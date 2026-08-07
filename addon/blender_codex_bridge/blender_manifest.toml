@@ -1,0 +1,17 @@
+schema_version = "1.0.0"
+
+id = "blender_codex_bridge"
+version = "0.1.0"
+name = "Blender Codex Bridge"
+tagline = "Permissioned local structured tools for Codex"
+maintainer = "Blender Codex Bridge contributors"
+type = "add-on"
+
+website = "https://github.com/Yoruiopz/Codex-Blender-Bridge"
+tags = ["Development", "3D View"]
+blender_version_min = "4.2.0"
+license = ["SPDX:GPL-3.0-or-later"]
+
+[permissions]
+network = "Listen for newline-delimited JSON requests on localhost only"
+files = "Save approved .blend files and temporary viewport captures"

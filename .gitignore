@@ -1,0 +1,28 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.coverage
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+build/
+dist/
+htmlcov/
+*.log
+
+# Blender backup and autosave files
+*.blend1
+*.blend2
+*.blend@
+
+# Generated captures and add-on bundles
+captures/
+blender_codex_bridge-*.zip
+
+# Editors and operating systems
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

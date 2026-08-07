@@ -1,0 +1,74 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "blender-codex-bridge"
+version = "0.1.0"
+description = "A permissioned MCP bridge for inspecting and editing Blender projects"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "GPL-3.0-or-later" }
+authors = [
+  { name = "Blender Codex Bridge contributors" },
+]
+keywords = ["blender", "codex", "mcp", "3d"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Multimedia :: Graphics :: 3D Modeling",
+]
+dependencies = [
+  "mcp>=2.0,<3",
+]
+
+[project.optional-dependencies]
+dev = [
+  "mypy>=1.11",
+  "pytest>=8.3",
+  "pytest-cov>=5.0",
+  "pytest-timeout>=2.3",
+  "ruff>=0.8",
+]
+
+[project.scripts]
+blender-codex-mcp = "mcp_server.server:main"
+
+[project.urls]
+Homepage = "https://github.com/Yoruiopz/Codex-Blender-Bridge"
+Repository = "https://github.com/Yoruiopz/Codex-Blender-Bridge"
+Issues = "https://github.com/Yoruiopz/Codex-Blender-Bridge/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["mcp_server*"]
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-config --strict-markers"
+testpaths = ["tests"]
+timeout = 10
+markers = [
+  "blender: requires a real Blender Python runtime",
+  "integration: exercises more than one package boundary",
+]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+extend-exclude = [".venv", "build", "dist"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.10"
+check_untyped_defs = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_return_any = true
+exclude = ["^addon/"]
