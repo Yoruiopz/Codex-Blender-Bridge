@@ -2,7 +2,7 @@
 
 This document defines the local protocol between the standalone MCP server and the Blender add-on. It is not the MCP protocol itself.
 
-Normative terms **MUST**, **MUST NOT**, **SHOULD**, and **MAY** describe the intended V1 contract. Where the implementation is still partial, unsupported behavior must fail explicitly rather than being emulated.
+Normative terms **MUST**, **MUST NOT**, **SHOULD**, and **MAY** describe the version 1 contract used by release 0.2.0. Unsupported methods/options fail explicitly rather than being emulated.
 
 ## Transport
 
@@ -52,7 +52,7 @@ Fields:
 | --- | --- | --- |
 | `protocol_version` | yes | Version string described above. |
 | `id` | yes | Non-empty caller-generated string, unique among active requests on that connection. It is opaque and echoed exactly. |
-| `method` | yes | Registered dotted tool name. No dynamic Python lookup or import is permitted. |
+| `method` | yes | Registered dotted tool name resolved by exact registry lookup. The dispatcher never imports or reflects from this string; only the separately armed `python.execute` handler accepts source code. |
 | `params` | yes | JSON object. Use `{}` when a method has no arguments. |
 | `timestamp` | no | RFC 3339 UTC timestamp for diagnostics; it is not used for authorization or deadline calculation. |
 | `timeout_ms` | no | Optional positive end-to-end caller budget, capped by local policy. Absence uses the server default. |
@@ -170,7 +170,7 @@ Event fields:
 - `sequence` increases monotonically within one request so clients can order progress.
 - `data` is a bounded JSON object.
 
-Events never replace the terminal response. A client must determine request completion only from the matching success/error response. The current MVP emits no events and its client is not required to consume them. Event emission must not be enabled until both peers recognize event envelopes; event-capable clients then ignore unknown event kinds. Callers must not require progress events in V1.
+Events never replace the terminal response. A client must determine request completion only from the matching success/error response. Release 0.2.0 emits no events and its client is not required to consume them. Event emission must not be enabled until both peers recognize event envelopes; event-capable clients then ignore unknown event kinds. Callers must not require progress events in V1.
 
 ## Timeouts and cancellation
 
@@ -183,7 +183,7 @@ Timeouts exist at several layers:
 
 The effective request budget is the smallest configured applicable deadline. `timeout_ms`, if accepted, is capped by policy and starts when the MCP server dispatches the Blender request. Queue wait consumes this budget.
 
-An expired command that has not started MUST be removed/rejected without mutation. For an active Blender operation, a caller timeout does **not** imply rollback: most Blender calls cannot be safely interrupted at arbitrary bytecode points. Handlers should be short; future long-running handlers need explicit cooperative safe points and cancellation semantics.
+An expired command that has not started MUST be removed/rejected without mutation. For an active Blender operation, a caller timeout does **not** imply rollback: most Blender calls cannot be safely interrupted at arbitrary bytecode points. Handlers should be short; long-running handlers need explicit cooperative safe points and cancellation semantics. `python.execute` adds a 0.1-30 second cooperative Python trace deadline, but long-running Blender C operations cannot always be preempted.
 
 If a response arrives after the MCP caller has timed out, the Blender client discards it for correlation purposes and logs the late result. A mutation that may have completed must remain visible in operation history so the next agent action reinspects state. IDs are not immediately reused.
 
@@ -195,12 +195,12 @@ Only a failure known to occur before a frame was sent carries `executed:false` a
 
 - Multiple requests may be in flight at the transport/client layer.
 - Writes on each socket are serialized so NDJSON frames never interleave.
-- The Blender main-thread executor processes one command at a time in queue order for the MVP.
+- The Blender main-thread executor processes one command at a time in queue order in 0.2.0.
 - The current add-on queue accepts at most 256 pending commands; saturation returns `SERVER_ERROR` rather than growing without bound.
-- Completion order can differ from submission order only if a request is rejected/expired before execution or a future implementation adds explicitly concurrent read paths.
+- Completion order can differ from submission order only if a request is rejected/expired before execution or a later protocol-compatible implementation adds explicitly concurrent read paths.
 - Callers MUST NOT issue dependent mutations concurrently. A later call should use the verified terminal result of the earlier call.
 - Duplicate active IDs are rejected. IDs may be reused only after the previous lifecycle is fully retired, but globally unique IDs are recommended.
-- Request order across separate TCP connections is undefined. The MVP should prefer one active MCP bridge connection unless multi-client ownership is explicitly implemented.
+- Request order across separate TCP connections is undefined. Clients should prefer one active MCP bridge connection unless multi-client ownership is explicitly implemented.
 
 ## Connection lifecycle
 
@@ -230,7 +230,7 @@ Parameter rules:
 - Distinguish omitted values from explicit `null` only when the schema defines that distinction.
 - Reject unknown parameters by default for mutating tools; read tools may adopt explicitly documented forward-compatible behavior.
 - Bound strings, arrays, image sizes, traversal depth, pagination limits, and numeric ranges.
-- Object references must be explicit names or opaque IDs defined by a tool schema. Never treat input as Python code.
+- Object references must be explicit names or opaque IDs defined by a tool schema. Normal methods never treat input as code. The sole exception is the exact registered `python.execute` method, whose schema requires the disabled-by-default Python toolset; all four broad permissions `EXECUTE_PYTHON`, `DELETE_OBJECTS`, `ACCESS_EXTERNAL_FILES`, and `SAVE_PROJECT`; `confirm_dangerous=true`; and `expected_effect`, then applies its own code/import/output/deadline policy.
 
 ## Serialization conventions
 
@@ -249,6 +249,20 @@ Read-only selection inspection:
 ```json
 {"protocol_version":"1.0","id":"req_101","method":"selection.inspect","params":{}}
 ```
+
+Show the high-level task in Blender's sidebar:
+
+```json
+{"protocol_version":"1.0","id":"req_101a","method":"bridge.task.set","params":{"description":"Repair the selected mesh and verify its UVs"}}
+```
+
+Create a prevalidated triangle mesh without relying on current selection:
+
+```json
+{"protocol_version":"1.0","id":"req_101b","method":"mesh.create","params":{"object_name":"Triangle","mesh_name":"TriangleMesh","vertices":[[0,0,0],[1,0,0],[0,1,0]],"faces":[[0,1,2]]}}
+```
+
+This method requires the `mesh` toolset plus `EDIT_MESH` and `TRANSFORM_OBJECTS`. It validates the complete bounded topology before Blender data allocation and returns fresh counts, bounds, transform, and mesh post-state.
 
 Permission denial:
 
@@ -288,11 +302,29 @@ Post-state from a transform:
 }
 ```
 
+Explicitly armed Python fallback for an otherwise unsupported Blender API operation:
+
+```json
+{
+  "protocol_version": "1.0",
+  "id": "req_104",
+  "method": "python.execute",
+  "params": {
+    "code": "result = {'active_scene': bpy.context.scene.name}",
+    "expected_effect": "Read the active scene name without changing project data",
+    "confirm_dangerous": true,
+    "time_limit_seconds": 2.0
+  }
+}
+```
+
+Transport acceptance does not arm Python by itself. Blender still requires the `python` toolset and all four of `EXECUTE_PYTHON`, `DELETE_OBJECTS`, `ACCESS_EXTERNAL_FILES`, and `SAVE_PROJECT`. Once armed, raw `bpy` bypasses normal structured `EDIT_*` gates. A successful result includes `verification_required: true`. Captured stdout is capped at 64 KiB. Script-result conversion allows at most 4,000 global items, depth 8, 4,000 integer digits, no cyclic/shared container expansion, and 256 KiB serialized. Violating a graph/scalar/byte budget—or encountering an unexpected conversion/size-check failure—replaces the result before transport encoding with `__truncated__` metadata while preserving audit/recovery fields; callers check `result_truncated` and `result_limit_bytes` rather than treating that placeholder as the requested value. A runtime/deadline failure after execution starts includes bounded digest/effect/output/delta evidence, `mutation_outcome_unknown: true`, and `verification_required: true`; it is recorded as a possible mutation with a finalized undo boundary. The Python policy is an accident guard, not a hard security sandbox, and it provides no shell or network tool.
+
 ## Security requirements
 
 - Do not place authentication secrets in messages; the V1 TCP transport is local only.
 - Never expose the socket using port forwarding, a reverse proxy, container publish flags, or public host binding.
-- Dispatch only registered methods. Never use `eval`, `exec`, arbitrary attribute traversal, or shell interpolation.
+- Dispatch only registered methods. Never use `eval`, reflective method traversal, arbitrary imports, or shell interpolation. Only the separately registered and explicitly armed `python.execute` handler may compile/execute caller source under its bounded policy; normal handlers must not route through it.
 - Validate paths and permissions in Blender, even if MCP already validated them.
 - Treat every local request as untrusted input for parser, type, range, and size purposes.
 

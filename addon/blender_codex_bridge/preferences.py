@@ -44,14 +44,19 @@ if bpy is not None:
         allow_edit_mesh: BoolProperty(name="Edit Meshes", default=True)
         allow_edit_materials: BoolProperty(name="Edit Materials", default=True)
         allow_edit_animation: BoolProperty(name="Edit Animation", default=True)
+        allow_edit_scene: BoolProperty(name="Edit Scene, Cameras & Lights", default=True)
+        allow_edit_render: BoolProperty(name="Edit Render Settings", default=True)
         allow_delete_objects: BoolProperty(
             name="Delete Objects",
             description="Allow permanent object deletion through structured tools",
             default=False,
         )
         allow_execute_python: BoolProperty(
-            name="Execute Arbitrary Python (Dangerous)",
-            description="Reserved dangerous permission; V1 deliberately exposes no Python execution tool",
+            name="Execute Blender Python (Dangerous)",
+            description=(
+                "Arm a super-permission that bypasses structured edit gates; calls also require "
+                "Delete Objects, Access External Files, and Save Project permissions"
+            ),
             default=False,
         )
         allow_external_files: BoolProperty(
@@ -60,6 +65,13 @@ if bpy is not None:
             default=False,
         )
         allow_save_project: BoolProperty(name="Save Project", default=True)
+        ui_history_rows: IntProperty(
+            name="History Rows",
+            description="Recent bridge operations shown in the sidebar",
+            default=8,
+            min=3,
+            max=20,
+        )
 
         def draw(self, context):
             del context
@@ -81,6 +93,8 @@ if bpy is not None:
                 "allow_edit_mesh",
                 "allow_edit_materials",
                 "allow_edit_animation",
+                "allow_edit_scene",
+                "allow_edit_render",
                 "allow_delete_objects",
                 "allow_save_project",
             ):
@@ -89,6 +103,9 @@ if bpy is not None:
             danger.alert = self.allow_execute_python or self.allow_external_files
             danger.prop(self, "allow_execute_python")
             danger.prop(self, "allow_external_files")
+            interface = layout.box()
+            interface.label(text="Interface", icon="WINDOW")
+            interface.prop(self, "ui_history_rows")
 
 
     CLASSES = (BlenderCodexBridgePreferences,)

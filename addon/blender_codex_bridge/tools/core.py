@@ -77,6 +77,22 @@ def bridge_status(context: ToolContext, params: Mapping[str, Any]) -> dict[str, 
     }
 
 
+def bridge_task_set(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
+    description = params.get("description")
+    if not isinstance(description, str) or not description.strip():
+        raise invalid_argument("A non-empty task 'description' is required.")
+    if len(description) > 500:
+        raise invalid_argument("Task descriptions must be at most 500 characters.")
+    context.state.set_task(description.strip())
+    return {"task": description.strip(), "active": True}
+
+
+def bridge_task_clear(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
+    del params
+    context.state.set_task("")
+    return {"task": "", "active": False}
+
+
 def save_project(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
     bpy = require_blender()
     raw_filepath = params.get("filepath")
@@ -188,6 +204,8 @@ def toolsets_disable(context: ToolContext, params: Mapping[str, Any]) -> dict[st
 def register_tools(registry: ToolRegistry) -> None:
     inspect_permission = (Permission.INSPECT_SCENE,)
     registry.register("bridge.status", bridge_status, description="Return Blender, bridge, permission, and agent state.")
+    registry.register("bridge.task.set", bridge_task_set, description="Show the current high-level Codex task in Blender's interactive UI.")
+    registry.register("bridge.task.clear", bridge_task_clear, description="Clear the completed or abandoned task from Blender's interactive UI.")
     registry.register("project.info", lambda c, p: project_info(p), permissions=inspect_permission, description="Inspect project-level state.")
     registry.register("scene.inspect", lambda c, p: inspect_scene(p), permissions=inspect_permission, description="Inspect bounded authoritative scene structure.")
     registry.register("scene.summary", lambda c, p: scene_summary(p), permissions=inspect_permission, description="Return an LLM-oriented scene summary in text and JSON.")

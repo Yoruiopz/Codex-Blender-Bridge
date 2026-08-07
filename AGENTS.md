@@ -33,7 +33,7 @@ Create a logical checkpoint before meaningful mutation, especially deletion, top
 
 ### 4. ACT
 
-Use typed, structured Blender tools. Prefer direct Blender data APIs and `bmesh` implementations over context-sensitive operators. Make no unrelated edits. Do not use arbitrary Python as a shortcut; it requires explicit Blender-side permission and is a last-resort capability, not the normal workflow.
+Use typed, structured Blender tools. Prefer direct Blender data APIs and `bmesh` implementations over context-sensitive operators. Make no unrelated edits. Do not use arbitrary Python as a shortcut; it is a last-resort super-permission that requires explicit enablement of `EXECUTE_PYTHON`, `DELETE_OBJECTS`, `ACCESS_EXTERNAL_FILES`, and `SAVE_PROJECT`, not the normal workflow.
 
 ### 5. VERIFY STRUCTURALLY
 
@@ -88,7 +88,9 @@ Natural-language references are evidence requirements, not permission to guess.
 - Never mutate Blender from a network thread. Enqueue requests and execute through the main-thread scheduler.
 - Blender-side permission checks are authoritative and must run immediately before execution. The MCP server cannot grant or bypass them.
 - Do not delete objects or data blocks without `DELETE_OBJECTS` and clear task scope.
-- Do not execute Python without `EXECUTE_PYTHON`; it must remain disabled by default.
+- Do not execute Python unless all four of `EXECUTE_PYTHON`, `DELETE_OBJECTS`, `ACCESS_EXTERNAL_FILES`, and `SAVE_PROJECT` are enabled. Once armed, raw `bpy` bypasses narrower structured `EDIT_*` gates; its import policy is an accident guard, not a security sandbox. It must remain disabled by default.
+- Treat a Python runtime/deadline failure as a possible mutation: retain digest/effect/delta evidence, require reinspection, and keep its finalized undo step available for confirmed recovery.
+- Treat `result_truncated: true` as incomplete Python evidence. The result exceeded its global 4,000-item, depth-8, 4,000-integer-digit, no-cyclic/shared-reference, or 256 KiB serialized budget—or result conversion failed—and was replaced by `__truncated__` metadata; request a compact acyclic summary or use structured inspection. The stdout budget remains a separate 64 KiB cap.
 - Do not access external paths without `ACCESS_EXTERNAL_FILES`. Normalize and constrain any permitted path.
 - Never add a remote shell tool or tunnel the local listener as part of a normal feature.
 - Pause and emergency-stop state must prevent new mutations. A canceled or timed-out caller must not cause an untracked late edit.

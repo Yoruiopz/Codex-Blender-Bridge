@@ -30,11 +30,16 @@ from .tools.catalog import DESTRUCTIVE_TOOL_NAMES, MODIFYING_TOOL_NAMES
 LOGGER = logging.getLogger(__name__)
 SERVER_NAME = "Blender Codex Bridge"
 SERVER_INSTRUCTIONS = (
-    "Inspect relevant Blender state before acting. Create a checkpoint before "
-    "meaningful mutation and prefer structured tools. Verify results structurally; "
-    "also capture the viewport when appearance matters. Blender-side permissions "
-    "are authoritative. Delete or save only when requested and permitted. Never "
-    "infer precise measurements from images when Blender can report them."
+    "Begin live Blender work with bridge.status, show the high-level task with "
+    "bridge.task.set, and enable only the structured toolsets the task needs. "
+    "Inspect explicit objects, selections, and datablocks before acting. Create one "
+    "checkpoint before each meaningful edit, prefer structured tools, and use "
+    "python.execute only as an explicitly acknowledged last resort. Verify every "
+    "change structurally and capture the viewport when appearance, pose, UVs, "
+    "lighting, or composition matters. Blender-side permissions are authoritative. "
+    "Delete, write external files, render, execute Python, or save only when requested "
+    "and permitted. Never infer measurements from images when Blender can report them. "
+    "Clear the task when finished and report changed datablocks, verification, and save state."
 )
 
 

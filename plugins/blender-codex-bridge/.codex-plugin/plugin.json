@@ -1,0 +1,30 @@
+{
+  "name": "blender-codex-bridge",
+  "version": "0.2.0",
+  "description": "Inspect, model, shade, rig, animate, UV, render, and automate Blender through a consent-first local bridge.",
+  "author": {
+    "name": "Blender Codex Bridge contributors",
+    "url": "https://github.com/Yoruiopz/Codex-Blender-Bridge"
+  },
+  "homepage": "https://github.com/Yoruiopz/Codex-Blender-Bridge",
+  "repository": "https://github.com/Yoruiopz/Codex-Blender-Bridge",
+  "license": "GPL-3.0-or-later",
+  "keywords": ["blender", "3d", "modeling", "animation", "mcp", "codex"],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Blender Codex Bridge",
+    "shortDescription": "A consent-first Blender copilot",
+    "longDescription": "Gives Codex structured local tools and a verification-first workflow for Blender modeling, materials, nodes, UVs, rigging, animation, rendering, and carefully gated Python fallbacks.",
+    "developerName": "Blender Codex Bridge contributors",
+    "category": "Productivity",
+    "capabilities": ["Read", "Write", "Interactive"],
+    "websiteURL": "https://github.com/Yoruiopz/Codex-Blender-Bridge",
+    "defaultPrompt": [
+      "Inspect my Blender scene and tell me what is selected.",
+      "Model this in Blender and verify it from two views.",
+      "Audit this scene's materials, UVs, rig, and render setup."
+    ],
+    "brandColor": "#E87D0D"
+  }
+}

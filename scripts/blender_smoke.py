@@ -80,7 +80,7 @@ def main() -> None:
     runtime = get_runtime()
     capture_path: Path | None = None
     try:
-        assert runtime.dispatch("bridge.status", {})["addon_version"] == "0.1.0"
+        assert runtime.dispatch("bridge.status", {})["addon_version"] == "0.2.0"
         try:
             runtime.dispatch("project.info", {})
         except BridgeError as error:

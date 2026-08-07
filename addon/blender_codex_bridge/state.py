@@ -124,6 +124,14 @@ class BridgeState:
         with self._lock:
             return [record.to_dict() for record in list(self._history)[: max(0, limit)]]
 
+    def clear_history(self) -> int:
+        """Clear the local audit display and return the removed record count."""
+
+        with self._lock:
+            count = len(self._history)
+            self._history.clear()
+            return count
+
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
             if self.connected_clients:

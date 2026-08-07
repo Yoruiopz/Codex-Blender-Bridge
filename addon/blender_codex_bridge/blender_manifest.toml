@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 
 id = "blender_codex_bridge"
-version = "0.1.0"
+version = "0.2.0"
 name = "Blender Codex Bridge"
 tagline = "Permissioned local structured tools for Codex"
 maintainer = "Blender Codex Bridge contributors"
@@ -14,4 +14,4 @@ license = ["SPDX:GPL-3.0-or-later"]
 
 [permissions]
 network = "Listen for newline-delimited JSON requests on localhost only"
-files = "Save approved .blend files and temporary viewport captures"
+files = "Save approved projects, renders, and bridge captures"

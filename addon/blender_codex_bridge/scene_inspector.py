@@ -87,6 +87,15 @@ def _object_compact(obj: Any, active: Any) -> dict[str, Any]:
         "visible_render": not bool(obj.hide_render),
         "selected": bool(obj.select_get()),
         "active": obj == active,
+        "data": (
+            {
+                "name": obj.data.name,
+                "type": type(obj.data).__name__,
+                "users": int(obj.data.users),
+            }
+            if obj.data is not None
+            else None
+        ),
         "material_slots": material_slots,
         "modifiers": modifiers,
         "constraints": constraints,
@@ -100,6 +109,36 @@ def _object_compact(obj: Any, active: Any) -> dict[str, Any]:
     }
     if obj.type == "MESH":
         value["mesh"] = basic_mesh_statistics(obj.data)
+    elif obj.type == "CAMERA":
+        camera = obj.data
+        value["camera"] = {
+            "type": camera.type,
+            "lens": float(camera.lens),
+            "sensor_width": float(camera.sensor_width),
+            "clip_start": float(camera.clip_start),
+            "clip_end": float(camera.clip_end),
+            "ortho_scale": float(camera.ortho_scale),
+            "dof": {
+                "enabled": bool(camera.dof.use_dof),
+                "focus_object": camera.dof.focus_object.name if camera.dof.focus_object else None,
+                "aperture_fstop": float(camera.dof.aperture_fstop),
+            },
+        }
+    elif obj.type == "LIGHT":
+        light = obj.data
+        value["light"] = {
+            "type": light.type,
+            "energy": float(light.energy),
+            "color": [float(component) for component in light.color],
+            "shadow_soft_size": float(getattr(light, "shadow_soft_size", 0.0)),
+            "spot_size": float(getattr(light, "spot_size", 0.0)),
+            "spot_blend": float(getattr(light, "spot_blend", 0.0)),
+        }
+    elif obj.type == "ARMATURE":
+        value["armature"] = {
+            "bone_count": len(obj.data.bones),
+            "pose_bone_count": len(obj.pose.bones) if obj.pose else 0,
+        }
     return value
 
 

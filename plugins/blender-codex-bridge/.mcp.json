@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "blender-codex-bridge": {
+      "command": "blender-codex-mcp",
+      "args": ["--transport", "stdio"],
+      "env": {
+        "BLENDER_CODEX_BRIDGE_HOST": "127.0.0.1",
+        "BLENDER_CODEX_BRIDGE_PORT": "9876",
+        "BLENDER_CODEX_LOG_LEVEL": "WARNING"
+      }
+    }
+  }
+}

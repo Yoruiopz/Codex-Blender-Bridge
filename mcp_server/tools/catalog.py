@@ -3,9 +3,43 @@
 from __future__ import annotations
 
 from ..tool_registry import ToolDefinition, remote_tool
+from .animation import (
+    ANIMATION_TOOL_DATA,
+    ANIMATION_TOOL_NAMES,
+    load_animation_definitions,
+)
+from .constraints import (
+    DESTRUCTIVE_TOOL_NAMES as CONSTRAINT_DESTRUCTIVE_TOOL_NAMES,
+)
+from .constraints import TOOL_DATA as CONSTRAINT_TOOL_DATA
+from .constraints import TOOL_NAMES as CONSTRAINT_TOOL_NAMES
+from .constraints import load_definitions as load_constraint_definitions
+from .materials import (
+    MATERIAL_TOOL_DATA,
+    MATERIAL_TOOL_NAMES,
+    load_material_definitions,
+)
+from .modifiers import DESTRUCTIVE_TOOL_NAMES as MODIFIER_DESTRUCTIVE_TOOL_NAMES
+from .modifiers import TOOL_DATA as MODIFIER_TOOL_DATA
+from .modifiers import TOOL_NAMES as MODIFIER_TOOL_NAMES
+from .modifiers import load_definitions as load_modifier_definitions
+from .nodes import NODE_TOOL_DATA, NODE_TOOL_NAMES, load_node_definitions
+from .python_exec import PYTHON_TOOL_NAMES
+from .python_exec import load_definitions as load_python_definitions
+from .render import RENDER_TOOL_DATA, RENDER_TOOL_NAMES
+from .render import load_definitions as load_render_definitions
+from .rigging import RIGGING_TOOL_DATA, RIGGING_TOOL_NAMES, load_rigging_definitions
+from .scene_edit import SCENE_EDIT_TOOL_DATA, SCENE_EDIT_TOOL_NAMES
+from .scene_edit import load_definitions as load_scene_edit_definitions
+from .uv import DESTRUCTIVE_TOOL_NAMES as UV_DESTRUCTIVE_TOOL_NAMES
+from .uv import TOOL_DATA as UV_TOOL_DATA
+from .uv import TOOL_NAMES as UV_TOOL_NAMES
+from .uv import load_definitions as load_uv_definitions
 
 CORE_REMOTE_TOOLS: tuple[tuple[str, str, bool, tuple[str, ...]], ...] = (
     ("bridge.status", "Report Blender bridge, project, mode, and permission status.", False, ()),
+    ("bridge.task.set", "Show the current high-level Codex task in Blender's UI.", False, ()),
+    ("bridge.task.clear", "Clear the current high-level task from Blender's UI.", False, ()),
     ("project.info", "Inspect project metadata and render settings.", False, ("INSPECT_SCENE",)),
     ("scene.inspect", "Return a compact authoritative structural scene representation.", False, ("INSPECT_SCENE",)),
     ("scene.summary", "Return an LLM-oriented structural and textual scene summary.", False, ("INSPECT_SCENE",)),
@@ -63,6 +97,7 @@ OBJECT_TOOL_DATA: tuple[tuple[str, str, bool, tuple[str, ...]], ...] = (
 OBJECT_TOOL_NAMES = tuple(item[0] for item in OBJECT_TOOL_DATA)
 
 MESH_TOOL_DATA: tuple[tuple[str, str, bool], ...] = (
+    ("mesh.create", "Create a fully prevalidated arbitrary mesh object from bounded topology arrays.", True),
     ("mesh.inspect", "Inspect compact mesh and topology statistics.", False),
     ("mesh.recalculate_normals", "Recalculate normals for the selected mesh region.", True),
     ("mesh.delete_selected", "Delete selected mesh elements.", True),
@@ -73,29 +108,59 @@ MESH_TOOL_DATA: tuple[tuple[str, str, bool], ...] = (
 )
 MESH_TOOL_NAMES = tuple(item[0] for item in MESH_TOOL_DATA)
 
-MATERIAL_TOOL_DATA: tuple[tuple[str, str, bool], ...] = (
-    ("material.inspect", "Inspect material users, node trees, textures, and Principled values.", False),
-)
-MATERIAL_TOOL_NAMES = tuple(item[0] for item in MATERIAL_TOOL_DATA)
+
+def _modifying_four(values: tuple[tuple[str, str, bool, tuple[str, ...]], ...]) -> set[str]:
+    return {name for name, _description, modifying, _permissions in values if modifying}
+
+
+def _modifying_three(values: tuple[tuple[str, str, bool], ...]) -> set[str]:
+    return {name for name, _description, modifying in values if modifying}
+
 
 MODIFYING_TOOL_NAMES = frozenset(
-    name
-    for name, _, modifying, _ in (*CORE_REMOTE_TOOLS, *OBJECT_TOOL_DATA)
-    if modifying
-) | frozenset(
-    name for name, _, modifying in (*LOCAL_TOOLSET_TOOLS, *MESH_TOOL_DATA, *MATERIAL_TOOL_DATA)
-    if modifying
+    _modifying_four(CORE_REMOTE_TOOLS)
+    | _modifying_three(LOCAL_TOOLSET_TOOLS)
+    | _modifying_four(OBJECT_TOOL_DATA)
+    | _modifying_three(MESH_TOOL_DATA)
+    | _modifying_four(MATERIAL_TOOL_DATA)
+    | _modifying_four(NODE_TOOL_DATA)
+    | _modifying_three(UV_TOOL_DATA)
+    | _modifying_three(MODIFIER_TOOL_DATA)
+    | _modifying_three(CONSTRAINT_TOOL_DATA)
+    | _modifying_four(ANIMATION_TOOL_DATA)
+    | _modifying_four(RIGGING_TOOL_DATA)
+    | _modifying_four(SCENE_EDIT_TOOL_DATA)
+    | _modifying_four(RENDER_TOOL_DATA)
+    | set(PYTHON_TOOL_NAMES)
 )
 
-# MCP annotations are advisory; Blender permissions remain authoritative.
+# MCP annotations are advisory; Blender permissions remain authoritative.  Err
+# conservative for operations that delete data, bake/apply state, write files,
+# replace Render Result, or execute a broad script.
 DESTRUCTIVE_TOOL_NAMES = frozenset(
     {
         "checkpoint.undo_last",
         "project.save",
         "viewport.capture",
         "object.delete",
+        "transform.apply",
         "mesh.delete_selected",
+        "mesh.dissolve_selected",
+        "material.delete",
+        "material.slot_remove",
+        "nodes.remove",
+        "nodes.unlink",
+        "animation.keyframe_delete",
+        "rig.bone_remove",
+        "rig.constraint_remove",
+        "rig.bind_mesh",
+        "collection.delete",
+        "render.execute",
+        "python.execute",
     }
+    | set(UV_DESTRUCTIVE_TOOL_NAMES)
+    | set(MODIFIER_DESTRUCTIVE_TOOL_NAMES)
+    | set(CONSTRAINT_DESTRUCTIVE_TOOL_NAMES)
 )
 
 
@@ -119,20 +184,42 @@ def load_mesh_definitions() -> tuple[ToolDefinition, ...]:
             toolset="mesh",
             description=description,
             modifying=modifying,
-            required_permissions=("EDIT_MESH",) if modifying else ("INSPECT_SCENE",),
+            required_permissions=(
+                ("EDIT_MESH", "TRANSFORM_OBJECTS")
+                if name == "mesh.create"
+                else (("EDIT_MESH",) if modifying else ("INSPECT_SCENE",))
+            ),
         )
         for name, description, modifying in MESH_TOOL_DATA
     )
 
 
-def load_material_definitions() -> tuple[ToolDefinition, ...]:
-    return tuple(
-        remote_tool(
-            name,
-            toolset="materials",
-            description=description,
-            modifying=modifying,
-            required_permissions=("EDIT_MATERIALS",) if modifying else ("INSPECT_SCENE",),
-        )
-        for name, description, modifying in MATERIAL_TOOL_DATA
-    )
+__all__ = [
+    "ANIMATION_TOOL_NAMES",
+    "CONSTRAINT_TOOL_NAMES",
+    "CORE_DEFINITIONS",
+    "DESTRUCTIVE_TOOL_NAMES",
+    "MATERIAL_TOOL_NAMES",
+    "MESH_TOOL_NAMES",
+    "MODIFIER_TOOL_NAMES",
+    "MODIFYING_TOOL_NAMES",
+    "NODE_TOOL_NAMES",
+    "OBJECT_TOOL_NAMES",
+    "PYTHON_TOOL_NAMES",
+    "RENDER_TOOL_NAMES",
+    "RIGGING_TOOL_NAMES",
+    "SCENE_EDIT_TOOL_NAMES",
+    "UV_TOOL_NAMES",
+    "load_animation_definitions",
+    "load_constraint_definitions",
+    "load_material_definitions",
+    "load_mesh_definitions",
+    "load_modifier_definitions",
+    "load_node_definitions",
+    "load_object_definitions",
+    "load_python_definitions",
+    "load_render_definitions",
+    "load_rigging_definitions",
+    "load_scene_edit_definitions",
+    "load_uv_definitions",
+]

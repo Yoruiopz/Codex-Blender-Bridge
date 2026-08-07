@@ -1,252 +1,157 @@
-# Implementation plan
+# Implementation plan and release status
 
-This plan turns the product brief into independently testable increments. It is intentionally ordered so no Blender mutation is exposed before the local transport, main-thread handoff, schemas, and Blender-side permission boundary exist.
+This document records what the 0.2.0 platform implements and the checks required before calling it releasable. Presence of a module is not completion: a public path must be registered on both sides, permission-gated, recoverable in proportion to risk, tested, documented, and verified in Blender where API/context behavior matters.
 
-Status in this document is conservative: a phase is complete only when its exit checks pass. File presence alone is not completion.
+## Invariants
 
-## Principles and constraints
+- Blender 4.2 LTS is the minimum compatibility target.
+- The add-on listener accepts only literal `127.0.0.1`.
+- Network workers enqueue; Blender API access runs on Blender's main thread.
+- The MCP server imports and tests without `bpy`.
+- Structured, typed tools are preferred over Python.
+- Blender-side live permission checks are authoritative.
+- Inspection, images, code, messages, queues, and history are bounded.
+- Meaningful changes participate in logical checkpoint/history behavior and return post-state.
+- Every mutation is structurally verified; appearance-dependent work is also checked visually.
 
-- Target Blender 4.2 LTS as the minimum supported Blender generation and smoke-test newer installed Blender releases without claiming them until checks pass.
-- Keep the Blender add-on dependency-light and compatible with Blender's bundled Python.
-- Bind the Blender listener to `127.0.0.1` only.
-- Network workers enqueue; only Blender's main thread may access or mutate `bpy` data.
-- Expose small typed toolsets through MCP; do not expose raw `bpy` or a remote shell.
-- Enforce permissions inside Blender immediately before execution.
-- Bound and summarize inspection results. Report truncation.
-- Group meaningful modifications into checkpoints/history entries and return post-operation state.
-- Verify structurally after every mutation and visually when appearance matters.
+## Implemented platform layers
 
-## Step 1 — Repository and design baseline
+### Repository, packaging, and Codex plugin
 
-Deliverables:
+- Python package metadata and `blender-codex-mcp` console script.
+- Deterministic Blender add-on ZIP builder targeting `dist/blender_codex_bridge-0.2.0.zip`.
+- Blender extension manifest and 4.2+ add-on registration lifecycle.
+- Repository Codex plugin at `plugins/blender-codex-bridge` with manifest, MCP configuration, workflow skill, and doctor script.
 
-- Root project metadata, ignore rules, license, and package layout.
-- `addon/blender_codex_bridge/`, `mcp_server/`, `tests/`, and `docs/` boundaries.
-- This implementation plan plus architecture, protocol, tool, security, and roadmap documents.
+Release checks:
 
-Exit checks:
+- install the Python package in a clean 3.10+ environment and run `blender-codex-mcp --help`;
+- validate the plugin manifest/package;
+- build the archive and confirm `blender_codex_bridge/__init__.py` is at its root;
+- install/enable/disable the ZIP in a fresh supported Blender profile without duplicate classes, timers, or listeners.
 
-- The standalone package can be imported without Blender or `bpy`.
-- Documentation distinguishes implemented MVP behavior from roadmap behavior.
-- No design requires arbitrary Python for normal operations.
+### Local transport, protocol, and MCP lifecycle
 
-## Step 2 — Add-on registration and control surface
+- Versioned UTF-8 NDJSON over local TCP with a 4 MiB payload cap.
+- Exact string request IDs, required object params, stable success/error envelopes, and structured errors.
+- Thread-safe bounded queue, Blender timer pump, serialized socket writes, lifecycle-safe stop/unregister, timeout-before-start rejection, and unknown-outcome handling after send.
+- Official MCP server integration over stdio by default, correlated Blender client, lazy registry, annotations, and stderr-only logs.
 
-Deliverables:
+Release checks:
 
-- Blender add-on metadata, deterministic `register()`/`unregister()`, preferences, operators, and a **Codex Bridge** 3D Viewport N-panel.
-- Connection controls, status, pause and emergency-stop controls, current-task placeholder, permission toggles, recent activity, and checkpoint actions.
-- Minimal persistent state with no background work left behind after unregister.
+- malformed, partial, oversized, non-finite, duplicate-ID, disconnect, cancellation, timeout, queue-saturation, and shutdown cases do not hang or late-mutate untracked state;
+- all terminal responses preserve the exact ID and protocol version;
+- MCP stdout contains protocol output only;
+- add-on and MCP method parity passes except the documented local-only recovery method.
 
-Exit checks:
+Read [protocol](protocol.md) before changing this layer.
 
-- A ZIP containing `blender_codex_bridge/__init__.py` at its root installs and enables in Blender 4.2.
-- Repeated enable/disable cycles do not duplicate classes, timers, or listeners.
-- The panel visibly distinguishes stopped, listening, connected, paused, active, and error states where applicable.
+### Blender control surface and permissions
 
-## Step 3 — Local transport and main-thread queue
+- Sidebar connection status/configuration, current task/method, queue depth, toolsets, permissions, history, diagnostics, checkpoint recovery, pause, and emergency stop.
+- `bridge.task.set` and `bridge.task.clear` for visible human oversight.
+- Blender-owned permissions for inspection, capture, transforms, mesh, materials, animation, scene, render, deletion, Python, external files, and saving.
+- Optional domain toolsets start disabled; core is always enabled; Python additionally defaults to disabled permission.
 
-Deliverables:
+Release checks:
 
-- TCP listener restricted to literal `127.0.0.1`.
-- UTF-8 NDJSON framing with message-size and parse limits.
-- Thread-safe command queue and response rendezvous.
-- Blender timer/main-thread pump with bounded work per tick.
-- Clean shutdown that unblocks sockets and rejects unfinished work deterministically.
+- the panel distinguishes stopped/listening/connected/executing/paused/emergency/error states;
+- every modifying handler declares and enforces current permissions immediately before execution;
+- denial produces `PERMISSION_DENIED` with `missing_permissions` and no partial mutation;
+- pause blocks mutations while inspection/recovery policy remains available; emergency stop closes the listener and cancels queued/not-started work.
 
-Exit checks:
+### Inspection, evidence, checkpoints, and saving
 
-- A network worker never imports scene data or calls Blender mutation APIs.
-- Malformed, oversized, disconnected, duplicate-ID, and shutdown paths do not hang Blender.
-- Slow/no client does not block Blender's main thread on socket I/O.
+- Project, scene, scene summary, selection, object, mesh, material, node, UV, modifier, constraint, animation, rig, and render inspection with explicit limits.
+- Session-scoped selection IDs with context/fingerprint validation.
+- Viewport/camera capture with bounded images and best-effort state restoration.
+- Logical checkpoint create/list/global undo plus local UI restore and bounded operation history.
+- Permissioned project save and approved external path handling.
 
-## Step 4 — Versioned request/response contract
+Release checks:
 
-Deliverables:
+- related summaries agree on scene, mode, active object, and selection;
+- truncation/omitted counts are explicit;
+- captures restore temporary selection, visibility, view, shading, and render settings where Blender permits and report Render Result replacement;
+- global undo requires explicit confirmation and does not claim agent-only ownership;
+- save never invents a path or overwrites unexpectedly.
 
-- Typed request, success, error, and reserved event envelopes.
-- Stable error taxonomy and exception-to-public-error translation.
-- Request ID preservation, timestamps where useful, protocol version negotiation/validation, timeouts, and structured local logging.
+## Implemented structured domains
 
-Exit checks:
+The running `toolsets.list` output is authoritative. Current domains include:
 
-- Valid messages round-trip without losing IDs or JSON-safe result types.
-- Invalid envelopes produce one bounded structured error when a response is possible.
-- Internal tracebacks remain in local diagnostics rather than normal responses.
+- object creation/deletion/duplication/rename/parenting/collections and deterministic transforms;
+- arbitrary mesh creation from fully prevalidated bounded vertices/edges/faces plus selection-scoped inspection, normals, delete, dissolve, extrude, inset, and bevel;
+- material lifecycle/assignment/slots/Principled values and exact material shader-node graph edits;
+- UV layer/island inspection, unwrap, Smart Project, and packing;
+- allowlisted modifier and object-constraint inspection/add/set/remove/apply behavior;
+- frame/range settings, action/F-curve/key inspection, and keyframe insertion/deletion;
+- armature creation/inspection, bone add/update/remove, pose transforms/constraints, and mesh binding;
+- scene configuration, collection lifecycle, camera, light, world, and render inspection/configuration/execution.
 
-## Step 5 — MCP adapter
+Each domain release check includes valid inputs, boundary validation, disabled toolset, every permission denial, wrong target/type/mode/selection, handler failure mapping, checkpoint/history metadata, measured post-state, MCP/add-on parity, and real-Blender smoke coverage for context-sensitive paths.
 
-Deliverables:
+The structured surface is intentionally not exhaustive. Geometry Nodes, compositor, sculpt/paint, advanced animation/NLA/drivers, detailed weight tools, simulations/bakes, retopology, and many specialist types remain future domain work.
 
-- Local MCP server over stdio.
-- Blender client with connect/disconnect behavior, correlated request futures, serialized writes, timeout handling, and clean error mapping.
-- Registry-backed MCP tool definitions and instructions that emphasize inspect/checkpoint/verify.
+## Python long-tail capability
 
-Exit checks:
+`python.execute` is implemented only as a last resort for an unsupported Blender API task. It is not used internally by ordinary structured tools.
 
-- Codex can launch the server as a local stdio command.
-- MCP stdout contains only protocol output; diagnostics use stderr/logging.
-- Blender unavailable, response timeout, malformed response, and mid-request disconnect become useful MCP errors.
+Required controls:
 
-## Step 6 — Core structural inspection
+- explicitly enabled `python` toolset;
+- all four Blender-side super-permissions: `EXECUTE_PYTHON`, `DELETE_OBJECTS`, `ACCESS_EXTERNAL_FILES`, and `SAVE_PROJECT`;
+- `confirm_dangerous=true` and non-empty `expected_effect` per call;
+- 64 KiB source/stdout caps; a result-conversion budget of 4,000 global items, depth 8, 4,000 integer digits, no cyclic/shared-reference expansion, and 256 KiB serialized; AST/input bounds; safe import roots; denied dangerous names/introspection; and a 0.1-30 second cooperative deadline;
+- bounded audit result with digest, expected effect, duration, output, coarse data-count/object deltas, and `verification_required: true`.
 
-Deliverables:
+The policy rejects obvious filesystem/process/network/dynamic-code paths but is an accident guard, **not a security sandbox**. Raw `bpy` bypasses normal structured `EDIT_*` permission gates once the four broad permissions arm it; it can delete data, use Blender file APIs, and save. The bridge exposes no shell or network tool. Long Blender C operations cannot always be interrupted. Every call must be followed by domain inspection and visual evidence where relevant, then the toolset and four broad permissions should return to least privilege.
 
-- `bridge.status`, `project.info`, `scene.inspect`, `scene.summary`, `selection.inspect`, and `object.inspect`.
-- Stable object references where practical and a session-scoped selection-reference abstraction.
-- Compact scene/object serialization with explicit limits and truncation metadata.
+Release checks:
 
-Exit checks:
+- verify denial unless the `python` toolset and all four broad permissions are enabled;
+- test import/name/introspection, size, AST, input, output, syntax, runtime failure, and cooperative deadline behavior;
+- confirm an oversized, over-depth, over-item, over-integer-digit, cyclic, shared-reference, or unexpectedly unconvertible result is replaced before transport encoding with `__truncated__`, `result_truncated: true`, and `result_limit_bytes: 262144`, preserving audit/recovery while stdout keeps its independent 64 KiB bound;
+- confirm trace state is restored and public errors contain no raw traceback;
+- confirm started runtime/deadline failures return digest/effect/output/deltas with unknown mutation outcome, remain in history, and finalize a usable undo step;
+- confirm execution remains on Blender's main thread and is recorded as modifying/destructive.
 
-- Scene summary and detailed inspection agree on current scene, mode, active object, and selection.
-- Mesh inspection reports useful aggregate diagnostics without dumping all coordinates.
-- Edit-mode selection reports counts, center, and approximate bounds where supported.
-- Unsupported object/data types degrade to bounded generic inspection rather than failing the whole scene.
-
-## Step 7 — Visual inspection
-
-Deliverables:
-
-- `viewport.capture` with supported view, shading, overlay, object-isolation, and resolution inputs.
-- A safe artifact/result representation that Codex can inspect.
-- State snapshot/restore around temporary viewport and visibility changes.
-
-Exit checks:
-
-- Current and deterministic orthographic/camera views work in supported UI contexts.
-- Capture failures restore viewport, active object, selection, shading, overlays, and visibility on a best-effort basis.
-- Headless or missing-area limitations return structured errors rather than fake images.
-
-## Step 8 — Blender-side permissions
-
-Deliverables:
-
-- Permission enum and policy for inspection, capture, transforms, mesh/material/animation edits, deletion, Python, external files, and saving.
-- Tool metadata declaring all required permissions.
-- Panel controls and concise denial history.
-
-Exit checks:
-
-- Every handler is checked in Blender; bypassing the MCP wrapper does not bypass policy.
-- Denied handlers do not begin mutation and return `PERMISSION_DENIED` with missing permissions.
-- Dangerous permissions default off, especially arbitrary Python and external files.
-
-## Step 9 — Checkpoints and operation history
-
-Deliverables:
-
-- `checkpoint.create`, `checkpoint.list`, and `checkpoint.undo_last`.
-- Logical operation IDs and bounded history containing tool, affected objects, timestamp, description, and success/failure.
-- Blender undo integration with clearly documented session limits.
-
-Exit checks:
-
-- A supported mutation can be undone as one logical agent operation.
-- Failed operations are recorded but are never advertised as successful checkpoints.
-- No checkpoint silently writes project copies to arbitrary filesystem paths.
-
-## Step 10 — Object and transform operations
-
-Deliverables:
-
-- Object create/delete/duplicate/rename/parent/collection operations in an `objects` toolset as feasible.
-- Deterministic transform set/translate/rotate/scale/apply operations.
-- Post-operation transforms and affected-object references in results.
-
-Exit checks:
-
-- Direct data APIs are used where safer than context-sensitive operators.
-- Missing/ambiguous object, invalid transform, locked data, permission denial, and mode mismatch are structured failures.
-- Deletion is separately gated and never enabled merely by enabling general object edits.
-
-## Step 11 — Basic mesh and material inspection operations
-
-Deliverables:
-
-- Initial `mesh` toolset for inspection, normals, selected delete/dissolve/extrude/inset/bevel where reliable.
-- `bmesh`-first edit implementation with explicit selection and mode requirements.
-- `material.inspect` preserving arbitrary node-tree structure in bounded summaries.
-
-Exit checks:
-
-- Mesh operations reject stale/empty/invalid selections and report affected geometry.
-- Geometry-changing operations update the mesh and return enough summary state to recheck topology.
-- Normals repair and topology edits can be checkpointed and undone.
-- Material inspection does not pretend every material is only a Principled BSDF.
-
-## Step 12 — Automated tests
-
-Deliverables:
-
-- Unit tests for message models, framing, malformed inputs, serialization, registry metadata, permission policy, timeout/error propagation, IDs, connection lifecycle, and fake scene responses.
-- A fake Blender server/client boundary for MCP tests.
-- Separately marked Blender integration tests or a documented manual smoke-test script.
-
-Exit checks:
-
-- The normal Python suite runs without importing `bpy` or launching Blender.
-- Tests cover success and failure paths, including late timeout responses and permission denial.
-- Platform-dependent networking tests use ephemeral loopback ports and deterministic cleanup.
-
-## Step 13 — User and contributor documentation
-
-Deliverables:
-
-- README setup, ZIP installation, Codex configuration, local security, examples, and honest limitations.
-- Architecture, protocol, tool-design, security, troubleshooting, agent behavior, and roadmap documents.
-
-Exit checks:
-
-- Every documented current tool exists in the registry or is explicitly labeled planned/conceptual.
-- Commands, package names, defaults, and environment options match code.
-- A new contributor can identify where to add a tool and which tests are required.
-
-## Step 14 — Verification and defect pass
+## Test and release sequence
 
 Run in this order:
 
-1. Formatting/static checks configured by the project.
-2. Focused unit tests for changed modules.
-3. Full non-Blender test suite.
-4. Fresh Blender 4.2 add-on ZIP install/enable/disable.
-5. Loopback connect/disconnect and malformed-request smoke tests.
-6. Read-only status/scene/selection/object inspection.
-7. Viewport capture with state-restore check.
-8. Permission-denied mutation check.
-9. Permitted transform and mesh operation with structural reinspection.
-10. Checkpoint undo and save-permission checks on a disposable `.blend`.
+1. `python -m ruff check .`
+2. `python -m mypy mcp_server`
+3. focused tests for changed modules;
+4. full `python -m pytest` suite;
+5. plugin validation and add-on ZIP build/layout validation;
+6. fresh Blender 4.2+ install/enable/disable;
+7. baseline TCP/main-thread smoke and permission denial;
+8. core inspection, checkpoint, viewport capture, transform, mesh, material/node, UV/modifier/constraint, animation/rig, scene/render, and save-path smoke checks on disposable projects;
+9. structural reinspection and visual comparison for every changed domain;
+10. undo/recovery and shutdown/reconnect checks;
+11. documentation/registry/version/stale-claim audit.
 
-Record exact versions and failures. Do not mark V1 complete on unit tests alone.
+Record exact Python, Blender, operating system, test commands, and failures. Unit tests alone do not establish Blender compatibility.
 
-## Step 15 — Architecture review
+## 0.2.0 acceptance scenario
 
-Review for:
+On a disposable supported `.blend`, a local Codex client must be able to:
 
-- accidental `bpy` use off the main thread;
-- authorization gaps or tool metadata drift;
-- unbounded serialization/rendering;
-- context-sensitive operator use without restoration;
-- request lifecycle races, duplicate terminal responses, or late edits after timeout;
-- MCP stdout logging corruption;
-- tight coupling that would make a new domain toolset require transport rewrites;
-- documentation that describes roadmap behavior as current behavior.
+1. connect, report status, and show a high-level task in Blender;
+2. inspect scene, selection, and relevant data without giant raw payloads;
+3. enable only needed structured toolsets and permissions;
+4. create one logical checkpoint and perform representative edits across requested domains;
+5. prove intended structural post-state and capture matched visual evidence where appearance matters;
+6. observe authoritative denial for a disabled permission;
+7. recover one logical step with acknowledged global-undo scope;
+8. render/save only with the required permissions and explicit path/overwrite intent;
+9. use Python only for a demonstrably unsupported operation through the full dangerous arming chain, then verify and disable it;
+10. show concise status/history/diagnostics in Blender and clear the task;
+11. recover from malformed input, handler failure, timeout, cancellation, disconnect, and shutdown without restarting Blender where reasonable.
 
-Address structural issues before adding breadth.
+Any partial or unsupported step must be reported as such. Saving, a successful protocol envelope, or a Python script return value is not a substitute for verification.
 
-## V1 acceptance scenario
+## Next implementation focus
 
-On a disposable Blender 4.2 project, a local Codex client must be able to:
-
-1. Connect and read bridge/project status.
-2. Inspect the scene, active selection, and one mesh without giant raw payloads.
-3. Capture a usable viewport image without permanently changing the workspace.
-4. Observe a Blender-side denial for a disabled permission.
-5. Enable an appropriate permission and toolset, create a checkpoint, and perform a transform.
-6. Perform several supported basic mesh operations with explicit selection/context.
-7. Reinspect structural state and capture visual evidence.
-8. Undo the logical agent operation.
-9. See concise operation history in Blender.
-10. Save only after explicitly enabling/using `SAVE_PROJECT`.
-11. Recover from malformed input, handler exceptions, timeout, and disconnect without restarting Blender.
-
-The final acceptance report must identify any step that remains partial; partial support is not silently promoted to complete.
+See [roadmap](roadmap.md). Near-term work prioritizes structured breadth and hardening, then Geometry Nodes/compositor, advanced animation/rigging, systematic evidence, persistent context, and durable variants. Reliability and structured tools continue to take priority over merely increasing operation count.

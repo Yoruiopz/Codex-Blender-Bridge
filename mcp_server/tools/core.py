@@ -17,6 +17,16 @@ class CoreTools:
 
         return await self.registry.call("bridge.status")
 
+    async def bridge_task_set(self, description: str) -> Any:
+        """Show the current high-level task in Blender's bridge panel."""
+
+        return await self.registry.call("bridge.task.set", {"description": description})
+
+    async def bridge_task_clear(self) -> Any:
+        """Clear the current task from Blender's bridge panel."""
+
+        return await self.registry.call("bridge.task.clear")
+
     async def checkpoint_create(self, description: str | None = None) -> Any:
         """Create a logical checkpoint before meaningful modification."""
 
@@ -62,6 +72,8 @@ class CoreTools:
     def bindings(self) -> tuple[MCPToolBinding, ...]:
         return (
             MCPToolBinding("bridge.status", self.bridge_status, self.bridge_status.__doc__ or ""),
+            MCPToolBinding("bridge.task.set", self.bridge_task_set, self.bridge_task_set.__doc__ or ""),
+            MCPToolBinding("bridge.task.clear", self.bridge_task_clear, self.bridge_task_clear.__doc__ or ""),
             MCPToolBinding("checkpoint.create", self.checkpoint_create, self.checkpoint_create.__doc__ or ""),
             MCPToolBinding("checkpoint.undo_last", self.checkpoint_undo_last, self.checkpoint_undo_last.__doc__ or ""),
             MCPToolBinding("checkpoint.list", self.checkpoint_list, self.checkpoint_list.__doc__ or ""),

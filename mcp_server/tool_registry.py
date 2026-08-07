@@ -432,13 +432,31 @@ def create_default_registry(client: AsyncRequestClient) -> ToolRegistry:
     """Create the V1 registry while preserving lazy domain imports."""
 
     from .tools.catalog import (
+        ANIMATION_TOOL_NAMES,
+        CONSTRAINT_TOOL_NAMES,
         CORE_DEFINITIONS,
         MATERIAL_TOOL_NAMES,
         MESH_TOOL_NAMES,
+        MODIFIER_TOOL_NAMES,
+        NODE_TOOL_NAMES,
         OBJECT_TOOL_NAMES,
+        PYTHON_TOOL_NAMES,
+        RENDER_TOOL_NAMES,
+        RIGGING_TOOL_NAMES,
+        SCENE_EDIT_TOOL_NAMES,
+        UV_TOOL_NAMES,
+        load_animation_definitions,
+        load_constraint_definitions,
         load_material_definitions,
         load_mesh_definitions,
+        load_modifier_definitions,
+        load_node_definitions,
         load_object_definitions,
+        load_python_definitions,
+        load_render_definitions,
+        load_rigging_definitions,
+        load_scene_edit_definitions,
+        load_uv_definitions,
     )
 
     registry = ToolRegistry(client)
@@ -460,7 +478,63 @@ def create_default_registry(client: AsyncRequestClient) -> ToolRegistry:
         "materials",
         load_material_definitions,
         tools=MATERIAL_TOOL_NAMES,
-        description="Material and shader-node inspection operations.",
+        description="Material lifecycle, slot assignment, and Principled shader operations.",
+    )
+    registry.register_toolset(
+        "nodes",
+        load_node_definitions,
+        tools=NODE_TOOL_NAMES,
+        description="Bounded material shader-node graph inspection and editing.",
+    )
+    registry.register_toolset(
+        "uv",
+        load_uv_definitions,
+        tools=UV_TOOL_NAMES,
+        description="Selection-scoped UV inspection, unwrap, projection, and packing.",
+    )
+    registry.register_toolset(
+        "modifiers",
+        load_modifier_definitions,
+        tools=MODIFIER_TOOL_NAMES,
+        description="Allowlisted object modifier inspection, configuration, removal, and apply.",
+    )
+    registry.register_toolset(
+        "constraints",
+        load_constraint_definitions,
+        tools=CONSTRAINT_TOOL_NAMES,
+        description="Allowlisted object-constraint inspection and editing.",
+    )
+    registry.register_toolset(
+        "animation",
+        load_animation_definitions,
+        tools=ANIMATION_TOOL_NAMES,
+        description="Frame, range, action, curve, driver, and keyframe workflows.",
+    )
+    registry.register_toolset(
+        "rigging",
+        load_rigging_definitions,
+        tools=RIGGING_TOOL_NAMES,
+        aliases=("rig",),
+        description="Armature, bone, pose, rig-constraint, and mesh binding workflows.",
+    )
+    registry.register_toolset(
+        "scene_edit",
+        load_scene_edit_definitions,
+        tools=SCENE_EDIT_TOOL_NAMES,
+        aliases=("cameras", "lights"),
+        description="Scene, collection, camera, light, and world configuration.",
+    )
+    registry.register_toolset(
+        "render",
+        load_render_definitions,
+        tools=RENDER_TOOL_NAMES,
+        description="Render inspection, configuration, and explicit still output.",
+    )
+    registry.register_toolset(
+        "python",
+        load_python_definitions,
+        tools=PYTHON_TOOL_NAMES,
+        description="Dangerous last-resort Blender Python, disabled by default and consent-gated.",
     )
     return registry
 

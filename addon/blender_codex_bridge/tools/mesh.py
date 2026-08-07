@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from contextlib import suppress
+from dataclasses import dataclass
 from typing import Any
 
 from ..errors import BridgeError, ErrorCode, invalid_argument
@@ -10,7 +12,16 @@ from ..mesh_inspector import inspect_mesh_object
 from ..permissions import Permission
 from ..selection import clear_selection_references, validate_selection_reference
 from ..tool_registry import ToolContext, ToolRegistry
-from ..utils import bool_param, float_param, get_object, int_param, vector3
+from ..utils import (
+    bool_param,
+    float_param,
+    get_collection,
+    get_object,
+    int_param,
+    require_blender,
+    serialize_transform,
+    vector3,
+)
 
 try:
     import bmesh  # type: ignore
@@ -19,6 +30,276 @@ except ImportError:  # pragma: no cover
 
 _MAX_OPERATION_ELEMENTS = 100_000
 _MAX_BEVEL_COMPLEXITY = 500_000
+_MAX_CREATE_VERTICES = 100_000
+_MAX_CREATE_EDGES = 200_000
+_MAX_CREATE_FACES = 100_000
+_MAX_CREATE_FACE_CORNERS = 500_000
+_MAX_FACE_VERTICES = 1_024
+_MAX_ID_NAME_BYTES = 63
+
+
+@dataclass(frozen=True, slots=True)
+class _PreparedMesh:
+    object_name: str
+    mesh_name: str
+    collection_name: str | None
+    vertices: tuple[tuple[float, float, float], ...]
+    edges: tuple[tuple[int, int], ...]
+    faces: tuple[tuple[int, ...], ...]
+    location: tuple[float, float, float]
+    rotation: tuple[float, float, float]
+    scale: tuple[float, float, float]
+    rotation_mode: str
+
+
+def _id_name(value: Any, parameter: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise invalid_argument(
+            f"'{parameter}' must be a non-empty string.", parameter=parameter
+        )
+    if "\x00" in value or len(value.encode("utf-8")) > _MAX_ID_NAME_BYTES:
+        raise invalid_argument(
+            f"'{parameter}' must be a Blender ID name of at most {_MAX_ID_NAME_BYTES} UTF-8 bytes.",
+            parameter=parameter,
+            maximum_bytes=_MAX_ID_NAME_BYTES,
+        )
+    return value
+
+
+def _bounded_array(value: Any, name: str, maximum: int) -> Sequence[Any]:
+    if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
+        raise invalid_argument(f"'{name}' must be an array.", parameter=name)
+    if len(value) > maximum:
+        raise invalid_argument(
+            f"'{name}' exceeds the bounded mesh-creation limit.",
+            parameter=name,
+            count=len(value),
+            maximum=maximum,
+        )
+    return value
+
+
+def _index(value: Any, *, parameter: str, vertex_count: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise invalid_argument(
+            f"'{parameter}' values must be integer vertex indices.", parameter=parameter
+        )
+    if value < 0 or value >= vertex_count:
+        raise invalid_argument(
+            f"'{parameter}' contains an out-of-range vertex index.",
+            parameter=parameter,
+            index=value,
+            vertex_count=vertex_count,
+        )
+    return value
+
+
+def _prepare_mesh_create(params: Mapping[str, Any]) -> _PreparedMesh:
+    """Validate and copy the complete request before touching Blender data."""
+
+    object_name = _id_name(params.get("object_name"), "object_name")
+    mesh_name = _id_name(params.get("mesh_name"), "mesh_name")
+    collection_name = params.get("collection_name")
+    if collection_name is not None:
+        collection_name = _id_name(collection_name, "collection_name")
+
+    raw_vertices = _bounded_array(
+        params.get("vertices"), "vertices", _MAX_CREATE_VERTICES
+    )
+    if not raw_vertices:
+        raise invalid_argument(
+            "'vertices' must contain at least one coordinate.", parameter="vertices"
+        )
+    vertices = tuple(
+        vector3(value, f"vertices[{index}]")
+        for index, value in enumerate(raw_vertices)
+    )
+    vertex_count = len(vertices)
+
+    raw_edges = _bounded_array(params.get("edges", ()), "edges", _MAX_CREATE_EDGES)
+    edges: list[tuple[int, int]] = []
+    unique_edges: set[tuple[int, int]] = set()
+    for edge_index, value in enumerate(raw_edges):
+        edge = _bounded_array(value, f"edges[{edge_index}]", 2)
+        if len(edge) != 2:
+            raise invalid_argument(
+                f"'edges[{edge_index}]' must contain exactly two vertex indices.",
+                parameter=f"edges[{edge_index}]",
+            )
+        first = _index(
+            edge[0], parameter=f"edges[{edge_index}][0]", vertex_count=vertex_count
+        )
+        second = _index(
+            edge[1], parameter=f"edges[{edge_index}][1]", vertex_count=vertex_count
+        )
+        if first == second:
+            raise invalid_argument(
+                "Mesh edges may not connect a vertex to itself.", edge_index=edge_index
+            )
+        canonical = tuple(sorted((first, second)))
+        if canonical in unique_edges:
+            raise invalid_argument(
+                "'edges' contains a duplicate undirected edge.",
+                edge_index=edge_index,
+                edge=list(canonical),
+            )
+        unique_edges.add(canonical)
+        edges.append((first, second))
+
+    raw_faces = _bounded_array(params.get("faces", ()), "faces", _MAX_CREATE_FACES)
+    faces: list[tuple[int, ...]] = []
+    unique_faces: set[tuple[int, ...]] = set()
+    total_corners = 0
+    for face_index, value in enumerate(raw_faces):
+        face = _bounded_array(value, f"faces[{face_index}]", _MAX_FACE_VERTICES)
+        if len(face) < 3:
+            raise invalid_argument(
+                f"'faces[{face_index}]' must contain at least three vertex indices.",
+                parameter=f"faces[{face_index}]",
+            )
+        total_corners += len(face)
+        if total_corners > _MAX_CREATE_FACE_CORNERS:
+            raise invalid_argument(
+                "'faces' exceeds the bounded total-corner limit.",
+                parameter="faces",
+                maximum_corners=_MAX_CREATE_FACE_CORNERS,
+            )
+        indices = tuple(
+            _index(
+                item,
+                parameter=f"faces[{face_index}][{corner_index}]",
+                vertex_count=vertex_count,
+            )
+            for corner_index, item in enumerate(face)
+        )
+        if len(set(indices)) != len(indices):
+            raise invalid_argument(
+                "A mesh face may not repeat a vertex index.", face_index=face_index
+            )
+        canonical_face = tuple(sorted(indices))
+        if canonical_face in unique_faces:
+            raise invalid_argument(
+                "'faces' contains a duplicate face vertex set.", face_index=face_index
+            )
+        unique_faces.add(canonical_face)
+        faces.append(indices)
+
+    location = vector3(params.get("location"), "location", default=(0.0, 0.0, 0.0))
+    rotation = vector3(params.get("rotation"), "rotation", default=(0.0, 0.0, 0.0))
+    scale = vector3(params.get("scale"), "scale", default=(1.0, 1.0, 1.0))
+    rotation_mode = params.get("rotation_mode", "XYZ")
+    if not isinstance(rotation_mode, str):
+        raise invalid_argument("'rotation_mode' must be a string.", parameter="rotation_mode")
+    rotation_mode = rotation_mode.upper()
+    if rotation_mode not in {"XYZ", "XZY", "YXZ", "YZX", "ZXY", "ZYX"}:
+        raise invalid_argument(
+            "'rotation_mode' must be an Euler rotation mode.",
+            parameter="rotation_mode",
+            supported=["XYZ", "XZY", "YXZ", "YZX", "ZXY", "ZYX"],
+        )
+    return _PreparedMesh(
+        object_name=object_name,
+        mesh_name=mesh_name,
+        collection_name=collection_name,
+        vertices=vertices,
+        edges=tuple(edges),
+        faces=tuple(faces),
+        location=location,
+        rotation=rotation,
+        scale=scale,
+        rotation_mode=rotation_mode,
+    )
+
+
+def _local_bounds(
+    vertices: Sequence[Sequence[float]],
+) -> dict[str, list[float]]:
+    return {
+        "min": [min(vertex[index] for vertex in vertices) for index in range(3)],
+        "max": [max(vertex[index] for vertex in vertices) for index in range(3)],
+    }
+
+
+def create_mesh(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
+    del context
+    prepared = _prepare_mesh_create(params)
+    bpy = require_blender()
+    if bpy.data.objects.get(prepared.object_name) is not None:
+        raise invalid_argument(
+            f"An object named '{prepared.object_name}' already exists.",
+            parameter="object_name",
+        )
+    if bpy.data.meshes.get(prepared.mesh_name) is not None:
+        raise invalid_argument(
+            f"A mesh data-block named '{prepared.mesh_name}' already exists.",
+            parameter="mesh_name",
+        )
+    collection = get_collection(prepared.collection_name)
+
+    mesh = None
+    obj = None
+    try:
+        mesh = bpy.data.meshes.new(prepared.mesh_name)
+        if mesh.name != prepared.mesh_name:
+            raise BridgeError(
+                ErrorCode.OPERATION_FAILED,
+                "Blender could not reserve the exact requested mesh data-block name.",
+                {"requested_mesh_name": prepared.mesh_name},
+            )
+        mesh.from_pydata(prepared.vertices, prepared.edges, prepared.faces)
+        if mesh.validate(verbose=False, clean_customdata=False):
+            raise BridgeError(
+                ErrorCode.INVALID_ARGUMENT,
+                "Blender found invalid topology after structured prevalidation.",
+            )
+        mesh.update(calc_edges=True, calc_edges_loose=True)
+        obj = bpy.data.objects.new(prepared.object_name, mesh)
+        if obj.name != prepared.object_name:
+            raise BridgeError(
+                ErrorCode.OPERATION_FAILED,
+                "Blender could not reserve the exact requested object name.",
+                {"requested_object_name": prepared.object_name},
+            )
+        collection.objects.link(obj)
+        obj.rotation_mode = prepared.rotation_mode
+        obj.location = prepared.location
+        obj.rotation_euler = prepared.rotation
+        obj.scale = prepared.scale
+    except Exception as exc:
+        if obj is not None:
+            with suppress(ReferenceError, RuntimeError):
+                bpy.data.objects.remove(obj, do_unlink=True)
+        if mesh is not None and mesh.users == 0:
+            with suppress(ReferenceError, RuntimeError):
+                bpy.data.meshes.remove(mesh)
+        if isinstance(exc, BridgeError):
+            raise
+        raise BridgeError(
+            ErrorCode.OPERATION_FAILED,
+            "Blender could not create the validated mesh object.",
+            {
+                "object_name": prepared.object_name,
+                "mesh_name": prepared.mesh_name,
+            },
+        ) from exc
+
+    return {
+        "created": True,
+        "object": obj.name,
+        "mesh_data_name": mesh.name,
+        "affected_objects": [obj.name],
+        "collections": [item.name for item in obj.users_collection],
+        "mesh_counts": {
+            "vertices": len(mesh.vertices),
+            "edges": len(mesh.edges),
+            "faces": len(mesh.polygons),
+            "face_corners": sum(len(polygon.vertices) for polygon in mesh.polygons),
+        },
+        "local_bounds": _local_bounds(prepared.vertices),
+        "transform": serialize_transform(obj),
+        "selection_changed": False,
+        "post_state": inspect_mesh_object(obj, include_topology=True),
+    }
 
 
 def _selected_elements(sequence: Any, label: str) -> list[Any]:
@@ -316,6 +597,14 @@ def bevel_selected(context: ToolContext, params: Mapping[str, Any]) -> dict[str,
 
 
 def register_tools(registry: ToolRegistry) -> None:
+    registry.register(
+        "mesh.create",
+        create_mesh,
+        permissions=(Permission.EDIT_MESH, Permission.TRANSFORM_OBJECTS),
+        toolset="mesh",
+        modifies=True,
+        description="Create a fully prevalidated arbitrary mesh object from bounded topology arrays.",
+    )
     registry.register(
         "mesh.inspect",
         inspect_mesh,

@@ -4,7 +4,7 @@ Blender Codex Bridge is a local automation boundary around a powerful desktop ap
 
 ## Supported deployment
 
-The supported V1 deployment is:
+The supported 0.2.0 deployment is:
 
 - Blender and the MCP server run on the same trusted workstation and normally as the same user.
 - Blender listens on the literal IPv4 loopback address `127.0.0.1`.
@@ -66,7 +66,7 @@ No one layer replaces another.
 
 ### Registered dispatch
 
-Only exact registered method names can execute. Dispatch must not use `eval`, `exec`, arbitrary module imports, reflective dotted attribute traversal, shell interpolation, or raw Blender operator names from the request.
+Only exact registered method names can execute. Normal dispatch must not use `eval`, reflective dotted attribute traversal, shell interpolation, arbitrary module imports, or raw Blender operator names from the request. `python.execute` is one explicitly registered, separately armed exception with its own policy; it is never an implicit fallback inside another handler.
 
 Unknown methods return `METHOD_NOT_FOUND`. Recognized but unfinished behavior returns `NOT_IMPLEMENTED`.
 
@@ -83,8 +83,8 @@ Permissions are capabilities, not UI decoration:
 ```text
 INSPECT_SCENE, CAPTURE_VIEWPORT, TRANSFORM_OBJECTS,
 EDIT_MESH, EDIT_MATERIALS, EDIT_ANIMATION,
-DELETE_OBJECTS, EXECUTE_PYTHON, ACCESS_EXTERNAL_FILES,
-SAVE_PROJECT
+EDIT_SCENE, EDIT_RENDER, DELETE_OBJECTS,
+EXECUTE_PYTHON, ACCESS_EXTERNAL_FILES, SAVE_PROJECT
 ```
 
 Rules:
@@ -94,7 +94,7 @@ Rules:
 - Missing permission means no handler invocation and a bounded `PERMISSION_DENIED` error.
 - Toolset enablement narrows availability but does not grant permission.
 - MCP client approvals are an additional user-control layer, not a replacement.
-- Deletion, arbitrary Python, and external file access remain off by default.
+- Deletion, arbitrary Python, and external file access remain off by default. Scene/render editing is separately revocable through `EDIT_SCENE` and `EDIT_RENDER`. Python is a declared super-permission path: it requires `EXECUTE_PYTHON`, `DELETE_OBJECTS`, `ACCESS_EXTERNAL_FILES`, and `SAVE_PROJECT` together because raw `bpy` can bypass narrower structured domain gates.
 
 ### Pause and emergency stop
 
@@ -104,22 +104,24 @@ Stopping the bridge closes listeners and resolves pending work. Users should use
 
 ## Arbitrary Python and shell access
 
-Structured tools are the normal interface. A future `python.execute` fallback, if shipped:
+Structured tools are the normal interface. The shipped `python.execute` fallback is available for unsupported long-tail Blender API work only. It requires all of the following:
 
-- is disabled by default and visually labeled dangerous;
-- requires `EXECUTE_PYTHON` checked in Blender;
-- accepts no implicit shell mode;
-- captures bounded stdout/error details;
-- cannot bypass other explicit path/project policy by convention;
-- is never used internally to implement ordinary tool calls.
+- explicit enablement of the `python` toolset;
+- all four Blender-side high-risk permissions: `EXECUTE_PYTHON`, `DELETE_OBJECTS`, `ACCESS_EXTERNAL_FILES`, and `SAVE_PROJECT`;
+- `confirm_dangerous=true` and a non-empty `expected_effect` on each request;
+- source, AST, input, output, safe-import, denied-name/introspection, and cooperative-deadline checks.
 
-The project must not expose remote shell execution. Adding a generic shell tool would materially change the threat model and is not a normal roadmap extension.
+Source and captured stdout are capped at 64 KiB each, ASTs at 8,000 nodes, inputs at 1,000 entries, and the cooperative deadline at 0.1-30 seconds. Result conversion uses a global 4,000-item budget, maximum depth 8, a 4,000-digit integer guard, identity tracking that rejects cyclic/shared container expansion, and a 256 KiB serialized cap. A graph/scalar/byte-budget violation is omitted before transport encoding and replaced by bounded `__truncated__` metadata with `result_truncated: true` and `result_limit_bytes: 262144`; unexpected post-execution conversion/size-check exceptions degrade to the same placeholder so audit and recovery evidence is retained. Stdout keeps its independent limit and `stdout_truncated` flag. Allowed import roots are `bpy`, `bmesh`, `mathutils`, `math`, `json`, `collections`, `functools`, `itertools`, `random`, and `statistics`. Obvious filesystem, process, network, dynamic-code, and double-underscore introspection paths are rejected. Long-running Blender C calls cannot always be preempted.
 
-Python execution inside Blender is effectively code execution with the user's Blender privileges. Enable it only for code you would run manually and disable it immediately afterward.
+These controls reduce accidental misuse; **they are not a hard security sandbox**. The provided `bpy` reference has broad authority over the open project, and Blender APIs evolve. Once armed, the script can mutate mesh/material/animation/scene/render domains without their normal structured `EDIT_*` permission, delete data, use Blender file APIs, and save. The four broad permissions acknowledge that bypass; they do not confine Python to those structured policies.
+
+Enable Python only for code you would knowingly run in the open project. Every successful result marks `verification_required: true`. If execution begins and then raises or exceeds the cooperative deadline, the public error includes the script digest, expected effect, duration and bounded stdout, coarse data-count/object deltas, `mutation_outcome_unknown: true`, and `verification_required: true`. The executor records that failure as a possible mutation and finalizes its Blender undo boundary, because the script may have changed state before failing. Reinspect affected data before retrying or using confirmed global undo, then disable the Python toolset and restore all four permissions to least privilege.
+
+The project exposes no shell or network tool. Adding a generic shell tool would materially change the threat model and is not a normal roadmap extension. Ordinary structured handlers must never invoke `python.execute` internally.
 
 ## Filesystem and saving
 
-Reading or writing a user-chosen external path requires `ACCESS_EXTERNAL_FILES` in addition to the domain permission. Saving the current project requires `SAVE_PROJECT`; saving to a new/external path may require both.
+Reading or writing a user-chosen external path through a structured tool requires `ACCESS_EXTERNAL_FILES` in addition to the domain permission. Saving through `project.save` requires `SAVE_PROJECT`; saving to a new/external path requires both. Render settings require `EDIT_RENDER`; a managed temporary still requires `EDIT_RENDER` and `CAPTURE_VIEWPORT`, while an explicit render path additionally checks `ACCESS_EXTERNAL_FILES`. An armed Python script does not re-enter these per-handler checks, which is why `python.execute` requires both `ACCESS_EXTERNAL_FILES` and `SAVE_PROJECT` even when its declared expected effect does not mention files.
 
 Path-handling requirements:
 
@@ -192,9 +194,10 @@ Blender undo state is global, in-memory/session-sensitive, and can be changed by
 - Confirm no `bpy` call runs from network threads.
 - Enumerate registered handlers and review their permissions/mutation flags.
 - Exercise denial for every modifying/destructive permission.
+- Confirm `python.execute` is denied unless all four of `EXECUTE_PYTHON`, `DELETE_OBJECTS`, `ACCESS_EXTERNAL_FILES`, and `SAVE_PROJECT` are enabled, and confirm Python can never rely on narrower `EDIT_*` toggles as containment.
 - Fuzz malformed, partial, oversized, deeply nested, and duplicate-ID frames.
 - Verify MCP stdout contains no log output.
-- Search for dynamic `eval`, `exec`, shell/subprocess, unsafe deserialization, and unbounded reads.
+- Review every dynamic-code site; only the registered, explicitly armed `python.execute` path may compile/execute caller source. Search for any additional `eval`, `exec`, shell/subprocess, unsafe deserialization, and unbounded reads. Exercise runtime failure/deadline paths and verify their digest/effect/deltas, possible-mutation history, and finalized undo step. Exercise over-byte, over-item, over-depth, cyclic, and shared-reference results; confirm the graph does not expand unboundedly and the original value never reaches transport while `__truncated__`, `result_truncated`, and `result_limit_bytes` remain explicit.
 - Test path normalization/overwrite behavior for every file-accepting tool.
 - Verify pause, emergency stop, timeout-before-start, disconnect, and unregister cleanup.
 - Confirm capture state restoration on success and injected failure.

@@ -16,6 +16,8 @@ class Permission(str, Enum):
     EDIT_MESH = "EDIT_MESH"
     EDIT_MATERIALS = "EDIT_MATERIALS"
     EDIT_ANIMATION = "EDIT_ANIMATION"
+    EDIT_SCENE = "EDIT_SCENE"
+    EDIT_RENDER = "EDIT_RENDER"
     DELETE_OBJECTS = "DELETE_OBJECTS"
     EXECUTE_PYTHON = "EXECUTE_PYTHON"
     ACCESS_EXTERNAL_FILES = "ACCESS_EXTERNAL_FILES"
@@ -29,6 +31,8 @@ PREFERENCE_PROPERTIES: dict[Permission, str] = {
     Permission.EDIT_MESH: "allow_edit_mesh",
     Permission.EDIT_MATERIALS: "allow_edit_materials",
     Permission.EDIT_ANIMATION: "allow_edit_animation",
+    Permission.EDIT_SCENE: "allow_edit_scene",
+    Permission.EDIT_RENDER: "allow_edit_render",
     Permission.DELETE_OBJECTS: "allow_delete_objects",
     Permission.EXECUTE_PYTHON: "allow_execute_python",
     Permission.ACCESS_EXTERNAL_FILES: "allow_external_files",

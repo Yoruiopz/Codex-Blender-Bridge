@@ -21,6 +21,34 @@ from .utils import affected_objects_from_result, require_blender
 LOGGER = logging.getLogger(__name__)
 
 
+def _history_description(
+    request: Request,
+    *,
+    outcome: str,
+    metadata: Mapping[str, Any] | None = None,
+    fallback: str,
+) -> str:
+    if request.method != "python.execute":
+        return fallback
+    effect = request.params.get("expected_effect")
+    effect_text = effect.strip() if isinstance(effect, str) and effect.strip() else "unspecified effect"
+    digest = metadata.get("script_digest") if metadata is not None else None
+    digest_text = digest if isinstance(digest, str) and digest else "unvalidated"
+    return f"Python {outcome} [{digest_text}]: {effect_text}"
+
+
+def _affected_objects_from_error(error: BridgeError) -> tuple[str, ...]:
+    names: list[str] = []
+    for key in ("objects_added", "objects_removed"):
+        value = error.context.get(key)
+        if not isinstance(value, Mapping):
+            continue
+        items = value.get("items")
+        if isinstance(items, list):
+            names.extend(item for item in items if isinstance(item, str) and item)
+    return tuple(dict.fromkeys(names))
+
+
 class MainThreadExecutor:
     """Execute queued tools exclusively from Blender's main UI thread."""
 
@@ -132,7 +160,12 @@ class MainThreadExecutor:
             duration_ms = (time.perf_counter() - start) * 1000.0
             record = self.state.record_operation(
                 tool=request.method,
-                description=f"Completed {request.method}",
+                description=_history_description(
+                    request,
+                    outcome="completed",
+                    metadata=result if isinstance(result, Mapping) else None,
+                    fallback=f"Completed {request.method}",
+                ),
                 success=True,
                 duration_ms=duration_ms,
                 affected_objects=affected_objects_from_result(result),
@@ -148,11 +181,20 @@ class MainThreadExecutor:
             return result
         except BridgeError as error:
             duration_ms = (time.perf_counter() - start) * 1000.0
+            execution_started = bool(error.context.get("execution_started"))
+            if spec is not None and spec.modifies and undo_boundary and execution_started:
+                self.checkpoints.after_modification(f"{request.method} (failed; verify state)")
             self.state.record_operation(
                 tool=request.method,
-                description=error.message,
+                description=_history_description(
+                    request,
+                    outcome="failed; verify state" if execution_started else "rejected",
+                    metadata=error.context,
+                    fallback=error.message,
+                ),
                 success=False,
                 duration_ms=duration_ms,
+                affected_objects=_affected_objects_from_error(error),
                 error_code=error.code,
             )
             self.state.end_execution(error.message)

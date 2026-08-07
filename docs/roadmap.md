@@ -1,155 +1,141 @@
 # Roadmap
 
-The roadmap grows from a reliable local inspection/edit loop toward human-like contextual workflows. Dates are intentionally omitted; each phase has capability and evidence gates. The running registry and test results—not this roadmap—are authoritative for current availability.
+The running registry and passing tests are authoritative. This roadmap separates shipped 0.2.0 behavior from planned breadth; a roadmap item is never a claim that a tool exists.
 
-## Phase 1 — Local foundation and verified transforms
+## Current release: 0.2.0 platform alpha
 
-Focus: connection, inspection, screenshots, transforms, permissions, and undo.
+Version 0.2.0 establishes the end-to-end platform and a broad first structured surface.
 
-Deliverables:
+Shipped foundation:
 
-- Installable Blender 4.2+ add-on and visible Codex Bridge panel.
-- Loopback-only NDJSON transport with a main-thread command queue.
-- Local stdio MCP server and small registry-backed core tool surface.
-- Bridge/project status; scene, selection, and object/mesh inspection.
-- Viewport capture with view/shading options and state restoration.
-- Blender-side permission enforcement, pause, emergency stop, and concise history.
-- Checkpoint create/list/undo and permitted project save.
-- Deterministic transform set/translate/rotate/scale/apply with post-state.
-- Fake-bridge tests plus Blender smoke tests.
+- installable Blender 4.2+ add-on and standalone local MCP server;
+- repository Codex plugin with MCP launch configuration and a verification-first Blender skill;
+- literal-loopback NDJSON transport, bounded framing/queue, and Blender main-thread dispatch;
+- Blender-side toolsets and permissions, pause, emergency stop, current task, checkpoints, history, and diagnostics;
+- project/scene/selection/object/mesh inspection and viewport evidence;
+- object lifecycle, hierarchy, collections, deterministic transforms, arbitrary bounded-topology mesh creation, and basic selection-scoped mesh editing;
+- material lifecycle, slots, Principled inputs, and bounded material shader-node editing;
+- UV inspection, unwrap, Smart Project, and packing;
+- allowlisted modifiers and object constraints;
+- frame/range/keyframe animation operations;
+- armature/bone/pose/constraint/binding rig operations;
+- scene, collection, camera, light, world, and render settings/execution;
+- save and external-path controls;
+- disabled-by-default, explicitly acknowledged `python.execute` for unsupported Blender API work, gated as a super-permission by Python, delete, external-file, and save permission together.
 
-Exit gate:
+The Python fallback provides long-tail reach, not equivalent maturity. Once armed it bypasses narrower structured `EDIT_*` gates, so its four broad permissions are explicit consent to that authority. It is an accident guard rather than a hard security sandbox and does not replace structured inspection, checkpoints, or verification.
 
-Codex can inspect a disposable `.blend`, checkpoint it, perform a permitted transform, structurally reinspect, visually compare, undo, and demonstrate a Blender-side permission denial without corrupting the session.
+Current gaps include advanced modeling/retopology, Geometry Nodes, compositor graphs, sculpt/paint, animation interpolation/driver/NLA editing, detailed weight workflows, simulations/bakes, many specialist data types, persistent semantic references, automatic structural diffs, and durable variants. Some shipped domains intentionally expose only a safe subset of settings or operations.
 
-## Phase 2 — Reliable modeling primitives
+## Next: structured breadth and hardening
 
-Focus: useful mesh editing without dependence on brittle viewport automation.
+Focus: turn the broad alpha surface into a dependable daily workflow without making Python the default.
 
-Deliverables:
+Planned work:
 
-- Selection-reference lifecycle and localized mesh-region inspection.
-- Reliable `bmesh`-first normals, delete, dissolve, extrude, inset, bevel, merge, subdivide, fill/grid-fill, and basic bridge/loop operations where Blender APIs support deterministic context.
-- Mesh diagnostics for loose/non-manifold geometry, ngons, normal inconsistencies, density, and connected islands.
-- Symmetry/mirror helpers with explicit planes and verification.
-- Operation-level topology metrics, preservation checks, and undo grouping.
-- Performance limits for dense meshes and long-running cooperative progress.
-
-Exit gate:
-
-On a representative mesh suite, Codex can identify a selected/localized region, apply several modeling primitives, prove the intended topology changed, prove protected dimensions/silhouette constraints remain within tolerance, and undo the logical operation.
-
-## Phase 3 — Materials, UVs, cameras, and lights
-
-Focus: structured look-development and scene-composition controls.
-
-Deliverables:
-
-- Arbitrary material node-tree inspection with stable node/socket references.
-- Principled helpers that preserve unrelated graph structure, plus material create/assign/connect operations.
-- Permission-gated texture/path workflows with strict path policy.
-- UV layer/island inspection, seam operations, unwrap helpers, packing diagnostics, overlap/stretch summaries.
-- Camera and light inspection/creation/transforms/settings.
-- Material-preview, camera, and lighting comparison captures.
+- expand deterministic mesh creation/editing, merge/subdivide/fill/bridge/loop operations, seams, and localized diagnostics;
+- add texture/image path workflows with explicit path policy;
+- add material-node coverage only through stable node/socket contracts;
+- broaden camera/light/render settings and matched visual comparisons;
+- add more Blender-version fixtures and dense/large-scene performance tests;
+- improve cancellation safe points, progress, diagnostics, and operation-level evidence;
+- continue parity, permission-denial, and real-Blender smoke coverage for every domain.
 
 Exit gate:
 
-Codex can preserve existing materials while editing an explicitly selected subset, perform a bounded UV workflow, create a camera/light setup, and verify each result structurally and with matched visual captures.
+Representative modeling, shading, UV, rigging, animation, scene, and render tasks complete through structured tools, prove intended post-state, preserve declared constraints, and undo coherently across the supported Blender matrix.
 
-## Phase 4 — Animation and rigging
+## Geometry Nodes and compositor
 
-Focus: time-aware inspection and reversible animation/armature edits.
+Focus: inspectable procedural and image-processing graphs.
 
-Deliverables:
+Planned work:
 
-- Actions, F-curves, keyframes, drivers, NLA tracks, constraints, bones, pose, weights, and dependency summaries.
-- Keyframe and interpolation tools with frame-range and channel scoping.
-- Armature/bone selection references and safe pose/edit-mode transitions.
-- Weight diagnostics and bounded assignment/normalization helpers.
-- Animation previews or sampled visual evidence without full-quality rendering by default.
-- Stronger checkpoint semantics for multi-frame and dependency-linked edits.
-
-Exit gate:
-
-Codex can diagnose and correct a scoped animation or rigging issue while preserving unrelated channels/bones and can verify the fix at relevant frames plus undo it as one logical operation.
-
-## Phase 5 — Geometry Nodes and advanced procedural workflows
-
-Focus: inspectable, composable procedural systems.
-
-Deliverables:
-
-- Geometry Nodes tree, interface, group, link, modifier, attribute, and dependency inspection.
-- Stable node/socket identifiers across one session.
-- Safe node create/connect/configure/group operations with schema-aware socket values.
-- Procedural evaluation summaries and bounded geometry diagnostics.
-- Domain extensions for modifiers, instances, simulations, and bake-state awareness.
+- Geometry Nodes trees, interfaces, node groups, modifier relationships, sockets, links, attributes, dependencies, and evaluated summaries;
+- compositor tree inspection and exact node/socket/link edits;
+- session-stable node/socket references with invalidation rules;
+- allowlisted node creation/configuration and schema-aware values;
+- simulation/bake-state awareness and bounded evaluated-geometry diagnostics.
 
 Exit gate:
 
-Codex can explain an unfamiliar node network, make a scoped procedural change without replacing the graph, and compare evaluated geometry/state before and after.
+Codex can explain an unfamiliar graph, make a scoped change without replacing unrelated structure, and compare evaluated state before and after.
 
-## Phase 6 — Agent verification and visual feedback loops
+## Advanced animation and rigging
 
-Focus: make verification systematic rather than prompt-dependent.
+Focus: channel-aware animation and production rig maintenance.
 
-Deliverables:
+Planned work:
 
-- Declarative pre/post conditions and preservation constraints on task plans.
-- Repeatable matched captures and automated multi-angle inspection.
-- Structural diff summaries for scenes, objects, meshes, materials, and animation.
-- Visual-comparison helpers for silhouette, composition, lighting, and material variants.
-- Progress events, cooperative cancellation, and long-operation state.
-- Evidence bundles linking operations, checkpoints, metrics, and images.
-
-Exit gate:
-
-For representative tasks, the bridge can produce a bounded evidence bundle showing intended changes, preserved constraints, structural diffs, matched visual comparisons, and any unresolved uncertainty.
-
-## Phase 7 — Persistent scene semantics and contextual interaction
-
-Focus: safely interpret instructions such as “this,” “the other side,” and “do the same.”
-
-Deliverables:
-
-- Persistent semantic object/region references with invalidation and provenance.
-- Spatial graph containing bounds, centers, hierarchy, proximity, visibility, and camera relationships.
-- Operation-history semantics suitable for replaying or mirroring prior intent.
-- Symmetry/counterpart detection with confidence and user confirmation thresholds.
-- User-visible current task/plan and protected-scope annotations in Blender.
-- Reference-resolution explanations and ambiguity errors instead of guesses.
+- interpolation/handle/extrapolation controls, action lifecycle, drivers, NLA, and sampled animation evidence;
+- armature selection references and stronger mode-transition guarantees;
+- vertex-group/weight inspection, assignment, normalization, symmetry, and diagnostics;
+- broader pose/object constraint settings and dependency summaries;
+- coherent undo/evidence for multi-frame and dependency-linked changes.
 
 Exit gate:
 
-Codex can combine current selection, structure, images, spatial relationships, and operation history to resolve contextual references on a benchmark set, while stopping for clarification below a defined confidence threshold.
+Codex can diagnose and correct a scoped animation or rig issue while proving unrelated channels, bones, and weights remain unchanged.
 
-## Phase 8 — Creative variants and project branching
+## Systematic verification
 
-Focus: non-destructive exploration across multiple alternatives.
+Focus: make proof of success a platform feature rather than a prompt convention.
 
-Deliverables:
+Planned work:
 
-- Named variants and branches with explicit base checkpoint and changed-data scope.
-- Lighting, material, camera, geometry, and animation variant workflows.
-- Safe file/scene/collection strategies that avoid silent backup sprawl.
-- Side-by-side structural and visual comparison, ranking, merge/apply, and discard.
-- Provenance linking user intent, tool operations, artifacts, and saved outputs.
-- Recovery across sessions and clear storage/cleanup controls.
+- declarative preconditions, postconditions, and preservation constraints;
+- structural diffs for scenes, objects, meshes, materials, node graphs, animation, and rigs;
+- repeatable matched multi-angle captures and bounded visual-comparison helpers;
+- evidence bundles linking task, operations, checkpoints, metrics, images, and save state;
+- correlated progress events and cooperative cancellation for long operations.
 
 Exit gate:
 
-Codex can generate multiple named alternatives without destructively altering the primary state, show comparable evidence for each, apply the chosen variant intentionally, and cleanly discard the rest.
+Representative tasks produce a bounded evidence bundle that shows intended changes, preserved constraints, visual comparisons, and unresolved uncertainty.
 
-## Cross-phase work
+## Persistent context and human-like references
 
-Every phase continues to improve:
+Focus: safely interpret instructions such as "this," "the other side," and "do the same."
 
-- Blender-version compatibility and clean enable/disable behavior;
-- schema/protocol compatibility and migration tests;
-- local-only security, permission granularity, and parser hardening;
-- queue responsiveness, result limits, and large-scene performance;
-- error quality, diagnostics, and supportability;
-- non-Blender unit tests and Blender integration fixtures;
-- honest documentation of supported and unsupported behavior.
+Planned work:
 
-Breadth does not advance a phase if the inspect → checkpoint → act → structural verify → visual verify → compare → refine loop is unreliable.
+- persistent semantic object/region references with provenance and invalidation;
+- spatial graph for bounds, centers, hierarchy, proximity, visibility, and camera relationships;
+- operation-history semantics suitable for replay/mirroring;
+- symmetry/counterpart detection with confidence and confirmation thresholds;
+- user-visible protected scope and reference-resolution explanations.
+
+Exit gate:
+
+Codex resolves contextual references from current Blender evidence on a benchmark set and stops for clarification below a defined confidence threshold.
+
+## Variants and durable project workflows
+
+Focus: non-destructive creative exploration across sessions.
+
+Planned work:
+
+- named variants/branches with explicit base state and changed-data scope;
+- lighting, material, camera, geometry, and animation variants;
+- side-by-side structural/visual comparison, apply/merge/discard controls;
+- provenance and explicit storage/cleanup behavior;
+- recovery across sessions without silent backup sprawl.
+
+Exit gate:
+
+Codex can produce alternatives without destructively altering the primary state, present comparable evidence, apply the selected result intentionally, and clean up the rest.
+
+## Cross-cutting release gates
+
+Every increment must maintain:
+
+- same-host loopback-only security and no remote shell;
+- Blender-side permission checks and disabled dangerous defaults;
+- no Blender API use from network threads;
+- bounded schemas/results and explicit truncation;
+- checkpoint/history participation and truthful post-state;
+- non-Blender tests plus real-Blender smoke coverage where API/context matters;
+- synchronized add-on, MCP, plugin, package, archive, and documentation versions;
+- explicit `NOT_IMPLEMENTED` or documented limitations instead of simulated success.
+
+Breadth does not advance the roadmap if the understand/plan/checkpoint/act/verify/compare/refine/report loop becomes unreliable.

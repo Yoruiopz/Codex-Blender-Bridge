@@ -12,6 +12,37 @@ class MeshTools:
     def __init__(self, registry: ToolRegistry) -> None:
         self.registry = registry
 
+    async def mesh_create(
+        self,
+        object_name: str,
+        mesh_name: str,
+        vertices: list[list[float]],
+        edges: list[list[int]] | None = None,
+        faces: list[list[int]] | None = None,
+        collection_name: str | None = None,
+        location: list[float] | None = None,
+        rotation: list[float] | None = None,
+        scale: list[float] | None = None,
+        rotation_mode: str = "XYZ",
+    ) -> Any:
+        """Create an arbitrary mesh from fully prevalidated bounded topology arrays."""
+
+        return await self.registry.call(
+            "mesh.create",
+            params(
+                object_name=object_name,
+                mesh_name=mesh_name,
+                vertices=vertices,
+                edges=edges,
+                faces=faces,
+                collection_name=collection_name,
+                location=location,
+                rotation=rotation,
+                scale=scale,
+                rotation_mode=rotation_mode,
+            ),
+        )
+
     async def mesh_inspect(self, object_name: str | None = None) -> Any:
         """Inspect compact mesh and topology statistics."""
 
@@ -133,6 +164,7 @@ class MeshTools:
 
     def bindings(self) -> tuple[MCPToolBinding, ...]:
         return (
+            MCPToolBinding("mesh.create", self.mesh_create, self.mesh_create.__doc__ or ""),
             MCPToolBinding("mesh.inspect", self.mesh_inspect, self.mesh_inspect.__doc__ or ""),
             MCPToolBinding("mesh.recalculate_normals", self.mesh_recalculate_normals, self.mesh_recalculate_normals.__doc__ or ""),
             MCPToolBinding("mesh.delete_selected", self.mesh_delete_selected, self.mesh_delete_selected.__doc__ or ""),

@@ -19,7 +19,7 @@ from .schemas import PROTOCOL_VERSION, BridgeRequest, BridgeResponse, ErrorPaylo
 from .server import build_runtime, create_mcp_server, create_server
 from .tool_registry import ToolDefinition, ToolRegistry, create_default_registry
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "PROTOCOL_VERSION",
