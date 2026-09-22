@@ -1,10 +1,38 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
+import pytest
 from mcp import Client
 
+from mcp_server.errors import BridgeError
 from mcp_server.server import build_runtime
+
+
+@pytest.mark.parametrize("expected", [True, False])
+def test_sdk_preserves_safe_errors_and_redacts_unexpected_exceptions(expected: bool) -> None:
+    class FailingClient:
+        async def request(self, *_args, **_kwargs):
+            if expected:
+                raise BridgeError("PERMISSION_DENIED", "Enable the required permission.", context={"missing_permissions": ["EDIT_MESH"]})
+            raise RuntimeError("secret diagnostic must stay local")
+
+    async def scenario() -> None:
+        runtime = build_runtime(client=FailingClient())  # type: ignore[arg-type]
+        async with Client(runtime.server) as client:
+            result = await client.call_tool("bridge.status", {})
+            assert result.is_error
+            error = json.loads(result.content[0].text)
+            assert error["code"] == ("PERMISSION_DENIED" if expected else "OPERATION_FAILED")
+            assert "secret diagnostic" not in result.content[0].text
+            if expected:
+                assert error["context"]["missing_permissions"] == ["EDIT_MESH"]
+            listing = await client.list_tools()
+            bulk = next(tool for tool in listing.tools if tool.name == "object.transform_batch")
+            assert "edits" in bulk.input_schema["properties"]
+
+    asyncio.run(scenario())
 
 
 def test_official_mcp_sdk_discovers_structured_tools() -> None:

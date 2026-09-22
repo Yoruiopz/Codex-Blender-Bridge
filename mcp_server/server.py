@@ -11,7 +11,8 @@ import os
 import sys
 from collections.abc import Awaitable
 from dataclasses import dataclass
-from typing import Any, cast
+from functools import wraps
+from typing import Any, cast, get_type_hints
 
 from .blender_client import (
     DEFAULT_CONNECT_TIMEOUT,
@@ -22,7 +23,7 @@ from .blender_client import (
     BlenderClient,
     validate_loopback_host,
 )
-from .errors import MCPDependencyError
+from .errors import BridgeError, MCPDependencyError
 from .tool_registry import ToolRegistry, create_default_registry
 from .tools import iter_bindings
 from .tools.catalog import DESTRUCTIVE_TOOL_NAMES, MODIFYING_TOOL_NAMES
@@ -131,7 +132,34 @@ def _register_tool(server: Any, *, name: str, handler: Any, description: str) ->
         {"name": name, "description": description, "annotations": annotations},
     )
     decorator = registrar(**decorator_kwargs)
-    decorator(handler)
+
+    @wraps(handler)
+    async def safe_handler(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return await handler(*args, **kwargs)
+        except BridgeError as exc:
+            error_text = str(exc)
+        except Exception:
+            LOGGER.exception("Unexpected MCP tool failure in %s", name)
+            error_text = str(BridgeError("OPERATION_FAILED", "Unexpected tool failure; inspect local diagnostics."))
+        # SDK 2.2 intentionally redacts unexpected exception text. Explicit MCP
+        # error results preserve our safe machine-readable envelope on all 2.x.
+        types = importlib.import_module("mcp.types")
+        return types.CallToolResult(
+            content=[types.TextContent(type="text", text=error_text)], isError=True
+        )
+
+    # Resolve postponed annotations in the ORIGINAL function's namespace (some
+    # wrappers use domain TypedDicts), retaining precise tool input schemas.
+    hints = get_type_hints(handler)
+    signature = inspect.signature(handler)
+    safe_handler.__annotations__ = hints
+    cast(Any, safe_handler).__signature__ = signature.replace(
+        parameters=[parameter.replace(annotation=hints.get(key, parameter.annotation))
+                    for key, parameter in signature.parameters.items()],
+        return_annotation=hints.get("return", signature.return_annotation),
+    )
+    decorator(safe_handler)
 
 
 def build_runtime(

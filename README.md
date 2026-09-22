@@ -48,7 +48,7 @@ On **Windows**, with the wheel in Downloads, run PowerShell:
 ```powershell
 $bridgeHome = Join-Path $env:LOCALAPPDATA 'BlenderCodexBridge'
 py -3 -m venv "$bridgeHome\.venv"
-& "$bridgeHome\.venv\Scripts\python.exe" -m pip install "$env:USERPROFILE\Downloads\blender_codex_bridge-0.2.0-py3-none-any.whl"
+& "$bridgeHome\.venv\Scripts\python.exe" -m pip install "$env:USERPROFILE\Downloads\blender_codex_bridge-0.2.0-py3-none-any.whl" "mcp==2.0.0"
 codex mcp add blender_codex_bridge -- "$bridgeHome\.venv\Scripts\blender-codex-mcp.exe"
 codex mcp list
 ```
@@ -60,7 +60,7 @@ On **macOS/Linux**:
 
 ```bash
 python3 -m venv "$HOME/.local/share/blender-codex-bridge/.venv"
-"$HOME/.local/share/blender-codex-bridge/.venv/bin/python" -m pip install "$HOME/Downloads/blender_codex_bridge-0.2.0-py3-none-any.whl"
+"$HOME/.local/share/blender-codex-bridge/.venv/bin/python" -m pip install "$HOME/Downloads/blender_codex_bridge-0.2.0-py3-none-any.whl" "mcp==2.0.0"
 codex mcp add blender_codex_bridge -- "$HOME/.local/share/blender-codex-bridge/.venv/bin/blender-codex-mcp"
 ```
 
@@ -68,6 +68,10 @@ If the CLI is unavailable, use your client's MCP settings: select **STDIO** and 
 same absolute executable path as the command, with no arguments.
 See [OpenAI's MCP setup documentation](https://developers.openai.com/codex/mcp/).
 Restart the client if needed and **start a new Codex task** to discover the tools.
+
+**0.2.0 compatibility:** keep the MCP SDK at `2.0.0` as shown above. Newer SDKs hide
+this release's structured error details. The unreleased 0.3.0 adapter fixes that behavior
+and is tested with SDK 2.0.0 and 2.2.0. Published 0.2.0 assets are unchanged.
 
 The optional plugin is an alternative, not a requirement: extract its ZIP and install
 the contained plugin directory using your client's local-plugin workflow. It needs
@@ -121,7 +125,7 @@ For 0.1.0 → 0.2.0, or later published updates:
 4. Upgrade the **same virtual environment** registered with Codex:
 
    ```powershell
-   & "$env:LOCALAPPDATA\BlenderCodexBridge\.venv\Scripts\python.exe" -m pip install --upgrade "$env:USERPROFILE\Downloads\blender_codex_bridge-0.2.0-py3-none-any.whl"
+   & "$env:LOCALAPPDATA\BlenderCodexBridge\.venv\Scripts\python.exe" -m pip install --upgrade "$env:USERPROFILE\Downloads\blender_codex_bridge-0.2.0-py3-none-any.whl" "mcp==2.0.0"
    ```
 
    Change the filename for future releases. If using an editable source install, update that
