@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import importlib
 import inspect
+import json
 import logging
 import os
 import sys
@@ -129,14 +130,27 @@ def _register_tool(server: Any, *, name: str, handler: Any, description: str) ->
     )
     decorator_kwargs = _accepted_kwargs(
         registrar,
-        {"name": name, "description": description, "annotations": annotations},
+        {
+            "name": name, "description": description, "annotations": annotations,
+            # Results are heterogeneous JSON validated by our registry. SDK 2.0
+            # on Python 3.10 otherwise infers an Any output model and attempts
+            # to validate error results' absent structured_content against it.
+            "structured_output": False,
+        },
     )
     decorator = registrar(**decorator_kwargs)
 
     @wraps(handler)
     async def safe_handler(*args: Any, **kwargs: Any) -> Any:
         try:
-            return await handler(*args, **kwargs)
+            result = await handler(*args, **kwargs)
+            if isinstance(result, dict):
+                types = importlib.import_module("mcp.types")
+                return types.CallToolResult(
+                    content=[types.TextContent(type="text", text=json.dumps(result, ensure_ascii=False, allow_nan=False))],
+                    structuredContent=result,
+                )
+            return result
         except BridgeError as exc:
             error_text = str(exc)
         except Exception:

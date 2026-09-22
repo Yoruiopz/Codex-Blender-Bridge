@@ -31,6 +31,7 @@ def test_sdk_preserves_safe_errors_and_redacts_unexpected_exceptions(expected: b
             listing = await client.list_tools()
             bulk = next(tool for tool in listing.tools if tool.name == "object.transform_batch")
             assert "edits" in bulk.input_schema["properties"]
+            assert bulk.output_schema is None
 
     asyncio.run(scenario())
 
