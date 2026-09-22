@@ -92,6 +92,12 @@ def bool_param(params: Mapping[str, Any], name: str, default: bool) -> bool:
     return value
 
 
+def reject_unknown_params(params: Mapping[str, Any], allowed: Iterable[str]) -> None:
+    unknown = set(params) - set(allowed)
+    if unknown:
+        raise invalid_argument("Unknown parameters are not accepted.", parameters=sorted(unknown))
+
+
 def int_param(
     params: Mapping[str, Any],
     name: str,

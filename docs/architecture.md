@@ -1,5 +1,7 @@
 # Architecture
 
+> This document records the published **0.2.0 baseline**. For the 20 additional tools and behavior in unreleased 0.3.0, see [agent workflows](agent-workflows.md).
+
 Blender Codex Bridge separates agent reasoning from Blender execution. Codex receives typed MCP tools; a local adapter forwards versioned requests; Blender remains the authority for toolset state, permissions, main-thread execution, undo, history, and live project state.
 
 ## Goals and non-goals
@@ -159,7 +161,7 @@ Structured coverage includes primitive objects, arbitrary meshes from bounded to
 - `confirm_dangerous=true` and a non-empty `expected_effect` on every call;
 - code, AST, input, safe-import, cooperative-deadline, 64 KiB stdout, and bounded result validation (4,000 items, depth 8, 4,000 integer digits, no cyclic/shared expansion, 256 KiB serialized).
 
-The namespace exposes `bpy`, JSON-safe `inputs`, bounded `print`, and a JSON-safe `result`. Allowed import roots are `bpy`, `bmesh`, `mathutils`, `math`, `json`, `collections`, `functools`, `itertools`, `random`, and `statistics`. Result conversion enforces a global 4,000-item budget, depth 8, a 4,000-digit integer guard, cyclic/shared-reference rejection, and a 256 KiB serialized cap before transport. Exceeding a graph/scalar/byte limit—or encountering an unexpected post-execution conversion/size-check failure—produces explicit `__truncated__` metadata marked with `result_truncated` and `result_limit_bytes`, preserving the surrounding audit/recovery response. Stdout remains independently capped at 64 KiB. The policy rejects obvious filesystem/process/network/dynamic-code/introspection paths, but it is not a security sandbox. Once armed, raw `bpy` can bypass the ordinary structured `EDIT_*` gates, delete project data, use Blender file APIs, and save. Requiring all four broad permissions makes that authority explicit.
+The namespace exposes `bpy`, JSON-safe `inputs`, bounded `print`, and a JSON-safe `result`. Allowed import roots are `bpy`, `bmesh`, `mathutils`, and `math`. Result conversion enforces a global 4,000-item budget, depth 8, a 4,000-digit integer guard, cyclic/shared-reference rejection, and a 256 KiB serialized cap before transport. Exceeding a graph/scalar/byte limit—or encountering an unexpected post-execution conversion/size-check failure—produces explicit `__truncated__` metadata marked with `result_truncated` and `result_limit_bytes`, preserving the surrounding audit/recovery response. Stdout remains independently capped at 64 KiB. The policy rejects obvious filesystem/process/network/dynamic-code/introspection paths, but it is not a security sandbox. Once armed, raw `bpy` can bypass the ordinary structured `EDIT_*` gates, delete project data, use Blender file APIs, and save. Requiring all four broad permissions makes that authority explicit.
 
 Success always marks verification as required. A script that starts and then fails returns bounded digest/effect/output/delta evidence with `mutation_outcome_unknown: true` and `verification_required: true`. The executor records it as a possible mutation and finalizes the pre-created undo boundary so the user has a tracked recovery step.
 

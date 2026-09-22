@@ -19,6 +19,7 @@ class QueuedRequest:
     response: Response | None = None
     _state: str = "pending"
     _lock: threading.Lock = field(default_factory=threading.Lock)
+    _stop_requested: bool = False
 
     def resolve(self, response: Response) -> None:
         with self._lock:
@@ -51,12 +52,28 @@ class QueuedRequest:
         """Cancel only if Blender has not begun execution."""
 
         with self._lock:
+            # A running tool cannot be interrupted, but cooperative tools must
+            # not begin another action after their caller has gone away.
+            self._stop_requested = True
             if self._state != "pending":
                 return False
             self.response = Response.failure(self.request.id, error)
             self._state = "cancelled"
             self.completed.set()
             return True
+
+    def check_active(self) -> None:
+        """Safe-point check; never attempt to interrupt a Blender C operation."""
+
+        with self._lock:
+            cancelled = self._stop_requested
+            expired = time.monotonic() >= self.deadline
+        if cancelled or expired:
+            raise BridgeError(
+                ErrorCode.TIMEOUT,
+                "Request stopped at a cooperative execution boundary; reinspect prior changes.",
+                {"cancellation_requested": cancelled, "deadline_expired": expired},
+            )
 
     def wait(self, timeout: float, *, running_grace: float = 300.0) -> Response:
         if not self.completed.wait(timeout):

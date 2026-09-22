@@ -44,6 +44,7 @@ class ToolContext:
     permissions: PermissionManager
     registry: ToolRegistry
     checkpoints: Any
+    check_cancelled: Callable[[], None] | None = None
 
     def require(self, *permissions: Permission) -> None:
         self.permissions.require(permissions)

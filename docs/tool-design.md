@@ -1,5 +1,7 @@
 # Tool design
 
+> This document records the published **0.2.0 baseline**. For the 20 additional tools and behavior in unreleased 0.3.0, see [agent workflows](agent-workflows.md).
+
 A bridge tool is a stable contract between an agent intent and a permission-gated Blender handler. Structured tools are task-shaped, typed, bounded, context-honest, recoverable, and independently verifiable; they are not thin aliases for arbitrary `bpy` functions.
 
 ## Design rules
@@ -187,7 +189,7 @@ The handler:
 
 - caps source/stdout at 64 KiB each, result conversion at 4,000 global items/depth 8/4,000 integer digits with cyclic/shared container rejection, serialized `result` at 256 KiB, AST complexity at 8,000 nodes, and inputs at 1,000 entries;
 - exposes `bpy`, JSON-safe `inputs`, bounded `print`, and a JSON-safe `result`;
-- allows imports rooted at `bpy`, `bmesh`, `mathutils`, `math`, `json`, `collections`, `functools`, `itertools`, `random`, and `statistics`;
+- allows imports rooted at `bpy`, `bmesh`, `mathutils`, and `math`;
 - rejects obvious filesystem/process/network/dynamic-code and double-underscore introspection paths;
 - enforces a cooperative 0.1-30 second trace deadline and reports that long Blender C calls may not be preemptible;
 - returns a code digest, expected effect, duration, bounded output, before/after data counts, object additions/removals, and `verification_required: true`.

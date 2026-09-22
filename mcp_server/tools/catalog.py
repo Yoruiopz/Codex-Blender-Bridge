@@ -8,12 +8,24 @@ from .animation import (
     ANIMATION_TOOL_NAMES,
     load_animation_definitions,
 )
+from .batch import TOOL_DATA as BATCH_TOOL_DATA
+from .batch import TOOL_NAMES as BATCH_TOOL_NAMES
+from .batch import load_definitions as load_batch_definitions
 from .constraints import (
     DESTRUCTIVE_TOOL_NAMES as CONSTRAINT_DESTRUCTIVE_TOOL_NAMES,
 )
 from .constraints import TOOL_DATA as CONSTRAINT_TOOL_DATA
 from .constraints import TOOL_NAMES as CONSTRAINT_TOOL_NAMES
 from .constraints import load_definitions as load_constraint_definitions
+from .geometry_nodes import DESTRUCTIVE_TOOL_NAMES as GEOMETRY_DESTRUCTIVE_TOOL_NAMES
+from .geometry_nodes import TOOL_DATA as GEOMETRY_TOOL_DATA
+from .geometry_nodes import TOOL_NAMES as GEOMETRY_TOOL_NAMES
+from .geometry_nodes import load_definitions as load_geometry_definitions
+from .interaction import TOOL_DATA as INTERACTION_TOOL_DATA
+from .interaction import TOOL_NAMES as INTERACTION_TOOL_NAMES
+from .interaction import load_definitions as load_interaction_definitions
+from .layout import LAYOUT_TOOL_DATA, LAYOUT_TOOL_NAMES
+from .layout import load_definitions as load_layout_definitions
 from .materials import (
     MATERIAL_TOOL_DATA,
     MATERIAL_TOOL_NAMES,
@@ -132,6 +144,10 @@ MODIFYING_TOOL_NAMES = frozenset(
     | _modifying_four(SCENE_EDIT_TOOL_DATA)
     | _modifying_four(RENDER_TOOL_DATA)
     | set(PYTHON_TOOL_NAMES)
+    | _modifying_four(BATCH_TOOL_DATA)
+    | _modifying_four(INTERACTION_TOOL_DATA)
+    | _modifying_four(LAYOUT_TOOL_DATA)
+    | _modifying_four(GEOMETRY_TOOL_DATA)
 )
 
 # MCP annotations are advisory; Blender permissions remain authoritative.  Err
@@ -157,10 +173,12 @@ DESTRUCTIVE_TOOL_NAMES = frozenset(
         "collection.delete",
         "render.execute",
         "python.execute",
+        "batch.execute",
     }
     | set(UV_DESTRUCTIVE_TOOL_NAMES)
     | set(MODIFIER_DESTRUCTIVE_TOOL_NAMES)
     | set(CONSTRAINT_DESTRUCTIVE_TOOL_NAMES)
+    | set(GEOMETRY_DESTRUCTIVE_TOOL_NAMES)
 )
 
 
@@ -196,9 +214,13 @@ def load_mesh_definitions() -> tuple[ToolDefinition, ...]:
 
 __all__ = [
     "ANIMATION_TOOL_NAMES",
+    "BATCH_TOOL_NAMES",
     "CONSTRAINT_TOOL_NAMES",
     "CORE_DEFINITIONS",
     "DESTRUCTIVE_TOOL_NAMES",
+    "GEOMETRY_TOOL_NAMES",
+    "INTERACTION_TOOL_NAMES",
+    "LAYOUT_TOOL_NAMES",
     "MATERIAL_TOOL_NAMES",
     "MESH_TOOL_NAMES",
     "MODIFIER_TOOL_NAMES",
@@ -211,7 +233,11 @@ __all__ = [
     "SCENE_EDIT_TOOL_NAMES",
     "UV_TOOL_NAMES",
     "load_animation_definitions",
+    "load_batch_definitions",
     "load_constraint_definitions",
+    "load_geometry_definitions",
+    "load_interaction_definitions",
+    "load_layout_definitions",
     "load_material_definitions",
     "load_mesh_definitions",
     "load_modifier_definitions",

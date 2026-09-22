@@ -10,7 +10,7 @@ This plugin packages the bridge's MCP server with a verification-first Blender w
    py -m pip install -e .
    ```
 
-2. Install `dist/blender_codex_bridge-0.2.0.zip` in Blender and enable the add-on.
+2. Install the matching Blender add-on ZIP and enable it. Published 0.2.0 packages are on [Releases](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.2.0); this source plugin is for unreleased 0.3.0 development and must be paired with that source build.
 3. Open **3D Viewport → Sidebar → Codex Bridge**, choose the permissions you want, and start the local bridge.
 4. Install or enable this plugin in Codex. Its bundled MCP server connects only to `127.0.0.1:9876`.
 

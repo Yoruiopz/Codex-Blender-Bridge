@@ -10,8 +10,12 @@ def register_all(registry: ToolRegistry) -> None:
 
     from . import (
         animation,
+        batch,
         constraints,
         core,
+        geometry_nodes,
+        interaction,
+        layout,
         materials,
         mesh,
         modifiers,
@@ -26,6 +30,10 @@ def register_all(registry: ToolRegistry) -> None:
     )
 
     core.register_tools(registry)
+    batch.register_tools(registry)
+    interaction.register_tools(registry)
+    layout.register_tools(registry)
+    geometry_nodes.register_tools(registry)
     objects.register_tools(registry)
     transforms.register_tools(registry)
     mesh.register_tools(registry)

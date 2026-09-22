@@ -263,6 +263,8 @@ class ToolRegistry:
         except ValueError as exc:
             raise BridgeError("INVALID_ARGUMENT", str(exc)) from exc
         assert isinstance(clean_params, dict)
+        if tool_name in {"batch.plan", "batch.execute"}:
+            self._check_batch_enablement(clean_params)
         if tool_name == "toolsets.list":
             # Listing local capability state must work even before Blender starts.
             return self.list()
@@ -314,6 +316,25 @@ class ToolRegistry:
                     if self._toolsets[toolset].enabled:
                         names.add(tool_name)
             return sorted(names)
+
+    def _check_batch_enablement(self, params: Mapping[str, Any]) -> None:
+        """Composition must not bypass local child-tool enablement either."""
+
+        steps = params.get("steps")
+        if not isinstance(steps, builtins.list):
+            raise BridgeError("INVALID_ARGUMENT", "Batch steps must be an array.")
+        if not 1 <= len(steps) <= 32:
+            raise BridgeError("INVALID_ARGUMENT", "A batch requires 1-32 steps.")
+        with self._lock:
+            for step in steps:
+                if not isinstance(step, dict) or not isinstance(step.get("method"), str):
+                    raise BridgeError("INVALID_ARGUMENT", "Each batch step requires a method string.")
+                method = step["method"]
+                group_name = self._tool_to_toolset.get(method)
+                if group_name is not None and not self._toolsets[group_name].enabled:
+                    raise ToolsetDisabledError(method, group_name)
+                if group_name is None and method not in self._tools:
+                    raise BridgeError("TOOL_NOT_FOUND", f"Unknown batch method '{method}'.")
 
     async def _synchronize_toolset(
         self, requested_name: str, *, enable: bool
@@ -433,8 +454,12 @@ def create_default_registry(client: AsyncRequestClient) -> ToolRegistry:
 
     from .tools.catalog import (
         ANIMATION_TOOL_NAMES,
+        BATCH_TOOL_NAMES,
         CONSTRAINT_TOOL_NAMES,
         CORE_DEFINITIONS,
+        GEOMETRY_TOOL_NAMES,
+        INTERACTION_TOOL_NAMES,
+        LAYOUT_TOOL_NAMES,
         MATERIAL_TOOL_NAMES,
         MESH_TOOL_NAMES,
         MODIFIER_TOOL_NAMES,
@@ -446,7 +471,11 @@ def create_default_registry(client: AsyncRequestClient) -> ToolRegistry:
         SCENE_EDIT_TOOL_NAMES,
         UV_TOOL_NAMES,
         load_animation_definitions,
+        load_batch_definitions,
         load_constraint_definitions,
+        load_geometry_definitions,
+        load_interaction_definitions,
+        load_layout_definitions,
         load_material_definitions,
         load_mesh_definitions,
         load_modifier_definitions,
@@ -461,6 +490,22 @@ def create_default_registry(client: AsyncRequestClient) -> ToolRegistry:
 
     registry = ToolRegistry(client)
     registry.register_core(CORE_DEFINITIONS)
+    registry.register_toolset(
+        "interaction", load_interaction_definitions, tools=INTERACTION_TOOL_NAMES,
+        description="Explicit object/component selection, localized mesh evidence, and Blender mode control.",
+    )
+    registry.register_toolset(
+        "layout", load_layout_definitions, tools=LAYOUT_TOOL_NAMES,
+        description="Bounded scene queries, bulk transforms, world-origin alignment and distribution.",
+    )
+    registry.register_toolset(
+        "geometry_nodes", load_geometry_definitions, tools=GEOMETRY_TOOL_NAMES,
+        description="Structured Geometry Nodes groups, interfaces, allowlisted nodes/properties, sockets, links, and attachment.",
+    )
+    registry.register_toolset(
+        "batch", load_batch_definitions, tools=BATCH_TOOL_NAMES,
+        description="Bounded serial structured edits with per-step permissions, audit, and cooperative cancellation.",
+    )
     registry.register_toolset(
         "objects",
         load_object_definitions,

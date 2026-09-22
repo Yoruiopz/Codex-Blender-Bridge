@@ -189,6 +189,16 @@ If a response arrives after the MCP caller has timed out, the Blender client dis
 
 Caller cancellation closes the shared client connection. The add-on then atomically cancels requests that are still pending and fails the other in-flight calls; a Blender operation that had already crossed the running boundary is not interrupted and remains visible in operation history. The next call reconnects and must reinspect state.
 
+The 0.3.0 development implementation adds cooperative safe points for `batch.execute`.
+Disconnect/timeout signals a running request without attempting to interrupt its current
+Blender call. Before each subsequent child step, the batch checks that signal, the queue
+deadline, its own bounded budget, and live toolset/permission/pause/emergency gates.
+Failure returns bounded completed-step evidence with `rollback_performed: false` and
+retains the logical recovery marker. No subsequent child is started after a stop is
+observed. A C operation already started may still finish after caller timeout. Batch
+preflight validates registration and static authorization, not handler arguments or
+scene-dependent success; batches are explicitly non-atomic. See [agent workflows](agent-workflows.md).
+
 Only a failure known to occur before a frame was sent carries `executed:false` and may be marked `retryable:true`. A timeout, cancellation, disconnect, or malformed response after sending carries `outcome_unknown:true` where an error can be returned and is never automatically retryable.
 
 ## Concurrency and ordering

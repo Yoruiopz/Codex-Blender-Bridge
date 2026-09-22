@@ -7,8 +7,12 @@ from collections.abc import Iterable
 from ..tool_registry import ToolRegistry
 from ._common import MCPToolBinding
 from .animation import AnimationTools
+from .batch import BatchTools
 from .constraints import ConstraintTools
 from .core import CoreTools
+from .geometry_nodes import GeometryNodeTools
+from .interaction import InteractionTools
+from .layout import LayoutTools
 from .materials import MaterialTools
 from .mesh import MeshTools
 from .modifiers import ModifierTools
@@ -30,6 +34,10 @@ def iter_bindings(registry: ToolRegistry) -> Iterable[MCPToolBinding]:
 
     bundles = (
         CoreTools(registry),
+        BatchTools(registry),
+        InteractionTools(registry),
+        LayoutTools(registry),
+        GeometryNodeTools(registry),
         ProjectTools(registry),
         SceneTools(registry),
         ViewportTools(registry),

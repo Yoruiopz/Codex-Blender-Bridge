@@ -1,5 +1,7 @@
 # Roadmap
 
+> This document records the published **0.2.0 baseline**. For the 20 additional tools and behavior in unreleased 0.3.0, see [agent workflows](agent-workflows.md).
+
 The running registry and passing tests are authoritative. This roadmap separates shipped 0.2.0 behavior from planned breadth; a roadmap item is never a claim that a tool exists.
 
 ## Current release: 0.2.0 platform alpha

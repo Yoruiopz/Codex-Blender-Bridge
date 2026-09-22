@@ -40,6 +40,12 @@ SERVER_INSTRUCTIONS = (
     "Delete, write external files, render, execute Python, or save only when requested "
     "and permitted. Never infer measurements from images when Blender can report them. "
     "Clear the task when finished and report changed datablocks, verification, and save state."
+    " Use scene.query and paginated mesh.components_inspect to resolve targets. "
+    "Prefer object.transform_batch for independent bulk placement; use batch.execute "
+    "for short sequences with known explicit names. Enable every child toolset first. "
+    "Batch preflight checks gates, not scene dependencies; partial failures are not rolled back. "
+    "Reinspect partial work, truncated results, and topology changes before continuing. "
+    "Use geometry_nodes tools for procedural graphs and acknowledge shared users explicitly."
 )
 
 

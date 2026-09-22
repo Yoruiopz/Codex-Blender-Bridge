@@ -6,7 +6,7 @@ import logging
 import threading
 import time
 import uuid
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from .checkpoints import CheckpointManager
@@ -38,7 +38,7 @@ def _history_description(
 
 
 def _affected_objects_from_error(error: BridgeError) -> tuple[str, ...]:
-    names: list[str] = []
+    names = list(affected_objects_from_result(error.context))
     for key in ("objects_added", "objects_removed"):
         value = error.context.get(key)
         if not isinstance(value, Mapping):
@@ -130,15 +130,20 @@ class MainThreadExecutor:
         )
         return self._invoke(request, allow_recovery=allow_recovery)
 
-    def execute_request(self, request: Request) -> Response:
+    def execute_request(
+        self, request: Request, *, check_cancelled: Callable[[], None] | None = None
+    ) -> Response:
         """Execute one validated request and contain all failures."""
 
         try:
-            return Response.success(request.id, self._invoke(request))
+            return Response.success(request.id, self._invoke(request, check_cancelled=check_cancelled))
         except BridgeError as error:
             return Response.failure(request.id, error)
 
-    def _invoke(self, request: Request, *, allow_recovery: bool = False) -> Any:
+    def _invoke(
+        self, request: Request, *, allow_recovery: bool = False,
+        check_cancelled: Callable[[], None] | None = None,
+    ) -> Any:
         start = time.perf_counter()
         task = request.params.get("_task", request.params.get("task_description"))
         if task is not None and not isinstance(task, str):
@@ -146,15 +151,19 @@ class MainThreadExecutor:
         self.state.begin_execution(request.method, task)
         spec = None
         undo_boundary = False
+        context = self.context
+        context.check_cancelled = check_cancelled
         try:
+            if check_cancelled is not None:
+                check_cancelled()
             spec = self.registry.prepare(
                 request.method,
-                self.context,
+                context,
                 allow_recovery=allow_recovery,
             )
             if spec.modifies and spec.automatic_checkpoint:
                 undo_boundary = self.checkpoints.before_modification(request.method)
-            result = spec.handler(self.context, request.params)
+            result = spec.handler(context, request.params)
             if spec.modifies and undo_boundary:
                 self.checkpoints.after_modification(request.method)
             duration_ms = (time.perf_counter() - start) * 1000.0
@@ -172,10 +181,11 @@ class MainThreadExecutor:
             )
             if spec.modifies and isinstance(result, Mapping):
                 result = dict(result)
-                result["operation"] = {
-                    "operation_id": record.operation_id,
-                    "undo_boundary_created": undo_boundary,
-                }
+                operation = {"undo_boundary_created": undo_boundary}
+                if isinstance(result.get("operation"), Mapping):
+                    operation.update(result["operation"])
+                operation["operation_id"] = record.operation_id
+                result["operation"] = operation
             LOGGER.info("Completed %s in %.1f ms", request.method, duration_ms)
             self.state.end_execution()
             return result
@@ -230,7 +240,7 @@ class MainThreadExecutor:
                 break
             try:
                 if queued.try_start():
-                    queued.resolve(self.execute_request(queued.request))
+                    queued.resolve(self.execute_request(queued.request, check_cancelled=queued.check_active))
             finally:
                 self.command_queue.task_done()
         return self.interval

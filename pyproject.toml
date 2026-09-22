@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "blender-codex-bridge"
-version = "0.2.0"
+version = "0.3.0"
 description = "A permissioned MCP bridge for inspecting and editing Blender projects"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -24,6 +24,7 @@ classifiers = [
 ]
 dependencies = [
   "mcp>=2.0,<3",
+  "typing_extensions>=4.12",
 ]
 
 [project.optional-dependencies]

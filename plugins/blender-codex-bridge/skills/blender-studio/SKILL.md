@@ -38,7 +38,18 @@ For each meaningful change:
 - Use rigging and animation tools for armatures, bones, poses, keyframes, actions, and frame settings.
 - Use scene, viewport, and render tools for cameras, lights, output configuration, previews, and final render work.
 
-Current optional toolsets are `objects`, `mesh`, `materials`, `nodes`, `uv`, `modifiers`, `constraints`, `animation`, `rigging`, `scene_edit`, `render`, and `python`. The Blender panel can enable all structured toolsets at once while leaving Python disabled.
+Current optional toolsets are `objects`, `mesh`, `materials`, `nodes`, `uv`, `modifiers`, `constraints`, `animation`, `rigging`, `scene_edit`, `render`, `interaction`, `layout`, `geometry_nodes`, `batch`, and `python`. The Blender panel can enable all structured toolsets at once while leaving Python disabled.
+
+## Efficient structured workflows (0.3.0+)
+
+- Resolve targets with filtered, paginated `scene.query`. Its bounds refer to world origins, not surface intersections.
+- Use `selection.set` and `context.set_mode` for intentional context changes. Entering edit/paint/pose modes isolates the target selection; entering paint mode is not itself painting.
+- In single-object mesh Edit Mode, use `mesh.components_inspect` to choose indices from measured evidence. Pass its fresh selection ID to `mesh.select_components`; reinspect after topology or context changes.
+- Prefer `object.transform_batch` for up to 128 independent object edits, and origin-based `object.align`/`object.distribute` for layout. Dependent/animated/parented objects are intentionally rejected.
+- Use `geometry_nodes.*` for Geometry Nodes and `nodes.*` for material shaders. Inspect shared/nested graph users before acknowledging `allow_shared`; direct-user summaries may not enumerate indirect effects.
+- Use `batch.plan` then `batch.execute` for short known sequences, up to 32 explicit `{id?, method, params}` steps, with all child toolsets enabled. Preflight checks shape/static gates, not handler arguments or scene dependencies. There are no result substitutions: inspect separately when the next decision depends on output.
+- Batch stops on the first error or cooperative deadline/disconnect boundary. Prior edits remain; never blindly retry. Check failed-step evidence, history, and current Blender state. One best-effort logical undo marker does not guarantee atomic rollback or single-step undo across mode/operator boundaries. Reinspect any `result_truncated` step separately (16 KiB limit).
+- Keep Python, render/capture, save, lifecycle changes, and undo outside batches. Perform structural and visual verification afterward; batching does not replace the work loop.
 
 ## Python fallback
 

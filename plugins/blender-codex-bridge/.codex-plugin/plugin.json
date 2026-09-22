@@ -1,6 +1,6 @@
 {
   "name": "blender-codex-bridge",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Inspect, model, shade, rig, animate, UV, render, and automate Blender through a consent-first local bridge.",
   "author": {
     "name": "Blender Codex Bridge contributors",

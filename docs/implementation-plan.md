@@ -1,5 +1,7 @@
 # Implementation plan and release status
 
+> This document records the published **0.2.0 baseline**. For the 20 additional tools and behavior in unreleased 0.3.0, see [agent workflows](agent-workflows.md).
+
 This document records what the 0.2.0 platform implements and the checks required before calling it releasable. Presence of a module is not completion: a public path must be registered on both sides, permission-gated, recoverable in proportion to risk, tested, documented, and verified in Blender where API/context behavior matters.
 
 ## Invariants
