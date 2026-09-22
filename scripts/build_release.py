@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import json
 import re
@@ -12,6 +13,33 @@ from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def release_version(source: Path) -> str:
+    """Reject mismatched components before creating any release assets."""
+    def numeric_version(path: Path) -> str:
+        match = re.search(r'^version = "([0-9]+\.[0-9]+\.[0-9]+)"$', path.read_text(encoding="utf-8"), re.M)
+        if not match:
+            raise ValueError(f"Expected a numeric release version in {path.name}")
+        return match.group(1)
+
+    def assignment(path: Path, name: str) -> object:
+        for node in ast.parse(path.read_text(encoding="utf-8")).body:
+            if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == name for target in node.targets):
+                return ast.literal_eval(node.value)
+        raise ValueError(f"Missing {name} in {path.name}")
+
+    version = numeric_version(source / "pyproject.toml")
+    addon_version = assignment(source / "addon/blender_codex_bridge/constants.py", "ADDON_VERSION")
+    expected_tuple = tuple(int(part) for part in version.split("."))
+    manifest = json.loads((source / "plugins/blender-codex-bridge/.codex-plugin/plugin.json").read_text(encoding="utf-8"))
+    if (addon_version != expected_tuple
+            or numeric_version(source / "addon/blender_codex_bridge/blender_manifest.toml") != version
+            or assignment(source / "mcp_server/__init__.py", "__version__") != version
+            or manifest.get("name") != "blender-codex-bridge"
+            or manifest.get("version", "").split("+")[0] != version):
+        raise ValueError("Release component versions disagree; update add-on, MCP server, and plugin together")
+    return version
 
 
 def package_plugin(source: Path, output: Path, version: str) -> Path:
@@ -38,10 +66,7 @@ def package_plugin(source: Path, output: Path, version: str) -> Path:
 
 def build(source: Path, output: Path, *, skip_wheel: bool = False) -> list[Path]:
     source, output = source.resolve(), output.resolve()
-    match = re.search(r'^version = "([0-9]+\.[0-9]+\.[0-9]+)"$', (source / "pyproject.toml").read_text(), re.M)
-    if not match:
-        raise ValueError("Expected a numeric project release version")
-    version = match.group(1)
+    version = release_version(source)
     output.mkdir(parents=True, exist_ok=True)
     addon = output / f"blender_codex_bridge-{version}.zip"
     subprocess.run([sys.executable, str(source / "scripts" / "build_addon.py"), "--output", str(addon)], check=True)

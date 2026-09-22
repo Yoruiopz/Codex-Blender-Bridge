@@ -41,3 +41,34 @@ jobs:
 
       - name: Build add-on archive
         run: python scripts/build_addon.py
+
+  packages:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install package
+        run: python -m pip install -e .
+      - name: Check documented tool inventory
+        run: python scripts/readme_tools.py --check
+      - name: Build matching release packages
+        run: python scripts/build_release.py
+      - name: Verify checksums
+        working-directory: dist/release
+        run: sha256sum --check SHA256SUMS.txt
+      - name: Smoke-test installed wheel
+        shell: bash
+        run: |
+          python -m venv /tmp/bridge-wheel-check
+          /tmp/bridge-wheel-check/bin/python -m pip install dist/release/*.whl
+          cd /tmp
+          /tmp/bridge-wheel-check/bin/blender-codex-mcp --help
+      - uses: actions/upload-artifact@v4
+        with:
+          name: blender-codex-bridge-development-${{ github.sha }}
+          path: dist/release/
+          if-no-files-found: error
+          retention-days: 14
