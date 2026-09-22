@@ -162,8 +162,17 @@ class MeshTools:
             ),
         )
 
+    async def mesh_mark_seams(
+        self, object_name: str, seam: bool = True, selection_id: str | None = None,
+    ) -> Any:
+        """Mark/clear selected edge UV seams on a single-user active Edit Mode mesh; preserve geometry, UV coordinates and selection."""
+        return await self.registry.call(
+            "mesh.mark_seams", params(object_name=object_name, seam=seam, selection_id=selection_id),
+        )
+
     def bindings(self) -> tuple[MCPToolBinding, ...]:
         return (
+            MCPToolBinding("mesh.mark_seams", self.mesh_mark_seams, self.mesh_mark_seams.__doc__ or ""),
             MCPToolBinding("mesh.create", self.mesh_create, self.mesh_create.__doc__ or ""),
             MCPToolBinding("mesh.inspect", self.mesh_inspect, self.mesh_inspect.__doc__ or ""),
             MCPToolBinding("mesh.recalculate_normals", self.mesh_recalculate_normals, self.mesh_recalculate_normals.__doc__ or ""),

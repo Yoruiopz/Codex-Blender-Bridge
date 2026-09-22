@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
@@ -18,10 +19,12 @@ from ..utils import (
     get_collection,
     get_object,
     int_param,
+    reject_unknown_params,
     require_blender,
     serialize_transform,
     vector3,
 )
+from .interaction import _active_edit_mesh
 
 try:
     import bmesh  # type: ignore
@@ -596,6 +599,60 @@ def bevel_selected(context: ToolContext, params: Mapping[str, Any]) -> dict[str,
     return result
 
 
+def mark_seams(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
+    """Set edge seam flags only; never unwrap or change geometry/selection."""
+    del context
+    reject_unknown_params(params, {"object_name", "seam", "selection_id"})
+    name = _id_name(params.get("object_name"), "object_name")
+    seam = bool_param(params, "seam", True)
+    selection_id = params.get("selection_id")
+    if selection_id is not None and (not isinstance(selection_id, str) or not selection_id):
+        raise invalid_argument("'selection_id' must be a non-empty string.")
+    _bpy, obj, bm, _sequences = _active_edit_mesh(name)
+    if any(getattr(data, "library", None) or getattr(data, "override_library", None)
+           for data in (obj, obj.data)):
+        raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Seam editing requires local, non-override data.", {"object": name})
+    if obj.data.users != 1:
+        raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Seam editing requires a single-user mesh; shared data is not changed implicitly.", {"object": name, "mesh_users": obj.data.users})
+    reference = validate_selection_reference(selection_id, obj, bm) if selection_id else None
+    edges = _operation_elements(bm.edges, "edges", reference)
+    if not edges or any(edge.hide for edge in edges):
+        raise BridgeError(ErrorCode.INVALID_SELECTION, "Seam editing requires non-hidden selected edges.", {"object": name})
+    before = [(edge, bool(edge.seam)) for edge in edges]
+    changed_count = sum(previous != seam for _, previous in before)
+    seam_count_before = sum(bool(edge.seam) for edge in bm.edges)
+    try:
+        for edge, _ in before:
+            edge.seam = seam
+        if changed_count:
+            bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
+        if any(bool(edge.seam) != seam for edge, _ in before):
+            raise RuntimeError("Seam post-state verification failed")
+    except Exception as exc:
+        restored = False
+        try:
+            for edge, previous in before:
+                edge.seam = previous
+            bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
+            restored = all(bool(edge.seam) == previous for edge, previous in before)
+        except Exception:
+            logging.getLogger(__name__).exception("Failed to restore seam flags on %s", name)
+        raise BridgeError(ErrorCode.OPERATION_FAILED, "Seam editing failed; reinspect the tracked operation.", {
+            "object": name, "affected_objects": [name], "execution_started": True,
+            "verification_required": True, "rollback_performed": restored,
+        }) from exc
+    return {
+        "object": name, "affected_objects": [name], "seam": seam,
+        "changed": bool(changed_count), "changed_edges": changed_count,
+        "target_edge_count": len(edges), "edge_indices": [edge.index for edge in edges[:256]],
+        "edge_indices_truncated": len(edges) > 256,
+        "seam_count_before": seam_count_before,
+        "seam_count_after": sum(bool(edge.seam) for edge in bm.edges),
+        "mesh_counts_after": _mesh_counts(bm), "selection_changed": False,
+        "topology_changed": False, "uv_coordinates_changed": False,
+    }
+
+
 def register_tools(registry: ToolRegistry) -> None:
     registry.register(
         "mesh.create",
@@ -623,3 +680,4 @@ def register_tools(registry: ToolRegistry) -> None:
     registry.register("mesh.extrude_selected", extrude_selected, description="Extrude the selected face region by an explicit offset.", **common)
     registry.register("mesh.inset_selected", inset_selected, description="Inset selected faces using a deterministic thickness and depth.", **common)
     registry.register("mesh.bevel_selected", bevel_selected, description="Bevel selected edges or vertices.", **common)
+    registry.register("mesh.mark_seams", mark_seams, description="Mark or clear UV seams on selected edges of one local single-user Edit Mode mesh.", **common)

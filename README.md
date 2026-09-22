@@ -12,6 +12,9 @@ The repository is currently private; downloads require a GitHub account with rep
 **0.3.0** adds faster structured scene workflows and Geometry Nodes editing.
 See [release notes](docs/releases/0.3.0.md) and [workflow examples](docs/agent-workflows.md).
 
+The main branch also includes **unreleased seam-authoring development**: `mesh.mark_seams`
+and edge seam flags in component inspection. These are not included in the 0.3.0 downloads.
+
 ## Install — no source build needed
 
 You need Blender **4.2+**, standalone **Python 3.10+**, and a local Codex client with MCP support.
@@ -174,14 +177,30 @@ Python can reach beyond structured tools only when all four permissions are enab
 Once armed, raw `bpy` can bypass narrower editing gates; its import policy is an accident
 guard, **not a security sandbox**. Keep it disabled for normal workflows.
 
-### Complete tool inventory — 0.3.0
+### Unreleased: structured UV seams
+
+`mesh.mark_seams` marks or clears UV seams on selected edges, or on the edge scope of a
+fresh `selection_id`. It requires `EDIT_MESH` and an explicitly named, active, single-user
+mesh in single-object Edit Mode. Linked/override data, shared meshes, hidden targets,
+empty selections and stale references fail explicitly. It preserves topology, UV coordinates,
+materials and live selection; unwrapping remains a separate `uv.unwrap` operation.
+
+Inspect indexed edges with `mesh.components_inspect` (each edge now includes `seam`),
+select the intended edges, mark with `seam=true` or clear with `seam=false`, then reinspect.
+The tool is batch-compatible and uses normal checkpoints/history. It returns bounded edge
+indices, changed counts and total seam counts, and attempts to restore flags on failure.
+Existing inspection bounds apply: at most 200,000 total mesh components and 100,000 targeted
+edges, with at most 256 edge indices in a mutation response.
+
+### Complete tool inventory — main branch
 
 Expand a domain for every registered MCP tool. This inventory is generated from the code
-and checked in CI; the feature table above identifies which domains are new.
+and checked in CI. Main has one more tool than the 108-tool 0.3.0 release; unreleased work
+is identified above, and the feature table describes the published release.
 Blender's local recovery UI also has an add-on-only restore action, not an extra MCP tool.
 
 <!-- BEGIN GENERATED MCP TOOLS -->
-Current registry: **108 MCP tools**.
+Current registry: **109 MCP tools**.
 
 <details>
 <summary>core — 16 tools</summary>
@@ -301,7 +320,7 @@ Current registry: **108 MCP tools**.
 </details>
 
 <details>
-<summary>mesh — 8 tools</summary>
+<summary>mesh — 9 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
@@ -312,6 +331,7 @@ Current registry: **108 MCP tools**.
 | `mesh.extrude_selected` | Extrude the selected mesh region by an explicit offset. |
 | `mesh.inset_selected` | Inset selected faces with explicit thickness and depth. |
 | `mesh.inspect` | Inspect compact mesh and topology statistics. |
+| `mesh.mark_seams` | Mark or clear UV seams on selected edges of one local single-user Edit Mode mesh. |
 | `mesh.recalculate_normals` | Recalculate normals for the selected mesh region. |
 
 </details>

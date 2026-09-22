@@ -109,6 +109,7 @@ OBJECT_TOOL_DATA: tuple[tuple[str, str, bool, tuple[str, ...]], ...] = (
 OBJECT_TOOL_NAMES = tuple(item[0] for item in OBJECT_TOOL_DATA)
 
 MESH_TOOL_DATA: tuple[tuple[str, str, bool], ...] = (
+    ("mesh.mark_seams", "Mark or clear UV seams on selected edges of one local single-user Edit Mode mesh.", True),
     ("mesh.create", "Create a fully prevalidated arbitrary mesh object from bounded topology arrays.", True),
     ("mesh.inspect", "Inspect compact mesh and topology statistics.", False),
     ("mesh.recalculate_normals", "Recalculate normals for the selected mesh region.", True),

@@ -325,6 +325,7 @@ def inspect_components(context: ToolContext, params: Mapping[str, Any]) -> dict[
             center = element.co
             detail["normal_local"] = list(element.normal)
         elif element_type == "EDGE":
+            detail["seam"] = bool(element.seam)
             center = (element.verts[0].co + element.verts[1].co) * 0.5
             detail["vertex_indices"] = [vertex.index for vertex in element.verts]
             detail["length_world"] = float(
