@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+from zipfile import ZipFile
 
 import pytest
 
@@ -35,6 +36,38 @@ def test_inventory_rejects_missing_markers() -> None:
 
 def test_release_components_match() -> None:
     assert load_script("build_release").release_version(ROOT) == "0.3.0"
+
+
+@pytest.mark.parametrize("name,metadata_version,runtime_version,valid", [
+    ("blender-codex-bridge", "0.3.0", "0.3.0", True),
+    ("blender_codex_bridge", "0.3.0", "0.3.0", True),
+    ("another-package", "0.3.0", "0.3.0", False),
+    ("blender-codex-bridge", "0.2.0", "0.3.0", False),
+    ("blender-codex-bridge", "0.3.0", "0.2.0", False),
+])
+def test_wheel_identity_is_verified(tmp_path: Path, name: str, metadata_version: str,
+                                   runtime_version: str, valid: bool) -> None:
+    wheel = tmp_path / "blender_codex_bridge-0.3.0-py3-none-any.whl"
+    with ZipFile(wheel, "w") as archive:
+        archive.writestr("blender_codex_bridge-0.3.0.dist-info/METADATA",
+                         f"Metadata-Version: 2.1\nName: {name}\nVersion: {metadata_version}\n")
+        archive.writestr("mcp_server/__init__.py", f'__version__ = "{runtime_version}"\n')
+    builder = load_script("build_release")
+    if valid:
+        builder.validate_wheel(wheel, "0.3.0")
+    else:
+        with pytest.raises(ValueError, match="version"):
+            builder.validate_wheel(wheel, "0.3.0")
+
+
+@pytest.mark.parametrize("metadata_count", [0, 2])
+def test_wheel_requires_unambiguous_metadata(tmp_path: Path, metadata_count: int) -> None:
+    wheel = tmp_path / "release.whl"
+    with ZipFile(wheel, "w") as archive:
+        for index in range(metadata_count):
+            archive.writestr(f"package{index}.dist-info/METADATA", "Name: blender-codex-bridge\nVersion: 0.3.0\n")
+    with pytest.raises(ValueError, match="exactly one"):
+        load_script("build_release").validate_wheel(wheel, "0.3.0")
 
 
 @pytest.mark.parametrize("component", [

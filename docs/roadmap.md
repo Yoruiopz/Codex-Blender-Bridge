@@ -1,10 +1,18 @@
 # Roadmap
 
-> This document records the published **0.2.0 baseline**. For the 20 additional tools and behavior in unreleased 0.3.0, see [agent workflows](agent-workflows.md).
+> This document records the historical **0.2.0 baseline**. For the 20 additional tools and behavior shipped in 0.3.0, see [agent workflows](agent-workflows.md) and [release notes](releases/0.3.0.md).
 
 The running registry and passing tests are authoritative. This roadmap separates shipped 0.2.0 behavior from planned breadth; a roadmap item is never a claim that a tool exists.
 
-## Current release: 0.2.0 platform alpha
+## Current release: 0.3.0 structured workflow alpha
+
+0.3.0 ships 108 MCP tools: the baseline below plus batching, explicit object/component
+selection and mode control, filtered scene queries, bulk origin-based layout, and
+allowlisted Geometry Nodes graph authoring/attachment. See [agent workflows](agent-workflows.md)
+for exact limits. The later roadmap sections describe remaining work, not promises
+that every listed capability exists.
+
+## Historical foundation: 0.2.0 platform alpha
 
 Version 0.2.0 establishes the end-to-end platform and a broad first structured surface.
 
@@ -27,7 +35,7 @@ Shipped foundation:
 
 The Python fallback provides long-tail reach, not equivalent maturity. Once armed it bypasses narrower structured `EDIT_*` gates, so its four broad permissions are explicit consent to that authority. It is an accident guard rather than a hard security sandbox and does not replace structured inspection, checkpoints, or verification.
 
-Current gaps include advanced modeling/retopology, Geometry Nodes, compositor graphs, sculpt/paint, animation interpolation/driver/NLA editing, detailed weight workflows, simulations/bakes, many specialist data types, persistent semantic references, automatic structural diffs, and durable variants. Some shipped domains intentionally expose only a safe subset of settings or operations.
+Remaining gaps include advanced modeling/retopology, broader Geometry Nodes coverage, compositor graphs, sculpt/paint strokes, animation interpolation/driver/NLA editing, detailed weight workflows, simulations/bakes, many specialist data types, persistent semantic references, automatic structural diffs, and durable variants. Some shipped domains intentionally expose only a safe subset of settings or operations.
 
 ## Next: structured breadth and hardening
 
@@ -53,7 +61,7 @@ Focus: inspectable procedural and image-processing graphs.
 
 Planned work:
 
-- Geometry Nodes trees, interfaces, node groups, modifier relationships, sockets, links, attributes, dependencies, and evaluated summaries;
+- extend the shipped Geometry Nodes tree/interface/node/socket/link/modifier tools with nested-group authoring, broader node coverage, dependencies and evaluated summaries;
 - compositor tree inspection and exact node/socket/link edits;
 - session-stable node/socket references with invalidation rules;
 - allowlisted node creation/configuration and schema-aware values;

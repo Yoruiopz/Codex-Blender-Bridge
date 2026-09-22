@@ -1,6 +1,6 @@
 # Tool design
 
-> This document records the published **0.2.0 baseline**. For the 20 additional tools and behavior in unreleased 0.3.0, see [agent workflows](agent-workflows.md).
+> This document records the historical **0.2.0 baseline**. For the 20 additional tools and behavior shipped in 0.3.0, see [agent workflows](agent-workflows.md) and [release notes](releases/0.3.0.md).
 
 A bridge tool is a stable contract between an agent intent and a permission-gated Blender handler. Structured tools are task-shaped, typed, bounded, context-honest, recoverable, and independently verifiable; they are not thin aliases for arbitrary `bpy` functions.
 

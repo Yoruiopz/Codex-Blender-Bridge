@@ -9,6 +9,7 @@ import json
 import re
 import subprocess
 import sys
+from email.parser import BytesParser
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
@@ -64,6 +65,26 @@ def package_plugin(source: Path, output: Path, version: str) -> Path:
     return destination
 
 
+def validate_wheel(wheel: Path, version: str) -> None:
+    """Check internal identity, not just a user-supplied wheel filename."""
+    with ZipFile(wheel) as archive:
+        if archive.testzip() is not None:
+            raise ValueError("Release wheel has corrupt contents")
+        metadata_paths = [name for name in archive.namelist() if name.endswith(".dist-info/METADATA")]
+        if len(metadata_paths) != 1:
+            raise ValueError("Release wheel must contain exactly one package metadata file")
+        metadata = BytesParser().parsebytes(archive.read(metadata_paths[0]))
+        name = re.sub(r"[-_.]+", "-", metadata.get("Name", "")).lower()
+        if name != "blender-codex-bridge" or metadata.get("Version") != version:
+            raise ValueError("Release wheel metadata does not match project name/version")
+        module = ast.parse(archive.read("mcp_server/__init__.py").decode("utf-8"))
+        versions = [ast.literal_eval(node.value) for node in module.body
+                    if isinstance(node, ast.Assign)
+                    and any(isinstance(target, ast.Name) and target.id == "__version__" for target in node.targets)]
+        if versions != [version]:
+            raise ValueError("Release wheel runtime version does not match project version")
+
+
 def build(source: Path, output: Path, *, skip_wheel: bool = False) -> list[Path]:
     source, output = source.resolve(), output.resolve()
     version = release_version(source)
@@ -75,6 +96,7 @@ def build(source: Path, output: Path, *, skip_wheel: bool = False) -> list[Path]
         subprocess.run([sys.executable, "-m", "pip", "wheel", "--no-deps", str(source), "--wheel-dir", str(output)], check=True)
     if not wheel.is_file():
         raise FileNotFoundError(wheel)
+    validate_wheel(wheel, version)
     assets = [addon, wheel, package_plugin(source, output, version)]
     checksum = output / "SHA256SUMS.txt"
     checksum.write_text("".join(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}\n" for path in assets), encoding="utf-8")

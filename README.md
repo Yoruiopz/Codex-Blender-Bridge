@@ -4,13 +4,13 @@ Let Codex inspect and edit your Blender scene through local, permission-controll
 Model objects, edit materials and shader nodes, unwrap UVs, work with rigs and animation,
 configure lights and cameras, and render—with status and controls inside Blender.
 
-**[Download 0.2.0](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.2.0)** ·
+**[Download 0.3.0](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.3.0)** ·
 [Upgrade instructions](#upgrading) · [Troubleshooting](docs/troubleshooting.md)
 
 This is **alpha software**. Start with a copy of an unimportant scene.
-Before the planned public launch, downloads require a GitHub account with repository access.
-The published download is 0.2.0. The main branch also contains **unreleased 0.3.0 development**;
-see [what is changing](docs/agent-workflows.md). Release downloads do not include unreleased tools.
+The repository is currently private; downloads require a GitHub account with repository access.
+**0.3.0** adds faster structured scene workflows and Geometry Nodes editing.
+See [release notes](docs/releases/0.3.0.md) and [workflow examples](docs/agent-workflows.md).
 
 ## Install — no source build needed
 
@@ -20,14 +20,14 @@ Recent integration checks use Blender 4.5.1 and 5.1.2; other versions are not ex
 
 ### 1. Download the packages
 
-Open the [0.2.0 release](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.2.0)
+Open the [0.3.0 release](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.3.0)
 and expand **Assets**:
 
 | Download | Purpose |
 | --- | --- |
-| `blender_codex_bridge-0.2.0.zip` | Required Blender add-on; do not extract it |
-| `blender_codex_bridge-0.2.0-py3-none-any.whl` | Required MCP server; install with pip below |
-| `blender-codex-bridge-plugin-0.2.0.zip` | Optional Codex plugin and Blender Studio guidance |
+| `blender_codex_bridge-0.3.0.zip` | Required Blender add-on; do not extract it |
+| `blender_codex_bridge-0.3.0-py3-none-any.whl` | Required MCP server; install with pip below |
+| `blender-codex-bridge-plugin-0.3.0.zip` | Optional Codex plugin and Blender Studio guidance |
 | `SHA256SUMS.txt` | Checksums for verifying downloads |
 
 GitHub's automatic **Source code** archives are for development, not Blender installation.
@@ -48,7 +48,7 @@ On **Windows**, with the wheel in Downloads, run PowerShell:
 ```powershell
 $bridgeHome = Join-Path $env:LOCALAPPDATA 'BlenderCodexBridge'
 py -3 -m venv "$bridgeHome\.venv"
-& "$bridgeHome\.venv\Scripts\python.exe" -m pip install "$env:USERPROFILE\Downloads\blender_codex_bridge-0.2.0-py3-none-any.whl" "mcp==2.0.0"
+& "$bridgeHome\.venv\Scripts\python.exe" -m pip install "$env:USERPROFILE\Downloads\blender_codex_bridge-0.3.0-py3-none-any.whl"
 codex mcp add blender_codex_bridge -- "$bridgeHome\.venv\Scripts\blender-codex-mcp.exe"
 codex mcp list
 ```
@@ -60,7 +60,7 @@ On **macOS/Linux**:
 
 ```bash
 python3 -m venv "$HOME/.local/share/blender-codex-bridge/.venv"
-"$HOME/.local/share/blender-codex-bridge/.venv/bin/python" -m pip install "$HOME/Downloads/blender_codex_bridge-0.2.0-py3-none-any.whl" "mcp==2.0.0"
+"$HOME/.local/share/blender-codex-bridge/.venv/bin/python" -m pip install "$HOME/Downloads/blender_codex_bridge-0.3.0-py3-none-any.whl"
 codex mcp add blender_codex_bridge -- "$HOME/.local/share/blender-codex-bridge/.venv/bin/blender-codex-mcp"
 ```
 
@@ -69,9 +69,9 @@ same absolute executable path as the command, with no arguments.
 See [OpenAI's MCP setup documentation](https://developers.openai.com/codex/mcp/).
 Restart the client if needed and **start a new Codex task** to discover the tools.
 
-**0.2.0 compatibility:** keep the MCP SDK at `2.0.0` as shown above. Newer SDKs hide
-this release's structured error details. The unreleased 0.3.0 adapter fixes that behavior
-and is tested with SDK 2.0.0 and 2.2.0. Published 0.2.0 assets are unchanged.
+**Compatibility:** 0.3.0 is tested with MCP SDK 2.0.0 and 2.2.0; the old SDK pin is no
+longer needed. If deliberately installing historical 0.2.0, follow its
+[release-specific instructions](docs/releases/0.2.0.md), including `mcp==2.0.0`.
 
 The optional plugin is an alternative, not a requirement: extract its ZIP and install
 the contained plugin directory using your client's local-plugin workflow. It needs
@@ -106,7 +106,7 @@ The workflow is **inspect → checkpoint → edit → inspect again → preview 
 Checkpoints use Blender's global undo stack: they are not saved backups and can include
 interleaved manual work. Keep normal backups and save only when intended.
 
-0.2.0 provides **88 MCP tools** across modeling, materials/shader nodes, UVs, modifiers,
+0.3.0 provides **108 MCP tools** across modeling, materials/shader nodes, UVs, modifiers,
 constraints, animation, rigging, scene settings, rendering, and inspection. It does not cover
 every Blender editor or operator. Python is a dangerous last resort, disabled by default,
 requiring Python, deletion, external-file, and save permissions together. It is **not a sandbox**.
@@ -114,11 +114,11 @@ requiring Python, deletion, external-file, and save permissions together. It is 
 The Blender connection stays on your machine, but scene summaries/images returned to Codex
 are provided to the AI client. Local transport does not mean local-only model processing.
 
-## Features — published and upcoming
+## Features
 
-The published **0.2.0** contains 88 MCP tools. The upcoming **0.3.0** contains those tools
-plus 20 new tools (108 total). Everything below is implemented on `main`, but rows marked
-**New in 0.3.0** are **not in the 0.2.0 download**. Optional domain toolsets start disabled;
+**0.3.0** contains all 88 tools from 0.2.0 plus 20 new tools (108 total).
+Rows marked **New in 0.3.0** are not available in older downloads.
+Optional domain toolsets start disabled;
 enabling a toolset does not grant Blender permissions.
 
 | Area | Supported workflows | Availability |
@@ -154,7 +154,7 @@ Geometry Nodes uses a reviewed node allowlist and explicit acknowledgement for s
 graphs. Bulk alignment/distribution uses object origins, not surface spacing, and rejects
 dependent objects it cannot safely handle. See [workflow limits and examples](docs/agent-workflows.md).
 
-Try this with matching 0.3.0 development packages:
+Try this with matching 0.3.0 packages:
 
 > Find the independent objects named Prop_*. Inspect them, plan an even distribution along
 > X, preserve their materials and off-axis positions, then verify the result. Do not save.
@@ -174,14 +174,14 @@ Python can reach beyond structured tools only when all four permissions are enab
 Once armed, raw `bpy` can bypass narrower editing gates; its import policy is an accident
 guard, **not a security sandbox**. Keep it disabled for normal workflows.
 
-### Complete tool inventory — upcoming 0.3.0
+### Complete tool inventory — 0.3.0
 
 Expand a domain for every registered MCP tool. This inventory is generated from the code
 and checked in CI; the feature table above identifies which domains are new.
 Blender's local recovery UI also has an add-on-only restore action, not an extra MCP tool.
 
 <!-- BEGIN GENERATED MCP TOOLS -->
-Current development registry: **108 MCP tools**.
+Current registry: **108 MCP tools**.
 
 <details>
 <summary>core — 16 tools</summary>
@@ -432,7 +432,7 @@ Current development registry: **108 MCP tools**.
 ## Upgrading
 
 Upgrade the **Blender add-on and MCP server together**, from the same release.
-For 0.1.0 → 0.2.0, or later published updates:
+For 0.1.0 or 0.2.0 → 0.3.0:
 
 1. Save and back up your scene. Stop the bridge and finish active tool calls.
 2. Download the new ZIP and matching wheel from [Releases](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases).
@@ -440,11 +440,11 @@ For 0.1.0 → 0.2.0, or later published updates:
 4. Upgrade the **same virtual environment** registered with Codex:
 
    ```powershell
-   & "$env:LOCALAPPDATA\BlenderCodexBridge\.venv\Scripts\python.exe" -m pip install --upgrade "$env:USERPROFILE\Downloads\blender_codex_bridge-0.2.0-py3-none-any.whl" "mcp==2.0.0"
+   & "$env:LOCALAPPDATA\BlenderCodexBridge\.venv\Scripts\python.exe" -m pip install --upgrade "$env:USERPROFILE\Downloads\blender_codex_bridge-0.3.0-py3-none-any.whl"
    ```
 
-   For 0.3.0 once published, use its matching wheel and remove the old `mcp==2.0.0` pin;
-   the new adapter is tested with MCP SDK 2.0.0 and 2.2.0. Do not mix a 0.3.0 server with
+   Remove any old `mcp==2.0.0` constraint from your install command or requirements file;
+   keeping SDK 2.0.0 installed also works. Do not mix a 0.3.0 server with
    the 0.2.0 add-on. If using an editable source install, update that
    environment or re-register the new executable path; do not accidentally update another Python.
 
@@ -464,10 +464,10 @@ project backup if needed. Downgrading software does not undo scene edits.
 - **Permission denied:** review the named Blender switch. Do not enable Python to bypass it.
 - **Executable not found:** register an absolute path from the environment containing the wheel.
 - **Old/duplicate tools:** remove duplicate registration and start a new task after upgrading.
-- **Download 404:** before public launch, sign in with repository access; otherwise check that the requested release has actually been published.
+- **Download 404:** sign in with repository access while the repository is private; also check that the requested release has actually been published.
 
 More: [troubleshooting](docs/troubleshooting.md), [security](docs/security.md),
-[tool contracts](docs/tool-design.md), [release notes](docs/releases/0.2.0.md).
+[tool contracts](docs/tool-design.md), [release notes](docs/releases/0.3.0.md).
 
 ## Development
 

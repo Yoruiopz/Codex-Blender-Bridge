@@ -1,7 +1,7 @@
-# 0.3.0 development: faster structured scene work
+# 0.3.0: faster structured scene work
 
-These additions are in source, **not in the published 0.2.0 packages**. Update both
-add-on and MCP server when trying this development build. There are 108 remote tools
+These additions ship in **0.3.0**, not in the older 0.2.0 packages. Update both
+add-on and MCP server from the same release. There are 108 remote tools
 (109 add-on methods including local-only checkpoint recovery).
 
 ## New toolsets

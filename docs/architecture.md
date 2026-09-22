@@ -1,6 +1,6 @@
 # Architecture
 
-> This document records the published **0.2.0 baseline**. For the 20 additional tools and behavior in unreleased 0.3.0, see [agent workflows](agent-workflows.md).
+> This document records the historical **0.2.0 baseline**. For the 20 additional tools and behavior shipped in 0.3.0, see [agent workflows](agent-workflows.md) and [release notes](releases/0.3.0.md).
 
 Blender Codex Bridge separates agent reasoning from Blender execution. Codex receives typed MCP tools; a local adapter forwards versioned requests; Blender remains the authority for toolset state, permissions, main-thread execution, undo, history, and live project state.
 

@@ -20,7 +20,7 @@ def render_inventory() -> str:
     names = [tool.name for tool in definitions]
     if len(set(names)) != len(names):
         raise ValueError("Duplicate tool in inventory")
-    lines = [START, f"Current development registry: **{len(names)} MCP tools**.", ""]
+    lines = [START, f"Current registry: **{len(names)} MCP tools**.", ""]
     groups = sorted({tool.toolset for tool in definitions}, key=lambda name: (name != "core", name))
     for group in groups:
         tools = sorted((tool for tool in definitions if tool.toolset == group), key=lambda tool: tool.name)

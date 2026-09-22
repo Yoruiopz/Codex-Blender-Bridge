@@ -189,7 +189,7 @@ If a response arrives after the MCP caller has timed out, the Blender client dis
 
 Caller cancellation closes the shared client connection. The add-on then atomically cancels requests that are still pending and fails the other in-flight calls; a Blender operation that had already crossed the running boundary is not interrupted and remains visible in operation history. The next call reconnects and must reinspect state.
 
-The 0.3.0 development implementation adds cooperative safe points for `batch.execute`.
+The 0.3.0 implementation adds cooperative safe points for `batch.execute`.
 Disconnect/timeout signals a running request without attempting to interrupt its current
 Blender call. Before each subsequent child step, the batch checks that signal, the queue
 deadline, its own bounded budget, and live toolset/permission/pause/emergency gates.
