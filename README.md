@@ -13,7 +13,8 @@ The repository is currently private; downloads require a GitHub account with rep
 See [release notes](docs/releases/0.3.0.md) and [workflow examples](docs/agent-workflows.md).
 
 The main branch also includes **unreleased seam-authoring development**: `mesh.mark_seams`
-and edge seam flags in component inspection. These are not included in the 0.3.0 downloads.
+and edge seam flags in component inspection, plus opt-in UV coordinate pages in `uv.inspect`.
+These are not included in the 0.3.0 downloads.
 
 ## Install — no source build needed
 
@@ -191,6 +192,16 @@ The tool is batch-compatible and uses normal checkpoints/history. It returns bou
 indices, changed counts and total seam counts, and attempts to restore flags on failure.
 Existing inspection bounds apply: at most 200,000 total mesh components and 100,000 targeted
 edges, with at most 256 edge indices in a mutation response.
+
+For exact unwrap evidence, call `uv.inspect` with `include_coordinates=true`.
+`coordinate_offset` and `max_coordinates` (1–256, default 100) page over face corners
+in the requested face scope. Each item identifies its face, corner and mesh vertex,
+with UV coordinates and pin state; UV selection is reported when available in Edit Mode.
+Object Mode and Edit Mode are supported without switching modes or active UV layers.
+Follow `coordinates.next_offset` until null. `analysis_truncated` indicates the scoped
+50,000-face/200,000-loop safety limit, not a complete result. Offsets are not persistent:
+restart inspection after UV, selection, topology, mode, scene or layer changes. Default
+inspection remains compact and omits coordinate pages; meshes without UV layers return null.
 
 ### Complete tool inventory — main branch
 

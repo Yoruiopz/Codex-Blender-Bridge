@@ -42,8 +42,11 @@ class UVTools:
         selected_only: bool = False,
         selection_id: str | None = None,
         max_islands: int = 100,
+        include_coordinates: bool = False,
+        coordinate_offset: int = 0,
+        max_coordinates: int = 100,
     ) -> Any:
-        """Inspect bounded UV-layer and island state for an explicit mesh."""
+        """Inspect UV-layer/island state; optionally return up to 256 face-corner coordinates per page."""
 
         return await self.registry.call(
             "uv.inspect",
@@ -53,6 +56,9 @@ class UVTools:
                 selected_only=selected_only,
                 selection_id=selection_id,
                 max_islands=max_islands,
+                include_coordinates=include_coordinates,
+                coordinate_offset=coordinate_offset,
+                max_coordinates=max_coordinates,
             ),
         )
 

@@ -24,7 +24,7 @@ def main() -> None:
         runtime = get_runtime()
         permissions = {permission.value: True for permission in Permission}
         runtime.executor.permissions = PermissionManager(lambda: permissions)
-        for toolset in ("mesh", "interaction", "batch"):
+        for toolset in ("mesh", "interaction", "batch", "uv"):
             runtime.registry.enable_toolset(toolset)
         dispatch = runtime.dispatch
         cube = bpy.data.objects["Cube"]
@@ -33,11 +33,33 @@ def main() -> None:
         before_materials = list(cube.data.materials)
         before_positions = [tuple(vertex.co) for vertex in cube.data.vertices]
         before_uvs = [tuple(loop.uv) for loop in cube.data.uv_layers.active.data]
+        def coordinates():
+            items = []
+            offset = 0
+            while True:
+                result = dispatch("uv.inspect", {"object_name": "Cube", "include_coordinates": True,
+                                                "coordinate_offset": offset, "max_coordinates": 7})
+                page = result["coordinates"]
+                assert not page["analysis_truncated"]
+                items.extend(page["items"])
+                if page["next_offset"] is None:
+                    break
+                offset = page["next_offset"]
+            assert len(items) == len(before_uvs)
+            assert [tuple(item["uv"]) for item in items] == before_uvs
+            return items
+
+        object_coordinates = coordinates()
         before_counts = (len(cube.data.vertices), len(cube.data.edges), len(cube.data.polygons))
         dispatch("context.set_mode", {"object_name": "Cube", "mode": "EDIT"})
         selected = dispatch("mesh.select_components", {"object_name": "Cube", "element_type": "EDGE", "indices": [0, 1]})
         selection_id = selected["selection"]["mesh_selection"]["selection_id"]
         bm = bmesh.from_edit_mesh(cube.data)
+        edit_coordinates = coordinates()
+        assert [(item["face_index"], item["corner_index"], item["vertex_index"])
+                for item in object_coordinates] == [
+                    (item["face_index"], item["corner_index"], item["vertex_index"])
+                    for item in edit_coordinates]
         before_selection = [[item.select for item in sequence] for sequence in (bm.verts, bm.edges, bm.faces)]
 
         def rejected(params, code):
@@ -67,9 +89,16 @@ def main() -> None:
         bm.edges[0].hide = True
         rejected({"object_name": "Cube"}, "INVALID_SELECTION")
         bm.edges[0].hide = False
+        scoped = dispatch("mesh.select_components", {"object_name": "Cube", "element_type": "FACE", "indices": [1]})
+        scoped_id = scoped["selection"]["mesh_selection"]["selection_id"]
+        uv_scope = dispatch("uv.inspect", {"object_name": "Cube", "selection_id": scoped_id,
+                                           "include_coordinates": True})["coordinates"]
+        assert uv_scope["scoped_loop_count"] == 4
+        assert all(item["face_index"] == 1 for item in uv_scope["items"])
         dispatch("context.set_mode", {"object_name": "Cube", "mode": "OBJECT"})
         assert before_positions == [tuple(vertex.co) for vertex in cube.data.vertices]
         assert before_uvs == [tuple(loop.uv) for loop in cube.data.uv_layers.active.data]
+        coordinates()
         assert before_counts == (len(cube.data.vertices), len(cube.data.edges), len(cube.data.polygons))
         assert list(cube.data.materials) == before_materials
         rejected({"object_name": "Cube"}, "INVALID_MODE")
@@ -84,6 +113,7 @@ def main() -> None:
             "version": bpy.app.version_string, "batch_verified": True,
             "topology_uvs_materials_selection_preserved": True,
             "shared_mesh_rejected": True, "saved": False,
+            "uv_coordinate_pages_verified": True,
         }))
     finally:
         blender_codex_bridge.unregister()

@@ -328,10 +328,73 @@ def _inspect_object_uv(
     }
 
 
+def _coordinate_page(
+    obj: Any, *, layer_name: str | None, selection_id: str | None,
+    selected_only: bool, offset: int, maximum: int,
+) -> dict[str, Any]:
+    """Bounded face-corner evidence; offsets are scoped positions, not durable IDs."""
+    edit_mode = obj.mode == "EDIT"
+    if edit_mode:
+        bm, layer, faces = _edit_data(obj, layer_name, selection_id, selected_only)
+        bm.faces.index_update()
+        bm.verts.index_update()
+    else:
+        layers = obj.data.uv_layers
+        layer = layers.get(layer_name) if layer_name is not None else layers.active
+        if layer is None:
+            raise invalid_argument("The requested mesh has no matching UV layer.")
+        faces = [face for face in obj.data.polygons if not selected_only or face.select]
+    if len(faces) > _MAX_FACES:
+        return {"items": [], "analysis_truncated": True, "analysis_limit": _MAX_FACES, "next_offset": None}
+    total = sum(len(face.loops) if edit_mode else face.loop_total for face in faces)
+    if total > _MAX_LOOPS:
+        return {"items": [], "analysis_truncated": True, "analysis_limit": _MAX_LOOPS, "next_offset": None}
+    items = []
+    position = 0
+    for face in faces:
+        count = len(face.loops) if edit_mode else face.loop_total
+        if position + count <= offset:
+            position += count
+            continue
+        for corner in range(count):
+            if position >= offset and len(items) < maximum:
+                if edit_mode:
+                    loop = face.loops[corner]
+                    uv_data = loop[layer]
+                    vertex_index = loop.vert.index
+                else:
+                    loop_index = face.loop_start + corner
+                    uv_data = layer.data[loop_index]
+                    vertex_index = obj.data.loops[loop_index].vertex_index
+                uv = [float(value) for value in uv_data.uv]
+                finite = all(math.isfinite(value) for value in uv)
+                items.append({
+                    "face_index": face.index, "corner_index": corner,
+                    "vertex_index": vertex_index, "uv": uv if finite else None, "finite": finite,
+                    "pinned": bool(uv_data.pin_uv),
+                    "selected": bool(uv_data.select) if edit_mode and hasattr(uv_data, "select") else None,
+                })
+            position += 1
+            if len(items) >= maximum:
+                break
+        if len(items) >= maximum:
+            break
+    next_offset = offset + len(items)
+    return {
+        "layer": layer.name, "items": items, "offset": offset, "scoped_loop_count": total,
+        "truncated": next_offset < total, "next_offset": next_offset if next_offset < total else None,
+        "analysis_truncated": False,
+        "index_validity": "Scope-relative pagination; reinspect after UV, topology, selection, mode, layer or scene changes. Face/corner indices are not persistent IDs.",
+    }
+
+
 def inspect_uv(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
     del context
     obj = _mesh_object(params)
     selected_only = bool_param(params, "selected_only", False)
+    include_coordinates = bool_param(params, "include_coordinates", False)
+    coordinate_offset = int_param(params, "coordinate_offset", 0, minimum=0, maximum=_MAX_LOOPS)
+    max_coordinates = int_param(params, "max_coordinates", 100, minimum=1, maximum=256)
     max_islands = int_param(params, "max_islands", 100, minimum=1, maximum=1_000)
     layer_name = _optional_layer_name(params)
     selection_id = params.get("selection_id")
@@ -343,7 +406,7 @@ def inspect_uv(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any
         )
     layers, layers_truncated = _layer_summaries(obj)
     if not obj.data.uv_layers:
-        return {
+        empty = {
             "object": obj.name,
             "mode": obj.mode,
             "uv_layer_count": 0,
@@ -351,6 +414,9 @@ def inspect_uv(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any
             "layers_truncated": False,
             "analysis": None,
         }
+        if include_coordinates:
+            empty["coordinates"] = None
+        return empty
     analysis = (
         _inspect_edit_uv(
             obj,
@@ -367,7 +433,7 @@ def inspect_uv(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any
             max_islands=max_islands,
         )
     )
-    return {
+    result = {
         "object": obj.name,
         "mode": obj.mode,
         "uv_layer_count": len(obj.data.uv_layers),
@@ -375,6 +441,13 @@ def inspect_uv(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any
         "layers_truncated": layers_truncated,
         "analysis": analysis,
     }
+    if include_coordinates:
+        result["coordinates"] = _coordinate_page(
+            obj, layer_name=layer_name, selection_id=selection_id,
+            selected_only=selected_only or selection_id is not None,
+            offset=coordinate_offset, maximum=max_coordinates,
+        )
+    return result
 
 
 def _operation_context(
