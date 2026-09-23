@@ -102,6 +102,60 @@ def _islands(
     return islands
 
 
+def _uv_quality(coordinates: Mapping[int, Sequence[tuple[float, float]]]) -> dict[str, Any]:
+    """Cheap numeric diagnostics, not an overlap/distortion or artistic quality verdict."""
+    degenerate = 0
+    invalid = 0
+    total_area = 0.0
+    for points in coordinates.values():
+        if not all(math.isfinite(value) for point in points for value in point):
+            invalid += 1
+            continue
+        if len(points) < 3:
+            degenerate += 1
+            continue
+        origin = points[0]
+        area = abs(sum(
+            (points[i][0] - origin[0]) * (points[i + 1][1] - origin[1])
+            - (points[i + 1][0] - origin[0]) * (points[i][1] - origin[1])
+            for i in range(1, len(points) - 1)
+        )) * 0.5
+        if not math.isfinite(area):
+            invalid += 1
+            continue
+        degenerate += int(area <= 1e-12)
+        total_area += area
+    return {
+        "face_count": len(coordinates), "degenerate_face_count": degenerate,
+        "invalid_face_count": invalid,
+        "total_absolute_signed_area": total_area if math.isfinite(total_area) else None,
+        "area_epsilon": 1e-12,
+        "limitations": "Per-face signed polygon area only; does not prove absence of overlaps, self-intersections, distortion, or acceptable texel density. Tiny valid faces can fall below the threshold.",
+    }
+
+
+def _verification(analysis: Mapping[str, Any]) -> dict[str, Any]:
+    quality = analysis.get("quality")
+    warnings = []
+    if analysis.get("analysis_truncated") or not quality:
+        warnings.append("UV analysis is incomplete; narrow the scope and reinspect.")
+    else:
+        if quality["invalid_face_count"]:
+            warnings.append("Some UV faces contain non-finite coordinates or area calculations.")
+        if quality["degenerate_face_count"]:
+            warnings.append("Some UV faces have near-zero signed area; inspect collapsed, tiny or folded UVs.")
+        if not quality["face_count"]:
+            warnings.append("No UV faces were measured.")
+    return {"status": "needs_review" if warnings else "basic_checks_passed",
+            "user_goal_verified": False, "warnings": warnings}
+
+
+def _invalid_uv_analysis(layer_name: str, quality: Mapping[str, Any], loop_count: int) -> dict[str, Any]:
+    return {"layer": layer_name, "quality": dict(quality), "scoped_face_count": quality["face_count"],
+            "scoped_loop_count": loop_count, "bounds": None, "island_count": None, "islands": [],
+            "analysis_truncated": True, "analysis_reason": "Non-finite UV coordinates or area; bounds and islands are unavailable."}
+
+
 def _island_summaries(
     islands: Sequence[Sequence[int]],
     coordinates: Mapping[int, Sequence[tuple[float, float]]],
@@ -223,6 +277,9 @@ def _inspect_edit_uv(
             )
         coordinates[face.index] = face_uvs
         records[face.index] = face_edges
+    quality = _uv_quality(coordinates)
+    if quality["invalid_face_count"]:
+        return _invalid_uv_analysis(layer.name, quality, loop_count)
     islands = _islands(records)
     summaries = _island_summaries(islands, coordinates, max_islands)
     all_uvs = [uv for values in coordinates.values() for uv in values]
@@ -241,6 +298,7 @@ def _inspect_edit_uv(
         "selected_uv_loop_count": selected_uv_loops if uv_selection_available else None,
         "uv_selection_available": uv_selection_available,
         "pinned_uv_loop_count": pinned_uv_loops,
+        "quality": quality,
         "bounds": bounds,
         "island_count": len(islands),
         "islands": summaries,
@@ -305,6 +363,9 @@ def _inspect_object_uv(
             )
         coordinates[polygon.index] = face_uvs
         records[polygon.index] = face_edges
+    quality = _uv_quality(coordinates)
+    if quality["invalid_face_count"]:
+        return _invalid_uv_analysis(layer.name, quality, loop_count)
     islands = _islands(records)
     summaries = _island_summaries(islands, coordinates, max_islands)
     all_uvs = [uv for values in coordinates.values() for uv in values]
@@ -313,6 +374,7 @@ def _inspect_object_uv(
         "scoped_face_count": len(polygons),
         "scoped_loop_count": loop_count,
         "selected_uv_loop_count": None,
+        "quality": quality,
         "pinned_uv_loop_count": sum(
             int(bool(getattr(item, "pin_uv", False))) for item in layer.data
         ),
@@ -661,6 +723,7 @@ def _post_operation(
         "created_uv_layer": created_layer,
         "faces_affected": face_count,
         "overwrites_uv_coordinates": True,
+        "verification": _verification(analysis),
         "post_state": analysis,
     }
 

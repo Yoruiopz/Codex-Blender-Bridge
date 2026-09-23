@@ -17,7 +17,9 @@ and edge seam flags in component inspection, plus opt-in UV coordinate pages in 
 These are not included in the 0.3.0 downloads.
 
 Development is working toward **1.0.0** through explicit [release-readiness gates](docs/release-1.0-readiness.md),
-not a tool-count target. Main also hardens mesh/UV edits against implicit changes to linked
+with a [full 3D-artist capability target](docs/release-1.0-readiness.md#10-product-direction-a-full-3d-artist-workflow),
+not a tool-count target or a claim that current releases already replace an artist.
+Main also hardens mesh/UV edits against implicit changes to linked
 duplicates: selection-scoped mesh edits and UV unwrap/Smart Project/packing now reject shared,
 library-linked or override data. Inspection remains available; no automatic data copying occurs.
 
@@ -215,6 +217,13 @@ Non-manifold edges with other than two scoped faces are not joined. Marking seam
 unwrapping are separate steps; this inspection describes current UVs, not a proposed unwrap.
 Disconnected-island traversal now sorts seeds once instead of repeatedly scanning the
 remaining faces, avoiding quadratic seed selection on highly fragmented UV layouts.
+
+UV analysis now includes near-zero signed face-area diagnostics. Unwrap/project/pack results
+include `verification.status` (`needs_review` or `basic_checks_passed`) and warnings; they never
+set `user_goal_verified` to true. Non-finite coordinates/area yield incomplete-analysis evidence
+instead of invalid JSON. These are basic numeric checks, not overlap, distortion or texel-density
+certification. A collapsed unwrap can return from Blender without raising an exception, so
+always inspect these fields and compare the result with the requested layout.
 
 ### Complete tool inventory — main branch
 
