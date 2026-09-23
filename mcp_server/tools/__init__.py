@@ -7,6 +7,7 @@ from collections.abc import Iterable
 from ..tool_registry import ToolRegistry
 from ._common import MCPToolBinding
 from .animation import AnimationTools
+from .artist import ArtistTools
 from .batch import BatchTools
 from .constraints import ConstraintTools
 from .core import CoreTools
@@ -33,6 +34,7 @@ def iter_bindings(registry: ToolRegistry) -> Iterable[MCPToolBinding]:
     """Yield every static MCP wrapper in stable domain order."""
 
     bundles = (
+        ArtistTools(registry),
         CoreTools(registry),
         BatchTools(registry),
         InteractionTools(registry),

@@ -26,12 +26,12 @@ No current release should be described as a complete human-equivalent artist.
 | Sculpt and paint | Mode entry only | Brush/stroke control, masks, multires workflows, texture/vertex painting and feedback |
 | UV and textures | Seams, unwrap/project/pack, bounded coordinate/island evidence | UV layer/coordinate editing, pins, overlap/distortion/texel-density checks, image loading/painting/baking with path consent |
 | Materials and look development | Principled controls and shader graph editing | Reviewed node/property breadth, image assets, reusable materials, matched visual comparisons |
-| Procedural modeling | Allowlisted Geometry Nodes graph authoring/attachment | Nested groups, modifier inputs, simulation/repeat zones, evaluated diagnostics and broader node types |
-| Rig and skin | Armatures, bones, pose transforms, constraints, binding | Weight inspection/editing/normalization, skinning diagnostics, robust IK/control-rig workflows |
-| Animate | Frames/ranges/keyframes, inspection | Curve interpolation/handles, action lifecycle, drivers, NLA, motion verification and multi-frame revisions |
-| Simulate | No dedicated comprehensive workflow | Physics setup, constraints/dependencies, cache/bake lifecycle and time-budgeted verification |
+| Procedural modeling | Allowlisted Geometry Nodes graph authoring/attachment; paired simulation/repeat zones | Nested groups, modifier inputs, zone-item lifecycle/disk baking, evaluated diagnostics and broader node types |
+| Rig and skin | Armatures, bones, pose transforms, constraints, binding; numeric weight inspection/editing/normalization | Weight brushes, smoothing/mirroring/transfer, skinning diagnostics, robust IK/control-rig workflows |
+| Animate | Frames/ranges/keyframes, inspection; non-scripted transform drivers and action-backed NLA clips | Curve interpolation/handles, action lifecycle, bone/custom-property drivers, NLA track/transition workflows, multi-frame revisions |
+| Simulate | Scoped cloth setup/configuration and bounded in-memory bake/free | Fluid/rigid-body/other solvers, dependencies, disk caches, asynchronous progress/cancellation and production-scale validation |
 | Stage and light | Collections, world, camera/light settings, layout | Camera composition/navigation, iterative lighting comparisons, asset-scale and placement constraints |
-| Render and composite | Render settings/execution, captures | Compositor graphs, passes, color/output workflows, render diagnostics and job/progress management |
+| Render and composite | Render settings/execution, captures; reviewed compositor graph editing | Broader nodes/image assets, passes, color/output workflows, render diagnostics and job/progress management |
 | Deliver production assets | Permission-controlled project save | Reviewed import/export, dependencies/packing, formats and asset validation, explicit deliverable paths |
 | Operate interactively | Status/task/history, permissions, stop/pause | Persistent plan/progress, visual target resolution, preview/change summaries, user corrections and long-running jobs |
 | Work safely and improve results | Checkpoints, bounded inspection, batch partial-failure evidence | Consistent preservation contracts, recoverability audits, structural diffs, aesthetic iteration and whole-project benchmarks |
@@ -42,6 +42,11 @@ coverage. Any narrower 1.0 scope must be explicitly agreed and documented, not s
 for the requested full-artist target. Raw Python is not a substitute for completing these rows.
 
 ## Reliability promise underneath that target
+
+The current [artist-tools increment](artist-tools.md) adds 19 structured tools across compositor,
+weights, drivers/NLA, cloth caches and Geometry Nodes zones. Factory-startup evidence on Blender
+4.5.1 and 5.1.2 includes evaluated motion/geometry, cloth deformation and a measured compositor
+render. These bounded foundations do not close the remaining capability or recovery gates.
 
 A dependable, consent-first local bridge for the documented structured Blender workflows:
 inspect, resolve targets, checkpoint, edit, structurally verify, visually verify where relevant,

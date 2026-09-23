@@ -174,9 +174,12 @@ Try this with matching 0.3.0 packages:
 
 This is broad Blender access, **not a claim that every Blender action has a structured tool**.
 Tools support their declared schemas and reviewed types, not every property in Blender.
-Mode switching does not implement sculpt or paint strokes. Dedicated compositor editing,
-simulation/baking workflows, advanced weight painting, drivers/NLA editing, and Geometry
-Nodes simulation/repeat zones are not currently covered by structured tools. Context-sensitive
+Mode switching does not implement sculpt or paint strokes. Unreleased `main` now adds
+structured compositor editing, vertex-weight assignment/normalization, transform drivers,
+NLA clips, paired Geometry Nodes simulation/repeat zones, and scoped in-memory cloth baking.
+These are bounded implementations, not complete coverage of each editor. Fluid/rigid-body
+baking, weight-paint brushes, arbitrary driver expressions and broader NLA workflows remain gaps.
+See [artist-tool contracts and limits](docs/artist-tools.md). Context-sensitive
 operations can require a particular mode and selection. Unsupported requests must fail
 explicitly rather than pretend to succeed.
 
@@ -233,7 +236,7 @@ is identified above, and the feature table describes the published release.
 Blender's local recovery UI also has an add-on-only restore action, not an extra MCP tool.
 
 <!-- BEGIN GENERATED MCP TOOLS -->
-Current registry: **109 MCP tools**.
+Current registry: **128 MCP tools**.
 
 <details>
 <summary>core — 16 tools</summary>
@@ -273,12 +276,36 @@ Current registry: **109 MCP tools**.
 </details>
 
 <details>
+<summary>animation_layers — 5 tools</summary>
+
+| Tool | What it does |
+| --- | --- |
+| `animation_layers.inspect` | Inspect bounded object drivers, NLA tracks and strips. |
+| `drivers.add` | Create a non-scripted transform driver from explicit independent source objects. |
+| `drivers.remove` | Remove one exact object transform driver. |
+| `nla.add_strip` | Add an existing action as an explicit NLA strip on a new named track, with slot selection. |
+| `nla.edit_strip` | Configure a named single-track CLIP strip or explicitly remove it. |
+
+</details>
+
+<details>
 <summary>batch — 2 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
 | `batch.execute` | Run 1-32 structured steps serially; one logical undo marker, stop on error, no atomic rollback. |
 | `batch.plan` | Preflight 1-32 structured steps for shape and static permissions, not scene state or handler arguments. |
+
+</details>
+
+<details>
+<summary>compositor — 3 tools</summary>
+
+| Tool | What it does |
+| --- | --- |
+| `compositor.create` | Initialize a missing compositor graph without replacing existing work. |
+| `compositor.edit` | Add/remove/configure reviewed compositor nodes and edit exact socket defaults/links. |
+| `compositor.inspect` | Inspect bounded scene compositor nodes, sockets and links. |
 
 </details>
 
@@ -295,7 +322,7 @@ Current registry: **109 MCP tools**.
 </details>
 
 <details>
-<summary>geometry_nodes — 10 tools</summary>
+<summary>geometry_nodes — 13 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
@@ -309,6 +336,9 @@ Current registry: **109 MCP tools**.
 | `geometry_nodes.node_set_input` | Set an exact geometry node input's scalar or vector default. |
 | `geometry_nodes.node_set_properties` | Configure allowlisted direct scalar/enum properties of a geometry node. |
 | `geometry_nodes.unlink` | Remove links between exact geometry-node sockets. |
+| `geometry_nodes.zone_create` | Create a paired repeat/simulation zone with bounded constant iterations. |
+| `geometry_nodes.zone_item_add` | Add a reviewed state/repeat item to an exact zone output. |
+| `geometry_nodes.zone_remove` | Remove both boundaries of an exact zone and incident links. |
 
 </details>
 
@@ -469,6 +499,18 @@ Current registry: **109 MCP tools**.
 </details>
 
 <details>
+<summary>simulation — 4 tools</summary>
+
+| Tool | What it does |
+| --- | --- |
+| `simulation.cache` | Bake/free one in-memory cloth cache, at most 32 frames and 2000 vertices; excluded from batches. |
+| `simulation.cloth_add` | Add cloth to a local single-user mesh with a bounded empty modifier stack. |
+| `simulation.configure` | Configure reviewed cloth and pin-group settings before baking. |
+| `simulation.inspect` | Inspect one cloth modifier and its point-cache state. |
+
+</details>
+
+<details>
 <summary>uv — 4 tools</summary>
 
 | Tool | What it does |
@@ -477,6 +519,18 @@ Current registry: **109 MCP tools**.
 | `uv.pack_islands` | Pack selected UV islands using bounded margin settings. |
 | `uv.smart_project` | Smart-project selected faces using bounded projection settings. |
 | `uv.unwrap` | Unwrap selected faces with explicit method and margin. |
+
+</details>
+
+<details>
+<summary>weights — 4 tools</summary>
+
+| Tool | What it does |
+| --- | --- |
+| `weights.assign` | Assign a weight or remove memberships on up to 1000 explicit vertices; rollback on failure. |
+| `weights.group_create` | Create an explicitly named vertex group on a local single-user mesh. |
+| `weights.inspect` | Inspect paginated vertex weights and locked groups in Object Mode. |
+| `weights.normalize` | Normalize named unlocked groups while preserving all unmentioned weights. |
 
 </details>
 

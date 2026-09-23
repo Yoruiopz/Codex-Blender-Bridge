@@ -9,6 +9,9 @@ from ._common import MCPToolBinding, params
 
 SocketValue = bool | int | float | str | list[float]
 TOOL_DATA: tuple[tuple[str, str, bool, tuple[str, ...]], ...] = (
+    ("geometry_nodes.zone_create", "Create a paired repeat/simulation zone with bounded constant iterations.", True, ("EDIT_MESH",)),
+    ("geometry_nodes.zone_item_add", "Add a reviewed state/repeat item to an exact zone output.", True, ("EDIT_MESH",)),
+    ("geometry_nodes.zone_remove", "Remove both boundaries of an exact zone and incident links.", True, ("EDIT_MESH",)),
     (
         "geometry_nodes.inspect",
         "Inspect a bounded geometry graph, interface, and direct users.",
@@ -71,7 +74,7 @@ TOOL_DATA: tuple[tuple[str, str, bool, tuple[str, ...]], ...] = (
     ),
 )
 TOOL_NAMES = tuple(item[0] for item in TOOL_DATA)
-DESTRUCTIVE_TOOL_NAMES = frozenset({"geometry_nodes.node_remove", "geometry_nodes.unlink"})
+DESTRUCTIVE_TOOL_NAMES = frozenset({"geometry_nodes.node_remove", "geometry_nodes.unlink", "geometry_nodes.zone_remove"})
 
 
 def load_definitions() -> tuple[ToolDefinition, ...]:

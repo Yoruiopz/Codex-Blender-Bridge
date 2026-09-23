@@ -121,7 +121,9 @@ def test_addon_and_mcp_metadata_match(addon_package: str, geometry: Any) -> None
 def test_mcp_bindings_and_exact_parameter_forwarding() -> None:
     recording = RecordingRegistry()
     wrappers = GeometryNodeTools(recording)  # type: ignore[arg-type]
-    assert tuple(item.name for item in wrappers.bindings()) == TOOL_NAMES
+    assert tuple(item.name for item in wrappers.bindings()) == tuple(
+        name for name in TOOL_NAMES if not name.startswith("geometry_nodes.zone_")
+    )
     asyncio.run(wrappers.geometry_nodes_create("Graph", passthrough=False))
     asyncio.run(
         wrappers.geometry_nodes_node_set_input(

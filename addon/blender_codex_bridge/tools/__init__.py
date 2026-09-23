@@ -10,7 +10,9 @@ def register_all(registry: ToolRegistry) -> None:
 
     from . import (
         animation,
+        animation_layers,
         batch,
+        compositor,
         constraints,
         core,
         geometry_nodes,
@@ -25,11 +27,15 @@ def register_all(registry: ToolRegistry) -> None:
         render,
         rigging,
         scene_edit,
+        simulation,
         transforms,
         uv,
+        weights,
     )
 
     core.register_tools(registry)
+    for module in (animation_layers, compositor, simulation, weights):
+        module.register_tools(registry)
     batch.register_tools(registry)
     interaction.register_tools(registry)
     layout.register_tools(registry)

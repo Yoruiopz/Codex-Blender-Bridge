@@ -8,6 +8,8 @@ from .animation import (
     ANIMATION_TOOL_NAMES,
     load_animation_definitions,
 )
+from .artist import TOOL_DATA as ARTIST_TOOL_DATA
+from .artist import load_definitions as load_artist_definitions
 from .batch import TOOL_DATA as BATCH_TOOL_DATA
 from .batch import TOOL_NAMES as BATCH_TOOL_NAMES
 from .batch import load_definitions as load_batch_definitions
@@ -131,7 +133,8 @@ def _modifying_three(values: tuple[tuple[str, str, bool], ...]) -> set[str]:
 
 
 MODIFYING_TOOL_NAMES = frozenset(
-    _modifying_four(CORE_REMOTE_TOOLS)
+    {name for name, _, modifies, _, _ in ARTIST_TOOL_DATA if modifies}
+    | _modifying_four(CORE_REMOTE_TOOLS)
     | _modifying_three(LOCAL_TOOLSET_TOOLS)
     | _modifying_four(OBJECT_TOOL_DATA)
     | _modifying_three(MESH_TOOL_DATA)
@@ -155,7 +158,8 @@ MODIFYING_TOOL_NAMES = frozenset(
 # conservative for operations that delete data, bake/apply state, write files,
 # replace Render Result, or execute a broad script.
 DESTRUCTIVE_TOOL_NAMES = frozenset(
-    {
+    {name for name, _, modifies, _, _ in ARTIST_TOOL_DATA if modifies}
+    | {
         "checkpoint.undo_last",
         "project.save",
         "viewport.capture",
@@ -234,6 +238,7 @@ __all__ = [
     "SCENE_EDIT_TOOL_NAMES",
     "UV_TOOL_NAMES",
     "load_animation_definitions",
+    "load_artist_definitions",
     "load_batch_definitions",
     "load_constraint_definitions",
     "load_geometry_definitions",

@@ -28,6 +28,8 @@ _UTILITY_TYPES = frozenset({"NodeGroupInput", "NodeGroupOutput", "NodeReroute", 
 # Exact reviewed types: a prefix match would also admit file-import/script nodes
 # whose string inputs could bypass ACCESS_EXTERNAL_FILES on evaluation.
 _SAFE_NODE_TYPES = _UTILITY_TYPES | frozenset({
+    "GeometryNodeRepeatInput", "GeometryNodeRepeatOutput",
+    "GeometryNodeSimulationInput", "GeometryNodeSimulationOutput",
     "GeometryNodeMeshGrid", "GeometryNodeMeshCube", "GeometryNodeMeshCircle",
     "GeometryNodeMeshLine", "GeometryNodeMeshUVSphere", "GeometryNodeMeshIcoSphere",
     "GeometryNodeMeshCylinder", "GeometryNodeMeshCone", "GeometryNodeTransform",
@@ -121,9 +123,16 @@ def _safe_graph(tree: Any) -> None:
     if unsupported:
         raise BridgeError(
             ErrorCode.NOT_IMPLEMENTED,
-            "This graph contains nodes outside the reviewed structured subset; inspect it separately. File/script and nested/zone nodes are not supported.",
+            "This graph contains nodes outside the reviewed structured subset; inspect it separately. File/script and nested group nodes are not supported.",
             {"unsupported_node_types": unsupported[:32], "truncated": len(unsupported) > 32},
         )
+    for node in tree.nodes:
+        if node.bl_idname in {"GeometryNodeRepeatInput", "GeometryNodeSimulationInput"} and node.paired_output is None:
+            raise invalid_argument("Zone input has no paired output.", node_name=node.name)
+        if node.bl_idname == "GeometryNodeRepeatInput":
+            iterations = node.inputs.get("Iterations")
+            if iterations is None or iterations.is_linked or not 0 <= iterations.default_value <= 64:
+                raise invalid_argument("Repeat zones require a constant iteration count between 0 and 64.")
 
 
 def _group(params: Mapping[str, Any], *, modify: bool = False) -> Any:
@@ -176,7 +185,19 @@ def _post_state(tree: Any, node: Any | None = None) -> dict[str, Any]:
     if node is not None:
         result["node"] = shader_nodes._node_summary(node, max_sockets=32)
         result["node"]["settings"] = serialize_properties(node, _NODE_PROPERTIES)
+        result["node"]["zone"] = _zone_summary(node)
     return result
+
+
+def _zone_summary(node: Any) -> dict[str, Any] | None:
+    paired = getattr(node, "paired_output", None)
+    items = getattr(node, "repeat_items", getattr(node, "state_items", None))
+    if paired is None and items is None:
+        return None
+    return {"paired_output": getattr(paired, "name", None),
+            "items": [] if items is None else [{"name": item.name, "socket_type": item.socket_type,
+                      "identifier": getattr(item, "identifier", None)} for item in list(items)[:32]],
+            "items_truncated": items is not None and len(items) > 32}
 
 
 def _interface_summary(item: Any) -> dict[str, Any]:
@@ -206,6 +227,7 @@ def inspect_graph(context: ToolContext, params: Mapping[str, Any]) -> dict[str, 
     graph.pop("node_tree")
     for node in graph["nodes"]:
         node["settings"] = serialize_properties(tree.nodes.get(node["name"]), _NODE_PROPERTIES)
+        node["zone"] = _zone_summary(tree.nodes.get(node["name"]))
     graph.update(_post_state(tree))
     graph["supported_node_types"] = sorted(_SAFE_NODE_TYPES)
     graph["interface"] = [
@@ -295,7 +317,7 @@ def add_node(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
     ):
         raise BridgeError(
             ErrorCode.NOT_IMPLEMENTED,
-            "Nested group assignment and zone pairing are not implemented by the structured Geometry Nodes tool.",
+            "Nested groups are unsupported; create paired zone boundaries with geometry_nodes.zone_create.",
             {"node_type": node_type},
         )
     if node_type not in _UTILITY_TYPES and _NODE_TYPE.fullmatch(node_type) is None:
@@ -368,6 +390,9 @@ def set_node_input(context: ToolContext, params: Mapping[str, Any]) -> dict[str,
     if "value" not in params:
         raise invalid_argument("'value' is required.")
     value = shader_nodes._coerce_default_value(socket, params["value"])
+    if (node.bl_idname == "GeometryNodeRepeatInput" and socket.name == "Iterations"
+            and (type(value) is not int or not 0 <= value <= 64)):
+        raise invalid_argument("Structured repeat zones allow 0-64 iterations.")
     assignments = prepare_assignments(
         socket,
         {"default_value": value},
@@ -391,6 +416,8 @@ def remove_node(context: ToolContext, params: Mapping[str, Any]) -> dict[str, An
     node = shader_nodes._node_exact(tree, _name(params, "node_name"))
     name = node.name
     links_before = len(tree.links)
+    if node.bl_idname in {"GeometryNodeRepeatInput", "GeometryNodeRepeatOutput", "GeometryNodeSimulationInput", "GeometryNodeSimulationOutput"}:
+        raise invalid_argument("Remove paired zone boundaries with geometry_nodes.zone_remove.")
     tree.nodes.remove(node)
     return {
         "removed": name,
@@ -429,6 +456,8 @@ def link_nodes(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any
     tree = _group(params, modify=True)
     source_node, source = shader_nodes._endpoint(tree, params, "from", "output")
     target_node, target = shader_nodes._endpoint(tree, params, "to", "input")
+    if target_node.bl_idname == "GeometryNodeRepeatInput" and target.name == "Iterations":
+        raise invalid_argument("Repeat iterations must be a bounded constant, not a linked field.")
     replace = _boolean(params, "replace_existing")
     existing = [link for link in tree.links if link.to_socket == target]
     duplicate = next((link for link in existing if link.from_socket == source), None)
@@ -539,6 +568,67 @@ def attach_graph(context: ToolContext, params: Mapping[str, Any]) -> dict[str, A
     }
 
 
+def zone_create(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
+    reject_unknown_params(params, {"group_name", "zone_type", "input_name", "output_name", "iterations", "allow_shared"})
+    tree = _group(params, modify=True)
+    kind = params.get("zone_type")
+    if not isinstance(kind, str) or kind not in {"REPEAT", "SIMULATION"}:
+        raise invalid_argument("zone_type must be REPEAT or SIMULATION.")
+    input_name, output_name = _name(params, "input_name"), _name(params, "output_name")
+    if any(len(name.encode("utf-8")) > 63 for name in (input_name, output_name)):
+        raise invalid_argument("Zone boundary names must fit 63 UTF-8 bytes.")
+    iterations = int_param(params, "iterations", 1, minimum=0, maximum=64)
+    if input_name == output_name or tree.nodes.get(input_name) or tree.nodes.get(output_name) or len(tree.nodes) > MAX_NODES - 2 or len(tree.links) >= MAX_LINKS:
+        raise invalid_argument("Two distinct unused node names and graph capacity are required.")
+    prefix = "GeometryNodeRepeat" if kind == "REPEAT" else "GeometryNodeSimulation"
+    created = []
+    try:
+        output = tree.nodes.new(prefix + "Output")
+        created.append(output)
+        source = tree.nodes.new(prefix + "Input")
+        created.append(source)
+        source.name, output.name = input_name, output_name
+        if not source.pair_with_output(output):
+            raise invalid_argument("Blender refused the zone pairing.")
+        if kind == "REPEAT":
+            source.inputs["Iterations"].default_value = iterations
+        tree.links.new(source.outputs["Geometry"], output.inputs["Geometry"])
+        source.location, output.location = (-200, 0), (200, 0)
+    except Exception:
+        for node in reversed(created):
+            tree.nodes.remove(node)
+        raise
+    return {"zone_type": kind, "input_name": source.name, "output_name": output.name, **_post_state(tree, output)}
+
+
+def zone_item_add(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
+    reject_unknown_params(params, {"group_name", "output_name", "socket_type", "name", "allow_shared"})
+    tree = _group(params, modify=True)
+    output = shader_nodes._node_exact(tree, _name(params, "output_name"))
+    items = getattr(output, "repeat_items", getattr(output, "state_items", None))
+    kind, name = params.get("socket_type"), _name(params, "name")
+    if items is None or not isinstance(kind, str) or kind not in {"GEOMETRY", "FLOAT", "INT", "BOOLEAN", "VECTOR", "RGBA"}:
+        raise invalid_argument("Expected a zone output and a supported zone socket type.")
+    if len(name.encode("utf-8")) > 63 or len(items) >= 32 or any(item.name == name for item in items):
+        raise invalid_argument("Zone item name already exists or 32-item budget reached.")
+    items.new(kind, name)
+    return _post_state(tree, output)
+
+
+def zone_remove(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
+    reject_unknown_params(params, {"group_name", "output_name", "allow_shared"})
+    tree = _group(params, modify=True)
+    output = shader_nodes._node_exact(tree, _name(params, "output_name"))
+    if output.bl_idname not in {"GeometryNodeRepeatOutput", "GeometryNodeSimulationOutput"}:
+        raise invalid_argument("Expected a repeat or simulation output node.")
+    inputs = [node for node in tree.nodes if getattr(node, "paired_output", None) == output]
+    names = [node.name for node in inputs] + [output.name]
+    for node in inputs:
+        tree.nodes.remove(node)
+    tree.nodes.remove(output)
+    return {"removed_nodes": names, **_post_state(tree)}
+
+
 def register_tools(registry: ToolRegistry) -> None:
     registry.register(
         "geometry_nodes.inspect",
@@ -584,6 +674,8 @@ def register_tools(registry: ToolRegistry) -> None:
     )
     for name, handler, description in handlers:
         registry.register(f"geometry_nodes.{name}", handler, description=description, **common)
+    for name, handler in (("zone_create", zone_create), ("zone_item_add", zone_item_add), ("zone_remove", zone_remove)):
+        registry.register(f"geometry_nodes.{name}", handler, description=f"Structured paired Geometry Nodes {name}.", **common)
     registry.register(
         "geometry_nodes.attach",
         attach_graph,

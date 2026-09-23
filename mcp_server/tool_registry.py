@@ -490,6 +490,18 @@ def create_default_registry(client: AsyncRequestClient) -> ToolRegistry:
 
     registry = ToolRegistry(client)
     registry.register_core(CORE_DEFINITIONS)
+    from .tools.artist import TOOL_DATA as artist_data
+    from .tools.artist import load_definitions as load_artist
+
+    def artist_loader(group: str) -> Callable[[], tuple[ToolDefinition, ...]]:
+        return lambda: tuple(tool for tool in load_artist() if tool.toolset == group)
+
+    for group in ("weights", "compositor", "animation_layers", "simulation"):
+        registry.register_toolset(
+            group, artist_loader(group),
+            tools=tuple(name for name, toolset, *_ in artist_data if toolset == group),
+            description=f"Structured {group} artist workflows with explicit limits.",
+        )
     registry.register_toolset(
         "interaction", load_interaction_definitions, tools=INTERACTION_TOOL_NAMES,
         description="Explicit object/component selection, localized mesh evidence, and Blender mode control.",
