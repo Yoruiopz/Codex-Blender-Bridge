@@ -413,10 +413,33 @@ class ArtistTools:
             params(group_name=group_name, output_name=output_name, allow_shared=allow_shared),
         )
 
+    async def geometry_nodes_zone_item_edit(
+        self,
+        group_name: str,
+        output_name: str,
+        name: str,
+        operation: Literal["RENAME", "MOVE", "REMOVE"],
+        new_name: str | None = None,
+        to_index: int | None = None,
+        allow_shared: bool = False,
+    ) -> Any:
+        return await self.registry.call(
+            "geometry_nodes.zone_item_edit",
+            params(
+                group_name=group_name,
+                output_name=output_name,
+                name=name,
+                operation=operation,
+                new_name=new_name,
+                to_index=to_index,
+                allow_shared=allow_shared,
+            ),
+        )
+
     def bindings(self) -> tuple[MCPToolBinding, ...]:
         methods = {name: getattr(self, name.replace(".", "_")) for name, *_ in TOOL_DATA}
         descriptions = {name: description for name, _, _, _, description in TOOL_DATA}
-        for suffix in ("zone_create", "zone_item_add", "zone_remove"):
+        for suffix in ("zone_create", "zone_item_add", "zone_item_edit", "zone_remove"):
             name = f"geometry_nodes.{suffix}"
             methods[name] = getattr(self, f"geometry_nodes_{suffix}")
             descriptions[name] = f"Structured paired Geometry Nodes {suffix}."

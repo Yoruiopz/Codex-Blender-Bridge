@@ -1,6 +1,6 @@
 # Structured artist tools (unreleased)
 
-These 21 tools are development work on `main`, not part of the published 0.3.0 assets.
+These 22 tools are development work on `main`, not part of the published 0.3.0 assets.
 They implement reviewed subsets of the requested 1.0 artist workflows. They do not yet
 provide every compositor node, simulation solver, painting brush, driver or NLA operation.
 Install matching development add-on and MCP sources to exercise them; do not mix an old
@@ -109,14 +109,20 @@ Transitions, meta strips, track lifecycle/reordering, action creation and full c
   allow_shared=false)` creates paired REPEAT or SIMULATION boundaries and a geometry passthrough.
 - `geometry_nodes.zone_item_add(group_name, output_name, socket_type, name, allow_shared=false)`
   adds GEOMETRY/FLOAT/INT/BOOLEAN/VECTOR/RGBA state, at most 32 items.
+- `geometry_nodes.zone_item_edit(group_name, output_name, name, operation, new_name=null,
+  to_index=null, allow_shared=false)` renames (`RENAME` with `new_name`), reorders (`MOVE`
+  with zero-based `to_index`) or removes (`REMOVE`) an exact item. Rename/reorder preserve
+  existing links and socket defaults. Removal requires an unlinked, non-geometry item;
+  disconnect its sockets explicitly first. Duplicate/ambiguous names and socket-name
+  collisions are rejected. Supply only the argument relevant to the operation.
 - `geometry_nodes.zone_remove(group_name, output_name, allow_shared=false)` removes the output,
   paired inputs and their incident links. Interior nodes are retained.
 
 Use existing node/link/input tools to build the zone body. Boundary nodes must be created/removed
 through paired APIs. Repeat iterations must be constant integers 0–64; linked iteration counts
 are rejected. This bounds the count, **not** total geometry complexity or evaluation time.
-Shared graph edits still require acknowledgement. Simulation-zone disk baking, item removal/
-reordering, nested node groups and arbitrary node types are not implemented.
+Shared graph edits still require acknowledgement. Simulation-zone disk baking, item type
+conversion, geometry-item removal, nested node groups and arbitrary node types are not implemented.
 
 ## Cloth and baking
 

@@ -34,7 +34,20 @@ def geometry(addon_package: str) -> Any:
     return importlib.import_module(f"{addon_package}.tools.geometry_nodes")
 
 
-@pytest.mark.parametrize("handler", ["create_graph", "add_interface", "add_node", "set_node_properties", "set_node_input", "remove_node", "link_nodes", "unlink_nodes", "attach_graph"])
+@pytest.mark.parametrize(
+    "handler",
+    [
+        "create_graph",
+        "add_interface",
+        "add_node",
+        "set_node_properties",
+        "set_node_input",
+        "remove_node",
+        "link_nodes",
+        "unlink_nodes",
+        "attach_graph",
+    ],
+)
 def test_graph_mutations_reject_unknown_parameters(geometry: Any, handler: str) -> None:
     with pytest.raises(Exception) as caught:
         getattr(geometry, handler)(None, {"unrecognized": True})
@@ -81,8 +94,12 @@ def fake_node(name: str) -> Any:
     )
 
 
-@pytest.mark.parametrize("node_type", ["GeometryNodeImportOBJ", "GeometryNodeImportPLY", "ShaderNodeScript"])
-def test_unreviewed_file_and_script_nodes_are_rejected(geometry: Any, monkeypatch: pytest.MonkeyPatch, node_type: str) -> None:
+@pytest.mark.parametrize(
+    "node_type", ["GeometryNodeImportOBJ", "GeometryNodeImportPLY", "ShaderNodeScript"]
+)
+def test_unreviewed_file_and_script_nodes_are_rejected(
+    geometry: Any, monkeypatch: pytest.MonkeyPatch, node_type: str
+) -> None:
     tree = fake_tree()
     install_tree(geometry, monkeypatch, tree)
     with pytest.raises(geometry.BridgeError) as caught:
@@ -95,7 +112,9 @@ def test_unreviewed_file_and_script_nodes_are_rejected(geometry: Any, monkeypatc
         geometry._group({"group_name": tree.name}, modify=True)
     assert caught.value.code == "NOT_IMPLEMENTED"
     with pytest.raises(geometry.BridgeError) as caught:
-        geometry.attach_graph(None, {"group_name": tree.name, "object_name": "Cube", "modifier_name": "Test"})
+        geometry.attach_graph(
+            None, {"group_name": tree.name, "object_name": "Cube", "modifier_name": "Test"}
+        )
     assert caught.value.code == "NOT_IMPLEMENTED"
 
 
@@ -378,3 +397,70 @@ def test_node_settings_do_not_allow_paths_or_pointers(
                 None, {"group_name": tree.name, "node_name": "Target", "settings": settings}
             )
         assert caught.value.code == "INVALID_ARGUMENT"
+
+
+class ZoneItems(list):
+    def move(self, source, target):
+        self.insert(target, self.pop(source))
+
+
+@pytest.fixture
+def zone_fixture(geometry, monkeypatch):
+    items = ZoneItems(
+        [
+            SimpleNamespace(name="Geometry", socket_type="GEOMETRY"),
+            SimpleNamespace(name="Amount", socket_type="FLOAT"),
+        ]
+    )
+    output = fake_node("Zone Out")
+    output.repeat_items = items
+    output.inputs = [SimpleNamespace(name="Amount", is_linked=False)]
+    tree = fake_tree(nodes=NamedItems([output]))
+    monkeypatch.setattr(geometry, "_group", lambda *args, **kwargs: tree)
+    monkeypatch.setattr(geometry, "_post_state", lambda *args: {"items": [i.name for i in items]})
+    return items, output
+
+
+@pytest.mark.parametrize(
+    "params,expected",
+    [
+        ({"operation": "RENAME", "new_name": "Speed"}, ["Geometry", "Speed"]),
+        ({"operation": "MOVE", "to_index": 0}, ["Amount", "Geometry"]),
+        ({"operation": "REMOVE"}, ["Geometry"]),
+    ],
+)
+def test_zone_item_edit_actions(geometry, zone_fixture, params, expected):
+    result = geometry.zone_item_edit(None, {"output_name": "Zone Out", "name": "Amount", **params})
+    assert result["items"] == expected and result["previous_index"] == 1
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"operation": "RENAME", "new_name": "Geometry"},
+        {"operation": "RENAME", "new_name": "界" * 22},
+        {"operation": "MOVE", "to_index": -1},
+        {"operation": "MOVE", "to_index": 2},
+        {"operation": "MOVE", "to_index": True},
+        {"operation": "MOVE"},
+        {"operation": "REMOVE", "new_name": "Ignored"},
+        {"operation": []},
+    ],
+)
+def test_zone_item_edit_invalid_requests_preserve_items(geometry, zone_fixture, params):
+    items, _ = zone_fixture
+    with pytest.raises(geometry.BridgeError) as caught:
+        geometry.zone_item_edit(None, {"output_name": "Zone Out", "name": "Amount", **params})
+    assert caught.value.code == "INVALID_ARGUMENT"
+    assert [i.name for i in items] == ["Geometry", "Amount"]
+
+
+def test_zone_removal_rejects_linked_or_geometry_item(geometry, zone_fixture):
+    items, output = zone_fixture
+    output.inputs[0].is_linked = True
+    for name in ("Geometry", "Amount", "Missing"):
+        with pytest.raises(geometry.BridgeError):
+            geometry.zone_item_edit(
+                None, {"output_name": "Zone Out", "name": name, "operation": "REMOVE"}
+            )
+    assert len(items) == 2

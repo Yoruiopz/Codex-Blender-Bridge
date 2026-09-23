@@ -629,6 +629,43 @@ def zone_remove(context: ToolContext, params: Mapping[str, Any]) -> dict[str, An
     return {"removed_nodes": names, **_post_state(tree)}
 
 
+def zone_item_edit(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
+    """Rename/reorder zone items, or remove an unlinked non-geometry item."""
+    operation = params.get("operation")
+    options = {"RENAME": {"new_name"}, "MOVE": {"to_index"}, "REMOVE": set()}
+    if not isinstance(operation, str) or operation not in options:
+        raise invalid_argument("operation must be RENAME, MOVE or REMOVE.")
+    reject_unknown_params(params, {"group_name", "output_name", "name", "operation", "allow_shared"} | options[operation])
+    tree = _group(params, modify=True)
+    output = shader_nodes._node_exact(tree, _name(params, "output_name"))
+    items = getattr(output, "repeat_items", getattr(output, "state_items", None))
+    name = _name(params, "name")
+    if items is None or not 1 <= len(items) <= 32:
+        raise invalid_argument("Expected a zone output with 1-32 items.")
+    matches = [(index, item) for index, item in enumerate(items) if item.name == name]
+    if len(matches) != 1:
+        raise invalid_argument("Zone item name is missing or ambiguous.")
+    old_index, item = matches[0]
+    boundaries = [output, *[node for node in tree.nodes if getattr(node, "paired_output", None) == output]]
+    if operation == "RENAME":
+        new_name = _name(params, "new_name")
+        reserved = {socket.name for node in boundaries for socket in (*node.inputs, *node.outputs) if socket.name != name}
+        if len(new_name.encode("utf-8")) > 63 or new_name in reserved or any(i.name == new_name and i != item for i in items):
+            raise invalid_argument("New item name collides with a socket/item or exceeds 63 UTF-8 bytes.")
+        item.name = new_name
+    elif operation == "MOVE":
+        to_index = int_param(params, "to_index", -1, minimum=0, maximum=len(items) - 1)
+        items.move(old_index, to_index)
+    else:
+        if item.socket_type == "GEOMETRY":
+            raise invalid_argument("Geometry items cannot be removed by this scoped workflow.")
+        if any(socket.is_linked for node in boundaries for socket in (*node.inputs, *node.outputs) if socket.name == name):
+            raise invalid_argument("Unlink the item's sockets explicitly before removing it.")
+        items.remove(item)
+    return {"operation": operation, "previous_name": name, "previous_index": old_index,
+            **_post_state(tree, output)}
+
+
 def register_tools(registry: ToolRegistry) -> None:
     registry.register(
         "geometry_nodes.inspect",
@@ -674,7 +711,7 @@ def register_tools(registry: ToolRegistry) -> None:
     )
     for name, handler, description in handlers:
         registry.register(f"geometry_nodes.{name}", handler, description=description, **common)
-    for name, handler in (("zone_create", zone_create), ("zone_item_add", zone_item_add), ("zone_remove", zone_remove)):
+    for name, handler in (("zone_create", zone_create), ("zone_item_add", zone_item_add), ("zone_item_edit", zone_item_edit), ("zone_remove", zone_remove)):
         registry.register(f"geometry_nodes.{name}", handler, description=f"Structured paired Geometry Nodes {name}.", **common)
     registry.register(
         "geometry_nodes.attach",

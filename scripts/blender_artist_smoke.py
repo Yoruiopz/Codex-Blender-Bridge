@@ -245,6 +245,64 @@ def main():
         graph(gn.zone_item_add, output_name="Zone Out", socket_type="FLOAT", name="Amount")
         tree = bpy.data.node_groups[group]
         assert tree.nodes["Zone In"].paired_output == tree.nodes["Zone Out"]
+        graph(gn.set_node_input, node_name="Zone In", socket_name="Amount", value=2.5)
+        graph(
+            gn.link_nodes,
+            from_node="Zone In",
+            from_socket="Amount",
+            to_node="Zone Out",
+            to_socket="Amount",
+        )
+        denied(
+            gn.zone_item_edit,
+            group_name=group,
+            output_name="Zone Out",
+            name="Amount",
+            operation="REMOVE",
+        )
+        socket_id = tree.nodes["Zone In"].inputs["Amount"].identifier
+        graph(
+            gn.zone_item_edit,
+            output_name="Zone Out",
+            name="Amount",
+            operation="RENAME",
+            new_name="Speed",
+        )
+        graph(gn.zone_item_edit, output_name="Zone Out", name="Speed", operation="MOVE", to_index=0)
+        items = (
+            tree.nodes["Zone Out"].repeat_items
+            if kind == "REPEAT"
+            else tree.nodes["Zone Out"].state_items
+        )
+        assert [item.name for item in items] == ["Speed", "Geometry"]
+        assert tree.nodes["Zone In"].inputs["Speed"].default_value == 2.5
+        assert tree.nodes["Zone In"].inputs["Speed"].identifier == socket_id
+        assert tree.nodes["Zone Out"].inputs["Speed"].is_linked
+        denied(
+            gn.zone_item_edit,
+            group_name=group,
+            output_name="Zone Out",
+            name="Speed",
+            operation="RENAME",
+            new_name="Geometry",
+        )
+        graph(
+            gn.unlink_nodes,
+            from_node="Zone In",
+            from_socket="Speed",
+            to_node="Zone Out",
+            to_socket="Speed",
+        )
+        graph(gn.zone_item_edit, output_name="Zone Out", name="Speed", operation="REMOVE")
+        assert [item.name for item in items] == ["Geometry"]
+        assert tree.nodes["Zone Out"].inputs["Geometry"].is_linked
+        denied(
+            gn.zone_item_edit,
+            group_name=group,
+            output_name="Zone Out",
+            name="Geometry",
+            operation="REMOVE",
+        )
         graph(gn.add_node, node_type="GeometryNodeTransform", name="Step")
         graph(gn.set_node_input, node_name="Step", socket_name="Translation", value=[1, 0, 0])
         for a, b in (

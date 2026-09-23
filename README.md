@@ -237,7 +237,7 @@ is identified above, and the feature table describes the published release.
 Blender's local recovery UI also has an add-on-only restore action, not an extra MCP tool.
 
 <!-- BEGIN GENERATED MCP TOOLS -->
-Current registry: **130 MCP tools**.
+Current registry: **131 MCP tools**.
 
 <details>
 <summary>core — 16 tools</summary>
@@ -323,7 +323,7 @@ Current registry: **130 MCP tools**.
 </details>
 
 <details>
-<summary>geometry_nodes — 13 tools</summary>
+<summary>geometry_nodes — 14 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
@@ -339,6 +339,7 @@ Current registry: **130 MCP tools**.
 | `geometry_nodes.unlink` | Remove links between exact geometry-node sockets. |
 | `geometry_nodes.zone_create` | Create a paired repeat/simulation zone with bounded constant iterations. |
 | `geometry_nodes.zone_item_add` | Add a reviewed state/repeat item to an exact zone output. |
+| `geometry_nodes.zone_item_edit` | Rename/reorder an exact zone item or remove an unlinked non-geometry item. |
 | `geometry_nodes.zone_remove` | Remove both boundaries of an exact zone and incident links. |
 
 </details>
