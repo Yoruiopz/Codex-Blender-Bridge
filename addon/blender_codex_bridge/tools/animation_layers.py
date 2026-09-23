@@ -63,6 +63,8 @@ def inspect(context: Any, params: Mapping[str, Any]) -> dict[str, Any]:
     data = obj.animation_data
     return {
         "object": obj.name,
+        "active_action": getattr(getattr(data, "action", None), "name", None),
+        "nla_enabled": bool(data and data.use_nla),
         "drivers": []
         if not data
         else [
@@ -98,6 +100,7 @@ def inspect(context: Any, params: Mapping[str, Any]) -> dict[str, Any]:
                 "name": track.name,
                 "mute": track.mute,
                 "solo": track.is_solo,
+                "locked": track.lock,
                 "strips": [
                     {
                         "name": strip.name,
@@ -271,6 +274,8 @@ def nla_edit(context: Any, params: Mapping[str, Any]) -> dict[str, Any]:
     strip = track.strips.get(strip_name) if track else None
     if strip is None or strip.type != "CLIP":
         raise invalid_argument("An exact CLIP strip is required.")
+    if track.lock:
+        raise invalid_argument("Unlock the NLA track explicitly before editing its strips.")
     remove = params.get("remove", False)
     if type(remove) is not bool:
         raise invalid_argument("remove must be boolean.")
@@ -301,6 +306,54 @@ def nla_edit(context: Any, params: Mapping[str, Any]) -> dict[str, Any]:
     return {"affected_objects": [obj.name], **inspect(context, {"object_name": obj.name})}
 
 
+def nla_edit_track(context: Any, params: Mapping[str, Any]) -> dict[str, Any]:
+    """Rename/mute/lock an exact NLA track, or remove an explicitly empty track."""
+    reject_unknown_params(params, {"object_name", "track_name", "settings", "remove"})
+    obj = _object(params, True)
+    name = bounded_name(params.get("track_name"), "track_name")
+    track = obj.animation_data.nla_tracks.get(name) if obj.animation_data else None
+    if track is None:
+        raise invalid_argument("Named NLA track does not exist.")
+    remove = params.get("remove", False)
+    if type(remove) is not bool:
+        raise invalid_argument("remove must be boolean.")
+    if remove:
+        if params.get("settings") is not None:
+            raise invalid_argument("Removal cannot include settings.")
+        if track.lock or len(track.strips):
+            raise invalid_argument(
+                "Track removal requires an unlocked, empty track; strips/actions are never deleted implicitly."
+            )
+        obj.animation_data.nla_tracks.remove(track)
+    else:
+        settings = settings_mapping(params)
+        if track.lock and (set(settings) != {"lock"} or settings["lock"] is not False):
+            raise invalid_argument(
+                "A locked track must first be explicitly unlocked with lock=false."
+            )
+        if "name" in settings:
+            new_name = bounded_name(settings["name"], "name", maximum=63)
+            existing = obj.animation_data.nla_tracks.get(new_name)
+            if len(new_name.encode("utf-8")) > 63 or (existing is not None and existing != track):
+                raise invalid_argument("Track name is unavailable or exceeds 63 UTF-8 bytes.")
+        apply_assignments(
+            track,
+            prepare_assignments(
+                track,
+                settings,
+                allowed=frozenset({"name", "mute", "lock"}),
+                object_pointers=frozenset(),
+                bpy=require_blender(),
+            ),
+        )
+    return {
+        "affected_objects": [obj.name],
+        "previous_track_name": name,
+        "removed": remove,
+        **inspect(context, {"object_name": obj.name}),
+    }
+
+
 def register_tools(registry: Any) -> None:
     for name, handler in (
         ("animation_layers.inspect", inspect),
@@ -308,6 +361,7 @@ def register_tools(registry: Any) -> None:
         ("drivers.remove", driver_remove),
         ("nla.add_strip", nla_add),
         ("nla.edit_strip", nla_edit),
+        ("nla.edit_track", nla_edit_track),
     ):
         registry.register(
             name,

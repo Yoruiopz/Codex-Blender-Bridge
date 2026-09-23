@@ -28,7 +28,7 @@ No current release should be described as a complete human-equivalent artist.
 | Materials and look development | Principled controls and shader graph editing | Reviewed node/property breadth, image assets, reusable materials, matched visual comparisons |
 | Procedural modeling | Allowlisted Geometry Nodes graph authoring/attachment; paired simulation/repeat zones and scoped item rename/reorder/removal | Nested groups, modifier inputs, zone-item type conversion/disk baking, evaluated diagnostics and broader node types |
 | Rig and skin | Armatures, bones, pose transforms, constraints, binding; numeric weight inspection/editing/normalization, edge smoothing and explicit mapped transfer | Weight brushes, geometric mirroring/surface transfer, skinning diagnostics, robust IK/control-rig workflows |
-| Animate | Frames/ranges/keyframes, inspection; non-scripted transform drivers and action-backed NLA clips | Curve interpolation/handles, action lifecycle, bone/custom-property drivers, NLA track/transition workflows, multi-frame revisions |
+| Animate | Frames/ranges/keyframes, inspection; non-scripted transform drivers, action-backed NLA clips and track rename/mute/lock/empty removal | Curve interpolation/handles, action lifecycle, bone/custom-property drivers, NLA reordering/solo/transition workflows, multi-frame revisions |
 | Simulate | Scoped cloth setup/configuration and bounded in-memory bake/free | Fluid/rigid-body/other solvers, dependencies, disk caches, asynchronous progress/cancellation and production-scale validation |
 | Stage and light | Collections, world, camera/light settings, layout | Camera composition/navigation, iterative lighting comparisons, asset-scale and placement constraints |
 | Render and composite | Render settings/execution, captures; reviewed compositor graph editing | Broader nodes/image assets, passes, color/output workflows, render diagnostics and job/progress management |
@@ -43,7 +43,7 @@ for the requested full-artist target. Raw Python is not a substitute for complet
 
 ## Reliability promise underneath that target
 
-The current [artist-tools increment](artist-tools.md) adds 22 structured tools across compositor,
+The current [artist-tools increment](artist-tools.md) adds 23 structured tools across compositor,
 weights, drivers/NLA, cloth caches and Geometry Nodes zones. Factory-startup evidence on Blender
 4.5.1 and 5.1.2 includes evaluated motion/geometry, cloth deformation and a measured compositor
 render. These bounded foundations do not close the remaining capability or recovery gates.

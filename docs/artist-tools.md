@@ -1,6 +1,6 @@
 # Structured artist tools (unreleased)
 
-These 22 tools are development work on `main`, not part of the published 0.3.0 assets.
+These 23 tools are development work on `main`, not part of the published 0.3.0 assets.
 They implement reviewed subsets of the requested 1.0 artist workflows. They do not yet
 provide every compositor node, simulation solver, painting brush, driver or NLA operation.
 Install matching development add-on and MCP sources to exercise them; do not mix an old
@@ -83,7 +83,9 @@ limits are 512 nodes and 2,048 links. Inspection reports truncation.
 ## Drivers and NLA
 
 `animation_layers.inspect(object_name)` reports object drivers and NLA tracks/strips.
-It does not return driver expressions. Editing is limited to local editable objects,
+It includes track locks, the active action name and whether NLA is enabled, so callers can
+identify common reasons an NLA edit is not visible in playback. It does not return driver expressions.
+Editing is limited to local editable objects,
 outside NLA tweak mode; budgets are 128 drivers, 64 tracks and 256 strips.
 
 `drivers.add(object_name, data_path, variables, index=0, driver_type="AVERAGE")` supports
@@ -101,7 +103,16 @@ an active action can mask NLA playback. Targets with drivers are rejected.
 `nla.edit_strip(object_name, track_name, strip_name, settings, remove=false)` edits a named CLIP
 strip on a single-strip track, or explicitly removes the strip. Timing, repeat, scale, influence,
 blend/extrapolation and mute settings are reviewed; scale/repeat are limited to 0.01–100.
-Transitions, meta strips, track lifecycle/reordering, action creation and full curve editing remain gaps.
+Locked tracks reject strip edits, including removal. Unlock explicitly first.
+
+`nla.edit_track(object_name, track_name, settings, remove=false)` supports `name`, `mute` and
+`lock` settings on an exact track. Names must be unique and fit 63 UTF-8 bytes. A locked track
+accepts only a separate `{"lock": false}` update. To remove a track, pass `remove=true` without
+settings; the track must be unlocked and empty. This never deletes its action datablocks or
+implicitly removes strips. Unrelated track order, mute/lock state and active actions are preserved.
+Mute changes playback and should be verified at representative frames after editing.
+
+Transitions, meta strips, track reordering/solo controls, action creation and full curve editing remain gaps.
 
 ## Geometry Nodes zones
 

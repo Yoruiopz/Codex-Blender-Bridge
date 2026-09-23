@@ -10,6 +10,13 @@ from ._common import MCPToolBinding, params
 
 TOOL_DATA = (
     (
+        "nla.edit_track",
+        "animation_layers",
+        True,
+        ("EDIT_ANIMATION",),
+        "Rename, mute or lock an exact NLA track, or remove an unlocked empty track without deleting actions.",
+    ),
+    (
         "weights.smooth",
         "weights",
         True,
@@ -306,6 +313,20 @@ class ArtistTools:
                 action_name=action_name,
                 frame_start=frame_start,
                 slot_identifier=slot_identifier,
+            ),
+        )
+
+    async def nla_edit_track(
+        self,
+        object_name: str,
+        track_name: str,
+        settings: dict[str, Any] | None = None,
+        remove: bool = False,
+    ) -> Any:
+        return await self.registry.call(
+            "nla.edit_track",
+            params(
+                object_name=object_name, track_name=track_name, settings=settings, remove=remove
             ),
         )
 

@@ -217,6 +217,42 @@ def main():
     )
     scene.frame_set(6)
     assert abs(actor.location.x - 5) < 0.01, actor.location.x
+    protected = actor.animation_data.nla_tracks.new()
+    protected.name = "Protected"
+    call(
+        anim.nla_edit_track,
+        object_name=actor.name,
+        track_name="Motion",
+        settings={"name": "Renamed", "mute": True},
+    )
+    actor.location.x = 42
+    scene.frame_set(7)
+    assert actor.location.x == 42
+    denied(anim.nla_edit_track, object_name=actor.name, track_name="Renamed", remove=True)
+    denied(
+        anim.nla_edit_track,
+        object_name=actor.name,
+        track_name="Renamed",
+        settings={"name": "Protected"},
+    )
+    call(
+        anim.nla_edit_track,
+        object_name=actor.name,
+        track_name="Renamed",
+        settings={"name": "Motion", "mute": False, "lock": True},
+    )
+    denied(
+        anim.nla_edit,
+        object_name=actor.name,
+        track_name="Motion",
+        strip_name="Walk",
+        settings={"scale": 2.0},
+    )
+    call(anim.nla_edit_track, object_name=actor.name, track_name="Motion", settings={"lock": False})
+    scene.frame_set(6)
+    assert abs(actor.location.x - 5) < 0.01
+    evidence = call(anim.inspect, object_name=actor.name)
+    assert evidence["active_action"] is None and evidence["nla_enabled"]
     call(
         anim.nla_edit,
         object_name=actor.name,
@@ -227,6 +263,10 @@ def main():
     assert actor.animation_data.nla_tracks["Motion"].strips["Walk"].scale == 2
     call(anim.nla_edit, object_name=actor.name, track_name="Motion", strip_name="Walk", remove=True)
     assert not actor.animation_data.nla_tracks["Motion"].strips
+    call(anim.nla_edit_track, object_name=actor.name, track_name="Motion", remove=True)
+    assert [t.name for t in actor.animation_data.nla_tracks] == ["Protected"]
+    assert not protected.mute and not protected.lock
+    assert bpy.data.actions.get(action.name) == action
 
     for kind in ("REPEAT", "SIMULATION"):
         group = f"Artist {kind}"
