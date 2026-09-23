@@ -106,9 +106,25 @@ def main() -> None:
         bpy.context.scene.collection.objects.link(sibling)
         dispatch("context.set_mode", {"object_name": "Cube", "mode": "EDIT"})
         rejected({"object_name": "Cube"}, "NOT_IMPLEMENTED")
+        for method, arguments in (
+            ("mesh.recalculate_normals", {}), ("mesh.delete_selected", {}),
+            ("mesh.dissolve_selected", {}), ("mesh.extrude_selected", {"offset": [0, 0, 1]}),
+            ("mesh.inset_selected", {"thickness": 0.1}), ("mesh.bevel_selected", {"width": 0.1}),
+            ("uv.unwrap", {}), ("uv.smart_project", {}), ("uv.pack_islands", {}),
+        ):
+            try:
+                dispatch(method, {"object_name": "Cube", **arguments})
+                raise AssertionError(f"Shared mesh should be rejected by {method}")
+            except BridgeError as error:
+                assert error.code == "NOT_IMPLEMENTED", (method, error.code)
+        # Shared data remains inspectable; only mutation is refused.
+        assert dispatch("mesh.inspect", {"object_name": "Cube"})["object"] == "Cube"
+        assert dispatch("uv.inspect", {"object_name": "Cube"})["object"] == "Cube"
         assert not any(edge.seam for edge in bmesh.from_edit_mesh(cube.data).edges)
         dispatch("context.set_mode", {"object_name": "Cube", "mode": "OBJECT"})
         assert not any(edge.use_seam for edge in sibling.data.edges)
+        assert before_positions == [tuple(vertex.co) for vertex in sibling.data.vertices]
+        assert before_uvs == [tuple(loop.uv) for loop in sibling.data.uv_layers.active.data]
         print("BLENDER_CODEX_SEAMS_SMOKE_OK " + json.dumps({
             "version": bpy.app.version_string, "batch_verified": True,
             "topology_uvs_materials_selection_preserved": True,

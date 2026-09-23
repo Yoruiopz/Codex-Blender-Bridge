@@ -16,6 +16,11 @@ The main branch also includes **unreleased seam-authoring development**: `mesh.m
 and edge seam flags in component inspection, plus opt-in UV coordinate pages in `uv.inspect`.
 These are not included in the 0.3.0 downloads.
 
+Development is working toward **1.0.0** through explicit [release-readiness gates](docs/release-1.0-readiness.md),
+not a tool-count target. Main also hardens mesh/UV edits against implicit changes to linked
+duplicates: selection-scoped mesh edits and UV unwrap/Smart Project/packing now reject shared,
+library-linked or override data. Inspection remains available; no automatic data copying occurs.
+
 ## Install — no source build needed
 
 You need Blender **4.2+**, standalone **Python 3.10+**, and a local Codex client with MCP support.

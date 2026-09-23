@@ -24,6 +24,7 @@ from ..utils import (
     serialize_transform,
     vector3,
 )
+from ._mesh_safety import require_local_single_user_mesh
 from .interaction import _active_edit_mesh
 
 try:
@@ -336,6 +337,7 @@ def _edit_bmesh(params: Mapping[str, Any]) -> tuple[Any, Any, Mapping[str, Any] 
         )
     if bmesh is None:
         raise BridgeError(ErrorCode.BLENDER_CONTEXT_ERROR, "bmesh is unavailable.")
+    require_local_single_user_mesh(obj)
     bm = bmesh.from_edit_mesh(obj.data)
     bm.verts.ensure_lookup_table()
     bm.edges.ensure_lookup_table()
@@ -609,11 +611,7 @@ def mark_seams(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any
     if selection_id is not None and (not isinstance(selection_id, str) or not selection_id):
         raise invalid_argument("'selection_id' must be a non-empty string.")
     _bpy, obj, bm, _sequences = _active_edit_mesh(name)
-    if any(getattr(data, "library", None) or getattr(data, "override_library", None)
-           for data in (obj, obj.data)):
-        raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Seam editing requires local, non-override data.", {"object": name})
-    if obj.data.users != 1:
-        raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Seam editing requires a single-user mesh; shared data is not changed implicitly.", {"object": name, "mesh_users": obj.data.users})
+    require_local_single_user_mesh(obj)
     reference = validate_selection_reference(selection_id, obj, bm) if selection_id else None
     edges = _operation_elements(bm.edges, "edges", reference)
     if not edges or any(edge.hide for edge in edges):

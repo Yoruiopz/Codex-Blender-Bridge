@@ -1,5 +1,9 @@
 # Roadmap
 
+The next major target is **1.0.0**, gated by the [readiness plan](release-1.0-readiness.md).
+It is not ready yet. Safety, end-to-end evidence and install/upgrade compatibility take
+priority over adding enough tools to claim complete Blender coverage.
+
 > This document records the historical **0.2.0 baseline**. For the 20 additional tools and behavior shipped in 0.3.0, see [agent workflows](agent-workflows.md) and [release notes](releases/0.3.0.md).
 
 The running registry and passing tests are authoritative. This roadmap separates shipped 0.2.0 behavior from planned breadth; a roadmap item is never a claim that a tool exists.

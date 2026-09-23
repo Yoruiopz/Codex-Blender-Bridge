@@ -13,6 +13,7 @@ from ..permissions import Permission
 from ..selection import validate_selection_reference
 from ..tool_registry import ToolContext, ToolRegistry
 from ..utils import bool_param, float_param, get_object, int_param, require_blender
+from ._mesh_safety import require_local_single_user_mesh
 from ._rna import bounded_name
 
 try:
@@ -482,6 +483,7 @@ def _operation_context(
             "UV operations require single-object Edit Mode to avoid modifying another mesh.",
             {"edit_objects": [item.name for item in edit_objects]},
         )
+    require_local_single_user_mesh(obj)
     if not operator.poll():
         raise BridgeError(
             ErrorCode.BLENDER_CONTEXT_ERROR,
