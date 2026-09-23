@@ -33,7 +33,7 @@ def test_artist_metadata_and_permissions(addon_package):
     for group in MODULES:
         mcp.enable(group)
     assert {name for name, *_ in TOOL_DATA} <= set(mcp.tool_names())
-    assert len(ArtistTools(mcp).bindings()) == 19
+    assert len(ArtistTools(mcp).bindings()) == len(TOOL_DATA) + 3
 
 
 @pytest.mark.parametrize(
@@ -43,6 +43,8 @@ def test_artist_metadata_and_permissions(addon_package):
         ("weights", "group_create"),
         ("weights", "assign"),
         ("weights", "normalize"),
+        ("weights", "smooth"),
+        ("weights", "transfer"),
         ("compositor", "inspect"),
         ("compositor", "create"),
         ("animation_layers", "inspect"),

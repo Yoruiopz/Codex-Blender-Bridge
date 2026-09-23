@@ -175,7 +175,8 @@ Try this with matching 0.3.0 packages:
 This is broad Blender access, **not a claim that every Blender action has a structured tool**.
 Tools support their declared schemas and reviewed types, not every property in Blender.
 Mode switching does not implement sculpt or paint strokes. Unreleased `main` now adds
-structured compositor editing, vertex-weight assignment/normalization, transform drivers,
+structured compositor editing, vertex-weight assignment/normalization/smoothing and explicit
+mapped weight transfer, transform drivers,
 NLA clips, paired Geometry Nodes simulation/repeat zones, and scoped in-memory cloth baking.
 These are bounded implementations, not complete coverage of each editor. Fluid/rigid-body
 baking, weight-paint brushes, arbitrary driver expressions and broader NLA workflows remain gaps.
@@ -236,7 +237,7 @@ is identified above, and the feature table describes the published release.
 Blender's local recovery UI also has an add-on-only restore action, not an extra MCP tool.
 
 <!-- BEGIN GENERATED MCP TOOLS -->
-Current registry: **128 MCP tools**.
+Current registry: **130 MCP tools**.
 
 <details>
 <summary>core — 16 tools</summary>
@@ -523,7 +524,7 @@ Current registry: **128 MCP tools**.
 </details>
 
 <details>
-<summary>weights — 4 tools</summary>
+<summary>weights — 6 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
@@ -531,6 +532,8 @@ Current registry: **128 MCP tools**.
 | `weights.group_create` | Create an explicitly named vertex group on a local single-user mesh. |
 | `weights.inspect` | Inspect paginated vertex weights and locked groups in Object Mode. |
 | `weights.normalize` | Normalize named unlocked groups while preserving all unmentioned weights. |
+| `weights.smooth` | Smooth one unlocked group across mesh edges on explicit vertices; fixed outside boundary and no implicit normalization. |
+| `weights.transfer` | Copy one group through explicit source/target vertex pairs, snapshotting before writes; no geometric correspondence guesses. |
 
 </details>
 

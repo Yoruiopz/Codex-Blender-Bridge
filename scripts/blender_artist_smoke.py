@@ -75,6 +75,74 @@ def main():
     selected = [o.name for o in bpy.context.selected_objects]
     active = bpy.context.view_layer.objects.active
     cube = bpy.data.objects["Cube"]
+    # Numeric weight workflows: explicit topology and source/target correspondence.
+    line_mesh = bpy.data.meshes.new("Weight Line")
+    line_mesh.from_pydata([(0, 0, 0), (1, 0, 0), (2, 0, 0)], [(0, 1), (1, 2)], [])
+    line = bpy.data.objects.new("Weight Line", line_mesh)
+    scene.collection.objects.link(line)
+    for name in ("Skin", "Protected"):
+        call(weights.group_create, object_name=line.name, group_name=name)
+    call(weights.assign, object_name=line.name, group_name="Skin", vertex_indices=[0], weight=1.0)
+    call(
+        weights.assign,
+        object_name=line.name,
+        group_name="Protected",
+        vertex_indices=[0, 1, 2],
+        weight=0.25,
+    )
+    call(
+        weights.smooth,
+        object_name=line.name,
+        group_name="Skin",
+        vertex_indices=[1],
+        iterations=3,
+        factor=1.0,
+    )
+    assert line.vertex_groups["Skin"].weight(0) == 1.0
+    assert line.vertex_groups["Skin"].weight(1) == 0.5
+    call(
+        weights.transfer,
+        source_object=line.name,
+        source_group="Skin",
+        object_name=line.name,
+        group_name="Skin",
+        source_indices=[0, 1],
+        vertex_indices=[1, 0],
+    )
+    assert line.vertex_groups["Skin"].weight(0) == 0.5
+    assert line.vertex_groups["Skin"].weight(1) == 1.0
+    call(
+        weights.transfer,
+        source_object=line.name,
+        source_group="Skin",
+        object_name=line.name,
+        group_name="Skin",
+        source_indices=[2],
+        vertex_indices=[0],
+    )
+    assert len(line_mesh.vertices[0].groups) == 1
+    assert all(line.vertex_groups["Protected"].weight(i) == 0.25 for i in range(3))
+    assert [tuple(v.co) for v in line_mesh.vertices] == [(0, 0, 0), (1, 0, 0), (2, 0, 0)]
+    line.vertex_groups["Skin"].lock_weight = True
+    denied(weights.smooth, object_name=line.name, group_name="Skin", vertex_indices=[1])
+    destination = bpy.data.objects.new("Weight Destination", line_mesh.copy())
+    scene.collection.objects.link(destination)
+    call(weights.group_create, object_name=destination.name, group_name="Copied")
+    call(
+        weights.transfer,
+        source_object=line.name,
+        source_group="Skin",
+        object_name=destination.name,
+        group_name="Copied",
+        source_indices=[1, 0],
+        vertex_indices=[2, 1],
+    )
+    assert destination.vertex_groups["Copied"].weight(2) == 1.0
+    assert all(
+        g.group != destination.vertex_groups["Copied"].index
+        for g in destination.data.vertices[1].groups
+    )
+    assert line.vertex_groups["Skin"].weight(1) == 1.0
     for name, value in (("A", 0.2), ("B", 0.3)):
         call(weights.group_create, object_name=cube.name, group_name=name)
         call(

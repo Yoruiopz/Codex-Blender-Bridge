@@ -1,6 +1,6 @@
 # Structured artist tools (unreleased)
 
-These 19 tools are development work on `main`, not part of the published 0.3.0 assets.
+These 21 tools are development work on `main`, not part of the published 0.3.0 assets.
 They implement reviewed subsets of the requested 1.0 artist workflows. They do not yet
 provide every compositor node, simulation solver, painting brush, driver or NLA operation.
 Install matching development add-on and MCP sources to exercise them; do not mix an old
@@ -37,9 +37,24 @@ Mutations require local, non-override, single-user mesh data.
   groups to fill the weight remaining after all unnamed groups. Unnamed weights are preserved.
   Zero target totals and untouched totals exceeding one are rejected before mutation.
 
-Locked groups cannot be edited. Weight application snapshots memberships and attempts rollback
+- `weights.smooth(object_name, group_name, vertex_indices, iterations=1, factor=0.5)` performs
+  simultaneous one-ring edge averaging on one group. Only named vertices change; neighboring
+  vertices outside the target set are fixed boundary values. Missing weights count as zero.
+  Isolated vertices stay unchanged. Limits: 1–20 iterations, factor 0–1, 400,000 mesh edges and
+  20,000 selected adjacency entries. This changes weights, never geometry or selection.
+- `weights.transfer(source_object, source_group, object_name, group_name, source_indices,
+  vertex_indices)` copies weights through explicit positional pairs. Both lists must contain
+  1–1,000 unique indices and have equal length. Snapshotting makes overlapping same-object
+  mappings safe. Missing source membership removes the target membership. Target groups must
+  already exist; source groups may be locked. No nearest-surface or symmetry guess is made.
+
+Smoothing and transfer preserve unrelated groups and do **not** normalize implicitly. Run
+explicit normalization afterward when required; inspect totals before assuming skinning is valid.
+Geometric mirroring, surface-interpolated transfer and brush strokes remain unimplemented.
+
+Locked target groups cannot be edited. Weight application snapshots memberships and attempts rollback
 on failure; inspect `rollback_performed` and reinspect before retrying. This is numeric skin-weight
-authoring, **not** brush strokes, smoothing/mirroring/transferring weights or deform-quality validation.
+authoring, **not** brush strokes or deform-quality validation.
 
 ## Compositor
 

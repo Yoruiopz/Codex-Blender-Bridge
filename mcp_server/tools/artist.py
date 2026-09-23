@@ -10,6 +10,20 @@ from ._common import MCPToolBinding, params
 
 TOOL_DATA = (
     (
+        "weights.smooth",
+        "weights",
+        True,
+        ("EDIT_MESH",),
+        "Smooth one unlocked group across mesh edges on explicit vertices; fixed outside boundary and no implicit normalization.",
+    ),
+    (
+        "weights.transfer",
+        "weights",
+        True,
+        ("EDIT_MESH",),
+        "Copy one group through explicit source/target vertex pairs, snapshotting before writes; no geometric correspondence guesses.",
+    ),
+    (
         "weights.inspect",
         "weights",
         False,
@@ -140,6 +154,46 @@ def load_definitions() -> tuple[ToolDefinition, ...]:
 class ArtistTools:
     def __init__(self, registry: ToolRegistry) -> None:
         self.registry = registry
+
+    async def weights_smooth(
+        self,
+        object_name: str,
+        group_name: str,
+        vertex_indices: list[int],
+        iterations: int = 1,
+        factor: float = 0.5,
+    ) -> Any:
+        return await self.registry.call(
+            "weights.smooth",
+            params(
+                object_name=object_name,
+                group_name=group_name,
+                vertex_indices=vertex_indices,
+                iterations=iterations,
+                factor=factor,
+            ),
+        )
+
+    async def weights_transfer(
+        self,
+        source_object: str,
+        source_group: str,
+        object_name: str,
+        group_name: str,
+        source_indices: list[int],
+        vertex_indices: list[int],
+    ) -> Any:
+        return await self.registry.call(
+            "weights.transfer",
+            params(
+                source_object=source_object,
+                source_group=source_group,
+                object_name=object_name,
+                group_name=group_name,
+                source_indices=source_indices,
+                vertex_indices=vertex_indices,
+            ),
+        )
 
     async def weights_inspect(
         self, object_name: str, offset: int = 0, max_vertices: int = 50
