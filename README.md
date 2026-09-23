@@ -203,6 +203,14 @@ Follow `coordinates.next_offset` until null. `analysis_truncated` indicates the 
 restart inspection after UV, selection, topology, mode, scene or layer changes. Default
 inspection remains compact and omits coordinate pages; meshes without UV layers return null.
 
+Unreleased UV inspection also corrects island counting: seam flags alone no longer split
+an existing UV island. Connectivity uses matching UV coordinates at both endpoints of a
+shared mesh edge (tolerance 1e-6); coincident but disconnected geometry stays separate.
+Non-manifold edges with other than two scoped faces are not joined. Marking seams and
+unwrapping are separate steps; this inspection describes current UVs, not a proposed unwrap.
+Disconnected-island traversal now sorts seeds once instead of repeatedly scanning the
+remaining faces, avoiding quadratic seed selection on highly fragmented UV layouts.
+
 ### Complete tool inventory — main branch
 
 Expand a domain for every registered MCP tool. This inventory is generated from the code

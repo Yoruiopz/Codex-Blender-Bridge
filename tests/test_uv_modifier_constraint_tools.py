@@ -256,7 +256,7 @@ def test_mcp_wrappers_forward_explicit_names_and_settings() -> None:
     assert registry.calls[2][1]["selection_id"] == "sel_123"
 
 
-def test_uv_island_connectivity_honors_seams(addon_package: str) -> None:
+def test_uv_island_connectivity_does_not_treat_seams_as_uv_edits(addon_package: str) -> None:
     uv = importlib.import_module(f"{addon_package}.tools.uv")
     shared_first = {0: (0.0, 0.0), 1: (1.0, 0.0)}
     shared_second = {0: (0.0, 0.0), 1: (1.0, 0.0)}
@@ -264,10 +264,10 @@ def test_uv_island_connectivity_honors_seams(addon_package: str) -> None:
         0: [(4, False, shared_first)],
         1: [(4, False, shared_second)],
     }
-    separated = {
+    seam_marked = {
         0: [(4, True, shared_first)],
         1: [(4, False, shared_second)],
     }
 
     assert uv._islands(connected) == [[0, 1]]
-    assert uv._islands(separated) == [[0], [1]]
+    assert uv._islands(seam_marked) == [[0, 1]]

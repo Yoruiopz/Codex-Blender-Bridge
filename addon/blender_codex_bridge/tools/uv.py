@@ -74,16 +74,18 @@ def _islands(
     for records in edges.values():
         if len(records) != 2:
             continue
-        (first_index, first_seam, first_uvs), (second_index, second_seam, second_uvs) = records
-        if first_seam or second_seam or first_uvs.keys() != second_uvs.keys():
+        (first_index, _first_seam, first_uvs), (second_index, _second_seam, second_uvs) = records
+        # Seams guide future unwrapping; only current coordinates define UV continuity.
+        if first_uvs.keys() != second_uvs.keys():
             continue
         if all(_uv_close(first_uvs[key], second_uvs[key]) for key in first_uvs):
             adjacency[first_index].add(second_index)
             adjacency[second_index].add(first_index)
     remaining = set(faces)
     islands: list[list[int]] = []
-    while remaining:
-        seed = min(remaining)
+    for seed in sorted(faces):
+        if seed not in remaining:
+            continue
         queue = deque([seed])
         remaining.remove(seed)
         island: list[int] = []
