@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from ..errors import invalid_argument
+from ..errors import BridgeError, ErrorCode, invalid_argument
 from ..permissions import Permission
 from ..utils import get_object, int_param, reject_unknown_params, require_blender
 from ._rna import apply_assignments, bounded_name, prepare_assignments, settings_mapping
@@ -362,6 +362,7 @@ def register_tools(registry: Any) -> None:
         ("nla.add_strip", nla_add),
         ("nla.edit_strip", nla_edit),
         ("nla.edit_track", nla_edit_track),
+        ("nla.solo_track", nla_solo_track),
     ):
         registry.register(
             name,
@@ -373,3 +374,77 @@ def register_tools(registry: Any) -> None:
             else (Permission.EDIT_ANIMATION,),
             description=f"Structured animation layer operation: {name}.",
         )
+
+
+def nla_solo_track(context: Any, params: Mapping[str, Any]) -> dict[str, Any]:
+    """Set one track's solo state with explicit consent to replace an existing solo."""
+    reject_unknown_params(params, {"object_name", "track_name", "enabled", "replace_existing"})
+    obj = _object(params, True)
+    name = bounded_name(params.get("track_name"), "track_name")
+    enabled = params.get("enabled")
+    replace = params.get("replace_existing", False)
+    if type(enabled) is not bool or type(replace) is not bool:
+        raise invalid_argument(
+            "enabled and replace_existing must be booleans; enabled is required."
+        )
+    data = obj.animation_data
+    track = data.nla_tracks.get(name) if data else None
+    if track is None or track.lock:
+        raise invalid_argument("An exact unlocked NLA track is required.")
+    if enabled and (track.mute or not data.use_nla):
+        raise invalid_argument(
+            "Unmute the target and enable NLA before soloing; neither is changed implicitly."
+        )
+    others = [t for t in data.nla_tracks if t != track and t.is_solo]
+    if enabled and others and not replace:
+        raise invalid_argument(
+            "Another track is soloed; replace_existing=true is required.",
+            solo_tracks=[t.name for t in others],
+        )
+    if enabled and any(t.lock for t in others):
+        raise invalid_argument(
+            "An existing solo track is locked; unlock it explicitly before replacement."
+        )
+    before = [(t, t.is_solo) for t in data.nla_tracks]
+    expected = [(t, enabled if t == track else False if enabled else value) for t, value in before]
+    if getattr(context, "check_cancelled", None):
+        context.check_cancelled()
+    try:
+        if enabled:
+            for other in others:
+                other.is_solo = False
+        track.is_solo = enabled
+        if any(t.is_solo != value for t, value in expected):
+            raise RuntimeError("Blender did not retain the requested solo state")
+    except Exception as exc:
+        restored = True
+        # Restore false flags before true flags because Blender soloing is exclusive.
+        for desired in (False, True):
+            for item, value in before:
+                if value == desired:
+                    try:
+                        item.is_solo = value
+                    except Exception:
+                        import logging
+
+                        logging.getLogger(__name__).exception("NLA solo rollback failed")
+                        restored = False
+        restored = restored and all(t.is_solo == value for t, value in before)
+        raise BridgeError(
+            ErrorCode.OPERATION_FAILED,
+            "Solo edit failed; reinspect animation layers.",
+            {
+                "object": obj.name,
+                "execution_started": True,
+                "verification_required": True,
+                "rollback_performed": restored,
+            },
+        ) from exc
+    return {
+        "affected_objects": [obj.name],
+        "changed_tracks": [t.name for t, value in before if t.is_solo != value],
+        "solo_before": [t.name for t, value in before if value],
+        "solo_after": [t.name for t in data.nla_tracks if t.is_solo],
+        "playback_scope": "Solo excludes other NLA tracks and the active action from evaluation; their data is preserved.",
+        **inspect(context, {"object_name": obj.name}),
+    }

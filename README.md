@@ -237,7 +237,7 @@ is identified above, and the feature table describes the published release.
 Blender's local recovery UI also has an add-on-only restore action, not an extra MCP tool.
 
 <!-- BEGIN GENERATED MCP TOOLS -->
-Current registry: **132 MCP tools**.
+Current registry: **133 MCP tools**.
 
 <details>
 <summary>core — 16 tools</summary>
@@ -277,7 +277,7 @@ Current registry: **132 MCP tools**.
 </details>
 
 <details>
-<summary>animation_layers — 6 tools</summary>
+<summary>animation_layers — 7 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
@@ -287,6 +287,7 @@ Current registry: **132 MCP tools**.
 | `nla.add_strip` | Add an existing action as an explicit NLA strip on a new named track, with slot selection. |
 | `nla.edit_strip` | Configure a named single-track CLIP strip or explicitly remove it. |
 | `nla.edit_track` | Rename, mute or lock an exact NLA track, or remove an unlocked empty track without deleting actions. |
+| `nla.solo_track` | Set an exact track's solo state; replacing another solo requires explicit acknowledgement and unlocked tracks. |
 
 </details>
 

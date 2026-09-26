@@ -1,6 +1,6 @@
 # Structured artist tools (unreleased)
 
-These 23 tools are development work on `main`, not part of the published 0.3.0 assets.
+These 24 tools are development work on `main`, not part of the published 0.3.0 assets.
 They implement reviewed subsets of the requested 1.0 artist workflows. They do not yet
 provide every compositor node, simulation solver, painting brush, driver or NLA operation.
 Install matching development add-on and MCP sources to exercise them; do not mix an old
@@ -112,7 +112,15 @@ settings; the track must be unlocked and empty. This never deletes its action da
 implicitly removes strips. Unrelated track order, mute/lock state and active actions are preserved.
 Mute changes playback and should be verified at representative frames after editing.
 
-Transitions, meta strips, track reordering/solo controls, action creation and full curve editing remain gaps.
+`nla.solo_track(object_name, track_name, enabled, replace_existing=false)` enables/disables
+solo on an exact unlocked track. Enabling requires an unmuted target and NLA already enabled.
+Replacing a different solo requires `replace_existing=true`; an existing locked solo track
+must first be unlocked separately. Solo changes which tracks and active action are evaluated,
+not their contents or mute settings. Disabling a non-solo track leaves another solo unchanged.
+Results list changed tracks and before/after solo names. A failure attempts to restore the
+previous flags and reports rollback evidence; reinspect before retrying.
+
+Transitions, meta strips, track reordering, action creation and full curve editing remain gaps.
 
 ## Geometry Nodes zones
 

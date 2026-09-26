@@ -220,6 +220,55 @@ def main():
     protected = actor.animation_data.nla_tracks.new()
     protected.name = "Protected"
     call(
+        anim.nla_add,
+        object_name=actor.name,
+        track_name="Alternate",
+        strip_name="Slow",
+        action_name=action.name,
+    )
+    call(
+        anim.nla_edit,
+        object_name=actor.name,
+        track_name="Alternate",
+        strip_name="Slow",
+        settings={"scale": 2.0},
+    )
+    scene.frame_set(6)
+    alternate_x = actor.location.x
+    assert abs(alternate_x - 5) > 0.1
+    solo = call(anim.nla_solo_track, object_name=actor.name, track_name="Motion", enabled=True)
+    scene.frame_set(6)
+    assert solo["solo_after"] == ["Motion"] and abs(actor.location.x - 5) < 0.01
+    denied(anim.nla_solo_track, object_name=actor.name, track_name="Alternate", enabled=True)
+    call(anim.nla_edit_track, object_name=actor.name, track_name="Motion", settings={"lock": True})
+    denied(
+        anim.nla_solo_track,
+        object_name=actor.name,
+        track_name="Alternate",
+        enabled=True,
+        replace_existing=True,
+    )
+    call(anim.nla_edit_track, object_name=actor.name, track_name="Motion", settings={"lock": False})
+    call(
+        anim.nla_solo_track,
+        object_name=actor.name,
+        track_name="Alternate",
+        enabled=True,
+        replace_existing=True,
+    )
+    scene.frame_set(6)
+    assert abs(actor.location.x - alternate_x) < 0.01
+    call(anim.nla_solo_track, object_name=actor.name, track_name="Alternate", enabled=False)
+    call(
+        anim.nla_edit,
+        object_name=actor.name,
+        track_name="Alternate",
+        strip_name="Slow",
+        remove=True,
+    )
+    call(anim.nla_edit_track, object_name=actor.name, track_name="Alternate", remove=True)
+    assert not protected.is_solo and not protected.mute
+    call(
         anim.nla_edit_track,
         object_name=actor.name,
         track_name="Motion",

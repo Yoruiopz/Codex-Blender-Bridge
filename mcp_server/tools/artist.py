@@ -10,6 +10,13 @@ from ._common import MCPToolBinding, params
 
 TOOL_DATA = (
     (
+        "nla.solo_track",
+        "animation_layers",
+        True,
+        ("EDIT_ANIMATION",),
+        "Set an exact track's solo state; replacing another solo requires explicit acknowledgement and unlocked tracks.",
+    ),
+    (
         "nla.edit_track",
         "animation_layers",
         True,
@@ -313,6 +320,19 @@ class ArtistTools:
                 action_name=action_name,
                 frame_start=frame_start,
                 slot_identifier=slot_identifier,
+            ),
+        )
+
+    async def nla_solo_track(
+        self, object_name: str, track_name: str, enabled: bool, replace_existing: bool = False
+    ) -> Any:
+        return await self.registry.call(
+            "nla.solo_track",
+            params(
+                object_name=object_name,
+                track_name=track_name,
+                enabled=enabled,
+                replace_existing=replace_existing,
             ),
         )
 
