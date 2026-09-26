@@ -4,6 +4,9 @@ Status: **not release-ready**. This is an acceptance plan, not a feature announc
 or a promise of a release date. Published 0.3.0 remains alpha; `main` contains unreleased work.
 No version bump or publication happens merely because the tool count increases.
 
+Follow the [1.0 execution plan](plan-1.0.md) for milestone dependencies, prioritized work,
+end-to-end scenarios and evidence requirements. This document defines the acceptance gates.
+
 ## 1.0 product direction: a full 3D-artist workflow
 
 The intended target is an agent that can carry a brief through a complete Blender art

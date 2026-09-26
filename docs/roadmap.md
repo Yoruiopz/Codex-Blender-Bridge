@@ -1,6 +1,7 @@
 # Roadmap
 
-The next major target is **1.0.0**, gated by the [readiness plan](release-1.0-readiness.md).
+The next major target is **1.0.0**, scheduled by the [execution plan](plan-1.0.md)
+and gated by the [readiness plan](release-1.0-readiness.md).
 It is not ready yet. Safety, end-to-end evidence and install/upgrade compatibility take
 priority over adding enough tools to claim complete Blender coverage.
 

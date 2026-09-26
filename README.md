@@ -17,6 +17,7 @@ and edge seam flags in component inspection, plus opt-in UV coordinate pages in 
 These are not included in the 0.3.0 downloads.
 
 Development is working toward **1.0.0** through explicit [release-readiness gates](docs/release-1.0-readiness.md),
+following the [milestones and prioritized execution plan](docs/plan-1.0.md),
 with a [full 3D-artist capability target](docs/release-1.0-readiness.md#10-product-direction-a-full-3d-artist-workflow),
 not a tool-count target or a claim that current releases already replace an artist.
 Main also hardens mesh/UV edits against implicit changes to linked
