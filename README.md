@@ -23,6 +23,12 @@ Main also hardens mesh/UV edits against implicit changes to linked
 duplicates: selection-scoped mesh edits and UV unwrap/Smart Project/packing now reject shared,
 library-linked or override data. Inspection remains available; no automatic data copying occurs.
 
+Unreleased material-slot edits (`material.assign`, `material.unassign`, `material.slot_add`,
+`material.slot_remove`) likewise require Object Mode and local, editable, non-override,
+single-user object data, with a 256-slot limit. Shared data now returns `NOT_IMPLEMENTED`
+before mutation, including OBJECT-linked slot cases not yet reviewed. This prevents implicit
+changes to linked duplicates; it does not make shared shader/material editing safe by itself.
+
 ## Install — no source build needed
 
 You need Blender **4.2+**, standalone **Python 3.10+**, and a local Codex client with MCP support.

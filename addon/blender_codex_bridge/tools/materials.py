@@ -59,8 +59,7 @@ _MAX_NAME_BYTES = 63
 def _value(value: Any) -> Any:
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
         return [
-            float(item) if isinstance(item, (int, float)) else to_jsonable(item)
-            for item in value
+            float(item) if isinstance(item, (int, float)) else to_jsonable(item) for item in value
         ]
     if (
         not isinstance(value, (str, bytes))
@@ -236,6 +235,30 @@ def _object_materials(obj: Any) -> Any:
     return materials
 
 
+def _editable_slots(obj: Any) -> Any:
+    """Slot arrays belong to object data; never implicitly alter linked duplicates."""
+    materials = _object_materials(obj)
+    data = obj.data
+    if (
+        obj.mode != "OBJECT"
+        or any(
+            getattr(owner, "library", None) is not None
+            or getattr(owner, "override_library", None) is not None
+            or not getattr(owner, "is_editable", True)
+            for owner in (obj, data)
+        )
+        or data.users != 1
+    ):
+        raise BridgeError(
+            ErrorCode.NOT_IMPLEMENTED,
+            "Material-slot edits require Object Mode and local, editable, non-override, single-user object data.",
+            {"object": obj.name, "data_users": data.users, "mode": obj.mode},
+        )
+    if len(materials) > 256:
+        raise invalid_argument("Material-slot editing supports at most 256 slots.")
+    return materials
+
+
 def _slot_state(obj: Any) -> dict[str, Any]:
     materials = _object_materials(obj)
     slots = [
@@ -248,6 +271,7 @@ def _slot_state(obj: Any) -> dict[str, Any]:
     ]
     return {
         "object": obj.name,
+        "affected_objects": [obj.name],
         "active_slot_index": int(getattr(obj, "active_material_index", 0)),
         "slot_count": len(slots),
         "slots": slots,
@@ -307,10 +331,7 @@ def _color(value: Any, name: str) -> list[float]:
             f"'{name}' must contain three or four numbers from 0 to 1.",
             parameter=name,
         )
-    result = [
-        _finite_number(component, name, minimum=0.0, maximum=1.0)
-        for component in value
-    ]
+    result = [_finite_number(component, name, minimum=0.0, maximum=1.0) for component in value]
     if len(result) == 3:
         result.append(1.0)
     return result
@@ -412,7 +433,7 @@ def assign_material(context: ToolContext, params: Mapping[str, Any]) -> dict[str
     del context
     obj = get_object(_required_name(params, "object_name"), allow_active=False)
     material = _material_exact(_required_name(params, "material_name"))
-    materials = _object_materials(obj)
+    materials = _editable_slots(obj)
     index = _slot_index(params, maximum=len(materials), required=False)
     if index is None:
         existing = next(
@@ -424,11 +445,15 @@ def assign_material(context: ToolContext, params: Mapping[str, Any]) -> dict[str
             None,
         )
         if existing is None:
+            if len(materials) >= 256:
+                raise invalid_argument("Material-slot limit reached.")
             materials.append(material)
             index = len(materials) - 1
         else:
             index = existing
     elif index == len(materials):
+        if len(materials) >= 256:
+            raise invalid_argument("Material-slot limit reached.")
         materials.append(material)
     else:
         obj.material_slots[index].material = material
@@ -444,7 +469,7 @@ def assign_material(context: ToolContext, params: Mapping[str, Any]) -> dict[str
 def unassign_material(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
     del context
     obj = get_object(_required_name(params, "object_name"), allow_active=False)
-    materials = _object_materials(obj)
+    materials = _editable_slots(obj)
     index = _slot_index(params, maximum=len(materials) - 1)
     assert index is not None
     slot = obj.material_slots[index]
@@ -462,7 +487,9 @@ def add_material_slot(context: ToolContext, params: Mapping[str, Any]) -> dict[s
     del context
     obj = get_object(_required_name(params, "object_name"), allow_active=False)
     material = _material_exact(_required_name(params, "material_name"))
-    materials = _object_materials(obj)
+    materials = _editable_slots(obj)
+    if len(materials) >= 256:
+        raise invalid_argument("Material-slot limit reached.")
     materials.append(material)
     index = len(materials) - 1
     obj.active_material_index = index
@@ -477,7 +504,7 @@ def add_material_slot(context: ToolContext, params: Mapping[str, Any]) -> dict[s
 def remove_material_slot(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
     del context
     obj = get_object(_required_name(params, "object_name"), allow_active=False)
-    materials = _object_materials(obj)
+    materials = _editable_slots(obj)
     index = _slot_index(params, maximum=len(materials) - 1)
     assert index is not None
     previous = obj.material_slots[index].material

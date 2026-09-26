@@ -61,7 +61,7 @@ evidence. The present declared minimum (4.2) is broader than the locally exercis
 
 | Gate | Required acceptance evidence | Current gap / next work |
 | --- | --- | --- |
-| Target and data ownership | Every modifying domain documents shared data, linked libraries, overrides, active/multi-object modes and hidden scope; rejects unsupported cases before mutation | Mesh/UV ownership guard added on main; audit materials, modifiers, rigs, nodes, transforms and all remaining mutators |
+| Target and data ownership | Every modifying domain documents shared data, linked libraries, overrides, active/multi-object modes and hidden scope; rejects unsupported cases before mutation | Mesh/UV and material-slot ownership guards added on main; shader/material datablock editing, modifiers, rigs, nodes, transforms and other mutators still need auditing |
 | Recoverable edits | Deliberate mid-operation faults, canceled callers, operator failures and manual undo interleaving leave truthful history and verifiable recovery state | Existing checkpoints and batch evidence are not transactions; expand injected-failure and real undo tests |
 | Preserved context | Each representative workflow proves unchanged mode, selection, active object, visibility, UV layer and unrelated data where promised | Selection preservation has coverage; UV layer activation and operator context need broader audit |
 | Bounded evidence | Explicit truncation, stable pagination rules, large-scene fixtures and measured time/memory reports | Hard limits exist; add performance baselines and inspect partial-result handling across domains |
@@ -95,6 +95,22 @@ Unsupported ownership returns `NOT_IMPLEMENTED` before editing or creating a UV 
 Inspection remains available for shared meshes. This does not silently copy data or make
 linked assets local; those are separate user decisions. Other editing domains are not
 covered by this guard and still require the audit above.
+
+## Material-slot ownership progress
+
+`material.assign`, `material.unassign`, `material.slot_add` and `material.slot_remove` now
+require Object Mode and local, editable, non-override, single-user object data. This applies
+even to OBJECT-linked slots on shared data: that specialized workflow has not been reviewed,
+so it is rejected conservatively rather than silently changing slot ownership. Nothing is
+automatically copied or made local. Inspection and use of a shared material on distinct,
+single-user object data remain available. Slot editing is capped at 256 slots.
+
+`blender_material_ownership_smoke.py` proves all four shared-data edits fail before mutation,
+then verifies all four on explicitly separated test data with the other object's material
+preserved, on Blender 4.5.1 and 5.1.2. Unit tests cover library/override/read-only ownership,
+Edit Mode and capacity rejection. This is structural slot evidence, not visual shader QA or
+completion of the whole material-ownership audit. Shared material datablock/node editing and
+forced material unlinking remain separate audit work.
 
 ## UV result verification progress
 
