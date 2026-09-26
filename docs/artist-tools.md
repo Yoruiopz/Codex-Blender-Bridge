@@ -1,6 +1,6 @@
 # Structured artist tools (unreleased)
 
-These 24 tools are development work on `main`, not part of the published 0.3.0 assets.
+These 25 tools are development work on `main`, not part of the published 0.3.0 assets.
 They implement reviewed subsets of the requested 1.0 artist workflows. They do not yet
 provide every compositor node, simulation solver, painting brush, driver or NLA operation.
 Install matching development add-on and MCP sources to exercise them; do not mix an old
@@ -120,7 +120,19 @@ not their contents or mute settings. Disabling a non-solo track leaves another s
 Results list changed tracks and before/after solo names. A failure attempts to restore the
 previous flags and reports rollback evidence; reinspect before retrying.
 
-Transitions, meta strips, track reordering, action creation and full curve editing remain gaps.
+`nla.push_down(object_name, track_name, strip_name)` moves the active action into a new top
+NLA track, then clears the active action assignment. It preserves the original action datablock,
+assigned slot and frame range instead of copying keys. Existing tracks are not overwritten;
+the previous active NLA track is restored when present. The new track name must be unused.
+This scoped implementation requires NLA enabled, no drivers/solo tracks, REPLACE blending,
+influence 1 and HOLD extrapolation. The action range must have integral endpoints between
+-100,000 and 100,000, positive duration and at most 100,000 frames. Nonstandard blending,
+fractional or zero-duration ranges return `NOT_IMPLEMENTED`; they are not silently coerced.
+On failure it attempts to restore the active action/slot and remove the newly created track,
+reporting rollback evidence. Compare playback at representative frames before/after; structural
+success alone does not prove preservation for every production rig.
+
+Transitions, meta strips, track reordering, action creation, nonstandard push-down and full curve editing remain gaps.
 
 ## Geometry Nodes zones
 

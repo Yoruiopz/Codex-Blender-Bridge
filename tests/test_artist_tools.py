@@ -54,6 +54,7 @@ def test_artist_metadata_and_permissions(addon_package):
         ("animation_layers", "nla_edit"),
         ("animation_layers", "nla_edit_track"),
         ("animation_layers", "nla_solo_track"),
+        ("animation_layers", "nla_push_down"),
         ("simulation", "inspect"),
         ("simulation", "cloth_add"),
         ("simulation", "configure"),

@@ -43,7 +43,7 @@ for the requested full-artist target. Raw Python is not a substitute for complet
 
 ## Reliability promise underneath that target
 
-The current [artist-tools increment](artist-tools.md) adds 24 structured tools across compositor,
+The current [artist-tools increment](artist-tools.md) adds 25 structured tools across compositor,
 weights, drivers/NLA, cloth caches and Geometry Nodes zones. Factory-startup evidence on Blender
 4.5.1 and 5.1.2 includes evaluated motion/geometry, cloth deformation and a measured compositor
 render. These bounded foundations do not close the remaining capability or recovery gates.

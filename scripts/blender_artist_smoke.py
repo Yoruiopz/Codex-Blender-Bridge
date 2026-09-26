@@ -207,14 +207,26 @@ def main():
     actor.location.x = 10
     actor.keyframe_insert(data_path="location", frame=11)
     action = actor.animation_data.action
-    actor.animation_data.action = None
-    call(
-        anim.nla_add,
-        object_name=actor.name,
-        track_name="Motion",
-        strip_name="Walk",
-        action_name=action.name,
+    slot = actor.animation_data.action_slot
+    before_motion = []
+    for frame in (1, 6, 11, 15):
+        scene.frame_set(frame)
+        before_motion.append(tuple(actor.location))
+    below = actor.animation_data.nla_tracks.new()
+    below.name = "Below"
+    actor.animation_data.nla_tracks.active = below
+    pushed = call(
+        anim.nla_push_down, object_name=actor.name, track_name="Motion", strip_name="Walk"
     )
+    assert actor.animation_data.action is None
+    assert actor.animation_data.nla_tracks.active == below
+    assert actor.animation_data.nla_tracks[-1].name == "Motion"
+    assert actor.animation_data.nla_tracks["Motion"].strips["Walk"].action_slot == slot
+    assert pushed["pushed_action"] == action.name
+    for frame, expected in zip((1, 6, 11, 15), before_motion, strict=True):
+        scene.frame_set(frame)
+        assert all(abs(a - b) < 1e-5 for a, b in zip(actor.location, expected, strict=True))
+    call(anim.nla_edit_track, object_name=actor.name, track_name="Below", remove=True)
     scene.frame_set(6)
     assert abs(actor.location.x - 5) < 0.01, actor.location.x
     protected = actor.animation_data.nla_tracks.new()

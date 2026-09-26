@@ -10,6 +10,13 @@ from ._common import MCPToolBinding, params
 
 TOOL_DATA = (
     (
+        "nla.push_down",
+        "animation_layers",
+        True,
+        ("EDIT_ANIMATION",),
+        "Push a standard active action into a new top NLA track, preserving its action/slot and frame range; rollback on failure.",
+    ),
+    (
         "nla.solo_track",
         "animation_layers",
         True,
@@ -321,6 +328,12 @@ class ArtistTools:
                 frame_start=frame_start,
                 slot_identifier=slot_identifier,
             ),
+        )
+
+    async def nla_push_down(self, object_name: str, track_name: str, strip_name: str) -> Any:
+        return await self.registry.call(
+            "nla.push_down",
+            params(object_name=object_name, track_name=track_name, strip_name=strip_name),
         )
 
     async def nla_solo_track(

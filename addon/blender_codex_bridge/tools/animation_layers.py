@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from typing import Any
 
@@ -354,6 +355,118 @@ def nla_edit_track(context: Any, params: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def nla_push_down(context: Any, params: Mapping[str, Any]) -> dict[str, Any]:
+    """Move a standard active action into a new top NLA track without copying its keys."""
+    reject_unknown_params(params, {"object_name", "track_name", "strip_name"})
+    obj = _object(params, True)
+    names = [bounded_name(params.get(key), key, maximum=63) for key in ("track_name", "strip_name")]
+    if any(len(name.encode("utf-8")) > 63 for name in names):
+        raise invalid_argument("Track and strip names must fit 63 UTF-8 bytes.")
+    data = obj.animation_data
+    if not data or not data.action:
+        raise invalid_argument("An active action is required for push-down.")
+    if (
+        not data.use_nla
+        or len(data.drivers)
+        or any(t.is_solo for t in data.nla_tracks)
+        or len(data.nla_tracks) >= 64
+        or sum(len(t.strips) for t in data.nla_tracks) >= 256
+    ):
+        raise invalid_argument(
+            "Push-down requires enabled NLA, no drivers/solo tracks, and available track/strip capacity."
+        )
+    if data.nla_tracks.get(names[0]):
+        raise invalid_argument("Push-down requires a new unused track name.")
+    if (
+        data.action_blend_type != "REPLACE"
+        or data.action_influence != 1.0
+        or data.action_extrapolation != "HOLD"
+    ):
+        raise BridgeError(
+            ErrorCode.NOT_IMPLEMENTED,
+            "Push-down currently supports REPLACE, influence 1, HOLD active actions only.",
+        )
+    action, slot = data.action, getattr(data, "action_slot", None)
+    if len(getattr(action, "slots", ())) and slot is None:
+        raise invalid_argument("The active action needs an explicitly assigned slot.")
+    start, end = map(float, action.frame_range)
+    if (
+        not all(
+            math.isfinite(v) and v.is_integer() and -100_000 <= v <= 100_000 for v in (start, end)
+        )
+        or not 0 < end - start <= 100_000
+    ):
+        raise BridgeError(
+            ErrorCode.NOT_IMPLEMENTED,
+            "Push-down requires a nonzero integral action range of at most 100000 frames.",
+        )
+    previous_active = data.nla_tracks.active
+    track = None
+    if getattr(context, "check_cancelled", None):
+        context.check_cancelled()
+    try:
+        track = (
+            data.nla_tracks.new(prev=data.nla_tracks[-1])
+            if len(data.nla_tracks)
+            else data.nla_tracks.new()
+        )
+        track.name = names[0]
+        strip = track.strips.new(names[1], int(start), action)
+        strip.name = names[1]
+        if slot is not None:
+            strip.action_slot = slot
+        strip.action_frame_start, strip.action_frame_end = start, end
+        strip.frame_start, strip.frame_end = start, end
+        strip.blend_type, strip.extrapolation, strip.influence = "REPLACE", "HOLD", 1.0
+        if (
+            strip.action != action
+            or (slot is not None and strip.action_slot != slot)
+            or strip.frame_start != start
+            or strip.frame_end != end
+            or strip.scale != 1.0
+        ):
+            raise RuntimeError("Created strip does not match the active action")
+        data.action = None
+        if previous_active is not None:
+            data.nla_tracks.active = previous_active
+        if data.action is not None:
+            raise RuntimeError("Active action was not cleared")
+    except Exception as exc:
+        restored = True
+        try:
+            data.action = action
+            if slot is not None:
+                data.action_slot = slot
+            if track is not None:
+                data.nla_tracks.remove(track)
+            if previous_active is not None:
+                data.nla_tracks.active = previous_active
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).exception("NLA push-down rollback failed")
+            restored = False
+        raise BridgeError(
+            ErrorCode.OPERATION_FAILED,
+            "Action push-down failed; reinspect before retrying.",
+            {
+                "object": obj.name,
+                "execution_started": True,
+                "verification_required": True,
+                "rollback_performed": restored,
+            },
+        ) from exc
+    return {
+        "affected_objects": [obj.name],
+        "pushed_action": action.name,
+        "preserved_slot": getattr(slot, "identifier", None),
+        "action_range": [start, end],
+        "created_track": track.name,
+        "created_strip": strip.name,
+        **inspect(context, {"object_name": obj.name}),
+    }
+
+
 def register_tools(registry: Any) -> None:
     for name, handler in (
         ("animation_layers.inspect", inspect),
@@ -363,6 +476,7 @@ def register_tools(registry: Any) -> None:
         ("nla.edit_strip", nla_edit),
         ("nla.edit_track", nla_edit_track),
         ("nla.solo_track", nla_solo_track),
+        ("nla.push_down", nla_push_down),
     ):
         registry.register(
             name,
