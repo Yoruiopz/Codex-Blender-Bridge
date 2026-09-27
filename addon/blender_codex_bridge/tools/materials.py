@@ -11,7 +11,8 @@ from ..errors import BridgeError, ErrorCode, invalid_argument
 from ..permissions import Permission
 from ..serialization import to_jsonable
 from ..tool_registry import ToolContext, ToolRegistry
-from ..utils import get_object, require_blender, similar_names
+from ..utils import get_object, require_blender
+from .material_scope import editable_material_scope, material_exact, material_scope
 
 _KEY_NODE_TYPES = {
     "BSDF_PRINCIPLED",
@@ -132,30 +133,22 @@ def _required_name(params: Mapping[str, Any], key: str) -> str:
 
 
 def _material_exact(name: str) -> Any:
-    bpy = require_blender()
-    material = bpy.data.materials.get(name)
-    if material is None:
-        raise BridgeError(
-            ErrorCode.MATERIAL_NOT_FOUND,
-            f"Material '{name}' does not exist.",
-            {"available_similar_materials": similar_names(name, bpy.data.materials.keys())},
-        )
-    return material
+    return material_exact(require_blender(), name)
 
 
-def _material_usage(bpy: Any, material_names: set[str]) -> dict[str, dict[str, Any]]:
+def _material_usage(bpy: Any, materials: set[Any]) -> dict[Any, dict[str, Any]]:
     """Build all requested material users in one object/slot traversal."""
 
     usage = {
-        name: {"objects": [], "object_count": 0, "objects_truncated": False}
-        for name in material_names
+        material: {"objects": [], "object_count": 0, "objects_truncated": False}
+        for material in materials
     }
     for obj in bpy.data.objects:
-        matched: set[str] = set()
+        matched: set[Any] = set()
         for slot in obj.material_slots:
             material = slot.material
-            if material is not None and material.name in material_names:
-                matched.add(material.name)
+            if material is not None and material in materials:
+                matched.add(material)
         for name in matched:
             entry = usage[name]
             entry["object_count"] += 1
@@ -168,8 +161,8 @@ def _material_usage(bpy: Any, material_names: set[str]) -> dict[str, dict[str, A
     return usage
 
 
-def _inspect_material(material: Any, usage: Mapping[str, Any]) -> dict[str, Any]:
-    users = usage[material.name]
+def _inspect_material(material: Any, usage: Mapping[Any, Any]) -> dict[str, Any]:
+    users = usage[material]
     result: dict[str, Any] = {
         "name": material.name,
         "use_nodes": bool(material.use_nodes),
@@ -354,13 +347,13 @@ def inspect_material(context: ToolContext, params: Mapping[str, Any]) -> dict[st
     elif object_name:
         obj = get_object(object_name, allow_active=False)
         materials = []
-        seen: set[str] = set()
+        seen: set[Any] = set()
         materials_truncated = False
         for slot in obj.material_slots:
             material = slot.material
-            if material is None or material.name in seen:
+            if material is None or material in seen:
                 continue
-            seen.add(material.name)
+            seen.add(material)
             if len(materials) >= _MAX_MATERIALS:
                 materials_truncated = True
                 break
@@ -370,9 +363,15 @@ def inspect_material(context: ToolContext, params: Mapping[str, Any]) -> dict[st
         material_count = len(bpy.data.materials)
         materials = list(islice(bpy.data.materials, _MAX_MATERIALS))
         materials_truncated = material_count > len(materials)
-    usage = _material_usage(bpy, {material.name for material in materials})
+    usage = _material_usage(bpy, set(materials))
+    user_map = bpy.data.user_map(subset=set(materials)) if materials else {}
     return {
-        "materials": [_inspect_material(material, usage) for material in materials],
+        "materials": [
+            {**_inspect_material(material, usage), "ownership": material_scope(
+                bpy, material, user_map=user_map, object_usage=usage[material]
+            )[0]}
+            for material in materials
+        ],
         "material_count": material_count,
         "material_count_is_lower_bound": bool(object_name and materials_truncated),
         "truncated": materials_truncated,
@@ -397,7 +396,7 @@ def create_material(context: ToolContext, params: Mapping[str, Any]) -> dict[str
     except Exception:
         bpy.data.materials.remove(material)
         raise
-    usage = {material.name: {"objects": [], "object_count": 0, "objects_truncated": False}}
+    usage = {material: {"objects": [], "object_count": 0, "objects_truncated": False}}
     return {"created": True, "material": _inspect_material(material, usage)}
 
 
@@ -408,7 +407,7 @@ def delete_material(context: ToolContext, params: Mapping[str, Any]) -> dict[str
     only_if_unused = params.get("only_if_unused", True)
     if not isinstance(only_if_unused, bool):
         raise invalid_argument("'only_if_unused' must be a boolean.", parameter="only_if_unused")
-    usage = _material_usage(bpy, {material.name})[material.name]
+    usage = _material_usage(bpy, {material})[material]
     if only_if_unused and int(material.users) > 0:
         raise invalid_argument(
             f"Material '{material.name}' still has users.",
@@ -418,6 +417,7 @@ def delete_material(context: ToolContext, params: Mapping[str, Any]) -> dict[str
             object_users_truncated=usage["objects_truncated"],
         )
     name = material.name
+    scope = editable_material_scope(bpy, material, params, unlink=not only_if_unused)
     affected_objects = list(usage["objects"])
     bpy.data.materials.remove(material, do_unlink=not only_if_unused)
     return {
@@ -426,6 +426,7 @@ def delete_material(context: ToolContext, params: Mapping[str, Any]) -> dict[str
         "forced_unlink": not only_if_unused,
         "affected_objects": affected_objects,
         "affected_objects_truncated": usage["objects_truncated"],
+        "ownership_before": scope,
     }
 
 
@@ -558,6 +559,7 @@ def _principled_socket(node: Any, names: tuple[str, ...]) -> Any:
 def set_principled(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
     del context
     material = _material_exact(_required_name(params, "material_name"))
+    scope = editable_material_scope(require_blender(), material, params)
     raw_node_name = params.get("node_name")
     if raw_node_name is not None:
         raw_node_name = _required_name(params, "node_name")
@@ -601,6 +603,7 @@ def set_principled(context: ToolContext, params: Mapping[str, Any]) -> dict[str,
         "node": node.name,
         "changed": changes,
         "principled": _node(node),
+        "ownership": scope,
     }
 
 

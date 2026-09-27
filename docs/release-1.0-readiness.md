@@ -113,7 +113,28 @@ then verifies all four on explicitly separated test data with the other object's
 preserved, on Blender 4.5.1 and 5.1.2. Unit tests cover library/override/read-only ownership,
 Edit Mode and capacity rejection. This is structural slot evidence, not visual shader QA or
 completion of the whole material-ownership audit. Shared material datablock/node editing and
-forced material unlinking remain separate audit work.
+forced material unlinking were subsequently hardened as described below.
+
+## Material shader scope progress
+
+`material.set_principled`, all six shader node mutators, and `material.delete` now enforce
+local/editable/non-override material and root-tree ownership. Shared references require
+`allow_shared=true`; this acknowledges all users, not just the selected object. Inspection
+and mutation evidence includes material reference counts, bounded direct datablock users and
+object-slot users. Above 100 direct or object users, mutation is refused rather than operating
+on truncated evidence. Inspection batches user-map computation and slot traversal.
+
+Forced unlink additionally rejects noneditable/linked/override direct users and object users
+outside Object Mode. Local/library material name collisions are rejected before lookup can
+silently choose a different datablock. Usage accounting uses datablock identity, not names.
+The isolated ownership smoke verifies all eight guarded operations, explicit shared edits,
+Edit Mode rejection, real linked-library rejection and ambiguous-name rejection on 4.5.1/5.1.2.
+
+This is structural scope evidence, not visual shader quality or complete SAFE-01 acceptance.
+Transitive dependencies (including node-group consumers and collection instances), a protected
+scope contract, intentional per-object material copies and partial-failure recovery remain open.
+`indirect_users_possible` flags non-slot datablock kinds; even when false the object list is
+only slot usage, not an assertion that every dependency was enumerated.
 
 ## UV result verification progress
 

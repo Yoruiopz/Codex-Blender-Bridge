@@ -28,7 +28,16 @@ Unreleased material-slot edits (`material.assign`, `material.unassign`, `materia
 `material.slot_remove`) likewise require Object Mode and local, editable, non-override,
 single-user object data, with a 256-slot limit. Shared data now returns `NOT_IMPLEMENTED`
 before mutation, including OBJECT-linked slot cases not yet reviewed. This prevents implicit
-changes to linked duplicates; it does not make shared shader/material editing safe by itself.
+changes to linked duplicates.
+
+Unreleased shader edits (`material.set_principled` and modifying `nodes.*` tools) and
+material deletion now check material ownership in Blender. Inspect `material.inspect` first:
+shared use requires explicit `allow_shared=true`; linked/override/read-only materials remain
+protected. Responses include bounded object-slot and direct datablock users. This is not a
+complete transitive dependency graph—Geometry Nodes and collection instances need additional
+inspection. Forced unlink also checks editable users and Object Mode. Ambiguous local/library
+material names are rejected, and scopes above 100 users cannot be edited through these tools.
+No material is copied or made local automatically. These changes are not in the 0.3.0 download.
 
 ## Install — no source build needed
 

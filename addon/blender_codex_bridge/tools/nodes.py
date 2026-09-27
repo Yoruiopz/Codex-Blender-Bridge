@@ -8,11 +8,13 @@ from collections.abc import Mapping, Sequence
 from itertools import islice
 from typing import Any
 
-from ..errors import BridgeError, ErrorCode, invalid_argument
+from ..errors import BridgeError as BridgeError
+from ..errors import invalid_argument
 from ..permissions import Permission
 from ..serialization import to_jsonable
 from ..tool_registry import ToolContext, ToolRegistry
 from ..utils import int_param, require_blender, similar_names
+from .material_scope import editable_material_scope, material_exact, material_scope
 
 _MAX_NAME_BYTES = 63
 _MAX_SOCKET_NAME_BYTES = 256
@@ -57,17 +59,7 @@ def _optional_string(
 
 def _material_graph(material_name: str) -> tuple[Any, Any]:
     bpy = require_blender()
-    material = bpy.data.materials.get(material_name)
-    if material is None:
-        raise BridgeError(
-            ErrorCode.MATERIAL_NOT_FOUND,
-            f"Material '{material_name}' does not exist.",
-            {
-                "available_similar_materials": similar_names(
-                    material_name, bpy.data.materials.keys()
-                )
-            },
-        )
+    material = material_exact(bpy, material_name)
     if not material.use_nodes or material.node_tree is None:
         raise invalid_argument(
             f"Material '{material.name}' does not use nodes.",
@@ -325,6 +317,7 @@ def _post_state(material: Any, tree: Any, node: Any | None = None) -> dict[str, 
         "node_tree": tree.name,
         "node_count": len(tree.nodes),
         "link_count": len(tree.links),
+        "ownership": material_scope(require_blender(), material)[0],
     }
     if node is not None:
         result["node"] = _node_summary(node, max_sockets=_DEFAULT_MAX_SOCKETS)
@@ -334,6 +327,7 @@ def _post_state(material: Any, tree: Any, node: Any | None = None) -> dict[str, 
 def add_node(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
     del context
     material, tree = _material_graph(_required_string(params, "material_name"))
+    editable_material_scope(require_blender(), material, params)
     node_type = _required_string(
         params,
         "node_type",
@@ -375,6 +369,7 @@ def add_node(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
 def remove_node(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
     del context
     material, tree = _material_graph(_required_string(params, "material_name"))
+    editable_material_scope(require_blender(), material, params)
     node = _node_exact(tree, _required_string(params, "node_name"))
     name = node.name
     removed_links = sum(
@@ -392,6 +387,7 @@ def remove_node(context: ToolContext, params: Mapping[str, Any]) -> dict[str, An
 def rename_node(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
     del context
     material, tree = _material_graph(_required_string(params, "material_name"))
+    editable_material_scope(require_blender(), material, params)
     node = _node_exact(tree, _required_string(params, "node_name"))
     new_name = _required_string(params, "new_name")
     collision = tree.nodes.get(new_name)
@@ -538,6 +534,7 @@ def _coerce_default_value(socket: Any, raw_value: Any) -> Any:
 def set_node_input(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
     del context
     material, tree = _material_graph(_required_string(params, "material_name"))
+    scope = editable_material_scope(require_blender(), material, params)
     node = _node_exact(tree, _required_string(params, "node_name"))
     socket_name = _required_string(
         params,
@@ -559,6 +556,7 @@ def set_node_input(context: ToolContext, params: Mapping[str, Any]) -> dict[str,
     socket_index = next(index for index, item in enumerate(node.inputs) if item == socket)
     return {
         "input_set": True,
+        "ownership": scope,
         "material": material.name,
         "node_tree": tree.name,
         "node": node.name,
@@ -593,6 +591,7 @@ def _endpoint(
 def link_nodes(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
     del context
     material, tree = _material_graph(_required_string(params, "material_name"))
+    editable_material_scope(require_blender(), material, params)
     _, from_socket = _endpoint(tree, params, "from", "output")
     _, to_socket = _endpoint(tree, params, "to", "input")
     replace = params.get("replace_existing", False)
@@ -637,6 +636,7 @@ def link_nodes(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any
 def unlink_nodes(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
     del context
     material, tree = _material_graph(_required_string(params, "material_name"))
+    editable_material_scope(require_blender(), material, params)
     from_node, from_socket = _endpoint(tree, params, "from", "output")
     to_node, to_socket = _endpoint(tree, params, "to", "input")
     matches = [

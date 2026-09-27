@@ -151,3 +151,26 @@ coverage explicit. Each process uses factory startup and Python error exit codes
 also requires the script's structured success marker with Blender version evidence.
 Timed-out runs are terminated by the runner and remain failures even if a marker was printed.
 The report always labels release readiness `NOT_ASSESSED`. Next work: **SAFE-01**.
+
+### 2026-09-27 — SAFE-01 direct ownership implemented; acceptance still open
+
+Material Principled edits, all six shader mutators and material deletion now have a shared
+Blender-side ownership guard and MCP `allow_shared=false` default. Users explicitly acknowledge
+shared edits after inspection; linked/override/read-only materials cannot be armed. Forced
+unlink additionally checks all enumerated direct users and object modes. Exact-name resolution
+rejects local/library collisions discovered in the real Blender fixture. Batched material
+inspection uses datablock identity rather than names and computes the user map once.
+
+The expanded ownership smoke checks denied edits preserve the duplicate, intentional shared
+edits work, forced unlink in Edit Mode fails, and actual linked materials/name collisions fail
+safely. The full 26-case Windows Blender 4.5.1/5.1.2 development matrix passed at
+`build/shared-material-final-evidence/report.json` (dirty-worktree evidence, not an RC).
+Python suites passed **502 tests** on both MCP SDK 2.0.0 and 2.2.0; lint, type checks and
+README registry validation passed. No user project was opened or saved. These are structural
+safety regressions, not visual material-quality acceptance.
+
+SAFE-01 is not accepted in full: transitive dependencies, protected-scope assertions,
+intentional per-object material copies and verified partial-failure recovery remain open.
+Do not treat a bounded direct-user list as full scene scope. Next: finish the protected-material
+workflow and REC-01, then apply the same audit to remaining domains without reducing the
+full-artist acceptance target.

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import inspect
 import math
 from types import SimpleNamespace
 from typing import Any
@@ -31,6 +32,31 @@ class RecordingRegistry:
     async def call(self, method: str, values: dict[str, Any]) -> dict[str, Any]:
         self.calls.append((method, values))
         return {"method": method, "params": values}
+
+
+@pytest.mark.parametrize(
+    "tool_class,method",
+    [
+        (MaterialTools, "material_set_principled"),
+        (MaterialTools, "material_delete"),
+        *[
+            (NodeTools, f"nodes_{name}")
+            for name in ("add", "remove", "rename", "set_input", "link", "unlink")
+        ],
+    ],
+)
+def test_shared_consent_is_exposed_and_forwarded(tool_class, method):
+    registry = RecordingRegistry()
+    function = getattr(tool_class(registry), method)
+    signature = inspect.signature(function)
+    assert signature.parameters["allow_shared"].default is False
+    required = {
+        name: "fixture"
+        for name, parameter in signature.parameters.items()
+        if parameter.default is inspect.Parameter.empty
+    }
+    asyncio.run(function(**required, allow_shared=True))
+    assert registry.calls[0][1]["allow_shared"] is True
 
 
 class FakeSocket:
@@ -113,8 +139,7 @@ def test_addon_registry_declares_permissions_and_modification_metadata(
         }
     )
     assert all(
-        registry.get(name).modifies
-        for name in (*MATERIAL_TOOL_NAMES[1:], *NODE_TOOL_NAMES[1:])
+        registry.get(name).modifies for name in (*MATERIAL_TOOL_NAMES[1:], *NODE_TOOL_NAMES[1:])
     )
 
 
@@ -159,7 +184,7 @@ def test_material_and_node_wrappers_forward_exact_structured_params() -> None:
 
     assert registry.calls[0] == (
         "material.set_principled",
-        {"material_name": "Paint", "metallic": 0.8, "roughness": 0.25},
+        {"material_name": "Paint", "metallic": 0.8, "roughness": 0.25, "allow_shared": False},
     )
     assert registry.calls[1] == (
         "nodes.link",
@@ -170,6 +195,7 @@ def test_material_and_node_wrappers_forward_exact_structured_params() -> None:
             "to_node": "Principled",
             "to_socket": "Base Color",
             "replace_existing": True,
+            "allow_shared": False,
         },
     )
 
@@ -197,6 +223,9 @@ def test_principled_settings_are_bounded_and_report_post_state(
         node_tree=SimpleNamespace(nodes=NodeList([node])),
     )
     monkeypatch.setattr(materials, "_material_exact", lambda _: material)
+    # Ownership has dedicated adversarial tests; this fixture isolates socket validation.
+    monkeypatch.setattr(materials, "require_blender", lambda: None)
+    monkeypatch.setattr(materials, "editable_material_scope", lambda *args: {})
 
     result = materials.set_principled(
         None,
@@ -236,9 +265,7 @@ def test_full_graph_inspection_is_bounded_and_reports_each_truncation(
     second = make_node("Second")
     tree = SimpleNamespace(name="Paint NodeTree", nodes=NodeList([first, second]), links=[])
     material = SimpleNamespace(name="Paint", use_nodes=True, node_tree=tree)
-    blender = SimpleNamespace(
-        data=SimpleNamespace(materials=MaterialCollection([material]))
-    )
+    blender = SimpleNamespace(data=SimpleNamespace(materials=MaterialCollection([material])))
     monkeypatch.setattr(nodes, "require_blender", lambda: blender)
 
     result = nodes.inspect_nodes(

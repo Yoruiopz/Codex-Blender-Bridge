@@ -104,8 +104,9 @@ class NodeTools:
         name: str | None = None,
         label: str | None = None,
         location: list[float] | None = None,
+        allow_shared: bool = False,
     ) -> Any:
-        """Add a Blender ShaderNode type with an optional exact name and position."""
+        """Add a shader node; shared materials require allow_shared after inspecting usage."""
 
         return await self.registry.call(
             "nodes.add",
@@ -115,15 +116,16 @@ class NodeTools:
                 name=name,
                 label=label,
                 location=location,
+                allow_shared=allow_shared,
             ),
         )
 
-    async def nodes_remove(self, material_name: str, node_name: str) -> Any:
-        """Remove one exact shader node and its incident links."""
+    async def nodes_remove(self, material_name: str, node_name: str, allow_shared: bool = False) -> Any:
+        """Remove a node and its links; inspect usage before consenting with allow_shared."""
 
         return await self.registry.call(
             "nodes.remove",
-            {"material_name": material_name, "node_name": node_name},
+            {"material_name": material_name, "node_name": node_name, "allow_shared": allow_shared},
         )
 
     async def nodes_rename(
@@ -131,8 +133,9 @@ class NodeTools:
         material_name: str,
         node_name: str,
         new_name: str,
+        allow_shared: bool = False,
     ) -> Any:
-        """Rename one exact shader node without allowing a name collision."""
+        """Rename a node without collisions; shared material edits require allow_shared."""
 
         return await self.registry.call(
             "nodes.rename",
@@ -140,6 +143,7 @@ class NodeTools:
                 "material_name": material_name,
                 "node_name": node_name,
                 "new_name": new_name,
+                "allow_shared": allow_shared,
             },
         )
 
@@ -150,8 +154,9 @@ class NodeTools:
         socket_name: str,
         value: SocketValue,
         socket_index: int | None = None,
+        allow_shared: bool = False,
     ) -> Any:
-        """Set one named input; use its index only to disambiguate duplicate names."""
+        """Set an exact input; index disambiguates sockets; shared materials require allow_shared."""
 
         return await self.registry.call(
             "nodes.set_input",
@@ -161,6 +166,7 @@ class NodeTools:
                 socket_name=socket_name,
                 value=value,
                 socket_index=socket_index,
+                allow_shared=allow_shared,
             ),
         )
 
@@ -174,8 +180,9 @@ class NodeTools:
         replace_existing: bool = False,
         from_socket_index: int | None = None,
         to_socket_index: int | None = None,
+        allow_shared: bool = False,
     ) -> Any:
-        """Link exact sockets, optionally replacing a single-input destination link."""
+        """Link exact sockets with explicit replacement; shared materials require allow_shared."""
 
         return await self.registry.call(
             "nodes.link",
@@ -188,6 +195,7 @@ class NodeTools:
                 replace_existing=replace_existing,
                 from_socket_index=from_socket_index,
                 to_socket_index=to_socket_index,
+                allow_shared=allow_shared,
             ),
         )
 
@@ -200,8 +208,9 @@ class NodeTools:
         to_socket: str,
         from_socket_index: int | None = None,
         to_socket_index: int | None = None,
+        allow_shared: bool = False,
     ) -> Any:
-        """Unlink exact output and input sockets; a missing link is a no-op."""
+        """Unlink exact sockets; shared materials require allow_shared; missing links are no-ops."""
 
         return await self.registry.call(
             "nodes.unlink",
@@ -213,6 +222,7 @@ class NodeTools:
                 to_socket=to_socket,
                 from_socket_index=from_socket_index,
                 to_socket_index=to_socket_index,
+                allow_shared=allow_shared,
             ),
         )
 

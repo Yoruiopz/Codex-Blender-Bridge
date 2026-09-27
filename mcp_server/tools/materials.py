@@ -111,14 +111,16 @@ class MaterialTools:
         self,
         material_name: str,
         only_if_unused: bool = True,
+        allow_shared: bool = False,
     ) -> Any:
-        """Delete a material; active users require an explicit forced unlink."""
+        """Delete a material; forced unlink needs editable users; shared usage needs allow_shared."""
 
         return await self.registry.call(
             "material.delete",
             {
                 "material_name": material_name,
                 "only_if_unused": only_if_unused,
+                "allow_shared": allow_shared,
             },
         )
 
@@ -175,8 +177,9 @@ class MaterialTools:
         emission_color: list[float] | None = None,
         emission_strength: float | None = None,
         coat_weight: float | None = None,
+        allow_shared: bool = False,
     ) -> Any:
-        """Set bounded common inputs on an exact or unambiguous Principled node."""
+        """Set Principled inputs; inspect usage before consenting to shared edits with allow_shared."""
 
         return await self.registry.call(
             "material.set_principled",
@@ -191,6 +194,7 @@ class MaterialTools:
                 emission_color=emission_color,
                 emission_strength=emission_strength,
                 coat_weight=coat_weight,
+                allow_shared=allow_shared,
             ),
         )
 
