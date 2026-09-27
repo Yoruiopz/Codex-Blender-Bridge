@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import math
 from collections.abc import Mapping, Sequence
 from itertools import islice
@@ -12,7 +13,7 @@ from ..permissions import Permission
 from ..serialization import to_jsonable
 from ..tool_registry import ToolContext, ToolRegistry
 from ..utils import get_object, require_blender
-from .material_scope import editable_material_scope, material_exact, material_scope
+from .material_scope import editable_material_scope, local_editable, material_exact, material_scope
 
 _KEY_NODE_TYPES = {
     "BSDF_PRINCIPLED",
@@ -55,6 +56,7 @@ _MAX_KEY_NODES = 200
 _MAX_TEXTURES = 100
 _MAX_LINKS = 500
 _MAX_NAME_BYTES = 63
+LOGGER = logging.getLogger(__name__)
 
 
 def _value(value: Any) -> Any:
@@ -518,6 +520,84 @@ def remove_material_slot(context: ToolContext, params: Mapping[str, Any]) -> dic
     }
 
 
+def copy_for_object(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
+    """Isolate one slot with an OBJECT binding; never copy or edit the shared mesh."""
+    del context
+    bpy = require_blender()
+    object_name = _required_name(params, "object_name")
+    if sum(obj.name == object_name for obj in bpy.data.objects) > 1:
+        raise invalid_argument("Object name is ambiguous across libraries.", object_name=object_name)
+    obj = get_object(object_name, allow_active=False)
+    slots = _object_materials(obj)
+    if obj.mode != "OBJECT" or not all(local_editable(owner) for owner in (obj, obj.data)):
+        raise BridgeError(ErrorCode.NOT_IMPLEMENTED,
+                          "Material isolation requires Object Mode and local editable non-override object/data.")
+    if len(slots) > 256:
+        raise invalid_argument("Material isolation supports at most 256 slots.")
+    index = _slot_index(params, maximum=len(slots) - 1)
+    slot = obj.material_slots[index]
+    source = slot.material
+    if source is None:
+        raise invalid_argument("The selected material slot is empty.")
+    name = _required_name(params, "new_name")
+    if bpy.data.materials.get(name) is not None:
+        raise invalid_argument("The new material name already exists.", material_name=name)
+    tree = source.node_tree
+    if tree is not None and (len(tree.nodes) > 256 or len(tree.links) > 1024):
+        raise invalid_argument("Material isolation supports at most 256 root nodes and 1024 links.")
+    data_before = tuple(slots)
+    material_count_before = len(bpy.data.materials)
+    old_link = slot.link
+    source_name = source.name
+    copied = None
+    old_override = None
+    override_captured = False
+    try:
+        copied = source.copy()
+        copied.name = name
+        copied.use_fake_user = False
+        if copied.name != name or not local_editable(copied):
+            raise RuntimeError("Blender did not create the requested local material")
+        if tree is not None and (copied.node_tree == tree or not local_editable(copied.node_tree)):
+            raise RuntimeError("Material root node tree was not copied into editable local data")
+        slot.link = "OBJECT"
+        old_override = slot.material
+        override_captured = True
+        slot.material = copied
+        if slot.material != copied or slot.link != "OBJECT" or tuple(slots) != data_before:
+            raise RuntimeError("Material binding verification failed")
+        return {
+            "copied": True, "material": copied.name, "source_material": source_name,
+            "slot_index": index, "previous_link": old_link, "binding": "OBJECT",
+            "mesh_data_copied": False, "root_node_tree_copied": tree is not None,
+            "nested_groups_and_images_remain_shared": True,
+            "referenced_datablocks_not_deep_copied": True,
+            "ownership": material_scope(bpy, copied)[0], **_slot_state(obj),
+        }
+    except Exception as exc:
+        LOGGER.exception("Material isolation failed; attempting scoped recovery")
+        recovered = False
+        try:
+            override_restored = True
+            if override_captured:
+                slot.link = "OBJECT"
+                slot.material = old_override
+                override_restored = slot.material == old_override
+            slot.link = old_link
+            if copied is not None and copied.users == 0:
+                bpy.data.materials.remove(copied)
+                copied = None
+            recovered = (slot.link == old_link and slot.material == source
+                         and tuple(slots) == data_before and copied is None
+                         and len(bpy.data.materials) == material_count_before and override_restored)
+        except Exception:
+            LOGGER.exception("Material isolation recovery failed")
+        raise BridgeError(ErrorCode.OPERATION_FAILED,
+                          "Material isolation failed; reinspect the object before continuing.",
+                          {"execution_started": True, "rollback_verified": recovered,
+                           "affected_objects": [obj.name], "requested_material": name}) from exc
+
+
 def _principled_node(material: Any, node_name: str | None) -> Any:
     if not material.use_nodes or material.node_tree is None:
         raise invalid_argument(
@@ -662,5 +742,10 @@ def register_tools(registry: ToolRegistry) -> None:
         "material.set_principled",
         set_principled,
         description="Set validated common Principled BSDF inputs.",
+        **common,
+    )
+    registry.register(
+        "material.copy_for_object", copy_for_object,
+        description="Copy a material for one object slot without changing shared mesh data.",
         **common,
     )

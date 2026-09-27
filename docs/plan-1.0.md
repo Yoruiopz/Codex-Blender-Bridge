@@ -174,3 +174,27 @@ intentional per-object material copies and verified partial-failure recovery rem
 Do not treat a bounded direct-user list as full scene scope. Next: finish the protected-material
 workflow and REC-01, then apply the same audit to remaining domains without reducing the
 full-artist acceptance target.
+
+### 2026-09-27 — Explicit object material isolation and scoped failure recovery
+
+Added `material.copy_for_object(object_name, slot_index, new_name)` to both registries and MCP
+schemas with Blender-side `EDIT_MATERIALS` gating. It creates a local material/root-tree copy
+and binds only the selected object's slot at OBJECT level, including when objects share mesh
+data. It never copies the mesh or recursively duplicates referenced groups/images/actions.
+Linked source materials can be read into a local copy without editing the library.
+
+The real ownership fixture verifies the protected duplicate, source values, mesh, polygon
+indices, selection and active object remain unchanged. Injected post-binding failure verifies
+restoration of visible and latent OBJECT bindings and removal of the unused copy; runtime
+errors carry `execution_started` and an explicit measured `rollback_verified` result.
+Unit tests also exercise a failed recovery and ensure it is never reported as successful.
+
+Validation: **517 tests** passed with MCP SDK 2.0.0 and 2.2.0; lint/type checks and README
+registry validation passed. All **26 Blender smoke checks** passed on Windows 4.5.1/5.1.2 in
+`build/material-copy-final-matrix/report.json`. This is dirty-worktree development evidence,
+not RC acceptance; no user project was opened or saved. No visual-quality claim is made.
+
+This completes the explicit per-object material-copy slice of SAFE-01 and gives REC-01 one
+measured recovery case. Transitive protected scope, interactive Blender undo/manual-edit
+interleaving, durable recovery and the remaining full-artist workflow gates remain open.
+Next priority: actual Blender undo/recovery lifecycle evidence, not another tool-count increase.

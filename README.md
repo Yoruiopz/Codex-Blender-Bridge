@@ -39,6 +39,15 @@ inspection. Forced unlink also checks editable users and Object Mode. Ambiguous 
 material names are rejected, and scopes above 100 users cannot be edited through these tools.
 No material is copied or made local automatically. These changes are not in the 0.3.0 download.
 
+To change only one object that shares a material, use the unreleased
+`material.copy_for_object(object_name, slot_index, new_name)` tool first. It creates a named
+material/root-shader-tree copy and an **OBJECT-level slot binding**, without copying the mesh
+or changing another object's slots—even when both objects share mesh data. Then edit the new
+material normally. The target must be local, editable, non-override and in Object Mode.
+Nested groups, images and other referenced datablocks are **not deep-copied**. The tool verifies
+its binding and attempts measured local recovery if copying or assignment fails; inspect any
+failure before continuing. See the [scope and recovery limits](docs/release-1.0-readiness.md#object-specific-material-copy-progress).
+
 ## Install — no source build needed
 
 You need Blender **4.2+**, standalone **Python 3.10+**, and a local Codex client with MCP support.
@@ -253,7 +262,7 @@ is identified above, and the feature table describes the published release.
 Blender's local recovery UI also has an add-on-only restore action, not an extra MCP tool.
 
 <!-- BEGIN GENERATED MCP TOOLS -->
-Current registry: **134 MCP tools**.
+Current registry: **135 MCP tools**.
 
 <details>
 <summary>core — 16 tools</summary>
@@ -388,11 +397,12 @@ Current registry: **134 MCP tools**.
 </details>
 
 <details>
-<summary>materials — 8 tools</summary>
+<summary>materials — 9 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
 | `material.assign` | Assign a material to an exact object slot or append it. |
+| `material.copy_for_object` | Copy a material for one object slot without changing shared mesh data. |
 | `material.create` | Create a named material with optional nodes and viewport color. |
 | `material.delete` | Delete one exact material, refusing active users unless forced. |
 | `material.inspect` | Inspect material users, important nodes, textures, and Principled values. |

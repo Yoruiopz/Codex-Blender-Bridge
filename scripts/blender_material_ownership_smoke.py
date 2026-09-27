@@ -15,6 +15,7 @@ import blender_codex_bridge  # noqa: E402
 from blender_codex_bridge.errors import BridgeError  # noqa: E402
 from blender_codex_bridge.permissions import Permission, PermissionManager  # noqa: E402
 from blender_codex_bridge.runtime import get_runtime  # noqa: E402
+from blender_codex_bridge.tools import materials as material_tools  # noqa: E402
 
 
 def main():
@@ -56,6 +57,76 @@ def main():
         assert cube.active_material_index == 0
         assert [p.material_index for p in cube.data.polygons] == indices
     # Test fixture explicitly separates data. Production tools never do this implicitly.
+    original.use_nodes = True
+    protected_tree = original.node_tree
+    protected_roughness = (
+        protected_tree.nodes.get("Principled BSDF").inputs["Roughness"].default_value
+    )
+    group = bpy.data.node_groups.new("Shared Nested Shader", "ShaderNodeTree")
+    group_node = protected_tree.nodes.new("ShaderNodeGroup")
+    group_node.node_tree = group
+    # Inject a post-binding verification failure and measure recovery in real Blender.
+    cube.material_slots[0].link = "OBJECT"
+    cube.material_slots[0].material = replacement
+    cube.material_slots[0].link = "DATA"
+    material_count_before = len(bpy.data.materials)
+    real_slot_state = material_tools._slot_state
+
+    def fail_after_binding(obj):
+        assert obj.material_slots[0].material.name == "Recovery Copy"
+        raise RuntimeError("injected post-binding failure")
+
+    material_tools._slot_state = fail_after_binding
+    try:
+        try:
+            runtime.dispatch(
+                "material.copy_for_object",
+                {"object_name": cube.name, "slot_index": 0, "new_name": "Recovery Copy"},
+            )
+        except BridgeError as error:
+            assert error.code == "OPERATION_FAILED" and error.context["rollback_verified"], error
+            assert error.context["execution_started"]
+        else:
+            raise AssertionError("Injected material copy failure succeeded")
+    finally:
+        material_tools._slot_state = real_slot_state
+    assert len(bpy.data.materials) == material_count_before
+    assert bpy.data.materials.get("Recovery Copy") is None
+    assert cube.material_slots[0].link == "DATA" and cube.material_slots[0].material == original
+    cube.material_slots[0].link = "OBJECT"
+    assert cube.material_slots[0].material == replacement
+    cube.material_slots[0].link = "DATA"
+    result = runtime.dispatch(
+        "material.copy_for_object",
+        {"object_name": cube.name, "slot_index": 0, "new_name": "Isolated Paint"},
+    )
+    isolated = bpy.data.materials["Isolated Paint"]
+    assert result["affected_objects"] == [cube.name] and not result["mesh_data_copied"]
+    assert cube.data == duplicate.data and cube.data.users == 2
+    assert cube.material_slots[0].link == "OBJECT" and cube.material_slots[0].material == isolated
+    assert duplicate.material_slots[0].material == original and list(cube.data.materials) == [
+        original
+    ]
+    assert isolated.node_tree != protected_tree
+    assert next(n for n in isolated.node_tree.nodes if n.type == "GROUP").node_tree == group
+    runtime.dispatch(
+        "material.set_principled", {"material_name": isolated.name, "roughness": 0.123}
+    )
+    assert (
+        abs(
+            isolated.node_tree.nodes.get("Principled BSDF").inputs["Roughness"].default_value
+            - 0.123
+        )
+        < 1e-6
+    )
+    assert (
+        protected_tree.nodes.get("Principled BSDF").inputs["Roughness"].default_value
+        == protected_roughness
+    )
+    assert [p.material_index for p in cube.data.polygons] == indices
+    # Return the fixture to DATA binding before the older single-user slot cases.
+    cube.material_slots[0].material = None
+    cube.material_slots[0].link = "DATA"
     duplicate.data = duplicate.data.copy()
     result = runtime.dispatch(
         "material.assign",
@@ -181,6 +252,24 @@ def main():
                 assert error.code == "NOT_IMPLEMENTED", error
             else:
                 raise AssertionError(f"{method} accepted a linked material")
+        # Copying a linked source is a read; only the new local material is edited.
+        cube.material_slots[0].material = linked
+        library_tree = linked.node_tree
+        runtime.dispatch(
+            "material.copy_for_object",
+            {"object_name": cube.name, "slot_index": 0, "new_name": "Local Library Copy"},
+        )
+        local_copy = cube.material_slots[0].material
+        assert local_copy.library is None and local_copy.node_tree.library is None
+        assert local_copy.node_tree != library_tree and linked.node_tree == library_tree
+        assert cube.data.materials[0] == linked
+        runtime.dispatch(
+            "material.set_principled", {"material_name": local_copy.name, "roughness": 0.231}
+        )
+        assert (
+            abs(library_tree.nodes.get("Principled BSDF").inputs["Roughness"].default_value - 0.5)
+            < 1e-6
+        )
     assert [tuple(v.co) for v in cube.data.vertices] == geometry
     assert (
         list(bpy.context.selected_objects) == selected
@@ -194,6 +283,9 @@ def main():
                 "denied_shared_mutators": 4,
                 "protected_duplicate_preserved_on_denial": True,
                 "single_user_mutators_verified": 4,
+                "object_material_copy_preserves_shared_mesh_and_other_user": True,
+                "copy_failure_restores_latent_binding_and_removes_copy": True,
+                "linked_source_copy_is_local_without_editing_library": True,
                 "denied_shared_shader_and_delete_mutators": 8,
                 "acknowledged_shared_mutators_verified": 8,
                 "edit_mode_forced_unlink_denied": True,

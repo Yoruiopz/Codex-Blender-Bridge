@@ -136,6 +136,31 @@ scope contract, intentional per-object material copies and partial-failure recov
 `indirect_users_possible` flags non-slot datablock kinds; even when false the object list is
 only slot usage, not an assertion that every dependency was enumerated.
 
+## Object-specific material copy progress
+
+`material.copy_for_object(object_name, slot_index, new_name)` requires `EDIT_MATERIALS` and
+participates in normal main-thread history/checkpoint handling. It explicitly copies a material
+and its root shader tree, then binds it to one object slot with `link=OBJECT`. Shared mesh data,
+polygon indices, other objects and the source material are untouched. This is the intentional
+isolation route; the existing general slot edits still reject shared object data.
+
+The object and its data must be local/editable/non-override and in Object Mode. Existing names,
+empty/out-of-range slots, ambiguous object names, more than 256 slots, or root graphs above
+256 nodes/1024 links are rejected. Referenced node groups, images, animation resources and other
+datablocks are not recursively copied; editing those dependencies requires separate scope checks.
+
+Success returns the source/copy names, old/new binding, slot state and direct ownership evidence.
+Failure attempts to restore both the visible binding and a latent OBJECT override, removes only
+the newly created unused material, and reports `rollback_verified`. Every runtime failure is
+marked `execution_started=true` so the existing executor retains its finalized recovery boundary
+when available. A false recovery verdict requires reinspection, not a success claim.
+
+The real Blender ownership smoke independently verifies isolation across shared mesh data,
+root-tree independence, unchanged nested-group references and source roughness, plus a forced
+post-binding failure restoring the old visible/latent bindings and material count. It preserves
+selection, active object and geometry. This is not verification of artistic appearance, durable
+saving, interactive undo interleaving or the full transitive protected-scope workflow.
+
 ## UV result verification progress
 
 `blender_uv_modifier_constraint_smoke.py` currently passes even when Blender prints

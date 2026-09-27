@@ -56,6 +56,12 @@ MATERIAL_TOOL_DATA: tuple[tuple[str, str, bool, tuple[str, ...]], ...] = (
         True,
         ("EDIT_MATERIALS",),
     ),
+    (
+        "material.copy_for_object",
+        "Copy a material for one object slot without changing shared mesh data.",
+        True,
+        ("EDIT_MATERIALS",),
+    ),
 )
 MATERIAL_TOOL_NAMES = tuple(item[0] for item in MATERIAL_TOOL_DATA)
 
@@ -212,6 +218,15 @@ class MaterialTools:
                 self.material_set_principled,
                 self.material_set_principled.__doc__ or "",
             ),
+            MCPToolBinding("material.copy_for_object", self.material_copy_for_object,
+                           self.material_copy_for_object.__doc__ or ""),
+        )
+
+    async def material_copy_for_object(self, object_name: str, slot_index: int, new_name: str) -> Any:
+        """Copy and bind one slot at OBJECT level; mesh, nested groups and images stay shared."""
+        return await self.registry.call(
+            "material.copy_for_object",
+            {"object_name": object_name, "slot_index": slot_index, "new_name": new_name},
         )
 
 

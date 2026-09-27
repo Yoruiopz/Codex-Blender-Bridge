@@ -132,6 +132,9 @@ def test_addon_registry_declares_permissions_and_modification_metadata(
     assert registry.get("material.set_principled").permissions == frozenset(
         {permissions.Permission.EDIT_MATERIALS}
     )
+    assert registry.get("material.copy_for_object").permissions == frozenset(
+        {permissions.Permission.EDIT_MATERIALS}
+    )
     assert registry.get("material.delete").permissions == frozenset(
         {
             permissions.Permission.EDIT_MATERIALS,
