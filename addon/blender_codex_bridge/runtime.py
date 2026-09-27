@@ -35,6 +35,14 @@ def _before_file_load(_unused: Any) -> None:
         _RUNTIME.prepare_for_file_load()
 
 
+@persistent
+def _before_external_undo_redo(_unused: Any) -> None:
+    """Native history navigation invalidates our process-local marker bookkeeping."""
+    if _RUNTIME is not None and not _RUNTIME.checkpoints.recovery_in_progress:
+        _RUNTIME.checkpoints.clear()
+        clear_selection_references()
+
+
 def _preferences() -> Any | None:
     try:
         import bpy  # type: ignore
@@ -74,9 +82,17 @@ class BridgeRuntime:
         self.executor.start()
         if bpy is not None and _before_file_load not in bpy.app.handlers.load_pre:
             bpy.app.handlers.load_pre.append(_before_file_load)
+        if bpy is not None:
+            for handlers in (bpy.app.handlers.undo_pre, bpy.app.handlers.redo_pre):
+                if _before_external_undo_redo not in handlers:
+                    handlers.append(_before_external_undo_redo)
         self._registered = True
 
     def unregister(self) -> None:
+        if bpy is not None:
+            for handlers in (bpy.app.handlers.undo_pre, bpy.app.handlers.redo_pre):
+                if _before_external_undo_redo in handlers:
+                    handlers.remove(_before_external_undo_redo)
         if bpy is not None and _before_file_load in bpy.app.handlers.load_pre:
             bpy.app.handlers.load_pre.remove(_before_file_load)
         self.server.stop()

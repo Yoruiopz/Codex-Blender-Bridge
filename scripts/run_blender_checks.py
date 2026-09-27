@@ -5,7 +5,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import subprocess
+import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -28,7 +30,9 @@ CASES = {
     "uv_workflow": ("blender_uv_workflow_smoke.py", "BLENDER_CODEX_UV_WORKFLOW_SMOKE_OK "),
     "artist": ("blender_artist_smoke.py", "artist_smoke"),
     "material_ownership": ("blender_material_ownership_smoke.py", "material_ownership_smoke"),
+    "undo_lifecycle": ("blender_undo_lifecycle_smoke.py", "BLENDER_UNDO_LIFECYCLE_OK "),
 }
+INTERACTIVE_CASES = {"undo_lifecycle"}
 
 
 def success_payload(output: str, marker: str) -> dict | None:
@@ -60,6 +64,18 @@ def run_case(blender: Path, case: str, output: Path, timeout: int) -> dict:
         "--python",
         str(script),
     ]
+    interactive = case in INTERACTIVE_CASES
+    if interactive:
+        command.remove("--background")
+    # Blender writes quit.blend on normal UI exit. Keep it outside the user's temp recovery.
+    temporary = output / f"{case}-temp"
+    temporary.mkdir()
+    environment = dict(os.environ, TEMP=str(temporary), TMP=str(temporary), TMPDIR=str(temporary))
+    startup = None
+    if interactive and sys.platform == "win32":
+        startup = subprocess.STARTUPINFO()
+        startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startup.wShowWindow = subprocess.SW_HIDE
     log = output / f"{case}.log"
     start = time.monotonic()
     result = {
@@ -70,6 +86,7 @@ def run_case(blender: Path, case: str, output: Path, timeout: int) -> dict:
         "log": str(log),
         "status": "failed",
         "exit_code": None,
+        "execution_mode": "interactive_hidden_on_windows" if interactive else "background",
     }
     with log.open("wb") as stream:
         try:
@@ -80,6 +97,8 @@ def run_case(blender: Path, case: str, output: Path, timeout: int) -> dict:
                 stderr=subprocess.STDOUT,
                 timeout=timeout,
                 check=False,
+                env=environment,
+                startupinfo=startup,
             )
             result["exit_code"] = process.returncode
         except subprocess.TimeoutExpired:
@@ -135,6 +154,11 @@ def main() -> int:
     )
     parser.add_argument("--case", action="append", choices=tuple(CASES), dest="cases")
     parser.add_argument(
+        "--include-interactive",
+        action="store_true",
+        help="Include UI-dependent native undo checks; requires a desktop/display",
+    )
+    parser.add_argument(
         "--timeout", type=int, default=180, help="Seconds per isolated process (1-1800)"
     )
     args = parser.parse_args()
@@ -145,7 +169,8 @@ def main() -> int:
         parser.error("Each Blender path must be an existing executable file")
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
-    cases = list(dict.fromkeys(args.cases or CASES))
+    defaults = [case for case in CASES if args.include_interactive or case not in INTERACTIVE_CASES]
+    cases = list(dict.fromkeys(args.cases or defaults))
     dirty = git_value("status", "--porcelain")
     report = {
         "schema_version": 1,

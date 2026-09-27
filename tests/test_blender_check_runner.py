@@ -72,3 +72,17 @@ def test_timeout_retains_failure_even_with_success_marker(runner, monkeypatch, t
     monkeypatch.setattr(runner.subprocess, "run", run)
     result = runner.run_case(Path("blender.exe"), "core", tmp_path, 10)
     assert result["status"] == "timeout" and result["exit_code"] is None
+
+
+def test_interactive_case_uses_isolated_temporary_recovery(runner, monkeypatch, tmp_path):
+    def run(command, **kwargs):
+        assert "--factory-startup" in command and "--background" not in command
+        for variable in ("TEMP", "TMP", "TMPDIR"):
+            assert Path(kwargs["env"][variable]).is_relative_to(tmp_path)
+        kwargs["stdout"].write(b'BLENDER_UNDO_LIFECYCLE_OK {"blender":"5.1.2"}')
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(runner.subprocess, "run", run)
+    result = runner.run_case(Path("blender.exe"), "undo_lifecycle", tmp_path, 10)
+    assert result["status"] == "passed"
+    assert result["execution_mode"] == "interactive_hidden_on_windows"

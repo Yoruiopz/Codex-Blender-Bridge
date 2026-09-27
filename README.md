@@ -48,6 +48,11 @@ Nested groups, images and other referenced datablocks are **not deep-copied**. T
 its binding and attempts measured local recovery if copying or assignment fails; inspect any
 failure before continuing. See the [scope and recovery limits](docs/release-1.0-readiness.md#object-specific-material-copy-progress).
 
+Unreleased recovery hardening invalidates bridge checkpoint bookkeeping after Blender-native
+undo/redo, preventing reuse of stale labels. Global undo still requires explicit confirmation
+and **does not prove exact operation-level restoration**; inspect the scene afterwards.
+Snapshot ordering and manual-edit interleaving remain [open 1.0 gates](docs/release-1.0-readiness.md#native-undo-lifecycle-progress).
+
 ## Install — no source build needed
 
 You need Blender **4.2+**, standalone **Python 3.10+**, and a local Codex client with MCP support.

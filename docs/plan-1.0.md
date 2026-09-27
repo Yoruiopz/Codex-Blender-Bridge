@@ -198,3 +198,30 @@ This completes the explicit per-object material-copy slice of SAFE-01 and gives 
 measured recovery case. Transitive protected scope, interactive Blender undo/manual-edit
 interleaving, durable recovery and the remaining full-artist workflow gates remain open.
 Next priority: actual Blender undo/recovery lifecycle evidence, not another tool-count increase.
+
+### 2026-09-27 — Native history invalidation verified; snapshot-ordering gap reproduced
+
+Added persistent native undo/redo hooks that invalidate stale checkpoint labels and selection
+references, with scoped suppression for bridge-invoked undo and complete unregister cleanup.
+Undo responses explicitly require verification and do not claim logical restoration.
+The new interactive factory-startup fixture verifies native navigation, stale bridge undo
+refusal without mutation, and handler re-registration on both installed Blender versions.
+
+The first isolated native probe demonstrated that before-only snapshots can skip the latest
+intended pre-state: snapshots x=0/x=1 followed by unsnapshotted x=2 yielded undo x=0 and redo
+x=1. This is a concrete **open REC-01 release blocker**, not a passed logical-undo test.
+Next implementation must correct snapshot ordering and verify multi-operation restoration,
+native operator boundaries and manual edit interleaving. Keep the full recovery target intact.
+
+Runner addition: `--case undo_lifecycle` runs the desktop-dependent case;
+`--include-interactive` includes it in the full matrix. Default background-only runs now
+truthfully report `all_cases_selected=false`. Windows UI processes are hidden. Child TEMP/
+TMP/TMPDIR directories isolate exit recovery files under the evidence output. The initial
+diagnostic probe used Blender's default temporary `quit.blend` location before this isolation
+was added; subsequent runs verified the isolated path. No open user project was used.
+
+Validation: **522 tests** passed on both MCP SDK versions, lint/type checks and README registry
+validation passed. **28/28** Windows Blender 4.5.1/5.1.2 checks passed at
+`build/native-undo-full-matrix/report.json`, including the two interactive lifecycle cases.
+Their payload explicitly says `logical_undo_restoration_verified=false`. This is development
+evidence, not full REC-01 or 1.0 acceptance.

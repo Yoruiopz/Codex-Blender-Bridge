@@ -161,6 +161,33 @@ post-binding failure restoring the old visible/latent bindings and material coun
 selection, active object and geometry. This is not verification of artistic appearance, durable
 saving, interactive undo interleaving or the full transitive protected-scope workflow.
 
+## Native undo lifecycle progress
+
+Persistent native `undo_pre`/`redo_pre` handlers clear process-local checkpoint labels and
+selection references. Bridge-invoked undo suppresses only this invalidation while its native
+operator runs; the suppression flag resets on success or failure. Registration is idempotent,
+unregister removes both handlers, and existing file-load invalidation remains in place.
+
+`blender_undo_lifecycle_smoke.py` runs in a separate factory-startup **interactive** Blender
+process because background mode cannot execute `ed.undo` in the tested versions. It verifies
+native undo/redo, stale bridge undo refusal without mutation, and handler re-registration/
+cleanup on Windows Blender 4.5.1/5.1.2. The runner hides this process on Windows and gives it
+isolated TEMP/TMP/TMPDIR paths so Blender's exit recovery stays in test output.
+
+Run it explicitly with `--case undo_lifecycle`, or add `--include-interactive` to the full
+matrix command. Interactive checks require a desktop/display; they are excluded by default.
+`all_cases_selected=false` reports that omission. This is lifecycle evidence only, not proof
+of exact logical undo: responses now explicitly expose `logical_restore_verified=false` and
+`verification_required=true`.
+
+An isolated native probe also exposed the before-only snapshot gap: with snapshots at x=0
+and x=1 followed by an unsnapshotted x=2 edit, native undo restored x=0, not x=1; redo restored
+x=1. The current manager finalizes labels but does not push a post-edit native snapshot.
+Correct snapshot ordering, multiple operations, operators with their own undo boundaries,
+manual non-undo edits and verified checkpoint restoration remain mandatory REC-01 work.
+Do not interpret a successful global undo call or a tracked label as proof of the user's
+requested state being restored. No 1.0 acceptance is claimed here.
+
 ## UV result verification progress
 
 `blender_uv_modifier_constraint_smoke.py` currently passes even when Blender prints

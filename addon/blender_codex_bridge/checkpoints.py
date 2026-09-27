@@ -34,6 +34,7 @@ class CheckpointManager:
         self._checkpoints: deque[Checkpoint] = deque(maxlen=maximum)
         self._undo_labels: deque[str] = deque(maxlen=maximum * 4)
         self._steps_since_checkpoint = 0
+        self.recovery_in_progress = False
 
     @staticmethod
     def _ensure_undo_enabled() -> Any:
@@ -97,6 +98,7 @@ class CheckpointManager:
             )
         blender = self._ensure_undo_enabled()
         try:
+            self.recovery_in_progress = True
             result = blender.ops.ed.undo()
         except RuntimeError as exc:
             raise BridgeError(
@@ -104,6 +106,8 @@ class CheckpointManager:
                 "Blender could not undo in the current context.",
                 {"detail": str(exc)},
             ) from exc
+        finally:
+            self.recovery_in_progress = False
         if "FINISHED" not in result:
             raise BridgeError(ErrorCode.OPERATION_FAILED, "There is no available Blender undo step.")
         label = self._undo_labels.popleft() if self._undo_labels else "latest Blender step"
@@ -114,6 +118,8 @@ class CheckpointManager:
             "undone": True,
             "tracked_agent_label": label,
             "scope": "blender_global_undo",
+            "logical_restore_verified": False,
+            "verification_required": True,
             "interleaving_warning": (
                 "Blender does not expose undo-entry ownership; this may also undo interleaved "
                 "user work. Inspect the scene immediately."
@@ -140,6 +146,8 @@ class CheckpointManager:
             "checkpoint": checkpoint.to_dict(),
             "undo_steps": steps,
             "scope": "blender_global_undo_repeated",
+            "logical_restore_verified": False,
+            "verification_required": True,
             "interleaving_warning": (
                 "Blender does not expose undo-entry ownership; repeated undo may also affect "
                 "interleaved user work."
