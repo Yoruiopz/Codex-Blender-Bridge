@@ -10,14 +10,14 @@ def test_external_history_navigation_invalidates_markers(addon_package, monkeypa
     runtime = importlib.import_module(f"{addon_package}.runtime")
     checkpoints = importlib.import_module(f"{addon_package}.checkpoints")
     manager = checkpoints.CheckpointManager()
-    manager.after_modification("tracked")
+    manager._undo_steps.append(checkpoints.UndoStep("tracked", "target", 1))
     monkeypatch.setattr(runtime, "_RUNTIME", NS(checkpoints=manager))
     references = []
     monkeypatch.setattr(runtime, "clear_selection_references", lambda: references.append("cleared"))
     runtime._before_external_undo_redo(None)
     assert references == ["cleared"]
     with pytest.raises(checkpoints.BridgeError, match="No tracked"):
-        manager.undo_last()
+        manager.restore_operation()
 
 
 @pytest.mark.parametrize("failure", [False, True])
@@ -27,23 +27,31 @@ def test_own_undo_handler_guard_is_scoped_even_when_operator_fails(
     runtime = importlib.import_module(f"{addon_package}.runtime")
     checkpoints = importlib.import_module(f"{addon_package}.checkpoints")
     manager = checkpoints.CheckpointManager()
-    manager.after_modification("tracked")
+    manager._undo_steps.append(checkpoints.UndoStep("tracked", "target", 1))
     monkeypatch.setattr(runtime, "_RUNTIME", NS(checkpoints=manager))
 
     def undo():
         assert manager.recovery_in_progress
         runtime._before_external_undo_redo(None)
-        assert list(manager._undo_labels) == ["tracked"]
+        assert [step.label for step in manager._undo_steps] == ["tracked"]
         if failure:
             raise RuntimeError("fixture failure")
         return {"FINISHED"}
 
-    monkeypatch.setattr(manager, "_ensure_undo_enabled", lambda: NS(ops=NS(ed=NS(undo=undo))))
+    monkeypatch.setattr(
+        manager,
+        "_ensure_undo_enabled",
+        lambda: NS(context=NS(mode="OBJECT"), ops=NS(ed=NS(undo=undo))),
+    )
+    monkeypatch.setattr(manager, "_snapshot", lambda *args: "guard")
+    monkeypatch.setattr(manager, "_stamp", lambda *args: "fresh")
+    markers = iter(["present", "guard" if failure else "target"])
+    monkeypatch.setattr(manager, "_marker", lambda *args: next(markers))
     if failure:
         with pytest.raises(checkpoints.BridgeError):
-            manager.undo_last()
+            manager.restore_operation()
     else:
-        assert manager.undo_last()["tracked_agent_label"] == "tracked"
+        assert manager.restore_operation()["tracked_agent_label"] == "tracked"
     assert manager.recovery_in_progress is False
 
 

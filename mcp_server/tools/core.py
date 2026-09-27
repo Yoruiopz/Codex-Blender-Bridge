@@ -37,12 +37,13 @@ class CoreTools:
     async def checkpoint_undo_last(
         self,
         confirm_global_undo: bool = False,
+        restore_snapshot: bool = False,
     ) -> Any:
-        """Use Blender global undo only after explicitly acknowledging interleaving risk."""
+        """Confirm global-undo risk; opt into restore_snapshot for verified operation-boundary navigation."""
 
         return await self.registry.call(
             "checkpoint.undo_last",
-            {"confirm_global_undo": confirm_global_undo},
+            {"confirm_global_undo": confirm_global_undo, "restore_snapshot": restore_snapshot},
         )
 
     async def checkpoint_list(self, limit: int = 50) -> Any:

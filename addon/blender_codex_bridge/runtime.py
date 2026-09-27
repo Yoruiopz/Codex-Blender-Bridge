@@ -97,7 +97,7 @@ class BridgeRuntime:
             bpy.app.handlers.load_pre.remove(_before_file_load)
         self.server.stop()
         self.executor.stop()
-        self.checkpoints.clear()
+        self.checkpoints.detach()
         clear_selection_references()
         self.registry.reset_enabled_toolsets()
         self.state.reset()

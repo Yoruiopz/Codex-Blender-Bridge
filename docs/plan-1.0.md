@@ -225,3 +225,38 @@ validation passed. **28/28** Windows Blender 4.5.1/5.1.2 checks passed at
 `build/native-undo-full-matrix/report.json`, including the two interactive lifecycle cases.
 Their payload explicitly says `logical_undo_restoration_verified=false`. This is development
 evidence, not full REC-01 or 1.0 acceptance.
+
+### 2026-09-27 — Marker-based snapshot navigation and measured restoration
+
+Replaced count-based logical recovery with distinct before/after native snapshots and bounded
+navigation to a session-specific scene marker. Checkpoint target markers are never left live
+for later manual/native snapshots to reuse. A recovery guard captures the current state;
+target eviction, bounded traversal failure and cancellation attempt redo back to that guard
+and expose whether its marker was reached. Unknown handler failures now finalize possible-
+mutation snapshots, as do structured failures and batches. Finalization is reported separately
+from pre-boundary creation.
+
+Compatibility: `checkpoint.undo_last` remains one global undo by default. Explicit
+`restore_snapshot=true` opts into the verified boundary path, and the Blender recovery button
+uses that option. Local named checkpoint restore navigates to its marker. Checkpoint creation
+is mutation-gated because it writes internal scene metadata; no hidden project file is saved.
+The metadata/save/shutdown behavior and all known limits are documented in the readiness gates.
+
+Native tests now verify consecutive transforms, internal native operator/undo steps, named
+multi-operation restore, mesh vertex restoration and Object Mode after an Edit Mode round
+trip, unexpected partial handler failure recovery, and return to the guard after native
+history eviction. Unit tests cover bounded navigation, failed redo, cancellation, namespace
+collision preservation, cleanup and unchanged legacy one-step semantics.
+
+Validation: **534 tests** passed on MCP SDK 2.0.0 and 2.2.0; lint/type and README registry checks
+passed. **28/28** Windows Blender checks passed on 4.5.1/5.1.2 at
+`build/snapshot-final-verified/report.json` (dirty-worktree development evidence, not RC).
+The previously reproduced before-only ordering gap is corrected for these measured global
+snapshot cases; broad REC-01 acceptance remains open.
+
+Native recovery starts in Object Mode; editor-specific operations do not claim individual
+global boundaries, but earlier named global checkpoints remain identifiable. Manual edits
+may be affected by confirmed global recovery. Snapshot provenance is not a proof of every
+user invariant or visual quality. Next work should establish protected-scope before/after
+comparisons and broader editor/domain recovery cases, then continue the full asset/character/
+procedural artist workflows. No gate or full-artist requirement is removed by this increment.

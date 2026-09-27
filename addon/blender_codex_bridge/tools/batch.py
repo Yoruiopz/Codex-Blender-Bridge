@@ -111,6 +111,8 @@ def batch_execute(context: ToolContext, params: Mapping[str, Any]) -> dict[str, 
     affected: set[str] = set()
     mutation_started = False
     undo_boundary = False
+    undo_finalized = False
+    finalization_attempted = False
     current_started = False
     current_spec = prepared[0][1]
     index = 0
@@ -147,6 +149,9 @@ def batch_execute(context: ToolContext, params: Mapping[str, Any]) -> dict[str, 
             results.append({"id": identifier, "method": spec.name, "ok": True,
                             "operation_id": record.operation_id, "result": _bounded_result(result)})
     except Exception as exc:
+        if mutation_started and undo_boundary:
+            finalization_attempted = True
+            undo_finalized = bool(context.checkpoints.after_modification(f"Batch: {label}"))
         if isinstance(exc, BridgeError):
             error = exc
         else:
@@ -162,18 +167,19 @@ def batch_execute(context: ToolContext, params: Mapping[str, Any]) -> dict[str, 
             "execution_started": mutation_started, "mutation_outcome_unknown": mutation_started,
             "affected_objects": sorted(affected)[:128], "affected_objects_truncated": len(affected) > 128,
             "verification_required": mutation_started, "undo_boundary_created": undo_boundary,
+            "undo_boundary_finalized": undo_finalized,
             "rollback_performed": False,
         }
         raise BridgeError(error.code, f"Batch stopped at step {index + 1}: {error.message}", context_data) from exc
     finally:
-        if mutation_started and undo_boundary:
-            context.checkpoints.after_modification(f"Batch: {label}")
+        if mutation_started and undo_boundary and not finalization_attempted:
+            undo_finalized = bool(context.checkpoints.after_modification(f"Batch: {label}"))
     return {
         "batch_label": label, "atomic": False, "completed_steps": len(results),
         "total_steps": len(prepared), "results": results,
         "affected_objects": sorted(affected)[:128], "affected_objects_truncated": len(affected) > 128,
         "verification_required": mutation_started, "rollback_performed": False,
-        "operation": {"undo_boundary_created": undo_boundary, "scope": "logical_batch"},
+        "operation": {"undo_boundary_created": undo_boundary, "undo_boundary_finalized": undo_finalized, "scope": "logical_batch"},
     }
 
 

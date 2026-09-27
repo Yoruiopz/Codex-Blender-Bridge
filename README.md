@@ -49,9 +49,13 @@ its binding and attempts measured local recovery if copying or assignment fails;
 failure before continuing. See the [scope and recovery limits](docs/release-1.0-readiness.md#object-specific-material-copy-progress).
 
 Unreleased recovery hardening invalidates bridge checkpoint bookkeeping after Blender-native
-undo/redo, preventing reuse of stale labels. Global undo still requires explicit confirmation
-and **does not prove exact operation-level restoration**; inspect the scene afterwards.
-Snapshot ordering and manual-edit interleaving remain [open 1.0 gates](docs/release-1.0-readiness.md#native-undo-lifecycle-progress).
+undo/redo, preventing reuse of stale labels. For measured operation-boundary recovery, call
+`checkpoint.undo_last(confirm_global_undo=true, restore_snapshot=true)` from Object Mode.
+The Blender recovery button uses this path. Omitting `restore_snapshot` keeps the legacy
+single-global-undo behavior. Recovery can still affect interleaved manual work; inspect afterwards.
+Internal `_codex_bridge_undo_marker` scene metadata identifies snapshots and may be saved with
+your project; normal add-on shutdown removes this session's current marker. It is not a backup.
+See [tested recovery cases and remaining 1.0 gates](docs/release-1.0-readiness.md#native-undo-lifecycle-progress).
 
 ## Install — no source build needed
 

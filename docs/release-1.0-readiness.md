@@ -176,17 +176,48 @@ isolated TEMP/TMP/TMPDIR paths so Blender's exit recovery stays in test output.
 
 Run it explicitly with `--case undo_lifecycle`, or add `--include-interactive` to the full
 matrix command. Interactive checks require a desktop/display; they are excluded by default.
-`all_cases_selected=false` reports that omission. This is lifecycle evidence only, not proof
-of exact logical undo: responses now explicitly expose `logical_restore_verified=false` and
-`verification_required=true`.
+`all_cases_selected=false` reports that omission.
 
 An isolated native probe also exposed the before-only snapshot gap: with snapshots at x=0
 and x=1 followed by an unsnapshotted x=2 edit, native undo restored x=0, not x=1; redo restored
-x=1. The current manager finalizes labels but does not push a post-edit native snapshot.
-Correct snapshot ordering, multiple operations, operators with their own undo boundaries,
-manual non-undo edits and verified checkpoint restoration remain mandatory REC-01 work.
-Do not interpret a successful global undo call or a tracked label as proof of the user's
-requested state being restored. No 1.0 acceptance is claimed here.
+x=1. This prompted the following replacement for count-based recovery.
+
+The current manager pushes distinct before/after native snapshots and uses an undoable scene
+marker to find the requested boundary. Live markers are advanced immediately after named
+checkpoints and restored boundaries so later native snapshots cannot reuse those target tokens.
+The snapshot path is opt-in: `checkpoint.undo_last(confirm_global_undo=true, restore_snapshot=true)`.
+The default remains exactly one native global undo for compatibility; that legacy path discards
+tracking afterwards because the resulting logical position is unverified. Blender's recovery
+button opts into snapshot navigation. Local named-checkpoint restoration also uses markers.
+
+Navigation captures a guard snapshot, checks cancellation between undo steps, and permits at
+most 256 undo hops. Missing/evicted targets, cancellation and traversal failures attempt bounded
+redo back to the guard; errors expose `return_to_guard_verified`, never fabricated restoration.
+Cancellation retains its error code, and a redo failure remains an explicit uncertain state.
+Raw and structured handler failures now finalize possible-mutation snapshots; successful
+operations and batches report `undo_boundary_finalized` separately from boundary creation.
+
+This path starts in **Object Mode**, on a local editable scene, with Global Undo enabled and
+at most 200 scenes. Editor-specific operations do not claim per-operation global boundaries;
+earlier named global checkpoints remain identifiable. The native fixture independently checks
+consecutive transforms, an internal native snapshot/operator, multiple-operation checkpoint
+restore, vertex coordinates after an Edit Mode round trip, an unexpected partial handler
+failure, and recovery to the guard after history eviction. Object Mode is restored when native
+history navigation passes through Edit Mode. Other editor stacks and broad cross-mode cases
+remain unverified; do not generalize this fixture to full recovery acceptance.
+
+`_codex_bridge_undo_marker` is internal scene ID-property metadata, not a security token or a
+durable backup. It can mark a project dirty and be included in an explicitly saved project;
+no file is saved by checkpoint creation/recovery. Normal shutdown removes current-session
+metadata; older saved files/native undo snapshots may retain stale values, which do not grant
+recovery authority. Unrelated values in the reserved property are rejected, not overwritten.
+Checkpoint creation now obeys mutation pause/emergency gates on both sides.
+
+`snapshot_marker_verified=true` proves reaching the native marker, not all user constraints
+or visual quality. Responses retain `logical_restore_verified=false` and `verification_required=true`.
+Interleaved manual edits can still be affected by confirmed global recovery. Protected-scope
+comparisons, broader editor/domain tests, durable recovery, UI acceptance and performance on
+production scenes remain mandatory REC-01 gates. No full 1.0 acceptance is claimed here.
 
 ## UV result verification progress
 

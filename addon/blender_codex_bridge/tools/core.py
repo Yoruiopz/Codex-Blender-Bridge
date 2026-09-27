@@ -152,6 +152,8 @@ def checkpoint_undo_last(context: ToolContext, params: Mapping[str, Any]) -> dic
         raise invalid_argument(
             "Set 'confirm_global_undo' to true to acknowledge that Blender cannot prove undo ownership."
         )
+    if bool_param(params, "restore_snapshot", False):
+        return context.checkpoints.restore_operation(check_cancelled=context.check_cancelled)
     return context.checkpoints.undo_last()
 
 
@@ -172,7 +174,7 @@ def checkpoint_restore_last(context: ToolContext, params: Mapping[str, Any]) -> 
         raise invalid_argument(
             "Set 'confirm_global_undo' to true to acknowledge that restore uses Blender global undo."
         )
-    return context.checkpoints.restore_last()
+    return context.checkpoints.restore_last(check_cancelled=context.check_cancelled)
 
 
 def toolsets_list(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
@@ -222,7 +224,7 @@ def register_tools(registry: ToolRegistry) -> None:
             "settings, and replace Blender's Render Result buffer."
         ),
     )
-    registry.register("checkpoint.create", checkpoint_create, description="Create a named Blender undo marker.", automatic_checkpoint=False)
+    registry.register("checkpoint.create", checkpoint_create, description="Create a named Blender undo marker.", modifies=True, automatic_checkpoint=False)
     registry.register(
         "checkpoint.undo_last",
         checkpoint_undo_last,

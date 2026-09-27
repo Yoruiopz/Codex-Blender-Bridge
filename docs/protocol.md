@@ -242,6 +242,21 @@ Parameter rules:
 - Bound strings, arrays, image sizes, traversal depth, pagination limits, and numeric ranges.
 - Object references must be explicit names or opaque IDs defined by a tool schema. Normal methods never treat input as code. The sole exception is the exact registered `python.execute` method, whose schema requires the disabled-by-default Python toolset; all four broad permissions `EXECUTE_PYTHON`, `DELETE_OBJECTS`, `ACCESS_EXTERNAL_FILES`, and `SAVE_PROJECT`; `confirm_dangerous=true`; and `expected_effect`, then applies its own code/import/output/deadline policy.
 
+### Unreleased recovery option (backward-compatible)
+
+`checkpoint.undo_last` still requires `confirm_global_undo=true`; its default is one native
+global undo. Optional `restore_snapshot=true` instead navigates bounded native history to
+the last finalized bridge operation's before-marker, checking cancellation between steps.
+The result includes the actual `undo_steps`, `snapshot_marker_verified`, and
+`verification_required=true`; it does not assert all scene invariants or user goals were restored.
+Failures attempt to return to a guard snapshot and report `return_to_guard_verified` with
+possible-mutation evidence. A canceled navigation may perform bounded redo for this recovery;
+its terminal failure/history record retains that evidence. No native operation is preempted.
+
+Modifying responses expose optional `operation.undo_boundary_finalized` in addition to
+`undo_boundary_created`. A before-boundary alone is not evidence of a finalized recoverable
+operation. These additions do not change envelopes, framing or default one-step undo semantics.
+
 ## Serialization conventions
 
 - JSON finite numbers only; `NaN` and infinities are errors or become documented `null`/warning fields.

@@ -50,21 +50,27 @@ def test_recovery_tools_obey_remote_pause_and_ui_only_gates(
     with pytest.raises(errors.BridgeError) as paused:
         registry.prepare("checkpoint.undo_last", context)
     assert paused.value.code == errors.ErrorCode.AGENT_PAUSED.value
-    assert registry.prepare(
-        "checkpoint.undo_last",
-        context,
-        allow_recovery=True,
-    ).name == "checkpoint.undo_last"
+    assert (
+        registry.prepare(
+            "checkpoint.undo_last",
+            context,
+            allow_recovery=True,
+        ).name
+        == "checkpoint.undo_last"
+    )
 
     state.set_paused(False)
     with pytest.raises(errors.BridgeError) as remote:
         registry.prepare("checkpoint.restore_last", context)
     assert remote.value.code == errors.ErrorCode.METHOD_NOT_FOUND.value
-    assert registry.prepare(
-        "checkpoint.restore_last",
-        context,
-        allow_recovery=True,
-    ).remote is False
+    assert (
+        registry.prepare(
+            "checkpoint.restore_last",
+            context,
+            allow_recovery=True,
+        ).remote
+        is False
+    )
 
 
 def test_checkpoint_undo_requires_explicit_global_undo_confirmation(
@@ -92,3 +98,37 @@ def test_checkpoint_undo_requires_explicit_global_undo_confirmation(
         context,
         {"confirm_global_undo": True},
     ) == {"undone": True}
+
+
+def test_snapshot_navigation_is_explicit_opt_in(addon_package):
+    core = importlib.import_module(f"{addon_package}.tools.core")
+    context = SimpleNamespace(
+        checkpoints=SimpleNamespace(
+            undo_last=lambda: {"legacy": True},
+            restore_operation=lambda **kwargs: {"verified_marker": True},
+        ),
+        check_cancelled=None,
+    )
+    assert core.checkpoint_undo_last(context, {"confirm_global_undo": True}) == {"legacy": True}
+    assert core.checkpoint_undo_last(
+        context, {"confirm_global_undo": True, "restore_snapshot": True}
+    ) == {"verified_marker": True}
+    with pytest.raises(core.BridgeError):
+        core.checkpoint_undo_last(
+            context, {"confirm_global_undo": True, "restore_snapshot": "true"}
+        )
+
+
+def test_checkpoint_create_obeys_pause_for_scene_metadata(addon_package):
+    core = importlib.import_module(f"{addon_package}.tools.core")
+    registry_module = importlib.import_module(f"{addon_package}.tool_registry")
+    registry = registry_module.ToolRegistry()
+    core.register_tools(registry)
+    assert registry.get("checkpoint.create").modifies
+    context = SimpleNamespace(
+        permissions=SimpleNamespace(require=lambda _permissions: None),
+        state=SimpleNamespace(snapshot=lambda: {"paused": True, "emergency_stopped": False}),
+    )
+    with pytest.raises(core.BridgeError) as caught:
+        registry.prepare("checkpoint.create", context)
+    assert caught.value.code == "AGENT_PAUSED"

@@ -151,6 +151,7 @@ class MainThreadExecutor:
         self.state.begin_execution(request.method, task)
         spec = None
         undo_boundary = False
+        undo_finalized = False
         context = self.context
         context.check_cancelled = check_cancelled
         try:
@@ -165,7 +166,7 @@ class MainThreadExecutor:
                 undo_boundary = self.checkpoints.before_modification(request.method)
             result = spec.handler(context, request.params)
             if spec.modifies and undo_boundary:
-                self.checkpoints.after_modification(request.method)
+                undo_finalized = bool(self.checkpoints.after_modification(request.method))
             duration_ms = (time.perf_counter() - start) * 1000.0
             record = self.state.record_operation(
                 tool=request.method,
@@ -181,7 +182,7 @@ class MainThreadExecutor:
             )
             if spec.modifies and isinstance(result, Mapping):
                 result = dict(result)
-                operation = {"undo_boundary_created": undo_boundary}
+                operation = {"undo_boundary_created": undo_boundary, "undo_boundary_finalized": undo_finalized}
                 if isinstance(result.get("operation"), Mapping):
                     operation.update(result["operation"])
                 operation["operation_id"] = record.operation_id
@@ -192,8 +193,14 @@ class MainThreadExecutor:
         except BridgeError as error:
             duration_ms = (time.perf_counter() - start) * 1000.0
             execution_started = bool(error.context.get("execution_started"))
-            if spec is not None and spec.modifies and undo_boundary and execution_started:
-                self.checkpoints.after_modification(f"{request.method} (failed; verify state)")
+            if spec is not None and spec.modifies and undo_boundary:
+                # Handler errors may follow a partial edit, even if not explicitly annotated.
+                execution_started = True
+                error.context["execution_started"] = True
+                error.context["verification_required"] = True
+                error.context["undo_boundary_finalized"] = bool(
+                    self.checkpoints.after_modification(f"{request.method} (failed; verify state)")
+                )
             self.state.record_operation(
                 tool=request.method,
                 description=_history_description(
@@ -216,10 +223,14 @@ class MainThreadExecutor:
         except Exception as exc:
             duration_ms = (time.perf_counter() - start) * 1000.0
             LOGGER.exception("Unhandled Blender tool failure in %s", request.method)
+            if spec is not None and spec.modifies and undo_boundary:
+                undo_finalized = bool(self.checkpoints.after_modification(f"{request.method} (failed; verify state)"))
             error = BridgeError(
                 ErrorCode.OPERATION_FAILED,
                 f"Blender operation '{request.method}' failed.",
-                {"exception_type": type(exc).__name__, "detail": str(exc)[:400]},
+                {"exception_type": type(exc).__name__, "detail": str(exc)[:400],
+                 "execution_started": bool(spec is not None and spec.modifies),
+                 "verification_required": True, "undo_boundary_finalized": undo_finalized},
             )
             self.state.record_operation(
                 tool=request.method,

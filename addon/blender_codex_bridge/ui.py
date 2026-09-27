@@ -89,7 +89,7 @@ if bpy is not None:
 
     class BCB_OT_checkpoint_undo(bpy.types.Operator):
         bl_idname = "blender_codex_bridge.checkpoint_undo"
-        bl_label = "Undo Agent Step (Global)"
+        bl_label = "Restore Agent Snapshot (Global)"
         bl_description = (
             "Blender cannot prove undo ownership; this may undo interleaved user work"
         )
@@ -102,7 +102,7 @@ if bpy is not None:
             try:
                 get_runtime().dispatch_recovery(
                     "checkpoint.undo_last",
-                    {"confirm_global_undo": True},
+                    {"confirm_global_undo": True, "restore_snapshot": True},
                 )
             except BridgeError as error:
                 self.report({"ERROR"}, error.message)
@@ -130,7 +130,7 @@ if bpy is not None:
             except BridgeError as error:
                 self.report({"ERROR"}, error.message)
                 return {"CANCELLED"}
-            self.report({"INFO"}, f"Restored {result['undo_steps']} tracked agent step(s)")
+            self.report({"INFO"}, f"Reached checkpoint marker using {result['undo_steps']} native undo step(s); reinspect")
             return {"FINISHED"}
 
 
