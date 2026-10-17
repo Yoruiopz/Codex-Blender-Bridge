@@ -236,9 +236,13 @@ scope or cover modifier/constraint settings, rigs/animation, nested shader conte
 pixels, evaluated geometry or appearance. Those remain requirements for full preservation
 and artist-workflow acceptance. `unchanged_within_scope` is never a whole-scene/user-goal verdict.
 
-The next recovery gap to verify is structured `context.set_mode`: post-tool finalization
-currently clears tracking outside Object Mode. The direct native mode round-trip fixture is
-not evidence for that dispatcher path; automated Edit Mode recovery still needs that case.
+The structured `context.set_mode` gap is now corrected for tracked single-mesh Edit Mode
+sessions. The dispatcher retains a deferred before-point, preserves named checkpoints and
+finalizes a grouped after-point on return to Object Mode. The [workflow contract](mesh-edit-recovery.md)
+describes the metadata and scope. A dedicated native fixture now checks the actual structured
+mode/face-selection/extrusion/recovery path, including partial failure, stop/permission gates,
+protected-object evidence and restoration of selection/active object/mode. Other editor
+stacks, per-operation Edit Mode undo and broader production acceptance remain open.
 
 ## UV result verification progress
 

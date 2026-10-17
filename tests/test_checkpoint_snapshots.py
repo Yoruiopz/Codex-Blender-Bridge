@@ -159,7 +159,7 @@ def test_cancellation_during_navigation_returns_to_guard(recovery):
     def cancelled():
         nonlocal checks
         checks += 1
-        if checks == 3:
+        if checks == 4:
             raise module.BridgeError(module.ErrorCode.TIMEOUT, "fixture cancellation")
 
     with pytest.raises(module.BridgeError) as caught:

@@ -73,6 +73,8 @@ def bridge_status(context: ToolContext, params: Mapping[str, Any]) -> dict[str, 
             "current_task": state["current_task"],
             "current_method": state["current_method"],
             "is_executing": state["is_executing"],
+            "undo_group": (context.checkpoints.editor_session_status()
+                           if callable(getattr(context.checkpoints, "editor_session_status", None)) else None),
         },
     }
 

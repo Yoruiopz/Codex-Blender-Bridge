@@ -257,6 +257,14 @@ Modifying responses expose optional `operation.undo_boundary_finalized` in addit
 `undo_boundary_created`. A before-boundary alone is not evidence of a finalized recoverable
 operation. These additions do not change envelopes, framing or default one-step undo semantics.
 
+Tracked single-mesh Edit Mode intervals may return optional `operation.undo_group` metadata
+(`deferred`, `finalized`, `invalidated` or `unavailable`). The before-boundary is captured at
+Object Mode entry and the after-boundary on return. A failed modifying call may carry the
+same group evidence in its error context. `bridge.status.agent.undo_group` reports a pending
+interval. Snapshot restoration returns `recovered_scope` and `group_operation_attempts`;
+these do not replace independent verification or change legacy one-step undo behavior.
+The dispatcher rechecks cancellation after checkpoint setup before starting the handler.
+
 ## Serialization conventions
 
 - JSON finite numbers only; `NaN` and infinities are errors or become documented `null`/warning fields.

@@ -295,3 +295,41 @@ the existing native round-trip fixture changes mode directly and does not prove 
 of checkpoints through the structured mode tool. Resolve and verify that path before claiming
 automated Edit Mode recovery, then use these comparisons in the ASSET-01 prop-repair workflow
 and implement its missing modeling/UV primitives. The full 3D-artist target remains unchanged.
+
+### 2026-10-17 — Structured Mesh Edit Mode recovery verified
+
+Reproduced the dispatcher regression: `context.set_mode(..., mode="EDIT")` completed, but
+post-tool finalization rejected Edit Mode and erased the named checkpoint. The new native
+fixture failed on the missing checkpoint before the repair.
+
+The manager now retains a deferred single-mesh edit interval from its Object Mode before-
+point, keeps earlier checkpoints/operations, and finalizes one grouped snapshot on return
+to Object Mode. Results/errors and `bridge.status` expose group state and attempt counts;
+the Blender panel shows the pending interval. The [workflow contract](mesh-edit-recovery.md)
+defines its scope, legacy compatibility and limits. Successful named restoration clears
+pending session state; native undo/redo and project/session invalidation still discard it.
+
+The fixture uses actual dispatcher calls for mode entry, bounded face inspection, selection,
+extrusion, mode exit and confirmed snapshot recovery. It independently compares geometry/
+material evidence, the protected mesh, selection, active object and mode, then verifies a
+partial editor failure and separate recovery of an earlier object transform. Permission
+revocation, pause and emergency gates remain effective during the deferred interval.
+
+A separate deterministic test exposed cancellation during checkpoint preparation still
+allowing a handler to start. The dispatcher now rechecks cancellation immediately before
+the handler. Recovery checks cancellation before editor finalization and retains group
+evidence if cancellation follows finalization. Tests verify no scene handler starts in the
+pre-edit cancellation case and that pre-canceled recovery creates no finalization snapshot.
+
+Validation: **568 tests** passed with MCP SDK 2.0.0 and 2.2.0; lint/type and README registry
+checks passed. **32/32** Windows Blender checks passed on 4.5.1/5.1.2 at
+`build/mesh-session-reviewed-matrix-20261017/report.json`. The report records source revision
+`2b2aaa344741a4f4ee7574fc50642371ded2d2ea` plus this work, a dirty worktree and Python fingerprint
+`ebe383df6c510b45c20e7fd0a21ea7c4e82e8726a00b37937262bdf8fdffad2c`.
+No user project was used or saved. This is development evidence, not clean-RC or artistic QA.
+
+The specific structured mode-transition gap is closed for these single-mesh cases. Per-edit
+primitive undo within an open editor, other editor stacks, multi-object work, protected manual
+interleaving and durable recovery remain open. Next implement ASSET-01 repair primitives
+(subdivide/merge/fill/bridge and UV editing) in a prop-repair workflow using this recovery path
+and scoped comparisons, while retaining all broader 1.0 capability/acceptance gates.

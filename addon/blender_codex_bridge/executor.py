@@ -143,6 +143,14 @@ class MainThreadExecutor:
         except BridgeError as error:
             return Response.failure(request.id, error)
 
+    def _editor_recovery_metadata(self) -> Mapping[str, Any] | None:
+        finish = getattr(self.checkpoints, "finish_editor_session", None)
+        result = finish() if callable(finish) else None
+        if result is not None:
+            return result
+        status = getattr(self.checkpoints, "editor_session_status", None)
+        return status() if callable(status) else None
+
     def _invoke(
         self, request: Request, *, allow_recovery: bool = False,
         check_cancelled: Callable[[], None] | None = None,
@@ -155,6 +163,7 @@ class MainThreadExecutor:
         spec = None
         undo_boundary = False
         undo_finalized = False
+        undo_group = None
         context = self.context
         context.check_cancelled = check_cancelled
         try:
@@ -167,9 +176,15 @@ class MainThreadExecutor:
             )
             if spec.modifies and spec.automatic_checkpoint:
                 undo_boundary = self.checkpoints.before_modification(request.method)
+            if check_cancelled is not None:
+                check_cancelled()
             result = spec.handler(context, request.params)
             if spec.modifies and undo_boundary:
                 undo_finalized = bool(self.checkpoints.after_modification(request.method))
+            if spec.modifies:
+                undo_group = self._editor_recovery_metadata()
+                if undo_group is not None and undo_group["state"] == "finalized":
+                    undo_finalized = True
             duration_ms = (time.perf_counter() - start) * 1000.0
             record = self.state.record_operation(
                 tool=request.method,
@@ -188,6 +203,10 @@ class MainThreadExecutor:
                 operation = {"undo_boundary_created": undo_boundary, "undo_boundary_finalized": undo_finalized}
                 if isinstance(result.get("operation"), Mapping):
                     operation.update(result["operation"])
+                if undo_group is not None:
+                    operation["undo_group"] = dict(undo_group)
+                    if undo_group["state"] == "finalized":
+                        operation["undo_boundary_finalized"] = True
                 operation["operation_id"] = record.operation_id
                 result["operation"] = operation
             LOGGER.info("Completed %s in %.1f ms", request.method, duration_ms)
@@ -204,6 +223,14 @@ class MainThreadExecutor:
                 error.context["undo_boundary_finalized"] = bool(
                     self.checkpoints.after_modification(f"{request.method} (failed; verify state)")
                 )
+            if spec is not None and spec.modifies:
+                undo_group = self._editor_recovery_metadata()
+                if undo_group is not None:
+                    error.context["undo_group"] = dict(undo_group)
+                    if undo_group["state"] == "finalized":
+                        execution_started = True
+                        error.context.update({"execution_started": True, "verification_required": True,
+                                              "undo_boundary_finalized": True})
             self.state.record_operation(
                 tool=request.method,
                 description=_history_description(
@@ -228,6 +255,9 @@ class MainThreadExecutor:
             LOGGER.exception("Unhandled Blender tool failure in %s", request.method)
             if spec is not None and spec.modifies and undo_boundary:
                 undo_finalized = bool(self.checkpoints.after_modification(f"{request.method} (failed; verify state)"))
+            if spec is not None and spec.modifies:
+                undo_group = self._editor_recovery_metadata()
+                undo_finalized = undo_finalized or (undo_group is not None and undo_group["state"] == "finalized")
             error = BridgeError(
                 ErrorCode.OPERATION_FAILED,
                 f"Blender operation '{request.method}' failed.",
@@ -235,6 +265,8 @@ class MainThreadExecutor:
                  "execution_started": bool(spec is not None and spec.modifies),
                  "verification_required": True, "undo_boundary_finalized": undo_finalized},
             )
+            if undo_group is not None:
+                error.context["undo_group"] = dict(undo_group)
             self.state.record_operation(
                 tool=request.method,
                 description=error.message,

@@ -32,8 +32,9 @@ CASES = {
     "material_ownership": ("blender_material_ownership_smoke.py", "material_ownership_smoke"),
     "undo_lifecycle": ("blender_undo_lifecycle_smoke.py", "BLENDER_UNDO_LIFECYCLE_OK "),
     "scene_evidence": ("blender_scene_evidence_smoke.py", "BLENDER_SCENE_EVIDENCE_OK "),
+    "mesh_edit_recovery": ("blender_mesh_edit_recovery_smoke.py", "BLENDER_MESH_EDIT_RECOVERY_OK "),
 }
-INTERACTIVE_CASES = {"undo_lifecycle"}
+INTERACTIVE_CASES = {"undo_lifecycle", "mesh_edit_recovery"}
 
 
 def success_payload(output: str, marker: str) -> dict | None:

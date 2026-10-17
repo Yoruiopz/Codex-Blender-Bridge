@@ -385,6 +385,11 @@ if bpy is not None:
 
             checkpoint = layout.box()
             checkpoint.label(text="Checkpoint", icon="RECOVER_LAST")
+            edit_session = runtime.checkpoints.editor_session_status()
+            if edit_session is not None:
+                checkpoint.label(text=f"Edit session: {edit_session['object'][:36]}", icon="INFO")
+                checkpoint.label(text=("Return to Object Mode to finalize recovery" if context.mode != "OBJECT"
+                                       else "Recovery will finalize the pending edit session"))
             checkpoint.operator("blender_codex_bridge.checkpoint_create", icon="ADD")
             row = checkpoint.row(align=True)
             row.operator("blender_codex_bridge.checkpoint_undo", icon="LOOP_BACK")

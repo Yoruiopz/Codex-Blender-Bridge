@@ -57,6 +57,11 @@ Internal `_codex_bridge_undo_marker` scene metadata identifies snapshots and may
 your project; normal add-on shutdown removes this session's current marker. It is not a backup.
 See [tested recovery cases and remaining 1.0 gates](docs/release-1.0-readiness.md#native-undo-lifecycle-progress).
 
+Structured single-mesh Edit Mode sessions now retain a recovery group from mode entry
+through the return to Object Mode. The checkpoint panel and tool results show when that
+group is deferred or finalized. Confirmed snapshot recovery restores the grouped interval;
+see the [mode/edit/recovery workflow](docs/mesh-edit-recovery.md) for its scope and limits.
+
 Unreleased `scene.snapshot` and `scene.compare` add bounded before/after evidence for named
 objects: transforms, hierarchy, visibility, base mesh geometry, UVs, weights, material slots
 and root shader socket values/links. They can detect edits that leave object or vertex counts
