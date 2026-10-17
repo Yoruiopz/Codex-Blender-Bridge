@@ -209,6 +209,9 @@ def test_loader_friendly_mcp_definitions_match_declared_names() -> None:
         "uv.pack_islands",
         "uv.smart_project",
         "uv.unwrap",
+        "uv.coordinates_set",
+        "uv.transform",
+        "uv.layer_remove",
     } == mcp_uv.DESTRUCTIVE_TOOL_NAMES
     assert {
         "modifier.apply",

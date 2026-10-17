@@ -370,3 +370,45 @@ Next continue ASSET-01 with explicit UV coordinate/layer/pin authoring and loop 
 then a fuller prop-repair/unwrap acceptance workflow. Keep all character, sculpt/paint,
 procedural, simulation, delivery, UI and production-reliability gates in the 1.0 scope.
 1.0 remains unreleased; repository visibility and 0.3.0 assets are unchanged.
+
+### 2026-10-17 — Exact UV authoring and layer lifecycle
+
+Implemented seven structured UV tools: exact face-corner coordinate updates, pivot/scale/
+rotation/offset transforms, individual corner or face-scope pins, and Object Mode layer
+create/copy/rename/activation/confirmed removal. They use bounded direct data/BMesh operations,
+explicit target/layer names, existing Blender permissions and logical recovery. Indexed
+edits require face selection references; all coordinates/results are prevalidated. UV write
+faults and deadlines attempt measured local rollback. Shared/linked/override meshes and
+unsupported context are rejected rather than implicitly copied or mode-switched.
+
+Native tests exposed version-specific storage: 4.5 has per-map UV selection; 5.1 has mesh-global
+UV selection and optional, initially absent pin backing attributes. Layer copying now preserves
+the applicable selection model, allocates only its new pin storage when required, reads back
+copied values, and reports its policy. Name checks include companion-attribute collisions.
+The test also covers first/last layer roles, pinned-layer rename/removal/recovery and unchanged
+named shader consumers. Unexpected native new-layer names are cleaned up using the actual
+created name; deterministic fault coverage checks that no orphan layer remains.
+
+An MCP validation probe found boolean indices converted to integers and extra record fields
+dropped before Blender validation. The new UV record schemas now forbid extra keys and coercion;
+new numeric/boolean authoring controls are strict too. Tests cover both schema and authoritative
+Blender validation. Existing unrelated tool schemas still need a broader coercion audit.
+
+The native workflow checks exact corner math, individual anchors, default pin skipping,
+out-of-scope rejection, a real injected BMesh-update failure, other UV maps, protected mesh/
+materials, native snapshot recovery and context restoration. Reviewed checker captures on
+4.5.1/5.1.2 show deliberately changed mapping only on the edited face. This is localization
+evidence, not artistic UV approval, overlap/stretch proof or a complete prop unwrap acceptance.
+No user project was used or saved. See [the tool contract and workflow](uv-authoring.md).
+
+Validation: **708 tests** passed with both MCP SDK 2.0.0 and 2.2.0; lint/type/README registry
+checks passed. The complete Windows Blender matrix passed **36/36** at
+`build/uv-author-strict-final-matrix-20261017/report.json`, recording commit
+`505790254461eb44eca94837dc48a0c702d4a403` plus this work, a dirty worktree and Python fingerprint
+`b64703843b2b8cd82fc99a5923e603912c2ef14cfc7e03377436f6a378a686b5`.
+These are development-source checks, not a clean packaged release-candidate installation.
+
+Next continue ASSET-01 with loop bridging/cuts and a combined repair/unwrap/material workflow,
+including UV-atlas visual evidence and quality diagnostics. Keep all remaining full-artist
+capability, installation/upgrade, UI, preservation, performance and release gates in scope.
+1.0 remains unreleased; repository visibility and published 0.3.0 assets remain unchanged.

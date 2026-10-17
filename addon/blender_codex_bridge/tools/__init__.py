@@ -31,6 +31,8 @@ def register_all(registry: ToolRegistry) -> None:
         simulation,
         transforms,
         uv,
+        uv_edit,
+        uv_layers,
         weights,
     )
 
@@ -48,6 +50,8 @@ def register_all(registry: ToolRegistry) -> None:
     materials.register_tools(registry)
     nodes.register_tools(registry)
     uv.register_tools(registry)
+    uv_edit.register_tools(registry)
+    uv_layers.register_tools(registry)
     modifiers.register_tools(registry)
     constraints.register_tools(registry)
     animation.register_tools(registry)

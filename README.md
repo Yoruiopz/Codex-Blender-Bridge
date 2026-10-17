@@ -69,6 +69,12 @@ zero UVs and need unwrapping; shared/linked/override and shape-key meshes are no
 See [tool limits and the verified repair/recovery workflow](docs/mesh-repair.md).
 Isolated viewport capture also now restores the selection of temporarily hidden objects.
 
+Unreleased UV authoring adds exact face-corner coordinate edits, pivot/scale/rotation/offset
+transforms, individual pin anchors, and UV-layer create/copy/rename/activation/confirmed removal.
+Coordinate/pin tools use scoped Edit Mode data; layer lifecycle is explicit in Object Mode.
+Other layers and mesh selection are preserved, and Blender 4.5/5.1 selection-storage differences
+are reported. See [UV tools, limits and the verified workflow](docs/uv-authoring.md).
+
 Unreleased `scene.snapshot` and `scene.compare` add bounded before/after evidence for named
 objects: transforms, hierarchy, visibility, base mesh geometry, UVs, weights, material slots
 and root shader socket values/links. They can detect edits that leave object or vertex counts
@@ -289,7 +295,7 @@ is identified above, and the feature table describes the published release.
 Blender's local recovery UI also has an add-on-only restore action, not an extra MCP tool.
 
 <!-- BEGIN GENERATED MCP TOOLS -->
-Current registry: **140 MCP tools**.
+Current registry: **147 MCP tools**.
 
 <details>
 <summary>core — 18 tools</summary>
@@ -574,13 +580,20 @@ Current registry: **140 MCP tools**.
 </details>
 
 <details>
-<summary>uv — 4 tools</summary>
+<summary>uv — 11 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
+| `uv.coordinates_set` | Set exact face-corner UV coordinates within a validated face selection reference. |
 | `uv.inspect` | Inspect bounded UV layers, selection, bounds, and island connectivity. |
+| `uv.layer_activate` | Activate an Object Mode UV layer and optionally make it the render/clone layer. |
+| `uv.layer_create` | Create a zero UV layer or copy UVs/pins in Object Mode; copy per-layer selection where available, otherwise preserve mesh-global selection. |
+| `uv.layer_remove` | Remove an Object Mode UV layer only with explicit data-loss confirmation. |
+| `uv.layer_rename` | Rename an Object Mode UV layer; named consumers are not rewritten. |
 | `uv.pack_islands` | Pack selected UV islands using bounded margin settings. |
+| `uv.pin` | Pin or unpin selected-face UV corners without changing their coordinates. |
 | `uv.smart_project` | Smart-project selected faces using bounded projection settings. |
+| `uv.transform` | Transform selected-face UV corners using explicit pivot, scale, rotation and offset; respect pins by default. |
 | `uv.unwrap` | Unwrap selected faces with explicit method and margin. |
 
 </details>
