@@ -260,3 +260,38 @@ may be affected by confirmed global recovery. Snapshot provenance is not a proof
 user invariant or visual quality. Next work should establish protected-scope before/after
 comparisons and broader editor/domain recovery cases, then continue the full asset/character/
 procedural artist workflows. No gate or full-artist requirement is removed by this increment.
+
+### 2026-10-17 — Scoped comparison tools and protected material evidence
+
+Added `scene.snapshot` and `scene.compare` to the core add-on/MCP registries with authoritative
+`INSPECT_SCENE` checks. They capture explicitly named objects and eight defined field families,
+return compact hashes/numeric summaries, preserve immutable in-memory baselines and report
+changed, matching scope or unknown evidence. The [contract](scene-evidence.md) records exact
+field definitions, identity/context rules, per-call limits, cache lifetime and unmeasured data.
+Shared mesh/UV/material reads are reused; cancellation and incomplete captures remain explicit.
+
+The protected-material fixture independently compares a shared-mesh duplicate while another
+object's material is isolated and edited. It detects shared shader, same-count coordinate,
+UV and weight changes, and tests permission denial, non-mesh applicability and project cache
+invalidation. The interactive recovery fixture now follows native undo with a complete numeric
+baseline comparison. Snapshot capture itself does not modify/save Blender data or create undo
+entries; none of these fixtures opens a user project or claims visual-quality acceptance.
+
+Validation: **559 tests** passed with MCP SDK 2.0.0 and 2.2.0; lint/type checks and generated
+README validation passed. **30/30** Windows Blender checks passed on 4.5.1/5.1.2, including
+interactive recovery, at `build/scene-evidence-reviewed-matrix-20261017/report.json`.
+The report records source revision `18e513c690b602bd1ac3a27cc2c8029b04ce61bd` plus this work,
+a dirty worktree and Python source fingerprint
+`726408dc409a0e17530b027c421ecffe1d1cc7c83c003b914e8bdff7e746c85c`.
+This is development evidence, not clean-RC acceptance. Unrelated user changes were preserved.
+
+This is the first implemented EVID-02 slice, prioritized to give SAFE-01/REC-01 independent
+before/after evidence. Automatic protected-scope enforcement, modifiers/constraints, rig/
+animation state, evaluated geometry, nested shader contents and visual comparison remain open.
+
+Next concrete REC-01 check: exercise `context.set_mode` through the dispatcher. Source audit
+shows `after_modification` clears tracking when native finalization fails outside Object Mode;
+the existing native round-trip fixture changes mode directly and does not prove preservation
+of checkpoints through the structured mode tool. Resolve and verify that path before claiming
+automated Edit Mode recovery, then use these comparisons in the ASSET-01 prop-repair workflow
+and implement its missing modeling/UV primitives. The full 3D-artist target remains unchanged.

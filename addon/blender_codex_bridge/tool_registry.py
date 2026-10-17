@@ -45,6 +45,7 @@ class ToolContext:
     registry: ToolRegistry
     checkpoints: Any
     check_cancelled: Callable[[], None] | None = None
+    evidence: Any = None
 
     def require(self, *permissions: Permission) -> None:
         self.permissions.require(permissions)

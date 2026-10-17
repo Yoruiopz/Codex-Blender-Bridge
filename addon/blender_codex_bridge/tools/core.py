@@ -147,6 +147,14 @@ def checkpoint_create(context: ToolContext, params: Mapping[str, Any]) -> dict[s
     return context.checkpoints.create(description)
 
 
+def scene_snapshot(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
+    return context.evidence.capture(require_blender(), params, context.check_cancelled)
+
+
+def scene_compare(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
+    return context.evidence.compare(require_blender(), params, context.check_cancelled)
+
+
 def checkpoint_undo_last(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
     if not bool_param(params, "confirm_global_undo", False):
         raise invalid_argument(
@@ -204,6 +212,10 @@ def toolsets_disable(context: ToolContext, params: Mapping[str, Any]) -> dict[st
 
 
 def register_tools(registry: ToolRegistry) -> None:
+    registry.register("scene.snapshot", scene_snapshot, permissions=(Permission.INSPECT_SCENE,),
+                      description="Capture bounded structural evidence for explicitly named objects and fields.")
+    registry.register("scene.compare", scene_compare, permissions=(Permission.INSPECT_SCENE,),
+                      description="Compare current measured object fields with a session snapshot; report incomplete coverage.")
     inspect_permission = (Permission.INSPECT_SCENE,)
     registry.register("bridge.status", bridge_status, description="Return Blender, bridge, permission, and agent state.")
     registry.register("bridge.task.set", bridge_task_set, description="Show the current high-level Codex task in Blender's interactive UI.")

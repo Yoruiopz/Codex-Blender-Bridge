@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "addon"))
 import blender_codex_bridge  # noqa: E402
 from blender_codex_bridge.errors import BridgeError  # noqa: E402
+from blender_codex_bridge.permissions import PermissionManager  # noqa: E402
 from blender_codex_bridge.runtime import get_runtime  # noqa: E402
 
 
@@ -21,6 +22,9 @@ def run():
         assert not bpy.app.background
         blender_codex_bridge.register()
         manager = get_runtime().checkpoints
+        inspection = PermissionManager(lambda: {"INSPECT_SCENE": True})
+        get_runtime().permissions = get_runtime().executor.permissions = inspection
+        evidence = get_runtime().dispatch("scene.snapshot", {"object_names": ["Cube"]})
         baseline = bpy.data.objects["Cube"].location.x
         manager.create("Measured snapshot baseline")
         assert manager.before_modification("first")
@@ -43,6 +47,8 @@ def run():
         assert bpy.data.objects["Cube"].location.x == 1.0
         assert manager.restore_operation()["snapshot_marker_verified"]
         assert bpy.data.objects["Cube"].location.x == baseline
+        comparison = get_runtime().dispatch("scene.compare", {"snapshot_id": evidence["snapshot_id"]})
+        assert comparison["status"] == "unchanged_within_scope" and comparison["coverage_complete"]
         assert manager.restore_last()["snapshot_marker_verified"]
         assert bpy.data.objects["Cube"].location.x == baseline
         # A global named checkpoint remains usable after an Edit Mode round trip.
@@ -145,6 +151,7 @@ def run():
                     "global_checkpoint_after_edit_mode_round_trip": True,
                     "unexpected_partial_failure_has_recoverable_snapshot": True,
                     "full_recovery_acceptance_verified": False,
+                "numeric_baseline_comparison_after_recovery": True,
                     "project_saved": False,
                 }
             ),

@@ -57,6 +57,12 @@ Internal `_codex_bridge_undo_marker` scene metadata identifies snapshots and may
 your project; normal add-on shutdown removes this session's current marker. It is not a backup.
 See [tested recovery cases and remaining 1.0 gates](docs/release-1.0-readiness.md#native-undo-lifecycle-progress).
 
+Unreleased `scene.snapshot` and `scene.compare` add bounded before/after evidence for named
+objects: transforms, hierarchy, visibility, base mesh geometry, UVs, weights, material slots
+and root shader socket values/links. They can detect edits that leave object or vertex counts
+unchanged. Results identify changed fields, complete matching scope, or incomplete evidence
+that needs further inspection. See [fields, limits and the protected-material workflow](docs/scene-evidence.md).
+
 ## Install — no source build needed
 
 You need Blender **4.2+**, standalone **Python 3.10+**, and a local Codex client with MCP support.
@@ -271,10 +277,10 @@ is identified above, and the feature table describes the published release.
 Blender's local recovery UI also has an add-on-only restore action, not an extra MCP tool.
 
 <!-- BEGIN GENERATED MCP TOOLS -->
-Current registry: **135 MCP tools**.
+Current registry: **137 MCP tools**.
 
 <details>
-<summary>core — 16 tools</summary>
+<summary>core — 18 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
@@ -287,7 +293,9 @@ Current registry: **135 MCP tools**.
 | `object.inspect` | Inspect one object without dumping raw vertex coordinates. |
 | `project.info` | Inspect project metadata and render settings. |
 | `project.save` | Save the current project when Blender-side permission allows it. |
+| `scene.compare` | Compare current measured object fields with a session snapshot; report incomplete coverage. |
 | `scene.inspect` | Return a compact authoritative structural scene representation. |
+| `scene.snapshot` | Capture bounded structural evidence for explicitly named objects and fields. |
 | `scene.summary` | Return an LLM-oriented structural and textual scene summary. |
 | `selection.inspect` | Inspect active and selected objects or mesh elements. |
 | `toolsets.disable` | Disable a local MCP domain toolset. |

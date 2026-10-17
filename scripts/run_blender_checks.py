@@ -31,6 +31,7 @@ CASES = {
     "artist": ("blender_artist_smoke.py", "artist_smoke"),
     "material_ownership": ("blender_material_ownership_smoke.py", "material_ownership_smoke"),
     "undo_lifecycle": ("blender_undo_lifecycle_smoke.py", "BLENDER_UNDO_LIFECYCLE_OK "),
+    "scene_evidence": ("blender_scene_evidence_smoke.py", "BLENDER_SCENE_EVIDENCE_OK "),
 }
 INTERACTIVE_CASES = {"undo_lifecycle"}
 

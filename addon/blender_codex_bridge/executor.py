@@ -14,6 +14,7 @@ from .command_queue import CommandQueue, QueuedRequest
 from .errors import BridgeError, ErrorCode
 from .permissions import PermissionManager
 from .protocol import PROTOCOL_VERSION, Request, Response
+from .scene_evidence import SceneEvidenceStore
 from .state import BridgeState
 from .tool_registry import ToolContext, ToolRegistry
 from .utils import affected_objects_from_result, require_blender
@@ -68,6 +69,7 @@ class MainThreadExecutor:
         self.state = state
         self.permissions = permissions
         self.checkpoints = checkpoints
+        self.evidence = SceneEvidenceStore()
         self.interval = interval
         self.maximum_per_tick = maximum_per_tick
         self._running = False
@@ -82,6 +84,7 @@ class MainThreadExecutor:
             permissions=self.permissions,
             registry=self.registry,
             checkpoints=self.checkpoints,
+            evidence=self.evidence,
         )
 
     def start(self) -> None:

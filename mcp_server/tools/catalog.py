@@ -57,6 +57,8 @@ CORE_REMOTE_TOOLS: tuple[tuple[str, str, bool, tuple[str, ...]], ...] = (
     ("project.info", "Inspect project metadata and render settings.", False, ("INSPECT_SCENE",)),
     ("scene.inspect", "Return a compact authoritative structural scene representation.", False, ("INSPECT_SCENE",)),
     ("scene.summary", "Return an LLM-oriented structural and textual scene summary.", False, ("INSPECT_SCENE",)),
+    ("scene.snapshot", "Capture bounded structural evidence for explicitly named objects and fields.", False, ("INSPECT_SCENE",)),
+    ("scene.compare", "Compare current measured object fields with a session snapshot; report incomplete coverage.", False, ("INSPECT_SCENE",)),
     ("selection.inspect", "Inspect active and selected objects or mesh elements.", False, ("INSPECT_SCENE",)),
     ("object.inspect", "Inspect one object without dumping raw vertex coordinates.", False, ("INSPECT_SCENE",)),
     (

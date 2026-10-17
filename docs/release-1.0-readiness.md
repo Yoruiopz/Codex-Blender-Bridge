@@ -219,6 +219,27 @@ Interleaved manual edits can still be affected by confirmed global recovery. Pro
 comparisons, broader editor/domain tests, durable recovery, UI acceptance and performance on
 production scenes remain mandatory REC-01 gates. No full 1.0 acceptance is claimed here.
 
+## Scoped structural comparison progress
+
+`scene.snapshot`/`scene.compare` now expose session-local, bounded field comparisons with
+Blender-side inspection permission, immutable cached baselines, exact target resolution,
+explicit incomplete coverage and cooperative cancellation. Their [contract](scene-evidence.md)
+defines all eight measured fields, record/byte limits, identity/lifecycle behavior and exclusions.
+
+The protected-material fixture checks independent before/after hashes for a shared-mesh
+duplicate while another object's material is isolated and edited. It also detects shared
+shader, same-count coordinate, UV and weight changes and rejects permission bypass. Native
+recovery is followed by a complete baseline comparison in the interactive undo fixture.
+
+This implements the first EVID-02 evidence slice. It does not automatically enforce protected
+scope or cover modifier/constraint settings, rigs/animation, nested shader contents, image
+pixels, evaluated geometry or appearance. Those remain requirements for full preservation
+and artist-workflow acceptance. `unchanged_within_scope` is never a whole-scene/user-goal verdict.
+
+The next recovery gap to verify is structured `context.set_mode`: post-tool finalization
+currently clears tracking outside Object Mode. The direct native mode round-trip fixture is
+not evidence for that dispatcher path; automated Edit Mode recovery still needs that case.
+
 ## UV result verification progress
 
 `blender_uv_modifier_constraint_smoke.py` currently passes even when Blender prints
