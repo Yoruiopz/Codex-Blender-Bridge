@@ -62,6 +62,13 @@ through the return to Object Mode. The checkpoint panel and tool results show wh
 group is deferred or finalized. Confirmed snapshot recovery restores the grouped interval;
 see the [mode/edit/recovery workflow](docs/mesh-edit-recovery.md) for its scope and limits.
 
+Unreleased mesh repair adds `mesh.subdivide_selected`, `mesh.merge_by_distance` and
+`mesh.fill_holes`: bounded edge subdivision, selected-only local-distance welding and closed
+boundary-loop caps. They require one active, local, single-user Edit Mode mesh. Caps start with
+zero UVs and need unwrapping; shared/linked/override and shape-key meshes are not supported.
+See [tool limits and the verified repair/recovery workflow](docs/mesh-repair.md).
+Isolated viewport capture also now restores the selection of temporarily hidden objects.
+
 Unreleased `scene.snapshot` and `scene.compare` add bounded before/after evidence for named
 objects: transforms, hierarchy, visibility, base mesh geometry, UVs, weights, material slots
 and root shader socket values/links. They can detect edits that leave object or vertex counts
@@ -282,7 +289,7 @@ is identified above, and the feature table describes the published release.
 Blender's local recovery UI also has an add-on-only restore action, not an extra MCP tool.
 
 <!-- BEGIN GENERATED MCP TOOLS -->
-Current registry: **137 MCP tools**.
+Current registry: **140 MCP tools**.
 
 <details>
 <summary>core — 18 tools</summary>
@@ -436,7 +443,7 @@ Current registry: **137 MCP tools**.
 </details>
 
 <details>
-<summary>mesh — 9 tools</summary>
+<summary>mesh — 12 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
@@ -445,10 +452,13 @@ Current registry: **137 MCP tools**.
 | `mesh.delete_selected` | Delete selected mesh elements. |
 | `mesh.dissolve_selected` | Dissolve selected mesh elements. |
 | `mesh.extrude_selected` | Extrude the selected mesh region by an explicit offset. |
+| `mesh.fill_holes` | Cap complete disjoint boundary loops with bounded n-gons; new face UVs start at zero. |
 | `mesh.inset_selected` | Inset selected faces with explicit thickness and depth. |
 | `mesh.inspect` | Inspect compact mesh and topology statistics. |
 | `mesh.mark_seams` | Mark or clear UV seams on selected edges of one local single-user Edit Mode mesh. |
+| `mesh.merge_by_distance` | Weld only selected vertices within an explicit local-space distance. |
 | `mesh.recalculate_normals` | Recalculate normals for the selected mesh region. |
+| `mesh.subdivide_selected` | Subdivide selected edges without smoothing under a conservative growth budget. |
 
 </details>
 

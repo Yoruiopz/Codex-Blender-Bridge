@@ -12,6 +12,30 @@ class MeshTools:
     def __init__(self, registry: ToolRegistry) -> None:
         self.registry = registry
 
+    async def mesh_subdivide_selected(
+        self, object_name: str, cuts: int = 1, selection_id: str | None = None,
+    ) -> Any:
+        """Subdivide selected edges on one local single-user active Edit Mode mesh; no smoothing. Cuts 1-32, selection <=20,000, conservative total-element budget 200,000. Adjacent faces change too; reinspect topology and attributes."""
+        return await self.registry.call("mesh.subdivide_selected", params(
+            object_name=object_name, cuts=cuts, selection_id=selection_id,
+        ))
+
+    async def mesh_merge_by_distance(
+        self, object_name: str, distance: float = 0.0001, selection_id: str | None = None,
+    ) -> Any:
+        """Weld only selected vertices on one local single-user active Edit Mode mesh. Distance is local-space (1e-12 to 1e6), not world-space. Incident faces/edges may collapse and attributes may reconcile; reinspect. No object/data-block deletion."""
+        return await self.registry.call("mesh.merge_by_distance", params(
+            object_name=object_name, distance=distance, selection_id=selection_id,
+        ))
+
+    async def mesh_fill_holes(
+        self, object_name: str, material_index: int = 0, selection_id: str | None = None,
+    ) -> Any:
+        """Cap complete disjoint boundary-edge loops (3-1,024 sides) on one local single-user active Edit Mode mesh. No wire/interior/branched selection, grid or bridge. New n-gon faces use the requested material slot and zero UVs; unwrap and visually verify them."""
+        return await self.registry.call("mesh.fill_holes", params(
+            object_name=object_name, material_index=material_index, selection_id=selection_id,
+        ))
+
     async def mesh_create(
         self,
         object_name: str,
@@ -172,6 +196,9 @@ class MeshTools:
 
     def bindings(self) -> tuple[MCPToolBinding, ...]:
         return (
+            MCPToolBinding("mesh.subdivide_selected", self.mesh_subdivide_selected, self.mesh_subdivide_selected.__doc__ or ""),
+            MCPToolBinding("mesh.merge_by_distance", self.mesh_merge_by_distance, self.mesh_merge_by_distance.__doc__ or ""),
+            MCPToolBinding("mesh.fill_holes", self.mesh_fill_holes, self.mesh_fill_holes.__doc__ or ""),
             MCPToolBinding("mesh.mark_seams", self.mesh_mark_seams, self.mesh_mark_seams.__doc__ or ""),
             MCPToolBinding("mesh.create", self.mesh_create, self.mesh_create.__doc__ or ""),
             MCPToolBinding("mesh.inspect", self.mesh_inspect, self.mesh_inspect.__doc__ or ""),

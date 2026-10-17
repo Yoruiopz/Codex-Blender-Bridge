@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import struct
 import tempfile
 import uuid
@@ -165,17 +166,37 @@ def _configure_output(
     return sampling
 
 
-def _isolate_object(scene: Any, isolated_object: Any) -> list[tuple[Any, bool, bool]]:
+def _restore_isolation(visibility: list[tuple[Any, bool, bool, bool]]) -> bool:
+    restored = True
+    # Unhide everything before restoring selection: Blender deselects on hide_set.
+    for obj, hidden, hidden_render, _selected in visibility:
+        try:
+            obj.hide_set(hidden)
+            obj.hide_render = hidden_render
+        except (ReferenceError, RuntimeError):
+            logging.getLogger(__name__).exception("Could not restore capture visibility")
+            restored = False
+    for obj, _hidden, _hidden_render, selected in visibility:
+        try:
+            if obj.select_get() != selected:
+                obj.select_set(selected)
+        except (ReferenceError, RuntimeError):
+            logging.getLogger(__name__).exception("Could not restore capture selection")
+            restored = False
+    return restored
+
+
+def _isolate_object(scene: Any, isolated_object: Any) -> list[tuple[Any, bool, bool, bool]]:
     """Apply temporary isolation atomically and return restoration state."""
 
-    visibility: list[tuple[Any, bool, bool]] = []
+    visibility: list[tuple[Any, bool, bool, bool]] = []
     try:
         for obj in scene.objects:
             try:
                 hidden = bool(obj.hide_get())
             except (RuntimeError, TypeError):
                 hidden = bool(obj.hide_viewport)
-            visibility.append((obj, hidden, bool(obj.hide_render)))
+            visibility.append((obj, hidden, bool(obj.hide_render), bool(obj.select_get())))
             if obj != isolated_object:
                 obj.hide_set(True)
                 obj.hide_render = True
@@ -183,12 +204,7 @@ def _isolate_object(scene: Any, isolated_object: Any) -> list[tuple[Any, bool, b
                 obj.hide_set(False)
                 obj.hide_render = False
     except Exception:
-        for obj, hidden, hidden_render in visibility:
-            try:
-                obj.hide_set(hidden)
-                obj.hide_render = hidden_render
-            except (ReferenceError, RuntimeError):
-                pass
+        _restore_isolation(visibility)
         raise
     return visibility
 
@@ -360,12 +376,11 @@ def capture_viewport(params: Mapping[str, Any] | None = None) -> dict[str, Any]:
             {"detail": str(exc)},
         ) from exc
     finally:
-        for obj, hidden, hidden_render in object_visibility:
-            try:
-                obj.hide_set(hidden)
-                obj.hide_render = hidden_render
-            except (ReferenceError, RuntimeError):
-                pass
+        if not _restore_isolation(object_visibility):
+            raise BridgeError(
+                ErrorCode.OPERATION_FAILED, "Viewport capture could not fully restore visibility/selection; reinspect the scene.",
+                {"verification_required": True, "context_restored": False},
+            )
 
     if not filepath.is_file():
         raise BridgeError(

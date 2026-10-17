@@ -333,3 +333,40 @@ primitive undo within an open editor, other editor stacks, multi-object work, pr
 interleaving and durable recovery remain open. Next implement ASSET-01 repair primitives
 (subdivide/merge/fill/bridge and UV editing) in a prop-repair workflow using this recovery path
 and scoped comparisons, while retaining all broader 1.0 capability/acceptance gates.
+
+### 2026-10-17 — Bounded prop-repair primitives
+
+Implemented `mesh.subdivide_selected`, `mesh.merge_by_distance` and `mesh.fill_holes` through
+a separate typed BMesh domain module and thin MCP bindings. Explicit single-object Edit Mode,
+local/single-user ownership, hidden geometry, shape-key rejection, selection handles, finite
+parameters and growth/corner budgets are checked before mutation. Topology changes require
+`EDIT_MESH`; no object/datablock deletion, raw Python or file permissions are needed. A no-op
+merge does not flush selection or update mesh data. New cap UVs are zero-initialized and unpinned.
+See [the actual tool contract](mesh-repair.md); bridging/loop cuts and broader modeling remain open.
+
+A disposable prop workflow welds one selected pair without touching an unselected coincident
+vertex, rejects incomplete boundaries, caps a hole, then subdivides its cap into four quads.
+It independently checks materials, UVs/pins, weights, dimensions, protected-object evidence,
+selection/active object/mode and grouped recovery. Before/after wireframe and solid captures
+were reviewed on Windows Blender 4.5.1 and 5.1.2: the cap grid and retained box silhouette are visible.
+No user project was used or saved; this is a bounded fixture, not full artistic acceptance.
+
+That workflow exposed temporary capture isolation dropping selection on hidden peers.
+Capture now restores selection after visibility, including partial isolation failure, and
+surfaces restoration failure. Deterministic tests reproduce Blender's deselection side effect.
+An initial pinned-UV fixture using legacy per-corner mesh RNA writes crashed Blender 4.5.1
+natively twice (`tbbmalloc.dll`); its logs remain under `build/repair-pin-*`. Constructing the
+fixture UV data through BMesh passes both versions. The precise native crash cause is not
+established; this does not claim a general legacy-RNA fix.
+
+Validation: **627 tests** passed with both MCP SDK 2.0.0 and 2.2.0; lint, type checks and README
+registry checks passed. The final complete matrix passed **34/34** cases, including pinned UVs,
+at `build/repair-final-matrix-20261017/report.json`. It records commit
+`52aae485a762447752db2aebc40b6b0146eb75d1` plus this work, a dirty worktree, and Python fingerprint
+`f9025827059b70ed1e4354706f2d152aa77fc0e7c5e1080b908565e955e05d99`.
+This is development evidence, not a clean packaged release candidate.
+
+Next continue ASSET-01 with explicit UV coordinate/layer/pin authoring and loop bridging,
+then a fuller prop-repair/unwrap acceptance workflow. Keep all character, sculpt/paint,
+procedural, simulation, delivery, UI and production-reliability gates in the 1.0 scope.
+1.0 remains unreleased; repository visibility and 0.3.0 assets are unchanged.

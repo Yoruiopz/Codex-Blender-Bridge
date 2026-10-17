@@ -25,7 +25,7 @@ No current release should be described as a complete human-equivalent artist.
 | Artist responsibility | Existing foundation | Remaining structured-workflow gaps |
 | --- | --- | --- |
 | Understand a brief and references | Scene/selection/object inspection, task display | Reference management, persistent constraints, scene units/scale checks, ambiguity resolution benchmarks |
-| Model and repair assets | Primitives, arbitrary meshes, selection-scoped edits, modifiers | Merge/subdivide/fill/bridge/loops, retopology, broader topology diagnostics and protected-scope editing |
+| Model and repair assets | Primitives, arbitrary meshes, selection-scoped edits, modifiers; bounded selected-edge subdivision, selected-only distance welding and boundary-loop caps ([scope](mesh-repair.md)) | Loop bridging/cuts, retopology, broader topology diagnostics, shape-key/shared-data workflows and protected-scope editing |
 | Sculpt and paint | Mode entry only | Brush/stroke control, masks, multires workflows, texture/vertex painting and feedback |
 | UV and textures | Seams, unwrap/project/pack, bounded coordinate/island evidence | UV layer/coordinate editing, pins, overlap/distortion/texel-density checks, image loading/painting/baking with path consent |
 | Materials and look development | Principled controls and shader graph editing | Reviewed node/property breadth, image assets, reusable materials, matched visual comparisons |
@@ -245,6 +245,12 @@ protected-object evidence and restoration of selection/active object/mode. Other
 stacks, per-operation Edit Mode undo and broader production acceptance remain open.
 
 ## UV result verification progress
+
+Main also has a [bounded mesh-repair workflow](mesh-repair.md): selected-only welding,
+boundary-loop capping and edge subdivision are measured together with protected data and
+grouped recovery on 4.5.1/5.1.2. Caps receive zero, unpinned UVs, not an automatic unwrap.
+The small box fixture and reviewed captures close only these cases; loop bridging/cuts,
+production retopology and broader modeling/UV acceptance remain open.
 
 `blender_uv_modifier_constraint_smoke.py` currently passes even when Blender prints
 `Unwrap failed to solve 1 of 1 island(s)`. Its later Smart Project checks do not prove

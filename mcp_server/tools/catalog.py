@@ -113,6 +113,9 @@ OBJECT_TOOL_DATA: tuple[tuple[str, str, bool, tuple[str, ...]], ...] = (
 OBJECT_TOOL_NAMES = tuple(item[0] for item in OBJECT_TOOL_DATA)
 
 MESH_TOOL_DATA: tuple[tuple[str, str, bool], ...] = (
+    ("mesh.subdivide_selected", "Subdivide selected edges without smoothing under a conservative growth budget.", True),
+    ("mesh.merge_by_distance", "Weld only selected vertices within an explicit local-space distance.", True),
+    ("mesh.fill_holes", "Cap complete disjoint boundary loops with bounded n-gons; new face UVs start at zero.", True),
     ("mesh.mark_seams", "Mark or clear UV seams on selected edges of one local single-user Edit Mode mesh.", True),
     ("mesh.create", "Create a fully prevalidated arbitrary mesh object from bounded topology arrays.", True),
     ("mesh.inspect", "Inspect compact mesh and topology statistics.", False),
@@ -169,6 +172,7 @@ DESTRUCTIVE_TOOL_NAMES = frozenset(
         "transform.apply",
         "mesh.delete_selected",
         "mesh.dissolve_selected",
+        "mesh.merge_by_distance",
         "material.delete",
         "material.slot_remove",
         "nodes.remove",
