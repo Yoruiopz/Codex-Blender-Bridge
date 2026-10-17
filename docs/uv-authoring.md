@@ -89,5 +89,6 @@ fault rollback, protected geometry/materials/UV layers and grouped native recove
 two-face checker surface is captured before and after: the deliberate mapping change is local
 to the edited face, while the other face and geometry remain fixed. The distorted checker is an
 intentional coordinate-edit test, not an approved unwrap or texel-density result. No user
-project is used or saved. UV-atlas visual inspection, automatic overlap/stretch diagnostics,
+project is used or saved. [UV-coordinate layout captures](mesh-loops.md#uv-coordinate-visual-evidence)
+now provide atlas evidence; UV-editor view/selection tooling, automatic overlap/stretch diagnostics,
 relax/stitch/alignment, broader UV-editor selection and production asset acceptance remain open.

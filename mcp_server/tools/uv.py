@@ -5,13 +5,14 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from pydantic import ConfigDict, StrictBool, StrictFloat, with_config
+from pydantic import ConfigDict, StrictBool, StrictFloat, StrictInt, with_config
 from typing_extensions import TypedDict
 
 from ..tool_registry import ToolDefinition, ToolRegistry, remote_tool
 from ._common import MCPToolBinding, params
 
 TOOL_DATA: tuple[tuple[str, str, bool], ...] = (
+    ("uv.capture_layout", "Capture a bounded UV-coordinate PNG without scene/UI/render changes; not a quality verdict.", False),
     ("uv.coordinates_set", "Set exact face-corner UV coordinates within a validated face selection reference.", True),
     ("uv.transform", "Transform selected-face UV corners using explicit pivot, scale, rotation and offset; respect pins by default.", True),
     ("uv.pin", "Pin or unpin selected-face UV corners without changing their coordinates.", True),
@@ -46,7 +47,8 @@ def load_definitions() -> tuple[ToolDefinition, ...]:
             toolset="uv",
             description=description,
             modifying=modifying,
-            required_permissions=("EDIT_MESH",) if modifying else ("INSPECT_SCENE",),
+            required_permissions=("INSPECT_SCENE", "CAPTURE_VIEWPORT") if name == "uv.capture_layout" else
+            (("EDIT_MESH",) if modifying else ("INSPECT_SCENE",)),
         )
         for name, description, modifying in TOOL_DATA
     )
@@ -55,6 +57,16 @@ def load_definitions() -> tuple[ToolDefinition, ...]:
 class UVTools:
     def __init__(self, registry: ToolRegistry) -> None:
         self.registry = registry
+
+    async def uv_capture_layout(
+        self, object_name: str, uv_layer: str, selected_only: StrictBool = False,
+        selection_id: str | None = None, size: StrictInt = 512, view: str = "UNIT_TILE",
+    ) -> Any:
+        """Create a managed temporary PNG from measured UV corners (Object/Edit Mode). Blue edges, red pins; U right/V up with equal scale. UNIT_TILE shows 0-1 and reports outside-view corners; FIT includes all scoped UVs. At most 4,096 faces/16,384 corners; narrow selected/reference scope if larger. Not a screenshot or overlap/stretch/texel-density verdict. No scene/UI/Render Result mutation; requires inspection and capture permissions, not external-file access."""
+        return await self.registry.call("uv.capture_layout", params(
+            object_name=object_name, uv_layer=uv_layer, selected_only=selected_only,
+            selection_id=selection_id, size=size, view=view,
+        ))
 
     async def uv_coordinates_set(
         self, object_name: str, uv_layer: str, selection_id: str, updates: list[UVCoordinateUpdate],
@@ -221,6 +233,7 @@ class UVTools:
 
     def bindings(self) -> tuple[MCPToolBinding, ...]:
         return (
+            MCPToolBinding("uv.capture_layout", self.uv_capture_layout, self.uv_capture_layout.__doc__ or ""),
             MCPToolBinding("uv.coordinates_set", self.uv_coordinates_set, self.uv_coordinates_set.__doc__ or ""),
             MCPToolBinding("uv.transform", self.uv_transform, self.uv_transform.__doc__ or ""),
             MCPToolBinding("uv.pin", self.uv_pin, self.uv_pin.__doc__ or ""),

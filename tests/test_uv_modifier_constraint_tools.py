@@ -203,7 +203,8 @@ def test_loader_friendly_mcp_definitions_match_declared_names() -> None:
         assert tuple(item.name for item in definitions) == module.TOOL_NAMES
         assert all(item.toolset == toolset for item in definitions)
         for item in definitions:
-            expected = (permission,) if item.modifying else ("INSPECT_SCENE",)
+            expected = (("INSPECT_SCENE", "CAPTURE_VIEWPORT") if item.name == "uv.capture_layout" else
+                        ((permission,) if item.modifying else ("INSPECT_SCENE",)))
             assert item.required_permissions == expected
     assert {
         "uv.pack_islands",

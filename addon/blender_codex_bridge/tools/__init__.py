@@ -20,6 +20,7 @@ def register_all(registry: ToolRegistry) -> None:
         layout,
         materials,
         mesh,
+        mesh_loops,
         mesh_repair,
         modifiers,
         nodes,
@@ -31,6 +32,7 @@ def register_all(registry: ToolRegistry) -> None:
         simulation,
         transforms,
         uv,
+        uv_capture,
         uv_edit,
         uv_layers,
         weights,
@@ -46,10 +48,12 @@ def register_all(registry: ToolRegistry) -> None:
     objects.register_tools(registry)
     transforms.register_tools(registry)
     mesh.register_tools(registry)
+    mesh_loops.register_tools(registry)
     mesh_repair.register_tools(registry)
     materials.register_tools(registry)
     nodes.register_tools(registry)
     uv.register_tools(registry)
+    uv_capture.register_tools(registry)
     uv_edit.register_tools(registry)
     uv_layers.register_tools(registry)
     modifiers.register_tools(registry)

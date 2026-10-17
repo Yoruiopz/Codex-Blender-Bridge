@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from pydantic import StrictInt
+
 from ..tool_registry import ToolRegistry
 from ._common import MCPToolBinding, params
 
@@ -11,6 +13,32 @@ from ._common import MCPToolBinding, params
 class MeshTools:
     def __init__(self, registry: ToolRegistry) -> None:
         self.registry = registry
+
+    async def mesh_edge_ring_inspect(
+        self, object_name: str, seed_edge_index: StrictInt, selection_id: str | None = None,
+        cuts: StrictInt = 1, offset: StrictInt = 0, max_items: StrictInt = 100,
+    ) -> Any:
+        """Read-only paginated quad-ring preview on one active Edit Mode mesh. Seed propagation includes unselected edges/faces. Returns measured edge centers, open/closed state and expected counts for 1-32 cuts. Stops with explicit errors on hidden/non-quad/non-manifold/self-crossing scope. At most 4,096 ring edges; 256 per page. Does not reserve the mesh."""
+        return await self.registry.call("mesh.edge_ring_inspect", params(
+            object_name=object_name, seed_edge_index=seed_edge_index, selection_id=selection_id,
+            cuts=cuts, offset=offset, max_items=max_items,
+        ))
+
+    async def mesh_loop_cut(
+        self, object_name: str, seed_edge_index: StrictInt, selection_id: str, cuts: StrictInt = 1,
+    ) -> Any:
+        """Cut the entire connected quad ring, not just selected faces. Preview with edge_ring_inspect first; a fresh edge reference containing the seed is required. Even spacing, no slide/smoothing. Requires a local single-user active Edit Mode mesh without shape keys; rejects hidden/non-quad/non-manifold/self-crossing scope and output above 200,000 elements. Reinspect topology/attributes and capture wireframe afterwards."""
+        return await self.registry.call("mesh.loop_cut", params(
+            object_name=object_name, seed_edge_index=seed_edge_index, selection_id=selection_id, cuts=cuts,
+        ))
+
+    async def mesh_bridge_loops(
+        self, object_name: str, selection_id: str, twist_offset: StrictInt = 0, material_index: StrictInt = 0,
+    ) -> Any:
+        """Bridge exactly two disjoint closed selected/referenced boundary or wire loops (3-1,024 edges each) on one local single-user active Edit Mode mesh without shape keys. Equal loops produce quads, unequal loops a native triangulated strip. Twist magnitude must be smaller than both loop sizes; nonzero twist for unequal loops returns NOT_IMPLEMENTED because native Blender ignores it. No merge. New faces use the requested material slot and zero, unpinned UVs. Verify correspondence/normals/crossings visually and unwrap; no automatic twist optimization."""
+        return await self.registry.call("mesh.bridge_loops", params(
+            object_name=object_name, selection_id=selection_id, twist_offset=twist_offset, material_index=material_index,
+        ))
 
     async def mesh_subdivide_selected(
         self, object_name: str, cuts: int = 1, selection_id: str | None = None,
@@ -196,6 +224,9 @@ class MeshTools:
 
     def bindings(self) -> tuple[MCPToolBinding, ...]:
         return (
+            MCPToolBinding("mesh.edge_ring_inspect", self.mesh_edge_ring_inspect, self.mesh_edge_ring_inspect.__doc__ or ""),
+            MCPToolBinding("mesh.loop_cut", self.mesh_loop_cut, self.mesh_loop_cut.__doc__ or ""),
+            MCPToolBinding("mesh.bridge_loops", self.mesh_bridge_loops, self.mesh_bridge_loops.__doc__ or ""),
             MCPToolBinding("mesh.subdivide_selected", self.mesh_subdivide_selected, self.mesh_subdivide_selected.__doc__ or ""),
             MCPToolBinding("mesh.merge_by_distance", self.mesh_merge_by_distance, self.mesh_merge_by_distance.__doc__ or ""),
             MCPToolBinding("mesh.fill_holes", self.mesh_fill_holes, self.mesh_fill_holes.__doc__ or ""),

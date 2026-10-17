@@ -70,10 +70,14 @@ and “accepted for release” are separate states.
 | 13 / DELIVER-01 | Import/export, dependencies and durable saves | Approved exact paths, reopen and reimport checks, no silent overwrite, dependency/asset validation |
 | 14 / RC-01 | Compatibility, installation, upgrade and release audit | Resolve claimed matrix, test packaged bits and old-release upgrade; requires all capability and reliability evidence |
 
-Next implementation slice after EVID-01: SAFE-01 + its protected-material fixture, then
-REC-01 for recently added multi-step edits. Work in coherent user workflows thereafter,
-not an indefinite sequence of unrelated one-tool additions. Reprioritize using failed evidence
-or dependency blockers; record why, and retain the unfinished target.
+The original sequence began with EVID-01, SAFE-01 and REC-01; their development increments
+are recorded below, not blanket release acceptance. Current focus (2026-10-17): ASSET-01 has
+bounded repair, loop modeling, UV authoring and a connected repair/unwrap/material fixture.
+Next add geometric UV-quality and mesh-normal/crossing evidence, then LOOK-01 image assets
+and a more representative textured-prop revision. Keep SAFE-02/JOB-01 and the remaining
+capability/UX/delivery/RC work open. Work in coherent user workflows, not an indefinite series
+of unrelated one-tool additions. Reprioritize using failed evidence or dependencies and retain
+the unfinished full-artist target.
 
 ## End-to-end acceptance scenarios
 
@@ -412,3 +416,54 @@ Next continue ASSET-01 with loop bridging/cuts and a combined repair/unwrap/mate
 including UV-atlas visual evidence and quality diagnostics. Keep all remaining full-artist
 capability, installation/upgrade, UI, preservation, performance and release gates in scope.
 1.0 remains unreleased; repository visibility and published 0.3.0 assets remain unchanged.
+
+### 2026-10-17 — Loop modeling, UV plots and connected prop workflow
+
+Implemented a read-only, paginated `mesh.edge_ring_inspect` plus structured `mesh.loop_cut`
+and `mesh.bridge_loops`. Preview returns measured ring edges and expected topology; cuts
+require a fresh seed-containing reference and explicitly propagate through unselected quad
+faces. Whole-strip/ownership/hidden/resource checks and post-operation counts prevent guessed
+or partial-route success. Two-loop bridging supports boundary/wire cycles, equal-loop quads
+and native unequal-loop triangulation, with no vertex merge. New faces receive explicit
+material and zero/unpinned UV policy; unexpected topology or zero/non-finite face area fails
+with possible-mutation/recovery evidence. Nonzero unequal-loop twist is `NOT_IMPLEMENTED`:
+native probes showed Blender silently ignores it, while equal-loop twist changes correspondence.
+Sliding, non-quad routes, open/multi-loop bridging and explicit unequal correspondence remain open.
+
+Added `uv.capture_layout`: a bounded standard-library PNG plot of measured coordinates and
+pins, requiring inspection/capture permissions but no scene/UI/Render Result mutation or
+arbitrary path. It preserves UV aspect, supports unit-tile/FIT views, reports clipping and
+numeric bounds, checks face/corner/coordinate/pixel-work limits, and never emits partial
+budget-failed evidence. It is not an editor screenshot or overlap/stretch/texel-density verdict.
+
+A new connected native fixture repairs a disconnected box-section prop, previews/inserts a
+middle ring, authors seams from inspected normals/connectivity, unwraps/packs six non-degenerate
+charts, isolates its material and edits the finish. It checks exact topology/positions,
+dimensions, weights, original UV corners/interpolation, and protected duplicate/material state.
+It then recovers five logical boundaries in reverse and independently matches the original
+baseline, including mode/selection/active object. Other native cases verify equal/unequal wire
+loops, equal-loop twist, and two even cuts through an open quad strip. Permission revocation,
+stale references and unsupported twist are explicit failures. Raw-Python/file/save/delete
+super-permissions remain disabled during the recipe.
+
+Reviewed before/after wireframe, material, UV-coordinate, protected and recovery images on
+Windows Blender 4.5.1/5.1.2: the intended gap closes, a middle loop appears, six charts pack,
+the repaired object gains a blue checker finish, protected appearance is unchanged, and recovery
+restores the gap. The twist control can produce an undesirable crossing/hourglass shape; it
+tests correspondence, not approved topology. The fixture configures/restores its own framing;
+no new scene-navigation capability is claimed. No user project was used or saved. See
+[scope and workflow](mesh-loops.md). This is progress toward scenario B, not full acceptance
+of reference-constrained texture assets, arbitrary props, diagnostics, or packaged client setup.
+
+Validation: **762 tests** passed with both MCP SDK 2.0.0 and 2.2.0; lint/type/README registry
+checks passed. **38/38** native cases passed at
+`build/prop-workflow-final-matrix-20261017/report.json`, recording commit
+`9ad6ae081adcde24bbb6cc4bb81dbd18961dd693` plus this work, a dirty worktree and Python fingerprint
+`76feed78b3fe6b896621398c2ea75ac4bda503fd638741cbba0db24fb116241e`.
+The prior reviewed prop run has the same Python fingerprint, and all 20 final prop PNGs match
+the reviewed artifacts byte-for-byte. This evidence does not qualify a clean release candidate.
+
+Next implement bounded UV overlap/stretch/texel-density and mesh validity evidence, then
+permission-controlled image assets and a richer LOOK-01/ASSET-01 workflow. Keep all other
+full-artist capability, safety, UX, performance, install/upgrade and delivery gates in scope.
+1.0 remains unreleased; repository visibility and published 0.3.0 assets are unchanged.

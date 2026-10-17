@@ -75,6 +75,12 @@ Coordinate/pin tools use scoped Edit Mode data; layer lifecycle is explicit in O
 Other layers and mesh selection are preserved, and Blender 4.5/5.1 selection-storage differences
 are reported. See [UV tools, limits and the verified workflow](docs/uv-authoring.md).
 
+Unreleased loop modeling adds a paginated quad-ring preview, evenly spaced ring cuts, and
+bridging of two closed boundary/wire loops. UV layout PNGs now provide measured-coordinate
+visual evidence without changing the viewport or Render Result. A connected test workflow
+repairs a prop, unwraps it, gives it a separate finish and verifies staged recovery while
+preserving a protected duplicate. See [scope, limits and workflow](docs/mesh-loops.md).
+
 Unreleased `scene.snapshot` and `scene.compare` add bounded before/after evidence for named
 objects: transforms, hierarchy, visibility, base mesh geometry, UVs, weights, material slots
 and root shader socket values/links. They can detect edits that leave object or vertex counts
@@ -295,7 +301,7 @@ is identified above, and the feature table describes the published release.
 Blender's local recovery UI also has an add-on-only restore action, not an extra MCP tool.
 
 <!-- BEGIN GENERATED MCP TOOLS -->
-Current registry: **147 MCP tools**.
+Current registry: **151 MCP tools**.
 
 <details>
 <summary>core — 18 tools</summary>
@@ -449,18 +455,21 @@ Current registry: **147 MCP tools**.
 </details>
 
 <details>
-<summary>mesh — 12 tools</summary>
+<summary>mesh — 15 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
 | `mesh.bevel_selected` | Bevel selected mesh elements with explicit width and segments. |
+| `mesh.bridge_loops` | Bridge two referenced closed boundary/wire loops without vertex merging; unequal loops produce triangles. |
 | `mesh.create` | Create a fully prevalidated arbitrary mesh object from bounded topology arrays. |
 | `mesh.delete_selected` | Delete selected mesh elements. |
 | `mesh.dissolve_selected` | Dissolve selected mesh elements. |
+| `mesh.edge_ring_inspect` | Preview paginated measured edges and expected topology for a complete connected quad ring. |
 | `mesh.extrude_selected` | Extrude the selected mesh region by an explicit offset. |
 | `mesh.fill_holes` | Cap complete disjoint boundary loops with bounded n-gons; new face UVs start at zero. |
 | `mesh.inset_selected` | Inset selected faces with explicit thickness and depth. |
 | `mesh.inspect` | Inspect compact mesh and topology statistics. |
+| `mesh.loop_cut` | Cut the entire connected quad ring with evenly spaced cuts, including unselected faces. |
 | `mesh.mark_seams` | Mark or clear UV seams on selected edges of one local single-user Edit Mode mesh. |
 | `mesh.merge_by_distance` | Weld only selected vertices within an explicit local-space distance. |
 | `mesh.recalculate_normals` | Recalculate normals for the selected mesh region. |
@@ -580,10 +589,11 @@ Current registry: **147 MCP tools**.
 </details>
 
 <details>
-<summary>uv — 11 tools</summary>
+<summary>uv — 12 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
+| `uv.capture_layout` | Capture a bounded UV-coordinate PNG without scene/UI/render changes; not a quality verdict. |
 | `uv.coordinates_set` | Set exact face-corner UV coordinates within a validated face selection reference. |
 | `uv.inspect` | Inspect bounded UV layers, selection, bounds, and island connectivity. |
 | `uv.layer_activate` | Activate an Object Mode UV layer and optionally make it the render/clone layer. |
