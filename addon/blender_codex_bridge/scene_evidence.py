@@ -30,8 +30,8 @@ UNMEASURED = [
     "animation, drivers and simulation caches",
     "non-mesh object data, rig poses and shape keys",
     "mesh attributes, custom normals and sculpt data",
-    "material/shader settings other than root socket defaults, mute state and links",
-    "nested node-group contents and image contents/settings",
+    "material/shader settings other than root socket defaults, mute state, links and listed Image Texture metadata",
+    "nested node-group contents, image pixels/file contents and unlisted image settings",
     "scene, world and render settings",
     "custom properties, selection and viewport state",
     "transitive dependencies and visual appearance",
@@ -164,6 +164,14 @@ def _shader_records(material: Any) -> Iterable[Any]:
             _identity(getattr(node, "node_tree", None)),
             _identity(getattr(node, "image", None)),
         ]
+        if node.bl_idname == "ShaderNodeTexImage":
+            image = getattr(node, "image", None)
+            yield ["image_texture", node.name,
+                   *[getattr(node, key, None) for key in ("interpolation", "projection", "extension")],
+                   ([getattr(image, "source", None), _small(str(getattr(image, "filepath", ""))),
+                     getattr(getattr(image, "colorspace_settings", None), "name", None),
+                     getattr(image, "alpha_mode", None), bool(getattr(image, "packed_file", None))]
+                    if image is not None else None)]
         for direction, sockets in (("input", node.inputs), ("output", node.outputs)):
             for index, socket in enumerate(sockets):
                 indices[socket.as_pointer()] = index

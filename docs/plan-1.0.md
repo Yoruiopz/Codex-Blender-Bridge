@@ -73,8 +73,9 @@ and “accepted for release” are separate states.
 The original sequence began with EVID-01, SAFE-01 and REC-01; their development increments
 are recorded below, not blanket release acceptance. Current focus (2026-10-19): ASSET-01 has
 bounded repair, loop modeling, UV authoring, measured UV-quality and mesh-winding/contact analysis,
-and a connected repair/unwrap/material fixture. Next add LOOK-01 permission-controlled image assets
-and a more representative textured-prop revision. Keep SAFE-02/JOB-01 and the remaining
+and a connected repair/unwrap/material fixture. LOOK-01 adds approved image assets and a
+matched texture-revision fixture. Next extend image lifecycle/nested shaders and integrate a more
+representative textured-prop workflow. Keep SAFE-02/JOB-01 and the remaining
 capability/UX/delivery/RC work open. Work in coherent user workflows, not an indefinite series
 of unrelated one-tool additions. Reprioritize using failed evidence or dependencies and retain
 the unfinished full-artist target.
@@ -108,6 +109,13 @@ Use `scripts/run_blender_checks.py` for the existing isolated smoke matrix. Its 
 an execution record, **not** a release-readiness verdict. Read warnings and review artifacts.
 The UV modifier smoke's success marker does not establish unwrap quality; the dedicated UV
 workflow test and later distortion/overlap/visual checks serve different purposes.
+
+Use Graphify in the primary workflow for codebase navigation: inspect index freshness first,
+query narrowly for the relevant subsystem, then use exact file/symbol neighbors and linked tests
+before opening full source. Check the current worktree for unindexed edits. Retrieval and static
+test links are navigation evidence, not proof of complete runtime behavior or coverage. Prefer
+bounded outlines first; refine noisy/broad queries instead of flooding context. Maintain the
+local map using [the documented workflow](architecture-map.md); neither map replaces tests.
 
 Before RC, run the entire claimed matrix from a clean checkout and retain evidence outside
 ephemeral CI storage. Build add-on/wheel/plugin from that exact revision, test the packaged
@@ -562,3 +570,43 @@ revision. Retain localized/evaluated/cross-object diagnostics, outward/custom no
 character, painting, simulation, UX, delivery and install/upgrade/RC gates. This is another
 development increment, not full scenario or 1.0 acceptance. Published 0.3.0 and repository
 visibility remain unchanged.
+
+### 2026-10-19 — Approved image assets and measured texture revision
+
+LOOK-01 now implements `image.inspect`, `image.load`, `image.remove` and `nodes.set_image`.
+Blender's user-controlled Approved Texture Folder and live external-file permission gate
+supported PNG/JPEG reads. Loading creates distinct named/color-role datablocks, checks bounded
+source bytes/headers before and after native decoding and verifies loaded metadata. Binding uses
+the existing material ownership guard, preserves graph links and verifies scoped restoration on
+failure. Unused-image deletion is explicit, separately permissioned and never deletes a file.
+Object Mode checkpoint/recovery behavior and strict schemas are documented in [image assets](image-assets.md).
+
+The connected native fixture isolates a material on one of two objects sharing mesh data, binds
+color and Non-Color roughness images, revises orange to blue and independently verifies protected
+data, exact staged recovery, original image IDs/pixels, source file hashes and context. All 16
+final texture captures match the reviewed before/revision/recovered/protected artifacts byte for
+byte. Blender config/scripts/datafiles now join temporary recovery paths in per-case isolation;
+the real add-on preference tests neither use nor save the user's preferences or project.
+
+Validation: **913 tests** passed on both MCP SDK 2.0.0 and 2.2.0, plus lint, typing and the generated
+README inventory (**157 tools**). Full native Windows Blender 4.5.1/5.1.2 passed **44/44** at
+`build/image-assets-final-matrix-20261019/report.json`, recording baseline `286dcc7` plus this
+then-dirty work and Python fingerprint
+`3a1aba028360b1a2b651bdef7785f7e6410dd0ec459738c274b71f1158d02ee2`.
+Every recorded Python source hash was independently matched to the frozen worktree. The first
+full unit run exposed an old test's assumption that one module owned all material/node handlers;
+it now registers the image domain and checks metadata semantically rather than by tuple position.
+
+Graphify MCP is verified in `dino-s-workspace`; it lists the bridge as queryable at `286dcc7`.
+A broad safety query returned partially useful/noisy recovery seeds. An exact material-scope
+outline and linked-test query localized `editable_material_scope` and `test_material_scope.py`;
+current source inspection verified reuse of shared-consent/100-user/library guards. That remote
+index does not include these uncommitted image tools. The local primary-checkout map is refreshed
+separately with honest extraction/health limits; query results are not a preservation certificate.
+
+This is still a bounded fixture, not full scenario B or 1.0 acceptance. Image reload/relocation,
+packing/saving, broader formats, nested shader/compositor images and responsive native decoding
+remain open, alongside representative prop/character/paint/simulation/UX/delivery/install gates.
+Next: extend typed image lifecycle and nested shader support, then integrate repair/UV/texture
+revisions on a representative prop with reference constraints. Keep the full artist target,
+published 0.3.0 assets and repository visibility unchanged.

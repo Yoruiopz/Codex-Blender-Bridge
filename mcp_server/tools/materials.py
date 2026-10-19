@@ -4,10 +4,15 @@ from __future__ import annotations
 
 from typing import Any
 
+from pydantic import StrictBool, StrictInt, StrictStr
+
 from ..tool_registry import ToolDefinition, ToolRegistry, remote_tool
 from ._common import MCPToolBinding, params
 
 MATERIAL_TOOL_DATA: tuple[tuple[str, str, bool, tuple[str, ...]], ...] = (
+    ("image.inspect", "Inspect bounded image metadata/direct users without loading unloaded buffers.", False, ("INSPECT_SCENE",)),
+    ("image.load", "Load a new bounded PNG/JPEG image from Blender's user-approved texture folder; no implicit reuse or file writes.", True, ("EDIT_MATERIALS", "ACCESS_EXTERNAL_FILES")),
+    ("image.remove", "Remove one explicitly confirmed unused image datablock, never its source file.", True, ("EDIT_MATERIALS", "DELETE_OBJECTS")),
     (
         "material.inspect",
         "Inspect material users, important nodes, textures, and Principled values.",
@@ -87,6 +92,18 @@ load_material_definitions = load_definitions
 class MaterialTools:
     def __init__(self, registry: ToolRegistry) -> None:
         self.registry = registry
+
+    async def image_inspect(self, image_name: StrictStr | None = None, offset: StrictInt = 0, max_images: StrictInt = 32) -> Any:
+        """Read existing image metadata and direct users, not file contents/pixels. Unloaded dimensions are not probed. Max 64 images, 100 direct users each / 256 total. Reports the Blender-controlled texture-folder policy without changing it."""
+        return await self.registry.call("image.inspect", params(image_name=image_name, offset=offset, max_images=max_images))
+
+    async def image_load(self, filepath: StrictStr, new_name: StrictStr, colorspace: StrictStr = "sRGB") -> Any:
+        """Object Mode only. Load a NEW image from an absolute local path inside the folder chosen in Blender's bridge settings. Requires material-edit and external-file permissions. PNG (no animation or iCCP/zTXt/iTXt chunks) or 8-bit baseline/progressive JPEG; 32 MiB, 8192 per dimension, 16,777,216 pixels. No implicit reuse/reload, filename expansion, remote path, packing or file writes. Native decode is not interruptible; failure attempts scoped cleanup and requires reinspection. sRGB defaults to color textures; explicitly use an available Non-Color space for data maps. Verify appearance and save only if asked."""
+        return await self.registry.call("image.load", {"filepath": filepath, "new_name": new_name, "colorspace": colorspace})
+
+    async def image_remove(self, image_name: StrictStr, confirm_unused: StrictBool = False) -> Any:
+        """Remove one confirmed zero-user local image datablock in Object Mode; fake users or active users block it. Requires material-edit and deletion permission. Never deletes a source file; checkpoint and verify recovery."""
+        return await self.registry.call("image.remove", {"image_name": image_name, "confirm_unused": confirm_unused})
 
     async def material_inspect(
         self,
@@ -206,6 +223,9 @@ class MaterialTools:
 
     def bindings(self) -> tuple[MCPToolBinding, ...]:
         return (
+            MCPToolBinding("image.inspect", self.image_inspect, self.image_inspect.__doc__ or ""),
+            MCPToolBinding("image.load", self.image_load, self.image_load.__doc__ or ""),
+            MCPToolBinding("image.remove", self.image_remove, self.image_remove.__doc__ or ""),
             MCPToolBinding("material.inspect", self.material_inspect, self.material_inspect.__doc__ or ""),
             MCPToolBinding("material.create", self.material_create, self.material_create.__doc__ or ""),
             MCPToolBinding("material.delete", self.material_delete, self.material_delete.__doc__ or ""),

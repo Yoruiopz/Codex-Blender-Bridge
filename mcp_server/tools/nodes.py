@@ -4,12 +4,15 @@ from __future__ import annotations
 
 from typing import Any
 
+from pydantic import StrictBool, StrictStr
+
 from ..tool_registry import ToolDefinition, ToolRegistry, remote_tool
 from ._common import MCPToolBinding, params
 
 SocketValue = bool | int | float | str | list[float]
 
 NODE_TOOL_DATA: tuple[tuple[str, str, bool, tuple[str, ...]], ...] = (
+    ("nodes.set_image", "Bind/clear a loaded image and validated sampling settings on an exact root material image node; FILE sources require external-file policy checks.", True, ("EDIT_MATERIALS",)),
     (
         "nodes.inspect",
         "Inspect a complete bounded material shader graph.",
@@ -77,6 +80,15 @@ load_node_definitions = load_definitions
 class NodeTools:
     def __init__(self, registry: ToolRegistry) -> None:
         self.registry = registry
+
+    async def nodes_set_image(
+        self, material_name: StrictStr, node_name: StrictStr, image_name: StrictStr | None,
+        interpolation: StrictStr | None = None, projection: StrictStr | None = None, extension: StrictStr | None = None,
+        allow_shared: StrictBool = False,
+    ) -> Any:
+        """Object Mode root Image Texture binding, or explicit null to clear. Local loaded single-view FILE/GENERATED images only; FILE sources also require live external-file permission and approved-folder/header checks. No implicit reload or pixel edits. Sampling enum names are validated against native RNA before mutation. Inspect material ownership first; shared materials require explicit allow_shared. Verify image identity, settings, graph links and a material/texture capture; buffer/file currency is not certified."""
+        return await self.registry.call("nodes.set_image", {"material_name": material_name, "node_name": node_name,
+            "image_name": image_name, **params(interpolation=interpolation, projection=projection, extension=extension, allow_shared=allow_shared)})
 
     async def nodes_inspect(
         self,
@@ -228,6 +240,7 @@ class NodeTools:
 
     def bindings(self) -> tuple[MCPToolBinding, ...]:
         return (
+            MCPToolBinding("nodes.set_image", self.nodes_set_image, self.nodes_set_image.__doc__ or ""),
             MCPToolBinding("nodes.inspect", self.nodes_inspect, self.nodes_inspect.__doc__ or ""),
             MCPToolBinding("nodes.add", self.nodes_add, self.nodes_add.__doc__ or ""),
             MCPToolBinding("nodes.remove", self.nodes_remove, self.nodes_remove.__doc__ or ""),

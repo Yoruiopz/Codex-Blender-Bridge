@@ -96,6 +96,17 @@ Rules:
 - MCP client approvals are an additional user-control layer, not a replacement.
 - Deletion, arbitrary Python, and external file access remain off by default. Scene/render editing is separately revocable through `EDIT_SCENE` and `EDIT_RENDER`. Python is a declared super-permission path: it requires `EXECUTE_PYTHON`, `DELETE_OBJECTS`, `ACCESS_EXTERNAL_FILES`, and `SAVE_PROJECT` together because raw `bpy` can bypass narrower structured domain gates.
 
+### Approved texture reads (unreleased)
+
+`image.load` and FILE-source `nodes.set_image` also constrain paths to the local **Approved
+Texture Folder** chosen in Blender. Empty scope blocks reads; no MCP tool changes that folder.
+Live external-file permission remains independently required alongside material editing.
+Read-only inspection does not reload unloaded buffers or read file/pixel contents. See the
+[format/byte/pixel bounds, source checks and recovery contract](image-assets.md). Native decoding
+cannot be preempted; preflight is an accident/workload guard, not a decoder sandbox or protection
+against all hostile local file races. This folder policy does not constrain other authorized
+file tools or armed raw Python.
+
 ### Pause and emergency stop
 
 Pause blocks new mutating work while permitting enough status/control inspection to recover. Emergency stop rejects queued/not-started mutations and prevents new ones until explicitly cleared. Neither can safely interrupt arbitrary Blender code halfway through; handlers must remain short or implement cooperative safe points.

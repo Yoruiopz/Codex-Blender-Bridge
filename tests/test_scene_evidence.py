@@ -158,6 +158,31 @@ def test_edit_mesh_evidence_is_explicitly_incomplete(evidence):
     assert compare(evidence, before)["status"] == "unknown"
 
 
+@pytest.mark.parametrize("changed", ["interpolation", "extension", "colorspace", "filepath"])
+def test_image_sampling_and_source_metadata_are_measured_without_pixel_loading(evidence, changed):
+    class Image(ID):
+        @property
+        def size(self):
+            pytest.fail("Shader evidence probed image dimensions/pixels")
+
+    image = Image("Image", 77, source="FILE", filepath="/assets/source.png", colorspace_settings=NS(name="sRGB"),
+                  alpha_mode="STRAIGHT", packed_file=None)
+    node = NS(name="Texture", bl_idname="ShaderNodeTexImage", mute=False, image=image,
+              interpolation="Linear", projection="FLAT", extension="REPEAT", inputs=[], outputs=[])
+    material = ID("Material", 78, use_nodes=True, node_tree=NS(nodes=[node], links=[]))
+    evidence[3].material_slots = [NS(material=material)]
+    before = snapshot(evidence, fields=["shader_inputs"])
+    assert before["coverage_complete"]
+    if changed == "colorspace":
+        image.colorspace_settings.name = "Non-Color"
+    elif changed == "filepath":
+        image.filepath = "/assets/replacement.png"
+    else:
+        setattr(node, changed, "changed")
+    result = compare(evidence, before)
+    assert result["status"] == "changed" and result["changes"][0]["field"] == "shader_inputs"
+
+
 def test_nonfinite_transform_does_not_become_a_matching_hash(evidence):
     evidence[3].location[0] = float("nan")
     before = snapshot(evidence, fields=["transforms"])

@@ -38,8 +38,9 @@ CASES = {
     "prop_workflow": ("blender_prop_workflow_smoke.py", "BLENDER_PROP_WORKFLOW_OK "),
     "uv_analysis": ("blender_uv_analysis_smoke.py", "BLENDER_UV_ANALYSIS_OK "),
     "mesh_analysis": ("blender_mesh_analysis_smoke.py", "BLENDER_MESH_ANALYSIS_OK "),
+    "image_assets": ("blender_image_assets_smoke.py", "BLENDER_IMAGE_ASSETS_OK "),
 }
-INTERACTIVE_CASES = {"undo_lifecycle", "mesh_edit_recovery", "mesh_repair", "uv_authoring", "prop_workflow", "uv_analysis", "mesh_analysis"}
+INTERACTIVE_CASES = {"undo_lifecycle", "mesh_edit_recovery", "mesh_repair", "uv_authoring", "prop_workflow", "uv_analysis", "mesh_analysis", "image_assets"}
 
 
 def success_payload(output: str, marker: str) -> dict | None:
@@ -78,6 +79,11 @@ def run_case(blender: Path, case: str, output: Path, timeout: int) -> dict:
     temporary = output / f"{case}-temp"
     temporary.mkdir()
     environment = dict(os.environ, TEMP=str(temporary), TMP=str(temporary), TMPDIR=str(temporary))
+    for key, folder in (("BLENDER_USER_CONFIG", "config"), ("BLENDER_USER_SCRIPTS", "scripts"),
+                        ("BLENDER_USER_DATAFILES", "datafiles")):
+        directory = temporary / folder
+        directory.mkdir()
+        environment[key] = str(directory)
     startup = None
     if interactive and sys.platform == "win32":
         startup = subprocess.STARTUPINFO()

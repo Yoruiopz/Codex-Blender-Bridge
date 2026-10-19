@@ -77,8 +77,9 @@ def test_timeout_retains_failure_even_with_success_marker(runner, monkeypatch, t
 def test_interactive_case_uses_isolated_temporary_recovery(runner, monkeypatch, tmp_path):
     def run(command, **kwargs):
         assert "--factory-startup" in command and "--background" not in command
-        for variable in ("TEMP", "TMP", "TMPDIR"):
+        for variable in ("TEMP", "TMP", "TMPDIR", "BLENDER_USER_CONFIG", "BLENDER_USER_SCRIPTS", "BLENDER_USER_DATAFILES"):
             assert Path(kwargs["env"][variable]).is_relative_to(tmp_path)
+            assert Path(kwargs["env"][variable]).is_dir()
         kwargs["stdout"].write(b'BLENDER_UNDO_LIFECYCLE_OK {"blender":"5.1.2"}')
         return SimpleNamespace(returncode=0)
 

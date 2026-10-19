@@ -346,6 +346,7 @@ if bpy is not None:
                 danger.alert = preferences.allow_execute_python or preferences.allow_external_files
                 danger.prop(preferences, "allow_execute_python")
                 danger.prop(preferences, "allow_external_files")
+                permissions.prop(preferences, "texture_directory")
                 if preferences.allow_execute_python:
                     danger.label(
                         text="Python bypasses structured edit gates and is not a sandbox.",

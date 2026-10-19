@@ -89,6 +89,12 @@ pixel-direction stretch and texel density at a declared texture resolution. It u
 base-mesh triangulation and world transforms, reports incomplete budgets honestly, and does
 not alter UVs or selection. See [measurements, thresholds and limitations](docs/uv-analysis.md).
 
+Unreleased [texture-image tools](docs/image-assets.md) inspect/load/remove image datablocks
+and bind loaded images to material Image Texture nodes. Choose an **Approved Texture Folder**
+in Blender and grant external-file access for supported PNG/JPEG reads; MCP cannot change the
+folder. The workflow checks color/data roles, material isolation, texture revisions and undo.
+No implicit reuse/reload, image writes, packing, painting or baking is claimed; see its limits.
+
 Unreleased `scene.snapshot` and `scene.compare` add bounded before/after evidence for named
 objects: transforms, hierarchy, visibility, base mesh geometry, UVs, weights, material slots
 and root shader socket values/links. They can detect edits that leave object or vertex counts
@@ -309,7 +315,7 @@ is identified above, and the feature table describes the published release.
 Blender's local recovery UI also has an add-on-only restore action, not an extra MCP tool.
 
 <!-- BEGIN GENERATED MCP TOOLS -->
-Current registry: **153 MCP tools**.
+Current registry: **157 MCP tools**.
 
 <details>
 <summary>core — 18 tools</summary>
@@ -446,10 +452,13 @@ Current registry: **153 MCP tools**.
 </details>
 
 <details>
-<summary>materials — 9 tools</summary>
+<summary>materials — 12 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
+| `image.inspect` | Inspect bounded image metadata/direct users without loading unloaded buffers. |
+| `image.load` | Load a new bounded PNG/JPEG image from Blender's user-approved texture folder; no implicit reuse or file writes. |
+| `image.remove` | Remove one explicitly confirmed unused image datablock, never its source file. |
 | `material.assign` | Assign a material to an exact object slot or append it. |
 | `material.copy_for_object` | Copy a material for one object slot without changing shared mesh data. |
 | `material.create` | Create a named material with optional nodes and viewport color. |
@@ -500,7 +509,7 @@ Current registry: **153 MCP tools**.
 </details>
 
 <details>
-<summary>nodes — 7 tools</summary>
+<summary>nodes — 8 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
@@ -509,6 +518,7 @@ Current registry: **153 MCP tools**.
 | `nodes.link` | Link exact material-node output and input sockets. |
 | `nodes.remove` | Remove one exact shader node and its incident links. |
 | `nodes.rename` | Rename one exact shader node without collisions. |
+| `nodes.set_image` | Bind/clear a loaded image and validated sampling settings on an exact root material image node; FILE sources require external-file policy checks. |
 | `nodes.set_input` | Set one exact material-node input default value. |
 | `nodes.unlink` | Remove links between exact material-node sockets. |
 
@@ -700,8 +710,9 @@ Run the native matrix with explicit Blender paths and `--include-interactive`, f
 .\.venv\Scripts\python.exe scripts/run_blender_checks.py --blender "C:\Program Files\Blender Foundation\Blender 4.5\blender.exe" --blender "C:\Program Files\Blender Foundation\Blender 5.1\blender.exe" --include-interactive --output build/blender-checks
 ```
 
-The runner isolates each factory-startup scene, records source/version evidence and keeps
-logs under the output folder. Undo-dependent fixtures need an interactive Blender context
+The runner isolates each factory-startup scene, temporary recovery folder and Blender
+config/scripts/datafiles profile, records source/version evidence and keeps logs under the
+output folder. Undo-dependent fixtures need an interactive Blender context
 (hidden on Windows), so running every script with `--background` is not equivalent.
 Passing development checks does not by itself accept the 1.0 release gates.
 

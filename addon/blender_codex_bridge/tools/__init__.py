@@ -16,6 +16,7 @@ def register_all(registry: ToolRegistry) -> None:
         constraints,
         core,
         geometry_nodes,
+        images,
         interaction,
         layout,
         materials,
@@ -54,6 +55,7 @@ def register_all(registry: ToolRegistry) -> None:
     mesh_loops.register_tools(registry)
     mesh_repair.register_tools(registry)
     materials.register_tools(registry)
+    images.register_tools(registry)
     nodes.register_tools(registry)
     uv.register_tools(registry)
     uv_analysis.register_tools(registry)

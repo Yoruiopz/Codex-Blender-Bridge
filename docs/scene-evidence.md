@@ -24,7 +24,7 @@ needs particular invariants or a large object exceeds the evidence budget.
 | `uv` | UV layer names, active/render layer state, loop coordinates and pins |
 | `weights` | Vertex-group definitions/locks and per-vertex group memberships/weights |
 | `material_slots` | Ordered object material-slot bindings and DATA/OBJECT link mode |
-| `shader_inputs` | Referenced material identities, node usage, root node names/types/mute state, root input/output defaults, referenced group/image identities and exact socket links |
+| `shader_inputs` | Referenced material identities, node usage, root node names/types/mute state, root input/output defaults, referenced group/image identities and exact socket links; root Image Texture interpolation/projection/extension and bound-image source/path/color space/alpha mode/packed state |
 
 Mesh geometry, UVs and weights apply to mesh objects. Other object types receive
 an explicit `not_applicable` digest for those fields; their curve, armature, camera
@@ -33,8 +33,8 @@ that mesh's data is in Edit Mode, including shared data edited through another o
 
 The response always lists unmeasured state. It includes evaluated geometry,
 modifiers/constraints, animation/drivers, simulation caches, rig poses/shape keys,
-other mesh attributes/custom normals, material/node settings beyond the listed socket/mute/link
-state, nested node-group contents, image contents/settings, scene/world/render settings,
+other mesh attributes/custom normals, material/node settings beyond the listed root state,
+nested node-group contents, image pixels/file contents and unlisted image settings, scene/world/render settings,
 custom properties, selection, viewport settings, transitive dependencies and visual appearance. For example,
 `material_slots` alone does not cover polygon material indices; include `mesh_geometry`
 to check those. These are specific field comparisons, not a whole-object guarantee.
@@ -99,4 +99,6 @@ duplicate; shared shader edits; same-count geometry edits; UV and weight changes
 budgets; inspection-permission denial; cache lifecycle; and preserved selection/mode.
 `blender_undo_lifecycle_smoke.py` additionally compares a complete numeric baseline after
 native snapshot recovery. These are disposable fixtures on Windows Blender 4.5.1/5.1.2.
+The [image-asset recipe](image-assets.md) also compares binding/sampler/source metadata across
+material isolation, texture revision and recovery without reading pixels through evidence tools.
 They do not establish full protected-character or production-scene acceptance.

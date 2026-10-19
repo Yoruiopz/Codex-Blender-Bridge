@@ -122,6 +122,7 @@ def test_addon_registry_declares_permissions_and_modification_metadata(
 
     materials.register_tools(registry)
     nodes.register_tools(registry)
+    importlib.import_module(f"{addon_package}.tools.images").register_tools(registry)
 
     assert set(MATERIAL_TOOL_NAMES).issubset(registry.list_tools())
     assert set(NODE_TOOL_NAMES).issubset(registry.list_tools())
@@ -141,9 +142,10 @@ def test_addon_registry_declares_permissions_and_modification_metadata(
             permissions.Permission.DELETE_OBJECTS,
         }
     )
-    assert all(
-        registry.get(name).modifies for name in (*MATERIAL_TOOL_NAMES[1:], *NODE_TOOL_NAMES[1:])
-    )
+    for definition in (*load_material_definitions(), *load_node_definitions()):
+        spec = registry.get(definition.name)
+        assert spec.modifies == definition.modifying
+        assert {permission.value for permission in spec.permissions} == set(definition.required_permissions)
 
 
 def test_lazy_mcp_definitions_are_complete_and_permissioned() -> None:

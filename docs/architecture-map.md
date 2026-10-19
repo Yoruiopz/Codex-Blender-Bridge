@@ -38,9 +38,10 @@ Use the interpreter recorded in `graphify-out/.graphify_python` if the executabl
 on PATH. Expand questions using actual node vocabulary; prefer exact labels for paths.
 Read `reflections/LESSONS.md`, preserve confidence/source tags, and save useful paths and
 dead ends. If output is truncated, narrow the scope rather than treating it as complete.
-Rebuild after source changes before relying on the graph for a new change. This document
-and the latest execution-log entry were written after the snapshot below and require a
-subsequent refresh; the existing map is a dated snapshot, not a continuously live view.
+Rebuild after source changes before relying on the graph for a new change. Every map is a
+dated snapshot, not a continuously live view; the initial counts below are historical.
+Check the current manifest, report and stale marker rather than assuming those counts describe
+later primary-checkout refreshes. Uncommitted source can be mapped locally without a cloud upload.
 
 ## Initial snapshot, 2026-10-19
 
@@ -100,5 +101,24 @@ connection, authenticated workspace or repository access. Cloud `list_repositori
 workspace switching require that service's tools in the active client session. The browser
 can show `dino-s-workspace` while a chat still has no Graphify service tools. Do not invent
 repository results, treat a UI connection wizard as proof of MCP access, or reuse GitHub
-results as if they came from Graphify. No credentials or cloud connector settings were
-changed by this local mapping run.
+results as if they came from Graphify.
+
+### Verified primary-workflow MCP use, 2026-10-19
+
+Graphify's MCP tools became available in this session. `list_workspaces` verified
+`dino-s-workspace` active (`token_claim`); no switch was needed. `list_repositories` returned
+one accessible/queryable repository: `Yoruiopz/Codex-Blender-Bridge`, default branch `main`.
+`graph_stats` identified commit `286dcc7`, 2,752 nodes / 7,710 edges / 280 communities. These
+remote totals are separate from the local skill graph and do not include uncommitted image work.
+
+Use `query_graph` with a bounded skeleton budget for initial navigation, then exact
+`graphify_file_neighbors(symbols_only=true)` / `graphify_tests_for` for relevant definitions
+and test candidates. A broad material/recovery question found some generic test seeds; the
+exact material-scope outline localized four definitions and a name-linked scope test file.
+Those links do not establish complete test coverage. Verify selected current source and run
+focused/full tests; freshness, confidence and truncation metadata remain evidence requirements.
+
+Neither local mapping nor these read/query calls changed credentials or repository source.
+Graphify-managed query trails may retain query intent according to the workspace's service
+settings; do not send secrets or assume queries are memory-free. No persistent local MCP server,
+watcher, auto-build hook, or runtime dependency was added.

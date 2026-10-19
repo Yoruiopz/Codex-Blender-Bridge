@@ -65,6 +65,12 @@ if bpy is not None:
             default=False,
         )
         allow_save_project: BoolProperty(name="Save Project", default=True)
+        texture_directory: StringProperty(
+            name="Approved Texture Folder",
+            description="User-approved absolute local folder for structured image reads; empty blocks loading. Not configurable through MCP",
+            subtype="DIR_PATH",
+            default="",
+        )
         ui_history_rows: IntProperty(
             name="History Rows",
             description="Recent bridge operations shown in the sidebar",
@@ -103,6 +109,10 @@ if bpy is not None:
             danger.alert = self.allow_execute_python or self.allow_external_files
             danger.prop(self, "allow_execute_python")
             danger.prop(self, "allow_external_files")
+            textures = layout.box()
+            textures.label(text="Texture File Access", icon="IMAGE_DATA")
+            textures.prop(self, "texture_directory")
+            textures.label(text="Image reads also require Access External Files.")
             interface = layout.box()
             interface.label(text="Interface", icon="WINDOW")
             interface.prop(self, "ui_history_rows")
