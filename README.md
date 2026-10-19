@@ -690,7 +690,18 @@ The release builder produces the add-on ZIP, MCP wheel, plugin ZIP, and checksum
 After changing registered tools, run `python scripts/readme_tools.py` to refresh the inventory.
 CI checks inventory consistency and builds downloadable development packages; these artifacts
 are test builds, not published releases. Tagged release assets remain the recommended install.
-Run isolated `scripts/blender_*_smoke.py` checks with Blender's
-`--background --factory-startup --python-exit-code 1 --python` flags.
+Run the native matrix with explicit Blender paths and `--include-interactive`, for example:
+
+```powershell
+.\.venv\Scripts\python.exe scripts/run_blender_checks.py --blender "C:\Program Files\Blender Foundation\Blender 4.5\blender.exe" --blender "C:\Program Files\Blender Foundation\Blender 5.1\blender.exe" --include-interactive --output build/blender-checks
+```
+
+The runner isolates each factory-startup scene, records source/version evidence and keeps
+logs under the output folder. Undo-dependent fixtures need an interactive Blender context
+(hidden on Windows), so running every script with `--background` is not equivalent.
+Passing development checks does not by itself accept the 1.0 release gates.
+
+For optional code/document navigation, see the [local Graphify architecture map workflow](docs/architecture-map.md).
+It stays outside the bridge runtime and is separate from Graphify cloud account access.
 
 Licensed under [GPL-3.0-or-later](LICENSE).

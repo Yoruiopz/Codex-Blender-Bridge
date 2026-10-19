@@ -71,9 +71,9 @@ and “accepted for release” are separate states.
 | 14 / RC-01 | Compatibility, installation, upgrade and release audit | Resolve claimed matrix, test packaged bits and old-release upgrade; requires all capability and reliability evidence |
 
 The original sequence began with EVID-01, SAFE-01 and REC-01; their development increments
-are recorded below, not blanket release acceptance. Current focus (2026-10-17): ASSET-01 has
-bounded repair, loop modeling, UV authoring and a connected repair/unwrap/material fixture.
-Next add geometric UV-quality and mesh-normal/crossing evidence, then LOOK-01 image assets
+are recorded below, not blanket release acceptance. Current focus (2026-10-19): ASSET-01 has
+bounded repair, loop modeling, UV authoring, measured UV-quality analysis and a connected
+repair/unwrap/material fixture. Next add mesh-normal/crossing evidence, then LOOK-01 image assets
 and a more representative textured-prop revision. Keep SAFE-02/JOB-01 and the remaining
 capability/UX/delivery/RC work open. Work in coherent user workflows, not an indefinite series
 of unrelated one-tool additions. Reprioritize using failed evidence or dependencies and retain
@@ -467,3 +467,48 @@ Next implement bounded UV overlap/stretch/texel-density and mesh validity eviden
 permission-controlled image assets and a richer LOOK-01/ASSET-01 workflow. Keep all other
 full-artist capability, safety, UX, performance, install/upgrade and delivery gates in scope.
 1.0 remains unreleased; repository visibility and published 0.3.0 assets are unchanged.
+
+### 2026-10-19 — Measured UV quality and local architecture map
+
+Committed/pushed `1e565e1`: `uv.analyze` measures native BMesh triangles for positive-area
+overlap, mirrored/folded winding, pixel-direction anisotropy and density in pixels per world
+coordinate unit. Resolution is caller-declared (hypothetical 1024 default), not inferred
+from images or interpreted as meters. World transforms are refreshed and local geometry is
+checked before native tessellation. Scope, triangle, overlap-pair and output-detail limits
+are separate; incomplete/invalid evidence never becomes a clean-map verdict. Per-triangle
+density checks avoid hiding variation behind face averages. A spatial-grid broadphase keeps
+the clean 8,192-triangle fixture within its default pair budget; it is not a scale guarantee.
+
+UV inspection, capture and analysis now recognize live Edit BMesh data through linked
+Object Mode aliases, including unflushed coordinates and new layers. Readers retain the
+actual owner's BMesh and each alias's own world transform; selection references still need
+the named Edit owner and shared-data mutations remain unsupported. Broader inspector and
+mutator ownership/state audits are not thereby complete.
+
+The new native recipe diagnoses known stacking, stretch and mirroring, refines four charts,
+independently measures density/anisotropy, compares protected data and recovers snapshots.
+Concave/folded tessellation, non-finite input, revoked inspection permission, paused/stopped
+inspection, honest budget failure and mixed-mode linked data are covered. The prop recipe
+also checks UV quality. Reviewed structural evidence and before/after/recovered layouts are
+consistent; all 28 final UV/prop captures match the reviewed artifacts byte-for-byte.
+No user project was used or saved; coordinate plots are not texture/look-development approval.
+
+Validation: **812 tests** passed on both MCP SDK 2.0.0 and 2.2.0, with lint, typing and README
+inventory checks passing. Native Windows Blender 4.5.1/5.1.2 passed **40/40** at
+`build/uv-quality-graphify-matrix-20261019/report.json`. It records `8a15205` plus the then-dirty
+changes, fingerprint `bb0461a34ad8a20e9732525f258814e4ea6277c8aef5b2bff0f81a1458c9b4d1`;
+the frozen source hashes were independently matched against the committed `1e565e1` files.
+These are development-source results, not packaged installation or full scenario acceptance.
+
+Used the requested Graphify skill and an authorized documentation sub-agent to map 194 files
+into 2,714 nodes / 8,645 edges / 97 named communities. The map highlights shared validation,
+error/context and documented authoring/evidence/recovery dependencies. It also reports 883
+raw dangling references, 8 self-loops and 766 undirected edge collapses, so it is not a
+complete call/dependency proof. Semantic token usage is unavailable, not claimed as zero.
+Generated artifacts stay local/ignored; [mapping workflow and limitations](architecture-map.md)
+explain refresh, provenance, cost estimates and the separate cloud-connector requirement.
+
+Next implement bounded mesh-validity/normal/crossing evidence and permission-controlled
+image assets, then prove a more representative textured-prop revision. Preserve the full
+character/paint/simulation/interactive/delivery and install/upgrade/release scope. Nothing in
+this increment accepts 1.0, changes repository visibility or replaces published 0.3.0 assets.

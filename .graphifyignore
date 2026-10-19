@@ -1,0 +1,3 @@
+# Unrelated local work and machine-specific agent configuration are not bridge sources.
+Roblox-game/
+.agents/
