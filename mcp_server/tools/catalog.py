@@ -179,6 +179,7 @@ DESTRUCTIVE_TOOL_NAMES = frozenset(
         "mesh.merge_by_distance",
         "material.delete",
         "image.remove",
+        "shader_group.remove",
         "material.slot_remove",
         "nodes.remove",
         "nodes.unlink",

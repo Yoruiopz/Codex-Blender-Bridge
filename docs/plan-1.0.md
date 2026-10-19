@@ -58,7 +58,7 @@ and “accepted for release” are separate states.
 | 1 / EVID-01 | Runner and machine-readable results for existing Blender smokes | Both installed versions; timeout/nonzero/missing-success-marker fail; report never labels 1.0 ready |
 | 2 / SAFE-01 | Material/shader ownership audit, including node graph edits and forced unlink | Enumerate affected users, explicit shared-scope contract, library/override checks; no damage to protected duplicate; M1 |
 | 3 / SAFE-02 | Audit remaining transforms/modifiers/rigs/scene/animation mutators | Per-tool ownership/mode/permission/recovery table with adversarial fixtures, not just a common guard |
-| 4 / REC-01 | Verified recovery after partial failure and actual Blender undo | Measure restored state, not merely exception-free rollback; manual undo interleaving and file/session changes invalidate unsafe recovery |
+| 4 / REC-01 | Verified recovery after partial failure and actual Blender undo | Measure restored state, not merely exception-free rollback; report/prune known native-history capacity limits and stale availability; manual undo, file/session changes and memory limits remain explicit |
 | 5 / JOB-01 | Responsive long-operation lifecycle | Read protocol first; correlated progress, queued-vs-running cancellation, late-result tracking; native uninterruptible operations must be honestly constrained or isolated |
 | 6 / EVID-02 | Scoped structural snapshots/diffs and protected-data assertions | Bounded mesh/material/hierarchy/animation deltas; stale references, truncation and shared dependencies explicit |
 | 7 / ASSET-01 | Missing modeling and UV editing primitives | Merge/subdivide/fill/bridge/loop workflows, UV layers/coordinates/pins; prop repair with silhouette/material preservation |
@@ -73,9 +73,11 @@ and “accepted for release” are separate states.
 The original sequence began with EVID-01, SAFE-01 and REC-01; their development increments
 are recorded below, not blanket release acceptance. Current focus (2026-10-19): ASSET-01 has
 bounded repair, loop modeling, UV authoring, measured UV-quality and mesh-winding/contact analysis,
-and a connected repair/unwrap/material fixture. LOOK-01 adds approved image assets and a
-matched texture-revision fixture. Next extend image lifecycle/nested shaders and integrate a more
-representative textured-prop workflow. Keep SAFE-02/JOB-01 and the remaining
+and a connected repair/unwrap/material fixture. LOOK-01 adds approved images, nested shader paths,
+group lifecycle and measured instance isolation. A logical-batch revision works at default undo
+capacity; longer separate operations exposed an eviction gap. Next address REC-01 capacity and
+availability reporting, then shader properties/image lifecycle and a representative textured prop.
+Keep SAFE-02/JOB-01 and the remaining
 capability/UX/delivery/RC work open. Work in coherent user workflows, not an indefinite series
 of unrelated one-tool additions. Reprioritize using failed evidence or dependencies and retain
 the unfinished full-artist target.
@@ -610,3 +612,52 @@ remain open, alongside representative prop/character/paint/simulation/UX/deliver
 Next: extend typed image lifecycle and nested shader support, then integrate repair/UV/texture
 revisions on a representative prop with reference constraints. Keep the full artist target,
 published 0.3.0 assets and repository visibility unchanged.
+
+### 2026-10-19 — Nested shader authoring, instance isolation and logical revision batches
+
+LOOK-01 adds six `shader_group.*` lifecycle tools and optional explicit `group_path` to existing
+`nodes.*`. Transitive ownership traces parent shader groups to material-slot users and direct
+World/Light/other owners, bounded to 32 groups / 100 owner IDs. Shared scope requires acknowledgement;
+incomplete evidence or read-only owners block mutation. Object slots for all reached materials are
+scanned once. Numeric per-material object counts still enforce consent when object names coincide.
+Nested mutations require Object Mode; root behavior remains otherwise compatible.
+
+Group creation, six typed interface socket types, unlinked instance binding/clearing, one-instance
+copies and confirmed unused removal compose with normal node authoring. Copies preserve instance
+defaults and parent links but do not deep-copy nested groups/images. Outgoing binding/copy dependencies
+are bounded, reject cycles and Script/IES nodes, and route loaded FILE images through the existing
+approved-source policy. No raw Python, file write, forced unlink or implicit buffer reload is needed.
+See [the full contract and remaining gaps](shader-groups.md).
+
+Graphify MCP localized the existing material graph/socket helpers and the structured batch path;
+current files were inspected before reuse. Its index advanced to `cce4bf0` during this work, not the
+new uncommitted group code. The local map remains explicitly stale after these source/doc additions.
+No refreshed graph or complete static dependency proof is claimed. In particular, retrieval/test
+links are navigation aids, not runtime coverage or permission guarantees.
+
+The first long standalone-call native recipe exposed finite undo history. Rather than expand user
+preferences or weaken recovery assertions, the final recipe uses the existing 12-step logical batch
+for a coherent new finish. Every child gate still runs; a deliberately invalid interface default
+also proves audited partial work and measured native batch recovery. Both installed versions pass
+the final default-32 workflow. Separate disposable probes recovered 16/17 standalone operations at
+32 native undo steps and 17/17 at 128. Native-capacity/availability reporting is now next in REC-01;
+batching reduces history consumption but is not a general eviction fix or durable backup.
+
+The native fixture independently compares protected group nodes/interface/links and root scene
+evidence across orange, blue, green-texture and recovered variants. It verifies original instance
+values/links, material/group IDs, selection and source bytes after recovery. Root `scene.compare`
+alone does not cover child contents. All 16 final shader captures match reviewed artifacts byte for
+byte; no user project or preferences are saved. Simple fixture cubes are not production-art approval.
+
+Validation: **960 tests** passed on both MCP SDK 2.0.0 and 2.2.0, plus lint, typing and README inventory
+checks (**163 tools**). The full Windows Blender 4.5.1/5.1.2 matrix passed **46/46** at
+`build/shader-groups-final-matrix-20261019/report.json`, baseline `cce4bf0` plus then-dirty work,
+Python fingerprint `3ecdacfca26552a2f854e11634b7c61c2aff877b0f2a7f69c501351883e5fbd2`.
+All recorded Python source hashes match the frozen worktree. Supplemental capacity probes and their
+isolated logs remain under `build/undo-capacity-probes/` and `build/undo-capacity-probes45/`.
+
+Next: REC-01 native-capacity reporting/pruning and longer/manual-interleaved recovery, then broader
+shader properties/color ramps, image lifecycle and representative reference-constrained prop work.
+Interface editing/conversion, deep asset lifecycle, nested snapshots, character, painting, simulation,
+UX, delivery and install/upgrade/RC gates remain open. This increment does not accept scenario B or
+1.0, publish a release, replace published 0.3.0 assets or change repository visibility.

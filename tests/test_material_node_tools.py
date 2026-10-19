@@ -123,6 +123,7 @@ def test_addon_registry_declares_permissions_and_modification_metadata(
     materials.register_tools(registry)
     nodes.register_tools(registry)
     importlib.import_module(f"{addon_package}.tools.images").register_tools(registry)
+    importlib.import_module(f"{addon_package}.tools.shader_groups").register_tools(registry)
 
     assert set(MATERIAL_TOOL_NAMES).issubset(registry.list_tools())
     assert set(NODE_TOOL_NAMES).issubset(registry.list_tools())

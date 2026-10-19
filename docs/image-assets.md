@@ -23,7 +23,7 @@ active object or viewport. Linked/override/read-only data is not silently made l
 | --- | --- | --- |
 | `image.inspect(image_name?, offset=0, max_images=32)` | Existing metadata/direct users; at most 64 images, 100 users per image and 256 users total, with pagination/truncation | `INSPECT_SCENE` |
 | `image.load(filepath, new_name, colorspace="sRGB")` | New image from an approved file; unique explicit name, no implicit reuse/reload | `EDIT_MATERIALS`, `ACCESS_EXTERNAL_FILES` |
-| `nodes.set_image(material_name, node_name, image_name, interpolation?, projection?, extension?, allow_shared=false)` | Bind a loaded image, or **explicit null** to clear; root `ShaderNodeTexImage` only, at most 256 root nodes / 1,024 links | `EDIT_MATERIALS`; FILE images additionally require `ACCESS_EXTERNAL_FILES` and approved-source preflight |
+| `nodes.set_image(material_name, node_name, image_name, interpolation?, projection?, extension?, allow_shared=false, group_path?)` | Bind a loaded image, or **explicit null** to clear; exact `ShaderNodeTexImage` at the material root or explicit nested path, at most 256 nodes / 1,024 links | `EDIT_MATERIALS`; FILE images additionally require `ACCESS_EXTERNAL_FILES` and approved-source preflight |
 | `image.remove(image_name, confirm_unused=false)` | Confirmed zero-user local datablock only; fake users block removal; never forced unlink or source-file deletion | `EDIT_MATERIALS`, `DELETE_OBJECTS` |
 
 Names must be non-control UTF-8, at most 63 bytes. Color spaces and sampler enums are validated
@@ -32,6 +32,8 @@ an available `Non-Color` space for data maps. Loading one file under different n
 independent datablocks/color roles without changing an existing image.
 
 Binding admits local, loaded, single-view FILE/GENERATED images only and checks material users.
+Nested paths also check [transitive group ownership](shader-groups.md); explicitly isolate shared
+parents/children before changing only one material user.
 Shared materials require explicit `allow_shared=true`. Binding never edits image pixels/color
 space, loads an unloaded buffer, changes graph links or silently reloads an image. Packed FILE
 images still require a permitted supported source path for this workflow.

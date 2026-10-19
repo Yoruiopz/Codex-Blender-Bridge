@@ -358,6 +358,7 @@ def binding(tools, addon_package, monkeypatch):
     bpy.data.objects = [obj]
     bpy.data.user_map = lambda **_: {material: {Owner("Mesh")}}
     nodes = importlib.import_module(f"{addon_package}.tools.nodes")
+    monkeypatch.setattr(nodes, "require_blender", lambda: bpy)
     monkeypatch.setattr(nodes, "_material_graph", lambda _: (material, tree))
     monkeypatch.setattr(nodes, "_node_exact", lambda *_: node)
     image = Image("Loaded", str(path))

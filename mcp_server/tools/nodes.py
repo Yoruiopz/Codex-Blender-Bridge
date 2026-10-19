@@ -8,6 +8,7 @@ from pydantic import StrictBool, StrictStr
 
 from ..tool_registry import ToolDefinition, ToolRegistry, remote_tool
 from ._common import MCPToolBinding, params
+from .shader_groups import SHADER_GROUP_TOOL_DATA, GroupPath, ShaderGroupTools
 
 SocketValue = bool | int | float | str | list[float]
 
@@ -55,6 +56,7 @@ NODE_TOOL_DATA: tuple[tuple[str, str, bool, tuple[str, ...]], ...] = (
         True,
         ("EDIT_MATERIALS",),
     ),
+    *SHADER_GROUP_TOOL_DATA,
 )
 NODE_TOOL_NAMES = tuple(item[0] for item in NODE_TOOL_DATA)
 
@@ -85,10 +87,11 @@ class NodeTools:
         self, material_name: StrictStr, node_name: StrictStr, image_name: StrictStr | None,
         interpolation: StrictStr | None = None, projection: StrictStr | None = None, extension: StrictStr | None = None,
         allow_shared: StrictBool = False,
+        group_path: GroupPath | None = None,
     ) -> Any:
-        """Object Mode root Image Texture binding, or explicit null to clear. Local loaded single-view FILE/GENERATED images only; FILE sources also require live external-file permission and approved-folder/header checks. No implicit reload or pixel edits. Sampling enum names are validated against native RNA before mutation. Inspect material ownership first; shared materials require explicit allow_shared. Verify image identity, settings, graph links and a material/texture capture; buffer/file currency is not certified."""
+        """Object Mode Image Texture binding at the material root or explicit group_path, or null to clear. Local loaded single-view FILE/GENERATED images only; FILE sources also require live external-file permission and approved-folder/header checks. No implicit reload or pixel edits. Sampling enum names are validated against native RNA before mutation. Inspect material and transitive group ownership first; shared scope requires explicit allow_shared. Verify image identity, settings, graph links and a material/texture capture; buffer/file currency is not certified."""
         return await self.registry.call("nodes.set_image", {"material_name": material_name, "node_name": node_name,
-            "image_name": image_name, **params(interpolation=interpolation, projection=projection, extension=extension, allow_shared=allow_shared)})
+            "image_name": image_name, **params(interpolation=interpolation, projection=projection, extension=extension, allow_shared=allow_shared, group_path=group_path)})
 
     async def nodes_inspect(
         self,
@@ -96,8 +99,9 @@ class NodeTools:
         max_nodes: int = 100,
         max_links: int = 300,
         max_sockets_per_direction: int = 32,
+        group_path: GroupPath | None = None,
     ) -> Any:
-        """Inspect all shader nodes and links with explicit response limits."""
+        """Inspect shader nodes/links at the material root or explicit group_path with bounds/truncation. Nested inspection includes transitive ownership evidence; it does not recursively expand every referenced group."""
 
         return await self.registry.call(
             "nodes.inspect",
@@ -106,6 +110,7 @@ class NodeTools:
                 "max_nodes": max_nodes,
                 "max_links": max_links,
                 "max_sockets_per_direction": max_sockets_per_direction,
+                **params(group_path=group_path),
             },
         )
 
@@ -117,8 +122,9 @@ class NodeTools:
         label: str | None = None,
         location: list[float] | None = None,
         allow_shared: bool = False,
+        group_path: GroupPath | None = None,
     ) -> Any:
-        """Add a shader node; shared materials require allow_shared after inspecting usage."""
+        """Add a shader node at the material root or group_path; nested graphs also admit NodeGroupInput/NodeGroupOutput. Shared material/group scope requires allow_shared after inspection."""
 
         return await self.registry.call(
             "nodes.add",
@@ -129,15 +135,16 @@ class NodeTools:
                 label=label,
                 location=location,
                 allow_shared=allow_shared,
+                group_path=group_path,
             ),
         )
 
-    async def nodes_remove(self, material_name: str, node_name: str, allow_shared: bool = False) -> Any:
+    async def nodes_remove(self, material_name: str, node_name: str, allow_shared: bool = False, group_path: GroupPath | None = None) -> Any:
         """Remove a node and its links; inspect usage before consenting with allow_shared."""
 
         return await self.registry.call(
             "nodes.remove",
-            {"material_name": material_name, "node_name": node_name, "allow_shared": allow_shared},
+            {"material_name": material_name, "node_name": node_name, "allow_shared": allow_shared, **params(group_path=group_path)},
         )
 
     async def nodes_rename(
@@ -146,6 +153,7 @@ class NodeTools:
         node_name: str,
         new_name: str,
         allow_shared: bool = False,
+        group_path: GroupPath | None = None,
     ) -> Any:
         """Rename a node without collisions; shared material edits require allow_shared."""
 
@@ -156,6 +164,7 @@ class NodeTools:
                 "node_name": node_name,
                 "new_name": new_name,
                 "allow_shared": allow_shared,
+                **params(group_path=group_path),
             },
         )
 
@@ -167,6 +176,7 @@ class NodeTools:
         value: SocketValue,
         socket_index: int | None = None,
         allow_shared: bool = False,
+        group_path: GroupPath | None = None,
     ) -> Any:
         """Set an exact input; index disambiguates sockets; shared materials require allow_shared."""
 
@@ -179,6 +189,7 @@ class NodeTools:
                 value=value,
                 socket_index=socket_index,
                 allow_shared=allow_shared,
+                group_path=group_path,
             ),
         )
 
@@ -193,6 +204,7 @@ class NodeTools:
         from_socket_index: int | None = None,
         to_socket_index: int | None = None,
         allow_shared: bool = False,
+        group_path: GroupPath | None = None,
     ) -> Any:
         """Link exact sockets with explicit replacement; shared materials require allow_shared."""
 
@@ -208,6 +220,7 @@ class NodeTools:
                 from_socket_index=from_socket_index,
                 to_socket_index=to_socket_index,
                 allow_shared=allow_shared,
+                group_path=group_path,
             ),
         )
 
@@ -221,6 +234,7 @@ class NodeTools:
         from_socket_index: int | None = None,
         to_socket_index: int | None = None,
         allow_shared: bool = False,
+        group_path: GroupPath | None = None,
     ) -> Any:
         """Unlink exact sockets; shared materials require allow_shared; missing links are no-ops."""
 
@@ -235,6 +249,7 @@ class NodeTools:
                 from_socket_index=from_socket_index,
                 to_socket_index=to_socket_index,
                 allow_shared=allow_shared,
+                group_path=group_path,
             ),
         )
 
@@ -248,6 +263,7 @@ class NodeTools:
             MCPToolBinding("nodes.set_input", self.nodes_set_input, self.nodes_set_input.__doc__ or ""),
             MCPToolBinding("nodes.link", self.nodes_link, self.nodes_link.__doc__ or ""),
             MCPToolBinding("nodes.unlink", self.nodes_unlink, self.nodes_unlink.__doc__ or ""),
+            *ShaderGroupTools(self.registry).bindings(),
         )
 
 

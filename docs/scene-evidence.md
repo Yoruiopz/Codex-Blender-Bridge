@@ -39,6 +39,10 @@ custom properties, selection, viewport settings, transitive dependencies and vis
 `material_slots` alone does not cover polygon material indices; include `mesh_geometry`
 to check those. These are specific field comparisons, not a whole-object guarantee.
 
+For [nested shader edits](shader-groups.md), root group identities may match even when a child
+changed. Separately inspect and compare each relevant group's nodes/interface/links; these snapshot
+tools do not yet hash nested contents. The native shader-group recipe uses both forms of evidence.
+
 ## Results and limits
 
 `schema_version=1` identifies the evidence format. Large collections are streamed

@@ -65,6 +65,23 @@ def _summary(image: Any) -> dict:
             "pixel_contents_verified": False}
 
 
+def binding_source(context: ToolContext, image: Any) -> dict | None:
+    """Validate an existing loaded image without changing/reloading it; reusable by group binding."""
+    if not local_editable(image) or image.source not in {"FILE", "GENERATED"} or getattr(image, "is_multiview", False):
+        raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Binding supports local editable single-view FILE/GENERATED images only.")
+    if not image.has_data:
+        raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Load the image buffer explicitly before binding it; no implicit reload is performed.")
+    source = None
+    if image.source == "FILE":
+        context.require(Permission.ACCESS_EXTERNAL_FILES)
+        _path, header = preflight_file(str(image.filepath), _root())
+        source = {k: v for k, v in header.items() if not k.startswith("_")}
+    size = tuple(int(v) for v in image.size)
+    if len(size) != 2 or min(size) < 1 or max(size) > MAX_DIMENSION or size[0] * size[1] > MAX_PIXELS:
+        raise invalid_argument("Loaded image exceeds texture binding limits.")
+    return source
+
+
 def inspect_images(context: ToolContext, params: Mapping[str, Any]) -> dict:
     reject_unknown_params(params, {"image_name", "offset", "max_images"})
     offset = int_param(params, "offset", 0, minimum=0, maximum=1_000_000)
@@ -180,21 +197,26 @@ def register_tools(registry: ToolRegistry) -> None:
                       description="Remove one explicitly confirmed unused local image datablock, never its source file.")
     registry.register("nodes.set_image", set_node_image, toolset="nodes", modifies=True,
                       permissions=(Permission.EDIT_MATERIALS,),
-                      description="Bind/clear a loaded texture image and validated sampling settings on one root material node; FILE images also require approved-path/external-file checks.")
+                      description="Bind/clear a loaded image and sampling settings at the root or explicit group_path; FILE images also require approved-path/external-file checks.")
 
 
 def set_node_image(context: ToolContext, params: Mapping[str, Any]) -> dict:
     from ._rna import prepare_assignments
     from .material_scope import editable_material_scope
-    from .nodes import _material_graph, _node_exact
+    from .nodes import _node_exact, _target_graph
 
-    reject_unknown_params(params, {"material_name", "node_name", "image_name", "interpolation", "projection", "extension", "allow_shared"})
+    reject_unknown_params(params, {"material_name", "node_name", "image_name", "interpolation", "projection", "extension", "allow_shared", "group_path"})
     if "image_name" not in params:
         raise invalid_argument("'image_name' is required; pass null explicitly to clear the binding.")
-    material, tree = _material_graph(_name(params, "material_name"))
+    material, tree = _target_graph(context, params, modify=True)
     bpy = require_blender()
     _object_mode(bpy)
     scope = editable_material_scope(bpy, material, params)
+    group_scope = None
+    if tree != material.node_tree:
+        from .shader_scope import ownership
+
+        group_scope = ownership(bpy, tree, context.check_cancelled)
     if len(tree.nodes) > 256 or len(tree.links) > 1024:
         raise invalid_argument("Texture binding supports at most 256 root nodes / 1024 links.")
     node = _node_exact(tree, _name(params, "node_name"))
@@ -204,19 +226,7 @@ def set_node_image(context: ToolContext, params: Mapping[str, Any]) -> dict:
     settings = {key: params[key] for key in keys if key in params}
     assignments = prepare_assignments(node, settings, allowed=keys, object_pointers=frozenset(), bpy=bpy)
     image = image_exact(bpy, _name(params, "image_name")) if params["image_name"] is not None else None
-    source = None
-    if image is not None:
-        if not local_editable(image) or image.source not in {"FILE", "GENERATED"} or getattr(image, "is_multiview", False):
-            raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Binding supports local editable single-view FILE/GENERATED images only.")
-        if not image.has_data:
-            raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Load the image buffer explicitly before binding it; no implicit reload is performed.")
-        if image.source == "FILE":
-            context.require(Permission.ACCESS_EXTERNAL_FILES)
-            _path, header = preflight_file(str(image.filepath), _root())
-            source = {k: v for k, v in header.items() if not k.startswith("_")}
-        size = tuple(int(v) for v in image.size)
-        if len(size) != 2 or min(size) < 1 or max(size) > MAX_DIMENSION or size[0] * size[1] > MAX_PIXELS:
-            raise invalid_argument("Loaded image exceeds texture binding limits.")
+    source = binding_source(context, image) if image is not None else None
     previous_image = node.image
     previous_name = previous_image.name if previous_image else None
     previous_settings = {key: getattr(node, key) for key in settings}
@@ -237,6 +247,7 @@ def set_node_image(context: ToolContext, params: Mapping[str, Any]) -> dict:
         return {"material": material.name, "node": node.name, "previous_image": previous_name,
                 "image": _summary(image) if image else None,
                 "sampling": {key: getattr(node, key) for key in sorted(keys)}, "ownership": scope,
+                "node_tree": tree.name, "group_ownership": group_scope,
                 "source_file_at_binding": source, "file_written": False,
                 "verification": "Binding/settings/unchanged link identities checked; existing buffer not reloaded and pixel/file currency not certified."}
     except Exception as exc:

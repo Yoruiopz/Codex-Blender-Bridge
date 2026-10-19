@@ -95,6 +95,13 @@ in Blender and grant external-file access for supported PNG/JPEG reads; MCP cann
 folder. The workflow checks color/data roles, material isolation, texture revisions and undo.
 No implicit reuse/reload, image writes, packing, painting or baking is claimed; see its limits.
 
+Unreleased [nested shader-group tools](docs/shader-groups.md) add group creation, typed interface
+sockets, binding, one-instance copies and confirmed unused removal. Existing `nodes.*` tools now
+accept an explicit `group_path`. Ownership checks follow parent groups to material users; copying
+a material alone does not isolate its children. A matched texture-revision test uses one logical
+batch and verifies protected data, partial-failure recovery and native undo without expanding the
+default history. Native history remains finite; see the workflow and limitations before use.
+
 Unreleased `scene.snapshot` and `scene.compare` add bounded before/after evidence for named
 objects: transforms, hierarchy, visibility, base mesh geometry, UVs, weights, material slots
 and root shader socket values/links. They can detect edits that leave object or vertex counts
@@ -315,7 +322,7 @@ is identified above, and the feature table describes the published release.
 Blender's local recovery UI also has an add-on-only restore action, not an extra MCP tool.
 
 <!-- BEGIN GENERATED MCP TOOLS -->
-Current registry: **157 MCP tools**.
+Current registry: **163 MCP tools**.
 
 <details>
 <summary>core — 18 tools</summary>
@@ -509,7 +516,7 @@ Current registry: **157 MCP tools**.
 </details>
 
 <details>
-<summary>nodes — 8 tools</summary>
+<summary>nodes — 14 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
@@ -521,6 +528,12 @@ Current registry: **157 MCP tools**.
 | `nodes.set_image` | Bind/clear a loaded image and validated sampling settings on an exact root material image node; FILE sources require external-file policy checks. |
 | `nodes.set_input` | Set one exact material-node input default value. |
 | `nodes.unlink` | Remove links between exact material-node sockets. |
+| `shader_group.bind` | Bind/clear an exact unlinked group instance after dependency and file-policy checks. |
+| `shader_group.copy_for_node` | Copy one shader-group instance, preserving input defaults and links; nested data remains shared. |
+| `shader_group.create` | Create a new empty local shader group with input/output nodes. |
+| `shader_group.inspect` | Inspect a bounded shader-group graph, interface and transitive parent ownership evidence. |
+| `shader_group.interface_add` | Add one typed interface socket to an explicitly scoped shader group. |
+| `shader_group.remove` | Remove a confirmed unused shader-group datablock without forced unlink or deleting nested data. |
 
 </details>
 

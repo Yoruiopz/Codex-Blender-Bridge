@@ -68,6 +68,18 @@ def _material_graph(material_name: str) -> tuple[Any, Any]:
     return material, material.node_tree
 
 
+def _target_graph(context: ToolContext | None, params: Mapping[str, Any], *, modify: bool = False) -> tuple[Any, Any]:
+    material, tree = _material_graph(_required_string(params, "material_name"))
+    bpy = require_blender()
+    if modify:
+        editable_material_scope(bpy, material, params)
+    if "group_path" in params:
+        from .shader_scope import resolve
+
+        tree = resolve(bpy, material, params, modify=modify, check=getattr(context, "check_cancelled", None))
+    return material, tree
+
+
 def _node_exact(tree: Any, node_name: str) -> Any:
     node = tree.nodes.get(node_name)
     if node is None:
@@ -197,6 +209,8 @@ def _node_summary(
         "dimensions": [float(component) for component in node.dimensions],
         "muted": bool(node.mute),
         "hidden": bool(node.hide),
+        "group_name": getattr(getattr(node, "node_tree", None), "name", None),
+        "image_name": getattr(getattr(node, "image", None), "name", None),
         "input_count": len(node.inputs),
         "output_count": len(node.outputs),
         "inputs": inputs,
@@ -277,9 +291,7 @@ def _graph_inspection(
 
 
 def inspect_nodes(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
-    del context
-    material_name = _required_string(params, "material_name")
-    material, tree = _material_graph(material_name)
+    material, tree = _target_graph(context, params)
     max_nodes = int_param(
         params,
         "max_nodes",
@@ -301,13 +313,19 @@ def inspect_nodes(context: ToolContext, params: Mapping[str, Any]) -> dict[str, 
         minimum=1,
         maximum=_MAX_SOCKETS_LIMIT,
     )
-    return _graph_inspection(
+    result = _graph_inspection(
         material,
         tree,
         max_nodes=max_nodes,
         max_links=max_links,
         max_sockets=max_sockets,
     )
+    if tree != material.node_tree:
+        from .shader_scope import ownership, path
+
+        result["group_path"] = path(params)
+        result["group_ownership"] = ownership(require_blender(), tree, getattr(context, "check_cancelled", None))
+    return result
 
 
 def _post_state(material: Any, tree: Any, node: Any | None = None) -> dict[str, Any]:
@@ -321,19 +339,24 @@ def _post_state(material: Any, tree: Any, node: Any | None = None) -> dict[str, 
     }
     if node is not None:
         result["node"] = _node_summary(node, max_sockets=_DEFAULT_MAX_SOCKETS)
+    if tree != material.node_tree:
+        from .shader_scope import ownership
+
+        result["group_ownership"] = ownership(require_blender(), tree)
     return result
 
 
 def add_node(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
-    del context
-    material, tree = _material_graph(_required_string(params, "material_name"))
-    editable_material_scope(require_blender(), material, params)
+    material, tree = _target_graph(context, params, modify=True)
+    if tree != material.node_tree and len(tree.nodes) >= _MAX_NODES_LIMIT:
+        raise invalid_argument("Nested shader graph has reached its 256-node editing budget.")
     node_type = _required_string(
         params,
         "node_type",
         maximum=_MAX_NODE_TYPE_LENGTH,
     )
-    if _NODE_TYPE_PATTERN.fullmatch(node_type) is None:
+    interface_node = tree != material.node_tree and node_type in {"NodeGroupInput", "NodeGroupOutput"}
+    if _NODE_TYPE_PATTERN.fullmatch(node_type) is None and not interface_node:
         raise invalid_argument(
             "'node_type' must be a registered shader node id beginning with 'ShaderNode'.",
             parameter="node_type",
@@ -367,9 +390,7 @@ def add_node(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def remove_node(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
-    del context
-    material, tree = _material_graph(_required_string(params, "material_name"))
-    editable_material_scope(require_blender(), material, params)
+    material, tree = _target_graph(context, params, modify=True)
     node = _node_exact(tree, _required_string(params, "node_name"))
     name = node.name
     removed_links = sum(
@@ -385,9 +406,7 @@ def remove_node(context: ToolContext, params: Mapping[str, Any]) -> dict[str, An
 
 
 def rename_node(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
-    del context
-    material, tree = _material_graph(_required_string(params, "material_name"))
-    editable_material_scope(require_blender(), material, params)
+    material, tree = _target_graph(context, params, modify=True)
     node = _node_exact(tree, _required_string(params, "node_name"))
     new_name = _required_string(params, "new_name")
     collision = tree.nodes.get(new_name)
@@ -532,8 +551,7 @@ def _coerce_default_value(socket: Any, raw_value: Any) -> Any:
 
 
 def set_node_input(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
-    del context
-    material, tree = _material_graph(_required_string(params, "material_name"))
+    material, tree = _target_graph(context, params, modify=True)
     scope = editable_material_scope(require_blender(), material, params)
     node = _node_exact(tree, _required_string(params, "node_name"))
     socket_name = _required_string(
@@ -589,9 +607,7 @@ def _endpoint(
 
 
 def link_nodes(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
-    del context
-    material, tree = _material_graph(_required_string(params, "material_name"))
-    editable_material_scope(require_blender(), material, params)
+    material, tree = _target_graph(context, params, modify=True)
     _, from_socket = _endpoint(tree, params, "from", "output")
     _, to_socket = _endpoint(tree, params, "to", "input")
     replace = params.get("replace_existing", False)
@@ -624,6 +640,8 @@ def link_nodes(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any
         if replace and not bool(getattr(to_socket, "is_multi_input", False))
         else 0
     )
+    if tree != material.node_tree and len(tree.links) >= _MAX_LINKS_LIMIT and not removed:
+        raise invalid_argument("Nested shader graph has reached its 1,024-link editing budget.")
     link = tree.links.new(from_socket, to_socket)
     return {
         "linked": True,
@@ -634,9 +652,7 @@ def link_nodes(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any
 
 
 def unlink_nodes(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
-    del context
-    material, tree = _material_graph(_required_string(params, "material_name"))
-    editable_material_scope(require_blender(), material, params)
+    material, tree = _target_graph(context, params, modify=True)
     from_node, from_socket = _endpoint(tree, params, "from", "output")
     to_node, to_socket = _endpoint(tree, params, "to", "input")
     matches = [
