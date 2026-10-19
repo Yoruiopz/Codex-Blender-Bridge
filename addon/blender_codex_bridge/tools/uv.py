@@ -43,7 +43,25 @@ def _optional_layer_name(params: Mapping[str, Any]) -> str | None:
     return None if value is None else bounded_name(value, "uv_layer", maximum=64)
 
 
-def _layer_summaries(obj: Any) -> tuple[list[dict[str, Any]], bool]:
+def _uses_edit_data(obj: Any) -> bool:
+    """Linked duplicates can be Object Mode while their shared mesh is live in Edit Mode."""
+    return bool(getattr(obj.data, "is_editmode", obj.mode == "EDIT"))
+
+
+def _layer_summaries(obj: Any) -> tuple[list[dict[str, Any]], bool, int]:
+    if _uses_edit_data(obj):
+        if bmesh is None:
+            raise BridgeError(ErrorCode.BLENDER_CONTEXT_ERROR, "bmesh is unavailable.")
+        live = bmesh.from_edit_mesh(obj.data).loops.layers.uv
+        layers = list(live.values())
+        active_name = live.active.name if live.active is not None else None
+        summaries = []
+        for layer in layers[:_MAX_UV_LAYERS]:
+            metadata = obj.data.uv_layers.get(layer.name)
+            summaries.append({"name": layer.name, "active": layer.name == active_name,
+                "active_render": bool(metadata.active_render) if metadata is not None else None,
+                "active_clone": bool(metadata.active_clone) if metadata is not None else None})
+        return summaries, len(layers) > len(summaries), len(layers)
     layers = list(obj.data.uv_layers)
     active = obj.data.uv_layers.active
     summaries = [
@@ -55,7 +73,7 @@ def _layer_summaries(obj: Any) -> tuple[list[dict[str, Any]], bool]:
         }
         for layer in layers[:_MAX_UV_LAYERS]
     ]
-    return summaries, len(layers) > len(summaries)
+    return summaries, len(layers) > len(summaries), len(layers)
 
 
 def _uv_close(first: Sequence[float], second: Sequence[float]) -> bool:
@@ -398,7 +416,7 @@ def _coordinate_page(
     selected_only: bool, offset: int, maximum: int,
 ) -> dict[str, Any]:
     """Bounded face-corner evidence; offsets are scoped positions, not durable IDs."""
-    edit_mode = obj.mode == "EDIT"
+    edit_mode = _uses_edit_data(obj)
     if edit_mode:
         bm, layer, faces = _edit_data(obj, layer_name, selection_id, selected_only)
         bm.faces.index_update()
@@ -469,11 +487,13 @@ def inspect_uv(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any
             "A UV selection reference can only be validated while its mesh is in Edit Mode.",
             {"object": obj.name, "current_mode": obj.mode, "required_mode": "EDIT"},
         )
-    layers, layers_truncated = _layer_summaries(obj)
-    if not obj.data.uv_layers:
+    layers, layers_truncated, layer_count = _layer_summaries(obj)
+    data_state = "LIVE_EDIT_BMESH" if _uses_edit_data(obj) else "OBJECT_MESH_DATA"
+    if not layer_count:
         empty = {
             "object": obj.name,
             "mode": obj.mode,
+            "mesh_data_state": data_state,
             "uv_layer_count": 0,
             "uv_layers": [],
             "layers_truncated": False,
@@ -490,7 +510,7 @@ def inspect_uv(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any
             selected_only=selected_only or selection_id is not None,
             max_islands=max_islands,
         )
-        if obj.mode == "EDIT"
+        if _uses_edit_data(obj)
         else _inspect_object_uv(
             obj,
             layer_name=layer_name,
@@ -501,7 +521,8 @@ def inspect_uv(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any
     result = {
         "object": obj.name,
         "mode": obj.mode,
-        "uv_layer_count": len(obj.data.uv_layers),
+        "mesh_data_state": data_state,
+        "uv_layer_count": layer_count,
         "uv_layers": layers,
         "layers_truncated": layers_truncated,
         "analysis": analysis,

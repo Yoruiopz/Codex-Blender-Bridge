@@ -81,6 +81,11 @@ visual evidence without changing the viewport or Render Result. A connected test
 repairs a prop, unwraps it, gives it a separate finish and verifies staged recovery while
 preserving a protected duplicate. See [scope, limits and workflow](docs/mesh-loops.md).
 
+Unreleased `uv.analyze` adds bounded numeric checks for overlap, mirrored/folded mappings,
+pixel-direction stretch and texel density at a declared texture resolution. It uses native
+base-mesh triangulation and world transforms, reports incomplete budgets honestly, and does
+not alter UVs or selection. See [measurements, thresholds and limitations](docs/uv-analysis.md).
+
 Unreleased `scene.snapshot` and `scene.compare` add bounded before/after evidence for named
 objects: transforms, hierarchy, visibility, base mesh geometry, UVs, weights, material slots
 and root shader socket values/links. They can detect edits that leave object or vertex counts
@@ -301,7 +306,7 @@ is identified above, and the feature table describes the published release.
 Blender's local recovery UI also has an add-on-only restore action, not an extra MCP tool.
 
 <!-- BEGIN GENERATED MCP TOOLS -->
-Current registry: **151 MCP tools**.
+Current registry: **152 MCP tools**.
 
 <details>
 <summary>core — 18 tools</summary>
@@ -589,10 +594,11 @@ Current registry: **151 MCP tools**.
 </details>
 
 <details>
-<summary>uv — 12 tools</summary>
+<summary>uv — 13 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
+| `uv.analyze` | Measure bounded triangulated UV overlap/winding, pixel anisotropy and world-unit texel density, with explicit completeness. |
 | `uv.capture_layout` | Capture a bounded UV-coordinate PNG without scene/UI/render changes; not a quality verdict. |
 | `uv.coordinates_set` | Set exact face-corner UV coordinates within a validated face selection reference. |
 | `uv.inspect` | Inspect bounded UV layers, selection, bounds, and island connectivity. |

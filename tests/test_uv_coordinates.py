@@ -82,3 +82,37 @@ def test_coordinate_wrapper_passes_pagination():
     assert method == "uv.inspect"
     assert params["include_coordinates"] and params["coordinate_offset"] == 12
     assert params["max_coordinates"] == 4
+
+
+def test_object_mode_alias_uses_live_edit_coordinates(uv_page, monkeypatch):
+    module, obj = uv_page
+    obj.data.is_editmode = True
+    layer = SimpleNamespace(name="UVMap")
+    vertices = [SimpleNamespace(index=i) for i in range(3)]
+    class Loop:
+        def __init__(self, index):
+            self.vert = vertices[index]
+
+        def __getitem__(self, _layer):
+            return SimpleNamespace(uv=(9., 8.), pin_uv=False)
+
+    class Sequence(list):
+        def index_update(self):
+            return None
+
+    bm = SimpleNamespace(faces=Sequence(), verts=Sequence())
+    face = SimpleNamespace(index=0, loops=[Loop(i) for i in range(3)])
+    monkeypatch.setattr(module, "_edit_data", lambda *args: (bm, layer, [face]))
+    result = page(module, obj)
+    assert result["items"][0]["uv"] == [9., 8.]  # Not the shadow object's old UV values.
+
+
+def test_live_layer_metadata_does_not_hide_unflushed_layers(addon_package, monkeypatch):
+    module = importlib.import_module(f"{addon_package}.tools.uv")
+    layer = SimpleNamespace(name="Live Only")
+    live = SimpleNamespace(values=lambda: [layer], active=layer)
+    monkeypatch.setattr(module, "bmesh", SimpleNamespace(from_edit_mesh=lambda _: SimpleNamespace(loops=SimpleNamespace(layers=SimpleNamespace(uv=live)))))
+    obj = SimpleNamespace(mode="OBJECT", data=SimpleNamespace(is_editmode=True, uv_layers={}))
+    summaries, truncated, count = module._layer_summaries(obj)
+    assert count == 1 and not truncated and summaries[0]["name"] == "Live Only"
+    assert summaries[0]["active"] and summaries[0]["active_render"] is None

@@ -12,6 +12,7 @@ from ..tool_registry import ToolDefinition, ToolRegistry, remote_tool
 from ._common import MCPToolBinding, params
 
 TOOL_DATA: tuple[tuple[str, str, bool], ...] = (
+    ("uv.analyze", "Measure bounded triangulated UV overlap/winding, pixel anisotropy and world-unit texel density, with explicit completeness.", False),
     ("uv.capture_layout", "Capture a bounded UV-coordinate PNG without scene/UI/render changes; not a quality verdict.", False),
     ("uv.coordinates_set", "Set exact face-corner UV coordinates within a validated face selection reference.", True),
     ("uv.transform", "Transform selected-face UV corners using explicit pivot, scale, rotation and offset; respect pins by default.", True),
@@ -57,6 +58,22 @@ def load_definitions() -> tuple[ToolDefinition, ...]:
 class UVTools:
     def __init__(self, registry: ToolRegistry) -> None:
         self.registry = registry
+
+    async def uv_analyze(
+        self, object_name: str, uv_layer: str, selected_only: StrictBool = False,
+        selection_id: str | None = None, face_indices: list[StrictInt] | None = None,
+        texture_resolution: list[StrictInt] | None = None, max_triangles: StrictInt = 8192,
+        max_pair_tests: StrictInt = 200_000, max_reports: StrictInt = 64,
+        anisotropy_warning: StrictFloat = 4., density_target: StrictFloat | None = None,
+        density_tolerance: StrictFloat = .2,
+    ) -> Any:
+        """Read-only UV diagnostics using native base-mesh tessellation (Object/Edit Mode). Checks positive-area triangle intersections, mirrored/folded UVs, pixel-direction singular-value anisotropy and density in pixels per world unit, NOT meters. Declared resolution defaults to hypothetical 1024x1024; no image is inferred. Optional explicit face indices must stay within selected/referenced scope. Budget-limited/invalid/tessellation-missing coverage is incomplete, never clean. Max 20,000 triangles / 1,000,000 broadphase pair tests; reports bounded to 256. Stacks/mirrors may be intentional; no artistic/evaluated-mesh or Blender-overlay-equivalence claim. Reinspect/capture and compare the brief."""
+        return await self.registry.call("uv.analyze", params(
+            object_name=object_name, uv_layer=uv_layer, selected_only=selected_only, selection_id=selection_id,
+            face_indices=face_indices, texture_resolution=texture_resolution, max_triangles=max_triangles,
+            max_pair_tests=max_pair_tests, max_reports=max_reports, anisotropy_warning=anisotropy_warning,
+            density_target=density_target, density_tolerance=density_tolerance,
+        ))
 
     async def uv_capture_layout(
         self, object_name: str, uv_layer: str, selected_only: StrictBool = False,
@@ -233,6 +250,7 @@ class UVTools:
 
     def bindings(self) -> tuple[MCPToolBinding, ...]:
         return (
+            MCPToolBinding("uv.analyze", self.uv_analyze, self.uv_analyze.__doc__ or ""),
             MCPToolBinding("uv.capture_layout", self.uv_capture_layout, self.uv_capture_layout.__doc__ or ""),
             MCPToolBinding("uv.coordinates_set", self.uv_coordinates_set, self.uv_coordinates_set.__doc__ or ""),
             MCPToolBinding("uv.transform", self.uv_transform, self.uv_transform.__doc__ or ""),

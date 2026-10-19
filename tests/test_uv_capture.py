@@ -15,7 +15,7 @@ def capture(addon_package, monkeypatch, tmp_path):
     module = importlib.import_module(f"{addon_package}.tools.uv_capture")
     collector = module._faces
     faces = [[(0., 0., True), (1., 0., False), (1., 1., False), (0., 1., False)]]
-    monkeypatch.setattr(module, "_faces", lambda *args: ("Mesh", "UV", faces))
+    monkeypatch.setattr(module, "_faces", lambda *args: ("Mesh", "UV", faces, "OBJECT_MESH_DATA"))
     path = tmp_path / "capture.png"
     monkeypatch.setattr(module, "_managed_capture_path", lambda: path)
     return module, faces, path, SimpleNamespace(check_cancelled=None, collector=collector)

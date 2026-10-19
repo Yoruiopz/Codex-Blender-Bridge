@@ -152,6 +152,8 @@ def run():
         denied("uv.capture_layout", "PERMISSION_DENIED", uv_layer="Repair UV")
         grants[Permission.CAPTURE_VIEWPORT.value] = True
         images["uv_before"] = call("uv.capture_layout", uv_layer="Repair UV")["path"]
+        initial_quality = call("uv.analyze", uv_layer="Repair UV", texture_resolution=[1024, 1024])
+        assert initial_quality["analysis_complete"] and initial_quality["metrics"]["near_zero_uv_triangles"] > 0
         unwrapped = call("uv.unwrap", uv_layer="Repair UV", create_if_missing=False, margin=.02)
         assert unwrapped["verification"]["status"] == "basic_checks_passed"
         call("uv.pack_islands", uv_layer="Repair UV", margin=.02)
@@ -160,6 +162,9 @@ def run():
         assert not uv["coordinates"]["truncated"]
         assert all(-1e-5 <= value <= 1.00001 for item in uv["coordinates"]["items"] for value in item["uv"])
         images["uv_after"] = call("uv.capture_layout", uv_layer="Repair UV")["path"]
+        final_quality = call("uv.analyze", uv_layer="Repair UV", texture_resolution=[1024, 1024], anisotropy_warning=1.01)
+        assert final_quality["analysis_complete"] and final_quality["overlap"]["positive_triangle_pairs"] == 0
+        assert final_quality["verification"]["status"] == "numeric_checks_passed"
         # The original map must retain old/interpolated corner values; new bridge faces start at zero.
         edit = bmesh.from_edit_mesh(bpy.data.objects["Repair Prop"].data)
         source = edit.loops.layers.uv["Source UV"]

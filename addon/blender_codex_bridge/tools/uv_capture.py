@@ -14,7 +14,7 @@ from ..tool_registry import ToolContext, ToolRegistry
 from ..utils import bool_param, int_param, reject_unknown_params
 from ..viewport import _cleanup_managed_captures, _managed_capture_path
 from .mesh import _id_name
-from .uv import _edit_data, _mesh_object
+from .uv import _edit_data, _mesh_object, _uses_edit_data
 
 MAX_FACES = 4_096
 MAX_CORNERS = 16_384
@@ -26,7 +26,7 @@ def _check(context: ToolContext) -> None:
         context.check_cancelled()
 
 
-def _faces(params: Mapping[str, Any], context: ToolContext) -> tuple[str, str, list[list[tuple[float, float, bool]]]]:
+def _faces(params: Mapping[str, Any], context: ToolContext) -> tuple[str, str, list[list[tuple[float, float, bool]]], str]:
     _id_name(params.get("object_name"), "object_name")
     name = _id_name(params.get("uv_layer"), "uv_layer")
     selected_only = bool_param(params, "selected_only", False)
@@ -34,8 +34,8 @@ def _faces(params: Mapping[str, Any], context: ToolContext) -> tuple[str, str, l
     if reference is not None and (not isinstance(reference, str) or not reference):
         raise invalid_argument("'selection_id' must be a non-empty string.")
     obj = _mesh_object(params)
-    edit = obj.mode == "EDIT"
-    if reference is not None and not edit:
+    edit = _uses_edit_data(obj)
+    if reference is not None and obj.mode != "EDIT":
         raise BridgeError(ErrorCode.INVALID_MODE, "UV selection references require Edit Mode.")
     if edit:
         _bm, layer, faces = _edit_data(obj, name, reference, selected_only or reference is not None)
@@ -67,7 +67,7 @@ def _faces(params: Mapping[str, Any], context: ToolContext) -> tuple[str, str, l
             _check(context)
     if not total:
         raise BridgeError(ErrorCode.INVALID_SELECTION, "No UV corners were found in the capture scope.")
-    return obj.name, layer.name, records
+    return obj.name, layer.name, records, "LIVE_EDIT_BMESH" if edit else "OBJECT_MESH_DATA"
 
 
 def _clip(a: tuple[float, float], b: tuple[float, float], bounds: tuple[float, float, float, float]) -> tuple[float, float, float, float] | None:
@@ -101,7 +101,7 @@ def capture_layout(context: ToolContext, params: Mapping[str, Any]) -> dict[str,
     view = params.get("view", "UNIT_TILE")
     if not isinstance(view, str) or view not in {"UNIT_TILE", "FIT"}:
         raise invalid_argument("'view' must be UNIT_TILE or FIT.")
-    obj, layer, faces = _faces(params, context)
+    obj, layer, faces, data_state = _faces(params, context)
     points = [point for face in faces for point in face]
     if view == "FIT":
         low_u, high_u = min(p[0] for p in points), max(p[0] for p in points)
@@ -177,6 +177,7 @@ def capture_layout(context: ToolContext, params: Mapping[str, Any]) -> dict[str,
         stream.write(payload)
     _cleanup_managed_captures(path.parent)
     return {"object": obj, "uv_layer": layer, "path": str(path), "mime_type": "image/png",
+            "mesh_data_state": data_state,
             "width": size, "height": size, "source": "uv_coordinate_raster", "view": view,
             "view_bounds": {"min": list(bounds[:2]), "max": list(bounds[2:])},
             "face_count": len(faces), "corner_count": len(points), "outside_view_corners": outside,

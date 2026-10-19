@@ -90,5 +90,6 @@ two-face checker surface is captured before and after: the deliberate mapping ch
 to the edited face, while the other face and geometry remain fixed. The distorted checker is an
 intentional coordinate-edit test, not an approved unwrap or texel-density result. No user
 project is used or saved. [UV-coordinate layout captures](mesh-loops.md#uv-coordinate-visual-evidence)
-now provide atlas evidence; UV-editor view/selection tooling, automatic overlap/stretch diagnostics,
-relax/stitch/alignment, broader UV-editor selection and production asset acceptance remain open.
+now provide atlas evidence, and [UV analysis](uv-analysis.md) adds bounded overlap/stretch/density
+checks. UV-editor view/selection tooling, relax/stitch/alignment, cross-object/evaluated atlas
+checks, broader quality coverage and production asset acceptance remain open.
