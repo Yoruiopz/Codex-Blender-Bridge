@@ -137,6 +137,9 @@ def run():
         grants[Permission.EDIT_MESH.value] = True
         cut = call("mesh.loop_cut", seed_edge_index=seed, selection_id=reference)
         assert cut["mesh_counts_after"] == {"vertices": 20, "edges": 36, "faces": 18}
+        mesh_quality = call("mesh.analyze")
+        assert mesh_quality["analysis_complete"] and not sum(mesh_quality["intersections"]["triangle_pairs"].values())
+        assert not mesh_quality["topology"]["counts"].get("inconsistent_orientation_edges", 0)
         denied("mesh.loop_cut", "INVALID_SELECTION", seed_edge_index=seed, selection_id=reference)
         vertices_after, edges_after, faces_after = page("VERT"), page("EDGE"), page("FACE")
         assert sum(abs(v["center_local"][2]) < 1e-6 for v in vertices_after) == 4

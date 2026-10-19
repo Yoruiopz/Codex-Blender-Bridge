@@ -14,6 +14,7 @@ from ..selection import validate_selection_reference
 from ..tool_registry import ToolContext, ToolRegistry
 from ..utils import bool_param, float_param, get_object, int_param, require_blender
 from ._mesh_safety import require_local_single_user_mesh
+from ._mesh_safety import uses_edit_data as _uses_edit_data
 from ._rna import bounded_name
 
 try:
@@ -41,11 +42,6 @@ def _mesh_object(params: Mapping[str, Any]) -> Any:
 def _optional_layer_name(params: Mapping[str, Any]) -> str | None:
     value = params.get("uv_layer")
     return None if value is None else bounded_name(value, "uv_layer", maximum=64)
-
-
-def _uses_edit_data(obj: Any) -> bool:
-    """Linked duplicates can be Object Mode while their shared mesh is live in Edit Mode."""
-    return bool(getattr(obj.data, "is_editmode", obj.mode == "EDIT"))
 
 
 def _layer_summaries(obj: Any) -> tuple[list[dict[str, Any]], bool, int]:

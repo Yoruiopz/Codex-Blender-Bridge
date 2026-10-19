@@ -20,6 +20,7 @@ def register_all(registry: ToolRegistry) -> None:
         layout,
         materials,
         mesh,
+        mesh_analysis,
         mesh_loops,
         mesh_repair,
         modifiers,
@@ -49,6 +50,7 @@ def register_all(registry: ToolRegistry) -> None:
     objects.register_tools(registry)
     transforms.register_tools(registry)
     mesh.register_tools(registry)
+    mesh_analysis.register_tools(registry)
     mesh_loops.register_tools(registry)
     mesh_repair.register_tools(registry)
     materials.register_tools(registry)

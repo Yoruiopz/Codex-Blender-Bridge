@@ -20,6 +20,9 @@ Development is working toward **1.0.0** through explicit [release-readiness gate
 following the [milestones and prioritized execution plan](docs/plan-1.0.md),
 with a [full 3D-artist capability target](docs/release-1.0-readiness.md#10-product-direction-a-full-3d-artist-workflow),
 not a tool-count target or a claim that current releases already replace an artist.
+Unreleased [mesh-quality inspection](docs/mesh-analysis.md) now reports bounded topology,
+adjacent winding and triangle crossing/contact evidence. It separates review findings from
+incomplete budget/precision coverage; it is not an outward-normal or whole-scene certificate.
 Main also hardens mesh/UV edits against implicit changes to linked
 duplicates: selection-scoped mesh edits and UV unwrap/Smart Project/packing now reject shared,
 library-linked or override data. Inspection remains available; no automatic data copying occurs.
@@ -306,7 +309,7 @@ is identified above, and the feature table describes the published release.
 Blender's local recovery UI also has an add-on-only restore action, not an extra MCP tool.
 
 <!-- BEGIN GENERATED MCP TOOLS -->
-Current registry: **152 MCP tools**.
+Current registry: **153 MCP tools**.
 
 <details>
 <summary>core — 18 tools</summary>
@@ -460,10 +463,11 @@ Current registry: **152 MCP tools**.
 </details>
 
 <details>
-<summary>mesh — 15 tools</summary>
+<summary>mesh — 16 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
+| `mesh.analyze` | Inspect bounded base-mesh topology, adjacent winding and triangle crossing/contact candidates with explicit completeness. |
 | `mesh.bevel_selected` | Bevel selected mesh elements with explicit width and segments. |
 | `mesh.bridge_loops` | Bridge two referenced closed boundary/wire loops without vertex merging; unequal loops produce triangles. |
 | `mesh.create` | Create a fully prevalidated arbitrary mesh object from bounded topology arrays. |

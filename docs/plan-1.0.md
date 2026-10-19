@@ -72,8 +72,8 @@ and “accepted for release” are separate states.
 
 The original sequence began with EVID-01, SAFE-01 and REC-01; their development increments
 are recorded below, not blanket release acceptance. Current focus (2026-10-19): ASSET-01 has
-bounded repair, loop modeling, UV authoring, measured UV-quality analysis and a connected
-repair/unwrap/material fixture. Next add mesh-normal/crossing evidence, then LOOK-01 image assets
+bounded repair, loop modeling, UV authoring, measured UV-quality and mesh-winding/contact analysis,
+and a connected repair/unwrap/material fixture. Next add LOOK-01 permission-controlled image assets
 and a more representative textured-prop revision. Keep SAFE-02/JOB-01 and the remaining
 capability/UX/delivery/RC work open. Work in coherent user workflows, not an indefinite series
 of unrelated one-tool additions. Reprioritize using failed evidence or dependencies and retain
@@ -512,3 +512,53 @@ Next implement bounded mesh-validity/normal/crossing evidence and permission-con
 image assets, then prove a more representative textured-prop revision. Preserve the full
 character/paint/simulation/interactive/delivery and install/upgrade/release scope. Nothing in
 this increment accepts 1.0, changes repository visibility or replaces published 0.3.0 assets.
+
+### 2026-10-19 — Mesh quality and verified winding repair
+
+Implemented `mesh.analyze`: a bounded read-only whole-base-mesh inspection requiring
+`INSPECT_SCENE`, not edit/Python/delete/file/save permissions. It measures topology categories,
+adjacent manifold face-winding consistency and native-triangle contact candidates. Crossings,
+boundary contacts and near-coplanar overlaps are distinguished; near-parallel ambiguity,
+degenerate/empty surfaces, insufficient coordinate precision, missing tessellation and
+exhausted budgets remain incomplete. Index examples and computation limits are independent.
+World-space tolerance is explicit, not meters; refreshed transforms and live shared Edit data
+are used. Shared live-data detection moved to a common mesh helper, preserving UV behavior.
+
+The triangle kernel uses pair-local double-precision tests and a bounded adaptive grid with
+a large-AABB fallback. A final scale review replaced a fixed world-area clipping floor with
+normalized pair-relative tolerance, verified by small/large unit tests and a native `1e-8`
+stacked-triangle case. The 8,192-triangle grid completes within the default 250,000 pair
+budget (98,056 tests), measured about 1.70–1.85 seconds locally, not a scale guarantee.
+Open boundaries/wire geometry can be intentional; passing checks is not an artistic,
+outward/custom-normal, evaluated-geometry, containment, cross-object or printability verdict.
+
+The native recipe diagnoses a reversed cube face, applies typed normal recalculation and
+independently checks exact positions, topology membership, per-vertex UVs/pins, material
+bindings/indices and transforms. It verifies protected-data preservation and snapshot recovery
+of the original winding/context. Further cases cover crossings, stacked faces, non-manifold
+incidence, concave tessellation, unsafe positions, near-zero edges, empty/degenerate meshes,
+precision limits, same-timer scale, shared live aliases, denial and pause/stop behavior.
+The connected prop recipe now checks winding and contact candidates after bridge/cut edits.
+Reviewed close-framed wire captures show unchanged shape/protected state and restored
+geometry; winding itself is established numerically. All 32 final mesh/prop images match
+the reviewed artifacts byte-for-byte. No user project was used or saved.
+
+Validation: **847 tests** passed with both MCP SDK 2.0.0 and 2.2.0; lint, typing and README
+inventory checks passed (153 registered MCP tools). The complete native Windows Blender
+4.5.1/5.1.2 matrix passed **42/42** at
+`build/mesh-quality-scale-final-matrix-20261019/report.json`, recording baseline `665cb54`
+plus this then-dirty work and Python fingerprint
+`c3d4697396f441e07b576ee8ea8006db52386fde93d30abdaf03eee978e69bbe`.
+All recorded Python source hashes were matched against the frozen worktree. An additional
+local diagnostic checked 1,000 seeded random triangle pairs against Blender's independent
+native segment/triangle intersections on both versions: all agreed, with 287 contacts.
+That probe is supplemental evidence, not universal collision proof or a release gate waiver.
+
+Graphify's partial navigation query located the existing normal/repair entry points, which
+were then inspected directly. The local map is flagged for refresh after this new source;
+no complete dependency proof or refreshed graph is claimed. See [the tool contract](mesh-analysis.md).
+Next advance LOOK-01 with permission-controlled image assets and a richer textured-prop
+revision. Retain localized/evaluated/cross-object diagnostics, outward/custom normals,
+character, painting, simulation, UX, delivery and install/upgrade/RC gates. This is another
+development increment, not full scenario or 1.0 acceptance. Published 0.3.0 and repository
+visibility remain unchanged.

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import StrictInt
+from pydantic import StrictFloat, StrictInt
 
 from ..tool_registry import ToolRegistry
 from ._common import MCPToolBinding, params
@@ -13,6 +13,16 @@ from ._common import MCPToolBinding, params
 class MeshTools:
     def __init__(self, registry: ToolRegistry) -> None:
         self.registry = registry
+
+    async def mesh_analyze(
+        self, object_name: str, distance_tolerance: StrictFloat = 1e-6,
+        max_triangles: StrictInt = 8192, max_pair_tests: StrictInt = 250_000, max_reports: StrictInt = 64,
+    ) -> Any:
+        """Read-only whole-base-mesh topology, adjacent face-winding and native-triangle contact diagnostics. Separates positive-length crossings, boundary contacts and positive-area near-coplanar overlaps; shared non-coplanar topology edges and point-only contacts are excluded. Object/Edit Mode, including live shared mesh data. Tolerance is world units, not meters. At most 20,000 triangles / 1,000,000 pair tests / 256 examples per category. Degenerate, precision-limited, near-parallel ambiguous and budget-limited evidence stays incomplete. No outward/custom-normal, evaluated geometry, solid containment or other-object guarantee. Capture and compare the brief after structural checks."""
+        return await self.registry.call("mesh.analyze", params(
+            object_name=object_name, distance_tolerance=distance_tolerance, max_triangles=max_triangles,
+            max_pair_tests=max_pair_tests, max_reports=max_reports,
+        ))
 
     async def mesh_edge_ring_inspect(
         self, object_name: str, seed_edge_index: StrictInt, selection_id: str | None = None,
@@ -224,6 +234,7 @@ class MeshTools:
 
     def bindings(self) -> tuple[MCPToolBinding, ...]:
         return (
+            MCPToolBinding("mesh.analyze", self.mesh_analyze, self.mesh_analyze.__doc__ or ""),
             MCPToolBinding("mesh.edge_ring_inspect", self.mesh_edge_ring_inspect, self.mesh_edge_ring_inspect.__doc__ or ""),
             MCPToolBinding("mesh.loop_cut", self.mesh_loop_cut, self.mesh_loop_cut.__doc__ or ""),
             MCPToolBinding("mesh.bridge_loops", self.mesh_bridge_loops, self.mesh_bridge_loops.__doc__ or ""),
