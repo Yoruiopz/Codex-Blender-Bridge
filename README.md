@@ -108,9 +108,16 @@ a material alone does not isolate its children. A matched texture-revision test 
 batch and verifies protected data, partial-failure recovery and native undo without expanding the
 default history. Native history remains finite; see the workflow and limitations before use.
 
+Unreleased [shader-setting and Color Ramp tools](docs/shader-settings.md) inspect native choices,
+edit reviewed properties on 13 shader node types, and replace complete 1–32-stop palettes at
+root or nested paths. Matched procedural-material variants verify protected group data and
+measured failure recovery. The inspector distinguishes stored ramp interpolation from Blender's
+effective RGB/HSV/HSL behavior. Broader properties, animation and production look acceptance
+remain open; no arbitrary Python or file write is needed for these edits.
+
 Unreleased `scene.snapshot` and `scene.compare` add bounded before/after evidence for named
 objects: transforms, hierarchy, visibility, base mesh geometry, UVs, weights, material slots
-and root shader socket values/links. They can detect edits that leave object or vertex counts
+and root shader socket values/links, reviewed properties and color ramps. They can detect edits that leave object or vertex counts
 unchanged. Results identify changed fields, complete matching scope, or incomplete evidence
 that needs further inspection. See [fields, limits and the protected-material workflow](docs/scene-evidence.md).
 
@@ -328,7 +335,7 @@ is identified above, and the feature table describes the published release.
 Blender's local recovery UI also has an add-on-only restore action, not an extra MCP tool.
 
 <!-- BEGIN GENERATED MCP TOOLS -->
-Current registry: **163 MCP tools**.
+Current registry: **166 MCP tools**.
 
 <details>
 <summary>core — 18 tools</summary>
@@ -522,17 +529,20 @@ Current registry: **163 MCP tools**.
 </details>
 
 <details>
-<summary>nodes — 14 tools</summary>
+<summary>nodes — 17 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
 | `nodes.add` | Add a validated shader node to one material graph. |
 | `nodes.inspect` | Inspect a complete bounded material shader graph. |
+| `nodes.inspect_properties` | Inspect one shader node's reviewed settings, native enum choices and color ramp with bounded native samples. |
 | `nodes.link` | Link exact material-node output and input sockets. |
 | `nodes.remove` | Remove one exact shader node and its incident links. |
 | `nodes.rename` | Rename one exact shader node without collisions. |
+| `nodes.set_color_ramp` | Replace a shader color ramp with 1-32 ordered scene-linear RGBA stops and reviewed interpolation settings. |
 | `nodes.set_image` | Bind/clear a loaded image and validated sampling settings on an exact root material image node; FILE sources require external-file policy checks. |
 | `nodes.set_input` | Set one exact material-node input default value. |
+| `nodes.set_properties` | Set reviewed native shader-node scalar/enum properties, preserving links/socket defaults with measured failure recovery. |
 | `nodes.unlink` | Remove links between exact material-node sockets. |
 | `shader_group.bind` | Bind/clear an exact unlinked group instance after dependency and file-policy checks. |
 | `shader_group.copy_for_node` | Copy one shader-group instance, preserving input defaults and links; nested data remains shared. |

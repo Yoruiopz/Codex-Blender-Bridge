@@ -186,6 +186,9 @@ def _node_summary(
     max_sockets: int,
     socket_budget: int | None = None,
 ) -> dict[str, Any]:
+    from .shader_state import node_state
+
+    state = node_state(node)
     input_limit = max_sockets
     if socket_budget is not None:
         input_limit = min(input_limit, max(0, socket_budget))
@@ -211,6 +214,7 @@ def _node_summary(
         "hidden": bool(node.hide),
         "group_name": getattr(getattr(node, "node_tree", None), "name", None),
         "image_name": getattr(getattr(node, "image", None), "name", None),
+        **state,
         "input_count": len(node.inputs),
         "output_count": len(node.outputs),
         "inputs": inputs,
@@ -218,6 +222,7 @@ def _node_summary(
         "truncated_fields": {
             "inputs": len(node.inputs) > len(inputs),
             "outputs": len(node.outputs) > len(outputs),
+            "state": bool(state.get("color_ramp", {}).get("truncated", False)),
         },
     }
 
@@ -264,6 +269,7 @@ def _graph_inspection(
         or bool(item["truncated_fields"]["outputs"])
         for item in nodes
     )
+    truncated_node_state = any(item["truncated_fields"]["state"] for item in nodes)
     return {
         "graph_type": "MATERIAL_SHADER",
         "material": material.name,
@@ -280,12 +286,13 @@ def _graph_inspection(
         },
         "truncated": len(nodes) < len(tree.nodes)
         or len(links) < len(tree.links)
-        or bool(truncated_socket_lists),
+        or bool(truncated_socket_lists) or truncated_node_state,
         "truncated_fields": {
             "nodes": len(nodes) < len(tree.nodes),
             "links": len(links) < len(tree.links),
             "socket_lists": truncated_socket_lists > 0,
             "nodes_with_truncated_sockets": nodes_with_truncated_sockets,
+            "node_state": truncated_node_state,
         },
     }
 

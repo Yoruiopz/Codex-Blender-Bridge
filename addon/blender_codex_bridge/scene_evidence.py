@@ -30,7 +30,7 @@ UNMEASURED = [
     "animation, drivers and simulation caches",
     "non-mesh object data, rig poses and shape keys",
     "mesh attributes, custom normals and sculpt data",
-    "material/shader settings other than root socket defaults, mute state, links and listed Image Texture metadata",
+    "material/shader settings outside reviewed per-node properties, root color ramps, root socket defaults, mute, links and listed Image Texture metadata",
     "nested node-group contents, image pixels/file contents and unlisted image settings",
     "scene, world and render settings",
     "custom properties, selection and viewport state",
@@ -148,6 +148,8 @@ def _mesh_records(obj: Any, field: str) -> Iterable[Any]:
 
 
 def _shader_records(material: Any) -> Iterable[Any]:
+    from .tools.shader_state import node_state
+
     yield ["material", _identity(material), bool(material.use_nodes)]
     tree = material.node_tree
     if tree is None:
@@ -156,6 +158,7 @@ def _shader_records(material: Any) -> Iterable[Any]:
         raise EvidenceLimit("Shader root exceeds 256 nodes or 1024 links.")
     indices = {}
     for node in tree.nodes:
+        state = node_state(node)
         yield [
             "node",
             node.name,
@@ -164,6 +167,15 @@ def _shader_records(material: Any) -> Iterable[Any]:
             _identity(getattr(node, "node_tree", None)),
             _identity(getattr(node, "image", None)),
         ]
+        for key, value in sorted(state["settings"].items()):
+            yield ["shader_setting", node.name, key, _small(value)]
+        ramp = state.get("color_ramp")
+        if ramp is not None:
+            if ramp["truncated"]:
+                raise EvidenceLimit("Root color ramp exceeds its 32-stop evidence budget.")
+            yield ["color_ramp", node.name, ramp["interpolation"], ramp["color_mode"], ramp["hue_interpolation"]]
+            for stop in ramp["elements"]:
+                yield ["color_ramp_stop", node.name, stop["index"], stop["position"], stop["color"]]
         if node.bl_idname == "ShaderNodeTexImage":
             image = getattr(node, "image", None)
             yield ["image_texture", node.name,

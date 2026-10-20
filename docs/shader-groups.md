@@ -20,6 +20,11 @@ inspection socket and total-output budgets still apply. `nodes.add` additionally
 `NodeGroupInput` and `NodeGroupOutput` inside a group. Normal node inspection/add/remove/rename,
 input/link/unlink and image-binding tools work at the selected level.
 
+The newer [reviewed shader-property and Color Ramp tools](shader-settings.md) also work at
+root/nested paths. They require Object Mode even at the root, reject direct material/target
+tree animation, and add full ramp/settings state to bounded node inspection. This is a
+separate reviewed subset, not generic property access or an extension of every legacy tool's gate.
+
 ## Lifecycle tools
 
 All six tools belong to the existing `nodes` toolset. Toolset availability never grants permission.
@@ -109,7 +114,8 @@ match alone cannot prove nested preservation: inspect and compare each relevant 
 nodes/interface/links separately. Inspect any truncation rather than treating partial state as complete.
 The fixture demonstrates iteration and recovery, not production-material or full artist acceptance.
 
-Interface edit/remove/reorder/type conversion, broader shader property/color-ramp controls,
+Interface edit/remove/reorder/type conversion, shader properties beyond the reviewed subset,
+animated ramps and other curve/collection controls,
 deep copies, asset marking, root World/Light editing, compositor groups/images, broader image
 lifecycle/formats, complete nested structural snapshots and production-scale latency/quality
 acceptance remain open in the [1.0 plan](plan-1.0.md). No new release is implied.

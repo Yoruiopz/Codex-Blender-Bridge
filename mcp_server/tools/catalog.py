@@ -182,6 +182,7 @@ DESTRUCTIVE_TOOL_NAMES = frozenset(
         "shader_group.remove",
         "material.slot_remove",
         "nodes.remove",
+        "nodes.set_color_ramp",
         "nodes.unlink",
         "animation.keyframe_delete",
         "rig.bone_remove",

@@ -32,6 +32,7 @@ def register_all(registry: ToolRegistry) -> None:
         rigging,
         scene_edit,
         shader_groups,
+        shader_settings,
         simulation,
         transforms,
         uv,
@@ -59,6 +60,7 @@ def register_all(registry: ToolRegistry) -> None:
     images.register_tools(registry)
     nodes.register_tools(registry)
     shader_groups.register_tools(registry)
+    shader_settings.register_tools(registry)
     uv.register_tools(registry)
     uv_analysis.register_tools(registry)
     uv_capture.register_tools(registry)

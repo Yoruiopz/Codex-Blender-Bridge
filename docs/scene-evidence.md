@@ -24,7 +24,7 @@ needs particular invariants or a large object exceeds the evidence budget.
 | `uv` | UV layer names, active/render layer state, loop coordinates and pins |
 | `weights` | Vertex-group definitions/locks and per-vertex group memberships/weights |
 | `material_slots` | Ordered object material-slot bindings and DATA/OBJECT link mode |
-| `shader_inputs` | Referenced material identities, node usage, root node names/types/mute state, root input/output defaults, referenced group/image identities and exact socket links; root Image Texture interpolation/projection/extension and bound-image source/path/color space/alpha mode/packed state |
+| `shader_inputs` | Referenced material identities, node usage, root node names/types/mute state, root input/output defaults, referenced group/image identities and exact socket links; [reviewed root properties and Color Ramp modes/stops](shader-settings.md); root Image Texture interpolation/projection/extension and bound-image source/path/color space/alpha mode/packed state |
 
 Mesh geometry, UVs and weights apply to mesh objects. Other object types receive
 an explicit `not_applicable` digest for those fields; their curve, armature, camera
@@ -38,6 +38,9 @@ nested node-group contents, image pixels/file contents and unlisted image settin
 custom properties, selection, viewport settings, transitive dependencies and visual appearance. For example,
 `material_slots` alone does not cover polygon material indices; include `mesh_geometry`
 to check those. These are specific field comparisons, not a whole-object guarantee.
+Reviewed properties and complete root ramps detect same-count edits; they do not cover
+arbitrary node RNA, animation, image pixels or nested group contents. A ramp beyond the
+32-stop evidence budget makes the field incomplete rather than returning a partial checksum.
 
 For [nested shader edits](shader-groups.md), root group identities may match even when a child
 changed. Separately inspect and compare each relevant group's nodes/interface/links; these snapshot
@@ -105,4 +108,6 @@ budgets; inspection-permission denial; cache lifecycle; and preserved selection/
 native snapshot recovery. These are disposable fixtures on Windows Blender 4.5.1/5.1.2.
 The [image-asset recipe](image-assets.md) also compares binding/sampler/source metadata across
 material isolation, texture revision and recovery without reading pixels through evidence tools.
+The [shader-settings recipe](shader-settings.md) independently detects same-count root
+property/ramp edits and checks recovery, while separately comparing nested group content.
 They do not establish full protected-character or production-scene acceptance.

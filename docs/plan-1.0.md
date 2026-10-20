@@ -71,13 +71,15 @@ and “accepted for release” are separate states.
 | 14 / RC-01 | Compatibility, installation, upgrade and release audit | Resolve claimed matrix, test packaged bits and old-release upgrade; requires all capability and reliability evidence |
 
 The original sequence began with EVID-01, SAFE-01 and REC-01; their development increments
-are recorded below, not blanket release acceptance. Current focus (2026-10-19): ASSET-01 has
+are recorded below, not blanket release acceptance. Current focus (2026-10-20): ASSET-01 has
 bounded repair, loop modeling, UV authoring, measured UV-quality and mesh-winding/contact analysis,
 and a connected repair/unwrap/material fixture. LOOK-01 adds approved images, nested shader paths,
 group lifecycle and measured instance isolation. A logical-batch revision works at default undo
 capacity; longer separate operations exposed an eviction gap. REC-01 now has conservative
 capacity reporting/pruning and long/manual-eviction native cases, not guaranteed history access.
-Next expand shader properties/image lifecycle and a representative textured prop while retaining
+LOOK-01 now includes reviewed scalar/enum settings on 13 shader node types, complete Color Ramp
+replacement and sampled RGB/HSV/HSL interpretation with measured local/native failure recovery.
+Next expand image lifecycle and a representative textured prop while retaining
 the remaining memory-pressure, mixed-editor/domain and durable recovery acceptance work.
 Keep SAFE-02/JOB-01 and the remaining
 capability/UX/delivery/RC work open. Work in coherent user workflows, not an indefinite series
@@ -709,3 +711,55 @@ reference-constrained textured prop with preservation/revision evidence. Memory-
 mixed-editor/domain and production-scale recovery, protected transitive dependencies, paint,
 character/animation, simulations/jobs, interactive UX, delivery and installation/upgrade/RC gates
 remain mandatory. This increment does not accept all REC-01, scenario B or 1.0.
+
+### 2026-10-20 — Reviewed shader properties, complete palettes and measured revision recovery
+
+LOOK-01 adds `nodes.inspect_properties`, `nodes.set_properties` and `nodes.set_color_ramp`,
+using explicit root/nested paths and existing transitive ownership gates. A passive shared
+state reader keeps inspection and root `shader_inputs` evidence consistent. The reviewed
+13-type scalar/enum map is not arbitrary RNA access; Image Texture properties stay behind
+their file-policy-aware tool. Exact limits and exclusions are in [shader settings](shader-settings.md).
+
+Complete replacement accepts 1–32 ordered scene-linear RGBA stops, ties and HDR with native
+float32 normalization. Mutations require Object Mode and reject direct material/target-tree
+animation. All links and target socket structure/defaults are compared before/after. Local
+restoration is attempted and measured after a partial failure; unresolved state retains
+possible-mutation evidence and a finalized native recovery boundary when available.
+
+Native evidence changed the visual test: a stored CONSTANT setting with HSV produced a smooth
+palette, not the intended hard step. Blender's evaluator uses linear interpolation in HSV/HSL.
+Inspection now distinguishes stored/effective interpolation and active hue wrapping; a native
+red/blue midpoint verifies magenta even with stored CONSTANT. The final hard-step variant uses
+RGB CONSTANT and was visually checked on both installed versions. This is refinement from
+evidence, not a passing property-assignment claim.
+
+The factory fixture independently reinspects all 13 types, one/32 stops, tied positions/HDR,
+root same-count evidence, nested isolation, protected group content, permission/pause/stop and
+direct-animation gates. Injected transient and persistent partial ramp failures prove measured
+local restoration versus unresolved mutation, then confirmed native recovery. Coherent revision
+batches and staged restore pass at unchanged default 32-step history, preserving active object,
+selection and mode. No user project or preferences are saved. Only the connected Noise/ramp
+palette receives visual look review; unconnected probe types prove properties, not rendered QA.
+
+Graphify was queried on the primary agent in `dino-s-workspace`. Its verified cloud index
+advanced to `7e18031`, while the local map remains older. Broad sharing/truncation retrieval
+localized existing scope tests but did not index the new shader implementation or prove
+preservation. Current source and actual native fixtures supplied that evidence; the map is
+navigation, not runtime acceptance.
+
+Validation: **1,026 tests** passed on each of MCP SDK 2.0.0 and 2.2.0; lint, mypy (34 files)
+and generated README inventory (**166 tools**) passed. Windows Blender 4.5.1 LTS/5.1.2 passed
+**50/50** at `build/nonfocus-full-native-20261020/report.json`: 28 background cases and
+22 UI cases on private, non-visible desktops. The report records baseline `7e18031` plus
+then-dirty source, including the runner subsequently pushed as `f6a98a3`. All 128 recorded
+Python hashes match this implementation; fingerprint
+`cdf2d952c6175d2f715a794094b43c98875dba2c7c678e0413e942d6a22c9c2c`.
+All 16 shader captures match the focused artifacts; representative warm/cool/hard-step and
+protected/recovered views are reviewed separately. Test UI no longer interrupts the user's
+desktop; isolation failures have no visible fallback. See [native testing](native-testing.md).
+
+Next: image reload/relocation and dependency lifecycle, then integrate on a representative
+reference-constrained textured prop. Broader shader/compositor contracts, nested evidence,
+painting, character/animation, simulations/jobs, interactive UX, delivery and install/upgrade/
+RC acceptance remain open. No published assets, version or visibility are changed; LOOK-01,
+scenario B and the full 1.0 goal remain unaccepted.
