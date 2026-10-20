@@ -75,6 +75,8 @@ def bridge_status(context: ToolContext, params: Mapping[str, Any]) -> dict[str, 
             "is_executing": state["is_executing"],
             "undo_group": (context.checkpoints.editor_session_status()
                            if callable(getattr(context.checkpoints, "editor_session_status", None)) else None),
+            "recovery": (context.checkpoints.recovery_status(limit=0)
+                         if callable(getattr(context.checkpoints, "recovery_status", None)) else None),
         },
     }
 
@@ -176,6 +178,7 @@ def checkpoint_list(context: ToolContext, params: Mapping[str, Any]) -> dict[str
         "checkpoint_count": len(checkpoints),
         "operation_history": history,
         "operation_count": len(history),
+        "recovery": context.checkpoints.recovery_status(limit=limit),
     }
 
 
@@ -263,7 +266,7 @@ def register_tools(registry: ToolRegistry) -> None:
     registry.register(
         "checkpoint.list",
         checkpoint_list,
-        description="List bounded logical checkpoints and operation history.",
+        description="List bounded checkpoint labels, history and conservative native recovery availability.",
     )
     registry.register(
         "project.save",

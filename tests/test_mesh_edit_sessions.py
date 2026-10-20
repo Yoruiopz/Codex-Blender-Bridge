@@ -126,3 +126,38 @@ def test_cancellation_after_session_finalization_retains_evidence(edit_session):
         and caught.value.context["execution_started"]
     )
     assert manager._undo_steps[0].kind == "mesh_edit_session"
+
+
+def test_guard_refusal_after_editor_finalization_reports_that_prior_mutation(edit_session):
+    module, stack, manager, _ = edit_session
+    stack.bpy.context.preferences.edit.undo_steps = 1
+    stack.bpy.context.mode = "OBJECT"
+    stack.scene["value"] = 42
+    before_frames = len(stack.frames)
+    with pytest.raises(module.BridgeError) as caught:
+        manager.restore_operation()
+    evidence = caught.value.context
+    assert evidence["recovery"]["availability"] == "guard_would_exceed_step_limit"
+    assert evidence["undo_group"]["state"] == "finalized"
+    assert evidence["execution_started"] and evidence["undo_boundary_finalized"]
+    assert not evidence["scene_undo_performed"] and evidence["undo_steps_completed"] == 0
+    assert len(stack.frames) == before_frames + 1  # Finalization only, no recovery guard.
+    assert stack.scene["value"] == 42
+
+
+def test_expired_group_target_still_reports_finalization_before_empty_queue_refusal(edit_session):
+    module, stack, manager, _ = edit_session
+    stack.bpy.context.preferences.edit.undo_steps = 2
+    stack.bpy.context.mode = "OBJECT"
+    stack.scene["value"] = 42
+    manager.create("Manual checkpoint after mode exit")
+    manager.create("Another checkpoint before group finalization")
+    before_frames = len(stack.frames)
+    with pytest.raises(module.BridgeError, match="No tracked") as caught:
+        manager.restore_operation()
+    evidence = caught.value.context
+    assert evidence["undo_group"]["state"] == "finalized"
+    assert evidence["execution_started"] and evidence["undo_boundary_finalized"]
+    assert evidence["expired_operations_pruned_since_clear"] == 1
+    assert not evidence["scene_undo_performed"]
+    assert len(stack.frames) == before_frames + 1 and stack.scene["value"] == 42

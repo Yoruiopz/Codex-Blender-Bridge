@@ -75,8 +75,10 @@ are recorded below, not blanket release acceptance. Current focus (2026-10-19): 
 bounded repair, loop modeling, UV authoring, measured UV-quality and mesh-winding/contact analysis,
 and a connected repair/unwrap/material fixture. LOOK-01 adds approved images, nested shader paths,
 group lifecycle and measured instance isolation. A logical-batch revision works at default undo
-capacity; longer separate operations exposed an eviction gap. Next address REC-01 capacity and
-availability reporting, then shader properties/image lifecycle and a representative textured prop.
+capacity; longer separate operations exposed an eviction gap. REC-01 now has conservative
+capacity reporting/pruning and long/manual-eviction native cases, not guaranteed history access.
+Next expand shader properties/image lifecycle and a representative textured prop while retaining
+the remaining memory-pressure, mixed-editor/domain and durable recovery acceptance work.
 Keep SAFE-02/JOB-01 and the remaining
 capability/UX/delivery/RC work open. Work in coherent user workflows, not an indefinite series
 of unrelated one-tool additions. Reprioritize using failed evidence or dependencies and retain
@@ -661,3 +663,47 @@ shader properties/color ramps, image lifecycle and representative reference-cons
 Interface editing/conversion, deep asset lifecycle, nested snapshots, character, painting, simulation,
 UX, delivery and install/upgrade/RC gates remain open. This increment does not accept scenario B or
 1.0, publish a release, replace published 0.3.0 assets or change repository visibility.
+
+### 2026-10-20: observed native-history availability and guard budgets
+
+REC-01 now has a bounded branch-aware ledger of bridge-owned snapshot pushes. It reports
+native step/memory settings, explicitly **unverified** targets, observed expiry and guard-budget
+refusal through `checkpoint.list`, `bridge.status` and the Blender panel. Known-expired operation
+targets are pruned; named labels retain their existing shape and separate expiry by ID. The
+ledger never enumerates the private undo stack or silently increases preferences. Manual/operator
+snapshots and memory eviction remain unknown until measured navigation. See [the contract](native-recovery.md).
+
+Guard-budget refusal occurs before navigation, not after evicting the target to make a guard.
+Successful recovery rewinds known branch positions so discarded future pushes do not age older
+targets. Expired labels do not resurrect after a preference increase. Zero undo steps cannot
+claim native snapshots. A finalized Edit Mode group retains possible-mutation/finalization
+evidence even when its before-point expires and recovery refuses an empty queue.
+
+The new native fixture uses real add-on preferences and structured tools in isolated factory
+profiles. At 32 steps it recovers 16/17 separate operations, prunes the expired oldest boundary
+and refuses another restore without undo; at an explicitly isolated 128-step test setting it
+recovers all 17. It also checks new branches, named guard-budget refusal, unknown manual eviction
+and return to unsnapshotted work, delayed group finalization, live permission/remote stop gates,
+protected data, selection and matched viewport captures. Fixture-only mode-selection context
+is explicitly restored. It does not assert production art, complete history access or durable recovery.
+
+Graphify was used directly on the primary agent to locate checkpoint recovery, runtime/core
+entry points and linked tests. The MCP index still described `cce4bf0`; relevant original files
+were checked against the checkout before editing. A whole-file test query returned noisy,
+truncated name matches, so exact source/tests and actual native fixtures—not that query—proved
+behavior. New availability code is beyond the cached local/cloud map and needs a later refresh.
+
+Validation: **974 tests** passed on each of MCP SDK 2.0.0 and 2.2.0; lint, typing and the
+README inventory (**163 tools**) also passed. Final Windows Blender 4.5.1 LTS/5.1.2 results:
+**48/48**, `build/undo-capacity-final-matrix-20261019-3/report.json`, baseline `65be9d9`
+plus the then-dirty implementation. All 123 recorded Python source hashes match the frozen
+worktree; fingerprint `cb185489c7914a1ceb33d42098e7e1d82c3c6362a0589bd53137fb347f77b77f`.
+Four recovery captures and 16 existing shader-workflow captures match previously reviewed
+artifacts byte for byte. No user project or preferences were saved. Earlier fixture failures
+remain in ignored build logs; the final checks do not substitute for the open release gates.
+
+Next: broader shader properties/color ramps and image lifecycle, followed by a representative
+reference-constrained textured prop with preservation/revision evidence. Memory-pressure,
+mixed-editor/domain and production-scale recovery, protected transitive dependencies, paint,
+character/animation, simulations/jobs, interactive UX, delivery and installation/upgrade/RC gates
+remain mandatory. This increment does not accept all REC-01, scenario B or 1.0.

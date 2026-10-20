@@ -65,7 +65,7 @@ evidence. The present declared minimum (4.2) is broader than the locally exercis
 | Gate | Required acceptance evidence | Current gap / next work |
 | --- | --- | --- |
 | Target and data ownership | Every modifying domain documents shared data, linked libraries, overrides, active/multi-object modes and hidden scope; rejects unsupported cases before mutation | Mesh/UV and material-slot ownership guards added on main; shader/material datablock editing, modifiers, rigs, nodes, transforms and other mutators still need auditing |
-| Recoverable edits | Deliberate mid-operation faults, canceled callers, operator failures and manual undo interleaving leave truthful history and verifiable recovery state | Checkpoints/batches are not transactions; finite native history can evict a tracked boundary. Add capacity/availability reporting and long/manual-interleaved recovery cases; never expand user preferences silently |
+| Recoverable edits | Deliberate mid-operation faults, canceled callers, operator failures and manual undo interleaving leave truthful history and verifiable recovery state | Checkpoints/batches are not transactions. [Conservative capacity reporting/pruning](native-recovery.md) and a long/manual-eviction fixture exist; memory-pressure, production-scale mixed-editor/domain, durable recovery and UI acceptance remain open. Never expand user preferences silently |
 | Preserved context | Each representative workflow proves unchanged mode, selection, active object, visibility, UV layer and unrelated data where promised | Selection preservation has coverage; UV layer activation and operator context need broader audit |
 | Bounded evidence | Explicit truncation, stable pagination rules, large-scene fixtures and measured time/memory reports | Hard limits exist; add performance baselines and inspect partial-result handling across domains |
 | End-to-end workflows | Modeling, materials/nodes, UVs, rigging, animation, scene layout and rendering each have an install-to-result scenario with pre/post evidence | Current factory-startup smokes cover portions, not complete production acceptance |
@@ -212,6 +212,16 @@ no file is saved by checkpoint creation/recovery. Normal shutdown removes curren
 metadata; older saved files/native undo snapshots may retain stale values, which do not grant
 recovery authority. Unrelated values in the reserved property are rejected, not overwritten.
 Checkpoint creation now obeys mutation pause/emergency gates on both sides.
+
+The [native availability ledger](native-recovery.md) counts observed bridge snapshots, prunes
+known-expired operation targets and labels expired named checkpoints separately. It budgets
+the guard before navigation and rewinds branch accounting after measured restore. It does not
+inspect Blender's private stack or guarantee unverified targets; manual/operator/memory eviction
+can occur earlier. The `undo_capacity` fixture verifies 16 retained operations out of 17 at 32
+steps, all 17 at the test profile's 128 steps, guard-budget refusal without navigation, manual
+eviction with return to unsnapshotted work, protected data and live permission/stop checks.
+Factory preferences are restored in that isolated process; no user preferences are changed.
+That is evidence about these fixtures, not broad native-history or durable recovery acceptance.
 
 `snapshot_marker_verified=true` proves reaching the native marker, not all user constraints
 or visual quality. Responses retain `logical_restore_verified=false` and `verification_required=true`.

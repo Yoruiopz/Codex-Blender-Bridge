@@ -74,7 +74,7 @@ CORE_REMOTE_TOOLS: tuple[tuple[str, str, bool, tuple[str, ...]], ...] = (
         True,
         (),
     ),
-    ("checkpoint.list", "List recent agent checkpoints and operation history.", False, ()),
+    ("checkpoint.list", "List checkpoint labels, operation history and conservative recovery availability.", False, ()),
     ("project.save", "Save the current project when Blender-side permission allows it.", True, ("SAVE_PROJECT",)),
 )
 

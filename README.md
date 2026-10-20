@@ -60,6 +60,12 @@ Internal `_codex_bridge_undo_marker` scene metadata identifies snapshots and may
 your project; normal add-on shutdown removes this session's current marker. It is not a backup.
 See [tested recovery cases and remaining 1.0 gates](docs/release-1.0-readiness.md#native-undo-lifecycle-progress).
 
+Checkpoint availability now reports finite undo limits in `checkpoint.list`, `bridge.status`
+and the Blender panel. Known-expired operation boundaries are pruned; named checkpoints show
+expiry, and recovery refuses if its guard would exceed the observed budget. Other points remain
+**unverified**, since manual edits and memory limits can evict them too. No preferences are
+expanded automatically. See [recovery availability and limits](docs/native-recovery.md).
+
 Structured single-mesh Edit Mode sessions now retain a recovery group from mode entry
 through the return to Object Mode. The checkpoint panel and tool results show when that
 group is deferred or finalized. Confirmed snapshot recovery restores the grouped interval;
@@ -333,7 +339,7 @@ Current registry: **163 MCP tools**.
 | `bridge.task.clear` | Clear the current high-level task from Blender's UI. |
 | `bridge.task.set` | Show the current high-level Codex task in Blender's UI. |
 | `checkpoint.create` | Create a logical agent undo checkpoint. |
-| `checkpoint.list` | List recent agent checkpoints and operation history. |
+| `checkpoint.list` | List checkpoint labels, operation history and conservative recovery availability. |
 | `checkpoint.undo_last` | Use Blender global undo only with explicit acknowledgement of user-interleaving risk. |
 | `object.inspect` | Inspect one object without dumping raw vertex coordinates. |
 | `project.info` | Inspect project metadata and render settings. |

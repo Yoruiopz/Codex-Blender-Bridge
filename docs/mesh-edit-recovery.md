@@ -68,7 +68,9 @@ evidence. A native call already running cannot be preempted.
 Pending groups are transient. File replacement, unregister and native user undo/redo
 invalidate tracking. Detected scene/target changes can invalidate a group while keeping
 earlier named checkpoint candidates. Native history may evict a target; the existing
-bounded guard/redo recovery contract still applies. Checkpoints do not save project files.
+bounded guard/redo recovery contract still applies. [Native availability](native-recovery.md)
+reports observed step-limit expiry and reserves the guard budget; unobserved manual/memory
+eviction remains possible. Checkpoints do not save project files.
 
 ## Current coverage
 

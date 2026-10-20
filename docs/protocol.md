@@ -265,6 +265,18 @@ interval. Snapshot restoration returns `recovered_scope` and `group_operation_at
 these do not replace independent verification or change legacy one-step undo behavior.
 The dispatcher rechecks cancellation after checkpoint setup before starting the handler.
 
+Optional `checkpoint.list.recovery` and `bridge.status.agent.recovery` expose current native
+step/memory settings and conservative `unverified`, `guard_would_exceed_step_limit` or
+`expired` status. They do not enumerate native history, grant authorization or guarantee retention.
+Known-expired operation targets are pruned; named labels retain separate availability by ID.
+Known-expiry/guard-budget refusals occur before guard creation/navigation and report
+`execution_started:false`, `scene_undo_performed:false`, and `undo_steps_completed:0`, unless
+the call already finalized a pending edit group: that preceding mutation retains
+`execution_started:true` and its group/finalized-boundary evidence without a scene undo.
+Snapshot creation/finalization fields remain event evidence, not retention guarantees.
+See [native recovery availability](native-recovery.md). These optional additions do not
+change existing label objects, envelopes, framing, or the default one-step undo contract.
+
 ## Serialization conventions
 
 - JSON finite numbers only; `NaN` and infinities are errors or become documented `null`/warning fields.

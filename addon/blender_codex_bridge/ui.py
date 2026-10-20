@@ -386,6 +386,19 @@ if bpy is not None:
 
             checkpoint = layout.box()
             checkpoint.label(text="Checkpoint", icon="RECOVER_LAST")
+            recovery = runtime.checkpoints.recovery_status(limit=1)
+            checkpoint.label(text=f"Native undo limit: {recovery['native_undo_steps']} steps")
+            if not recovery["global_undo_enabled"]:
+                checkpoint.label(text="Native undo is disabled", icon="ERROR")
+            memory_limit = recovery["native_undo_memory_limit_mb"]
+            if memory_limit:
+                checkpoint.label(text=f"Undo memory limit: {memory_limit} MiB")
+            checkpoint.label(text=f"Tracked operations: {recovery['tracked_operation_count']} (unverified)")
+            expired = recovery["expired_operations_pruned_since_clear"]
+            if expired:
+                checkpoint.label(text=f"Expired operations pruned: {expired}", icon="ERROR")
+            checkpoint.label(text="Labels are not backups", icon="INFO")
+            checkpoint.label(text="Manual edits can expire recovery points")
             edit_session = runtime.checkpoints.editor_session_status()
             if edit_session is not None:
                 checkpoint.label(text=f"Edit session: {edit_session['object'][:36]}", icon="INFO")
@@ -393,8 +406,23 @@ if bpy is not None:
                                        else "Recovery will finalize the pending edit session"))
             checkpoint.operator("blender_codex_bridge.checkpoint_create", icon="ADD")
             row = checkpoint.row(align=True)
-            row.operator("blender_codex_bridge.checkpoint_undo", icon="LOOP_BACK")
-            row.operator("blender_codex_bridge.checkpoint_restore", icon="RECOVER_LAST")
+            undo = row.column(align=True)
+            latest = recovery["latest_operation"]
+            if latest is not None and latest["availability"] != "unverified":
+                checkpoint.label(text="Undo exceeds the recovery budget", icon="ERROR")
+            undo.enabled = bool(
+                (latest is not None and latest["can_attempt_restore"])
+                or (edit_session is not None and context.mode == "OBJECT"
+                    and recovery["global_undo_enabled"])
+            )
+            undo.operator("blender_codex_bridge.checkpoint_undo", icon="LOOP_BACK")
+            restore = row.column(align=True)
+            named = recovery["checkpoints"]
+            restore.enabled = bool(named and named[0]["can_attempt_restore"])
+            restore.operator("blender_codex_bridge.checkpoint_restore", icon="RECOVER_LAST")
+            if named and named[0]["availability"] != "unverified":
+                checkpoint.label(text=("Named checkpoint expired" if named[0]["availability"] == "expired"
+                                       else "Named checkpoint exceeds recovery budget"), icon="ERROR")
 
 
     CLASSES = (

@@ -47,7 +47,7 @@ class CoreTools:
         )
 
     async def checkpoint_list(self, limit: int = 50) -> Any:
-        """List recent checkpoints and operation history."""
+        """List checkpoint labels, history and unverified/expired native recovery availability."""
 
         return await self.registry.call("checkpoint.list", {"limit": limit})
 

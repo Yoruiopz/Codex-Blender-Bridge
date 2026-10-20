@@ -13,6 +13,7 @@ from typing import Any
 
 from .errors import BridgeError, ErrorCode
 from .selection import clear_selection_references
+from .undo_window import UndoWindow
 from .utils import require_blender
 
 LOGGER = logging.getLogger(__name__)
@@ -63,6 +64,8 @@ class CheckpointManager:
         self._editor_session: MeshEditSession | None = None
         self._sequence = 0
         self._prefix = f"BCB1:{uuid.uuid4().hex}:"
+        self._window = UndoWindow()
+        self._expired_operations = 0
         self.recovery_in_progress = False
 
     @staticmethod
@@ -72,6 +75,10 @@ class CheckpointManager:
         if preferences is not None and not preferences.use_global_undo:
             raise BridgeError(
                 ErrorCode.BLENDER_CONTEXT_ERROR, "Global Undo is disabled in Blender preferences."
+            )
+        if getattr(preferences, "undo_steps", None) == 0:
+            raise BridgeError(
+                ErrorCode.BLENDER_CONTEXT_ERROR, "Native undo steps are set to zero in Blender preferences."
             )
         # Scene markers belong to global memfile undo, not editor-specific undo stacks.
         if require_object_mode and blender.context.mode != "OBJECT":
@@ -135,12 +142,76 @@ class CheckpointManager:
             raise BridgeError(
                 ErrorCode.OPERATION_FAILED, "Blender did not create the native snapshot."
             )
+        self._window.pushed(self._step_limit(blender))
+        self._prune_expired_operations()
         return token
+
+    @staticmethod
+    def _step_limit(blender: Any) -> int | None:
+        edit = getattr(getattr(blender.context, "preferences", None), "edit", None)
+        value = getattr(edit, "undo_steps", None)
+        return value if type(value) is int and 0 <= value <= 256 else None
+
+    def _prune_expired_operations(self) -> None:
+        retained = [step for step in self._undo_steps if not self._window.expired(step.before_marker)]
+        self._expired_operations += len(self._undo_steps) - len(retained)
+        self._undo_steps = deque(retained, maxlen=self._undo_steps.maxlen)
+
+    def _retain_targets(self) -> None:
+        targets = {checkpoint.snapshot_marker for checkpoint in self._checkpoints}
+        targets.update(step.before_marker for step in self._undo_steps)
+        if self._pending is not None:
+            targets.add(self._pending.before_marker)
+        if self._editor_session is not None:
+            targets.add(self._editor_session.before.before_marker)
+        self._window.retain(targets)
+
+    def recovery_status(self, limit: int = 20) -> dict[str, Any]:
+        """Read settings and report uncertainty without probing or changing native undo."""
+        blender = require_blender()
+        edit = getattr(blender.context.preferences, "edit", None)
+        step_limit = self._step_limit(blender)
+        enabled = bool(getattr(edit, "use_global_undo", False)) and step_limit != 0
+        mode = blender.context.mode
+
+        def describe(marker: str) -> dict[str, Any]:
+            evidence = self._window.describe(marker, step_limit)
+            return {
+                **evidence,
+                "can_attempt_restore": enabled and mode == "OBJECT"
+                and evidence["availability"] == "unverified",
+            }
+
+        checkpoints = list(self._checkpoints)
+        latest = self._undo_steps[0] if self._undo_steps else None
+        return {
+            "native_undo_steps": step_limit,
+            "native_undo_memory_limit_mb": getattr(edit, "undo_memory_limit", None),
+            "global_undo_enabled": enabled,
+            "mode": mode,
+            "tracked_operation_count": len(self._undo_steps),
+            "expired_operations_pruned_since_clear": self._expired_operations,
+            "tracked_checkpoint_count": len(checkpoints),
+            "expired_checkpoint_count": sum(self._window.expired(cp.snapshot_marker) for cp in checkpoints),
+            "latest_operation": None if latest is None else {
+                "label": latest.label, **describe(latest.before_marker),
+            },
+            "checkpoints": [
+                {"checkpoint_id": cp.checkpoint_id, **describe(cp.snapshot_marker)}
+                for cp in checkpoints[:max(0, limit)]
+            ],
+            "checkpoints_truncated": len(checkpoints) > max(0, limit),
+            "native_history_introspection": False,
+            "availability_guaranteed": False,
+            "verification_required": True,
+            "warning": "Only bridge pushes are counted. Manual/operator snapshots, memory limits, preference changes and editor stacks can expire other targets. Global recovery can undo interleaved work; labels are not durable backups.",
+        }
 
     def create(self, description: str = "Agent checkpoint") -> dict[str, Any]:
         blender = self._ensure_undo_enabled()
         description = (description or "Agent checkpoint").strip()[:120]
         token = self._snapshot(blender, f"Codex Checkpoint: {description}")
+        self._window.track(token)
         # A later native/manual snapshot must not masquerade as this named checkpoint.
         self._stamp(blender)
         self._sequence += 1
@@ -152,6 +223,7 @@ class CheckpointManager:
             self._sequence,
         )
         self._checkpoints.appendleft(checkpoint)
+        self._retain_targets()
         return checkpoint.to_dict()
 
     def before_modification(self, tool_name: str) -> bool:
@@ -176,6 +248,8 @@ class CheckpointManager:
             token = self._snapshot(blender, f"Codex Before: {tool_name}")
             self._sequence += 1
             self._pending = UndoStep(tool_name, token, self._sequence)
+            self._window.track(token)
+            self._retain_targets()
             # Child operators must not carry BEFORE into intermediate snapshots.
             self._stamp(blender)
             return True
@@ -217,6 +291,8 @@ class CheckpointManager:
             self.clear()
             return False
         self._undo_steps.appendleft(UndoStep(tool_name, pending.before_marker, pending.sequence))
+        self._prune_expired_operations()
+        self._retain_targets()
         return True
 
     def _editor_matches(self, blender: Any) -> bool:
@@ -279,6 +355,8 @@ class CheckpointManager:
                 session.attempts,
             )
         )
+        self._prune_expired_operations()
+        self._retain_targets()
         return {**status, "state": "finalized"}
 
     @staticmethod
@@ -295,6 +373,15 @@ class CheckpointManager:
         if check_cancelled is not None:
             check_cancelled()
         blender = self._ensure_undo_enabled()
+        availability = self._window.describe(target, self._step_limit(blender))
+        if availability["availability"] != "unverified":
+            raise BridgeError(
+                ErrorCode.OPERATION_FAILED,
+                "Snapshot exceeded the observed native history window or its recovery guard budget; refusing global undo.",
+                {"execution_started": False, "undo_steps_completed": 0,
+                 "scene_undo_performed": False, "verification_required": True,
+                 "recovery": availability},
+            )
         if self._marker(blender) is None:
             self.clear()
             raise BridgeError(
@@ -319,6 +406,7 @@ class CheckpointManager:
                         and "FINISHED" not in blender.ops.object.mode_set(mode="OBJECT")
                     ):
                         raise RuntimeError("Could not restore snapshot Object Mode")
+                    self._window.rewind(target)
                     return {
                         "undo_steps": hops,
                         "snapshot_marker_verified": True,
@@ -363,10 +451,20 @@ class CheckpointManager:
             check_cancelled()
         group = self.finish_editor_session()
         if not self._undo_steps:
+            context: dict[str, Any] = {
+                "expired_operations_pruned_since_clear": self._expired_operations,
+                "execution_started": False, "scene_undo_performed": False,
+            }
+            if group is not None:
+                context["undo_group"] = group
+                if group["state"] in {"finalized", "unavailable"}:
+                    context.update({"execution_started": True, "verification_required": True})
+                if group["state"] == "finalized":
+                    context["undo_boundary_finalized"] = True
             raise BridgeError(
                 ErrorCode.OPERATION_FAILED,
                 "No tracked agent undo step is available; refusing to undo unrelated Blender work.",
-                {"undo_group": group} if group is not None else None,
+                context,
             )
         step = self._undo_steps[0]
         try:
@@ -381,6 +479,7 @@ class CheckpointManager:
         self._undo_steps.popleft()
         while self._checkpoints and self._checkpoints[0].sequence > step.sequence:
             self._checkpoints.popleft()
+        self._retain_targets()
         return {
             "undone": True,
             "tracked_agent_label": step.label,
@@ -433,6 +532,7 @@ class CheckpointManager:
         self._editor_session = None
         while self._undo_steps and self._undo_steps[0].sequence > checkpoint.sequence:
             self._undo_steps.popleft()
+        self._retain_targets()
         return {
             "restored": True,
             "checkpoint": checkpoint.to_dict(),
@@ -448,6 +548,8 @@ class CheckpointManager:
         self._undo_steps.clear()
         self._pending = None
         self._editor_session = None
+        self._window.clear()
+        self._expired_operations = 0
 
     def detach(self) -> None:
         """Remove only this session's metadata on normal shutdown."""
