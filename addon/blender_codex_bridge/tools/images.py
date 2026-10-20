@@ -60,6 +60,11 @@ def _summary(image: Any) -> dict:
             "has_data": loaded, "loaded_size": [int(v) for v in image.size] if simple else None,
             "filepath": str(image.filepath)[:4096], "filepath_truncated": len(str(image.filepath)) > 4096,
             "colorspace": image.colorspace_settings.name,
+            "alpha_mode": getattr(image, "alpha_mode", None),
+            "is_dirty": bool(getattr(image, "is_dirty", False)) if loaded else None,
+            # Image.is_float acquires an ImBuf and can decode from disk. Only
+            # inspect it when this exact simple image already has a buffer.
+            "is_float": bool(getattr(image, "is_float", False)) if simple else None,
             "packed": image.packed_file is not None, "users": int(image.users),
             "fake_user": bool(image.use_fake_user), "local_editable": bool(local_editable(image)),
             "pixel_contents_verified": False}
@@ -113,10 +118,15 @@ def inspect_images(context: ToolContext, params: Mapping[str, Any]) -> dict:
 
 
 def load_image(context: ToolContext, params: Mapping[str, Any]) -> dict:
-    reject_unknown_params(params, {"filepath", "new_name", "colorspace"})
+    from ._rna import apply_assignments, prepare_assignments
+
+    reject_unknown_params(params, {"filepath", "new_name", "colorspace", "alpha_mode"})
     name = _name(params, "new_name")
     raw = params.get("filepath")
     color = params.get("colorspace", "sRGB")
+    alpha = params.get("alpha_mode")
+    if alpha is not None and (not isinstance(alpha, str) or alpha not in {"STRAIGHT", "PREMUL", "CHANNEL_PACKED", "NONE"}):
+        raise invalid_argument("'alpha_mode' must be a reviewed native alpha identifier.")
     if not isinstance(color, str) or not color.strip() or len(color) > 128:
         raise invalid_argument("'colorspace' must be an explicit bounded color-space name.")
     context.require(Permission.EDIT_MATERIALS, Permission.ACCESS_EXTERNAL_FILES)
@@ -138,6 +148,9 @@ def load_image(context: ToolContext, params: Mapping[str, Any]) -> dict:
         image.name = name
         image.use_fake_user = False
         image.colorspace_settings.name = color
+        if alpha is not None and image.alpha_mode != alpha:
+            apply_assignments(image, prepare_assignments(image, {"alpha_mode": alpha},
+                allowed=frozenset({"alpha_mode"}), object_pointers=frozenset(), bpy=bpy))
         _check(context)
         context.require(Permission.EDIT_MATERIALS, Permission.ACCESS_EXTERNAL_FILES)
         actual = tuple(int(v) for v in image.size)  # Explicit authorized decode, never a read-only probe.
@@ -145,6 +158,8 @@ def load_image(context: ToolContext, params: Mapping[str, Any]) -> dict:
                 or actual not in {(preflight["width"], preflight["height"]), (preflight["height"], preflight["width"])}
                 or image.colorspace_settings.name != color):
             raise RuntimeError("Loaded image did not match verified source metadata")
+        if alpha is not None and image.alpha_mode != alpha:
+            raise RuntimeError("Loaded image alpha mode did not match the requested role")
         checked_path, after = preflight_file(str(image.filepath), _root())
         if checked_path != path or after != preflight:
             raise RuntimeError("Texture source changed during native decoding")
@@ -200,14 +215,11 @@ def register_tools(registry: ToolRegistry) -> None:
                       description="Bind/clear a loaded image and sampling settings at the root or explicit group_path; FILE images also require approved-path/external-file checks.")
 
 
-def set_node_image(context: ToolContext, params: Mapping[str, Any]) -> dict:
-    from ._rna import prepare_assignments
+def binding_target(context: ToolContext, params: Mapping[str, Any]) -> tuple[Any, Any, Any, dict, dict | None]:
+    """Resolve and authorize one exact image node before file access/allocation."""
     from .material_scope import editable_material_scope
     from .nodes import _node_exact, _target_graph
 
-    reject_unknown_params(params, {"material_name", "node_name", "image_name", "interpolation", "projection", "extension", "allow_shared", "group_path"})
-    if "image_name" not in params:
-        raise invalid_argument("'image_name' is required; pass null explicitly to clear the binding.")
     material, tree = _target_graph(context, params, modify=True)
     bpy = require_blender()
     _object_mode(bpy)
@@ -222,6 +234,17 @@ def set_node_image(context: ToolContext, params: Mapping[str, Any]) -> dict:
     node = _node_exact(tree, _name(params, "node_name"))
     if node.bl_idname != "ShaderNodeTexImage":
         raise invalid_argument("The exact target must be an Image Texture node.")
+    return material, tree, node, scope, group_scope
+
+
+def set_node_image(context: ToolContext, params: Mapping[str, Any]) -> dict:
+    from ._rna import prepare_assignments
+
+    reject_unknown_params(params, {"material_name", "node_name", "image_name", "interpolation", "projection", "extension", "allow_shared", "group_path"})
+    if "image_name" not in params:
+        raise invalid_argument("'image_name' is required; pass null explicitly to clear the binding.")
+    material, tree, node, scope, group_scope = binding_target(context, params)
+    bpy = require_blender()
     keys = frozenset({"interpolation", "projection", "extension"})
     settings = {key: params[key] for key in keys if key in params}
     assignments = prepare_assignments(node, settings, allowed=keys, object_pointers=frozenset(), bpy=bpy)

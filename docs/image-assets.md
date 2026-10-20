@@ -22,7 +22,8 @@ active object or viewport. Linked/override/read-only data is not silently made l
 | Tool | Scope | Blender permissions |
 | --- | --- | --- |
 | `image.inspect(image_name?, offset=0, max_images=32)` | Existing metadata/direct users; at most 64 images, 100 users per image and 256 users total, with pagination/truncation | `INSPECT_SCENE` |
-| `image.load(filepath, new_name, colorspace="sRGB")` | New image from an approved file; unique explicit name, no implicit reuse/reload | `EDIT_MATERIALS`, `ACCESS_EXTERNAL_FILES` |
+| `image.load(filepath, new_name, colorspace="sRGB", alpha_mode?)` | New image from an approved file; unique explicit name, no implicit reuse/reload | `EDIT_MATERIALS`, `ACCESS_EXTERNAL_FILES` |
+| `nodes.refresh_image(material_name, node_name, new_image_name, filepath?, group_path?, allow_shared=false)` | [Versioned refresh/relocation](image-revisions.md): load a new FILE version and rebind one exact image node, retaining the old image/buffer | `EDIT_MATERIALS`, `ACCESS_EXTERNAL_FILES` |
 | `nodes.set_image(material_name, node_name, image_name, interpolation?, projection?, extension?, allow_shared=false, group_path?)` | Bind a loaded image, or **explicit null** to clear; exact `ShaderNodeTexImage` at the material root or explicit nested path, at most 256 nodes / 1,024 links | `EDIT_MATERIALS`; FILE images additionally require `ACCESS_EXTERNAL_FILES` and approved-source preflight |
 | `image.remove(image_name, confirm_unused=false)` | Confirmed zero-user local datablock only; fake users block removal; never forced unlink or source-file deletion | `EDIT_MATERIALS`, `DELETE_OBJECTS` |
 
@@ -30,6 +31,9 @@ Names must be non-control UTF-8, at most 63 bytes. Color spaces and sampler enum
 against the running Blender/OCIO configuration. `sRGB` is the default color role; explicitly use
 an available `Non-Color` space for data maps. Loading one file under different new names gives
 independent datablocks/color roles without changing an existing image.
+Optional `alpha_mode` selects STRAIGHT, PREMUL, CHANNEL_PACKED or NONE before the new buffer is
+verified; omission preserves the native default. Inspection also reports alpha mode, dirty
+and floating-point status for loaded buffers (otherwise null), without loading an unloaded buffer.
 
 Binding admits local, loaded, single-view FILE/GENERATED images only and checks material users.
 Nested paths also check [transitive group ownership](shader-groups.md); explicitly isolate shared
@@ -93,6 +97,8 @@ color roles, unused removal, isolated material binding on shared mesh data, oran
 with separate roughness, protected pixels/source files, structural comparisons and repeated native
 recovery. Matched captures require visual review. No user project or preferences are saved.
 
-Reload/relocation, packing/unpacking/saving, painting/baking, broader formats, nested shader and
-compositor image workflows, production-material reuse and responsive decoding remain open. This
+[Versioned node refresh/relocation](image-revisions.md) now works at root/nested paths without
+reloading the original buffer. In-place reload/pixel editing and durable pixel recovery,
+packing/unpacking/saving, painting/baking, broader formats, compositor image workflows,
+production-material reuse and responsive decoding remain open. This
 advances LOOK-01, not complete [repair-and-texture or 1.0 acceptance](plan-1.0.md).

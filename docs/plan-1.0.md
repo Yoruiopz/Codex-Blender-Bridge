@@ -79,7 +79,10 @@ capacity; longer separate operations exposed an eviction gap. REC-01 now has con
 capacity reporting/pruning and long/manual-eviction native cases, not guaranteed history access.
 LOOK-01 now includes reviewed scalar/enum settings on 13 shader node types, complete Color Ramp
 replacement and sampled RGB/HSV/HSL interpretation with measured local/native failure recovery.
-Next expand image lifecycle and a representative textured prop while retaining
+LOOK-01 also adds versioned node texture refresh/relocation with explicit file consent and
+original-buffer retention. Native probes show in-place reload is not recovered by global undo;
+identity-preserving edits and durable pixel recovery remain mandatory, not silently dropped.
+Next integrate a representative textured prop and extend dependency/pixel lifecycle while retaining
 the remaining memory-pressure, mixed-editor/domain and durable recovery acceptance work.
 Keep SAFE-02/JOB-01 and the remaining
 capability/UX/delivery/RC work open. Work in coherent user workflows, not an indefinite series
@@ -763,3 +766,72 @@ reference-constrained textured prop. Broader shader/compositor contracts, nested
 painting, character/animation, simulations/jobs, interactive UX, delivery and install/upgrade/
 RC acceptance remain open. No published assets, version or visibility are changed; LOOK-01,
 scenario B and the full 1.0 goal remain unaccepted.
+
+### 2026-10-20 — Versioned texture revisions and native buffer-recovery evidence
+
+LOOK-01 adds `nodes.refresh_image`, a coherent new-image/load-and-bind operation at explicit
+root/nested image nodes. It rereads an approved FILE source or accepts a new approved path,
+including missing/unloaded-source repair. The original image/buffer remains untouched, with
+explicit new identity, inherited color/alpha role and measured sampler/socket/link preservation.
+The [contract](image-revisions.md) distinguishes this workflow from in-place reload, pixel
+editing, packing or durable backup; those remain full 1.0 work.
+
+Native probes changed the implementation decision: after `Image.reload()`, global undo retained
+the new pixels on both installed versions. Independent image versions recovered the original
+binding and cached pixels. The committed native fixture records that diagnostic without
+requiring future Blender versions to retain the limitation. This is an evidence-driven
+versioned revision, not a claim that identity-preserving reload is implemented or unnecessary.
+
+Alpha interpretation is selected during authorized loading/verification, not after a buffer
+was declared ready: native alpha changes invalidate the cache. New image metadata is guarded
+too. The first full matrix exposed `Image.is_float` lazily loading an unloaded outside source;
+the corrected inspector returns null for unavailable buffer flags and never calls that getter
+unless the exact simple image is already loaded. Unit and native regressions cover repeated
+unloaded inspection. Earlier failing runs remain in local logs, not reported as passes.
+
+The versioned native workflow checks shared-group rejection, file/permission/pause/stop/mode/
+direct-animation gates, all four alpha roles, orange/blue/green variants, unloaded missing
+sources and dirty generated/packed FILE originals. Complete small fixture pixel/packed-byte
+hashes, protected group content and native restored state are measured independently. Scoped
+failure cleanup never force-unlinks unexpected users; unresolved leftovers remain explicit and
+are checked after confirmed global recovery. Factory profiles preserve user projects/preferences
+and run off the input desktop. No generic Python command or source-file write is added.
+
+Graphify was queried in the primary workflow in `dino-s-workspace`. Its approved-load/source-
+change tests directed reuse of existing file checks and cleanup contracts; current files were
+inspected before extracting the shared image-node target resolver and semantic graph guard.
+Cloud indexing advanced to `7810b8b` during this increment, not the new image-revision code.
+An empty recall is not invented prior guidance; local/cloud graph freshness remains explicit.
+
+Validation: **193 focused tests**, then **1,058 tests** on each of MCP SDK 2.0.0 and 2.2.0,
+lint, mypy (34 files), and README inventory (**167 tools**) passed. The final Windows Blender
+4.5.1 LTS/5.1.2 matrix passed **52/52**, including the guarded unloaded-source inspection and
+new revision fixture, at `build/image-revisions-final-matrix-20261020-3/report.json`.
+It records baseline `7810b8b` plus this then-dirty implementation, 130 independently matched
+Python source hashes and fingerprint
+`5e8470c7b25916189586c5f63f6a7fb855a9ba9bb099fa39dcccdbba5de5c4cb`.
+There are 28 background and 24 private-desktop UI cases. All 14 new revision captures match
+the focused artifacts; six orange/blue/green views were reviewed and all protected/recovered
+views match their original baseline bytes. Existing shader/image/group captures are also
+compared with previously reviewed evidence. Earlier failures are retained under the same
+local build prefix; neither green markers nor this development matrix accept the full artist
+or clean-RC gates. No user project/preferences, published release assets or visibility changed.
+
+Next executable deliverable is a representative reference-constrained prop, not another
+unbounded sequence of unrelated tools:
+
+1. Commit an original field-scanner brief/reference with world-unit dimensions, component and
+   silhouette constraints, a protected comparison object and a numeric/visual review rubric.
+2. Model body, inset panel, controls and handle through structured tools with coherent logical
+   stages; retain scoped topology/material evidence and a deliberate partial-failure case.
+3. Author seams/UVs and measure overlap/stretch/density; build a reusable nested material and
+   approved texture/data roles, then use versioned image revisions without changing protected data.
+4. Review matched orthographic/isometric/material/UV views, refine at least one evidenced
+   design mismatch, and measure staged recovery. Do not call a fixture marker artistic acceptance.
+5. Record which scenario-B requirements are met and keep painting/baking, deep dependency/
+   durable-pixel lifecycle, production scale and remaining modeling gaps explicit. Save/export
+   only when agreed; delivery/install/upgrade/RC acceptance is a separate mandatory stage.
+
+SAFE-02, JOB-01, remaining shader/compositor and nested evidence work, painting, character/
+animation, simulations, interactive UX, delivery and the full release audit remain open.
+Published 0.3.0 assets, version and repository visibility are unchanged.

@@ -14,6 +14,7 @@ from .shader_settings import SHADER_SETTINGS_TOOL_DATA, ShaderSettingsTools
 SocketValue = bool | int | float | str | list[float]
 
 NODE_TOOL_DATA: tuple[tuple[str, str, bool, tuple[str, ...]], ...] = (
+    ("nodes.refresh_image", "Refresh/relocate an image-node binding using a new approved FILE image version while retaining the old image/buffer.", True, ("EDIT_MATERIALS", "ACCESS_EXTERNAL_FILES")),
     ("nodes.set_image", "Bind/clear a loaded image and validated sampling settings on an exact root material image node; FILE sources require external-file policy checks.", True, ("EDIT_MATERIALS",)),
     (
         "nodes.inspect",
@@ -84,6 +85,14 @@ load_node_definitions = load_definitions
 class NodeTools:
     def __init__(self, registry: ToolRegistry) -> None:
         self.registry = registry
+
+    async def nodes_refresh_image(self, material_name: StrictStr, node_name: StrictStr,
+                                  new_image_name: StrictStr, filepath: StrictStr | None = None,
+                                  group_path: GroupPath | None = None, allow_shared: StrictBool = False) -> Any:
+        """Object Mode: load a NEW image version and rebind one exact root/nested Image Texture node as one logical operation. Omit filepath to reread its bound FILE source, or provide an approved absolute PNG/JPEG path for relocation (even when the old source is missing). Preserves old image/buffer and current color/alpha role, node samplers, links and socket defaults. New identity and unpacked FILE version, not in-place reload, image copy, disk writes or durable pixel backup. Local single-view FILE/GENERATED source only; generated requires filepath. Direct material/tree/image animation unsupported; shared material/group edits require explicit allow_shared. Requires material-edit and external-file permissions; native decode cannot be interrupted. Inspect measured rollback evidence after failure, verify pixels/appearance and protected data, then save only when agreed."""
+        return await self.registry.call("nodes.refresh_image", params(material_name=material_name,
+            node_name=node_name, new_image_name=new_image_name, filepath=filepath,
+            group_path=group_path, allow_shared=allow_shared))
 
     async def nodes_set_image(
         self, material_name: StrictStr, node_name: StrictStr, image_name: StrictStr | None,
@@ -257,6 +266,7 @@ class NodeTools:
 
     def bindings(self) -> tuple[MCPToolBinding, ...]:
         return (
+            MCPToolBinding("nodes.refresh_image", self.nodes_refresh_image, self.nodes_refresh_image.__doc__ or ""),
             MCPToolBinding("nodes.set_image", self.nodes_set_image, self.nodes_set_image.__doc__ or ""),
             MCPToolBinding("nodes.inspect", self.nodes_inspect, self.nodes_inspect.__doc__ or ""),
             MCPToolBinding("nodes.add", self.nodes_add, self.nodes_add.__doc__ or ""),

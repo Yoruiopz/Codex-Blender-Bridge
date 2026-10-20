@@ -6,6 +6,7 @@ import math
 from itertools import islice
 from typing import Any
 
+from ..errors import BridgeError, ErrorCode, invalid_argument
 from ._rna import serialize_properties
 
 MAX_STOPS = 32
@@ -26,6 +27,35 @@ SETTINGS = {
     "ShaderNodeBsdfPrincipled": frozenset({"distribution", "subsurface_method"}),
 }
 RAMP_SETTINGS = frozenset({"interpolation", "color_mode", "hue_interpolation"})
+
+
+def graph_guard(tree: Any, node: Any) -> dict[str, Any]:
+    """Bounded semantic links and complete target socket/default state for revisions."""
+    from . import nodes
+
+    def default(socket: Any) -> Any:
+        if not hasattr(socket, "default_value"):
+            return None
+        value = socket.default_value
+        if isinstance(value, float) and not math.isfinite(value):
+            raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Cannot verify non-finite shader socket defaults.")
+        if not isinstance(value, (str, bytes)) and hasattr(value, "__len__"):
+            if len(value) > 64:
+                raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Shader default exceeds its bounded verification window.")
+            if any(isinstance(item, float) and not math.isfinite(item) for item in value):
+                raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Cannot verify non-finite shader socket defaults.")
+        return nodes._json_value(value)
+
+    if len(node.inputs) > 64 or len(node.outputs) > 64:
+        raise invalid_argument("Shader revisions support at most 64 sockets per direction.")
+    return {
+        "links": sorted((link.from_node.name, link.from_socket.identifier,
+                         link.to_node.name, link.to_socket.identifier, bool(link.is_muted))
+                        for link in tree.links),
+        "sockets": [(direction, index, socket.identifier, socket.bl_idname, default(socket))
+                    for direction, sockets in (("input", node.inputs), ("output", node.outputs))
+                    for index, socket in enumerate(sockets)],
+    }
 
 
 def ramp_interpretation(state: dict[str, Any]) -> dict[str, Any]:

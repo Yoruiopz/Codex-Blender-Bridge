@@ -23,6 +23,9 @@ from .shader_state import (
     ramp_interpretation,
     ramp_state,
 )
+from .shader_state import (
+    graph_guard as _guard,
+)
 
 LOGGER = logging.getLogger(__name__)
 BASE = {"material_name", "node_name", "group_path", "allow_shared"}
@@ -68,33 +71,6 @@ def _ramp(node: Any) -> Any:
     if not 1 <= len(node.color_ramp.elements) <= MAX_STOPS:
         raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Color ramp exceeds the supported 1-32 stop window.")
     return node.color_ramp
-
-
-def _guard(tree: Any, node: Any) -> dict[str, Any]:
-    def default(socket: Any) -> Any:
-        if not hasattr(socket, "default_value"):
-            return None
-        value = socket.default_value
-        if isinstance(value, float) and not math.isfinite(value):
-            raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Cannot verify non-finite shader socket defaults.")
-        if not isinstance(value, (str, bytes)) and hasattr(value, "__len__"):
-            if len(value) > 64:
-                raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Shader default exceeds its bounded verification window.")
-            if any(isinstance(item, float) and not math.isfinite(item) for item in value):
-                raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Cannot verify non-finite shader socket defaults.")
-        return nodes._json_value(value)
-
-    if len(node.inputs) > 64 or len(node.outputs) > 64:
-        raise invalid_argument("Shader settings support at most 64 sockets per direction.")
-    return {
-        "links": sorted((link.from_node.name, link.from_socket.identifier,
-                         link.to_node.name, link.to_socket.identifier, bool(link.is_muted))
-                        for link in tree.links),
-        "sockets": [(direction, index, socket.identifier, socket.bl_idname,
-                     default(socket))
-                    for direction, sockets in (("input", node.inputs), ("output", node.outputs))
-                    for index, socket in enumerate(sockets)],
-    }
 
 
 def _check(context: Any) -> None:

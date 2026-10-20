@@ -101,6 +101,12 @@ in Blender and grant external-file access for supported PNG/JPEG reads; MCP cann
 folder. The workflow checks color/data roles, material isolation, texture revisions and undo.
 No implicit reuse/reload, image writes, packing, painting or baking is claimed; see its limits.
 
+Unreleased [versioned texture refresh](docs/image-revisions.md) adds `nodes.refresh_image`:
+reread a changed texture or repair its source path through a newly named image version,
+retaining the original image/buffer and the node's color/alpha role, sampling and wiring.
+It works at root/nested paths with explicit scope and file consent, including missing sources.
+This is not in-place image reload or a durable pixel backup; those remain 1.0 work.
+
 Unreleased [nested shader-group tools](docs/shader-groups.md) add group creation, typed interface
 sockets, binding, one-instance copies and confirmed unused removal. Existing `nodes.*` tools now
 accept an explicit `group_path`. Ownership checks follow parent groups to material users; copying
@@ -335,7 +341,7 @@ is identified above, and the feature table describes the published release.
 Blender's local recovery UI also has an add-on-only restore action, not an extra MCP tool.
 
 <!-- BEGIN GENERATED MCP TOOLS -->
-Current registry: **166 MCP tools**.
+Current registry: **167 MCP tools**.
 
 <details>
 <summary>core — 18 tools</summary>
@@ -529,7 +535,7 @@ Current registry: **166 MCP tools**.
 </details>
 
 <details>
-<summary>nodes — 17 tools</summary>
+<summary>nodes — 18 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
@@ -537,6 +543,7 @@ Current registry: **166 MCP tools**.
 | `nodes.inspect` | Inspect a complete bounded material shader graph. |
 | `nodes.inspect_properties` | Inspect one shader node's reviewed settings, native enum choices and color ramp with bounded native samples. |
 | `nodes.link` | Link exact material-node output and input sockets. |
+| `nodes.refresh_image` | Refresh/relocate an image-node binding using a new approved FILE image version while retaining the old image/buffer. |
 | `nodes.remove` | Remove one exact shader node and its incident links. |
 | `nodes.rename` | Rename one exact shader node without collisions. |
 | `nodes.set_color_ramp` | Replace a shader color ramp with 1-32 ordered scene-linear RGBA stops and reviewed interpolation settings. |

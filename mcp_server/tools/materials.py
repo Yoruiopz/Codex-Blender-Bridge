@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import StrictBool, StrictInt, StrictStr
 
@@ -97,9 +97,9 @@ class MaterialTools:
         """Read existing image metadata and direct users, not file contents/pixels. Unloaded dimensions are not probed. Max 64 images, 100 direct users each / 256 total. Reports the Blender-controlled texture-folder policy without changing it."""
         return await self.registry.call("image.inspect", params(image_name=image_name, offset=offset, max_images=max_images))
 
-    async def image_load(self, filepath: StrictStr, new_name: StrictStr, colorspace: StrictStr = "sRGB") -> Any:
-        """Object Mode only. Load a NEW image from an absolute local path inside the folder chosen in Blender's bridge settings. Requires material-edit and external-file permissions. PNG (no animation or iCCP/zTXt/iTXt chunks) or 8-bit baseline/progressive JPEG; 32 MiB, 8192 per dimension, 16,777,216 pixels. No implicit reuse/reload, filename expansion, remote path, packing or file writes. Native decode is not interruptible; failure attempts scoped cleanup and requires reinspection. sRGB defaults to color textures; explicitly use an available Non-Color space for data maps. Verify appearance and save only if asked."""
-        return await self.registry.call("image.load", {"filepath": filepath, "new_name": new_name, "colorspace": colorspace})
+    async def image_load(self, filepath: StrictStr, new_name: StrictStr, colorspace: StrictStr = "sRGB", alpha_mode: Literal["STRAIGHT", "PREMUL", "CHANNEL_PACKED", "NONE"] | None = None) -> Any:
+        """Object Mode only. Load a NEW image from an absolute local path inside the folder chosen in Blender's bridge settings. Requires material-edit and external-file permissions. PNG (no animation or iCCP/zTXt/iTXt chunks) or 8-bit baseline/progressive JPEG; 32 MiB, 8192 per dimension, 16,777,216 pixels. No implicit reuse/reload, filename expansion, remote path, packing or file writes. Native decode is not interruptible; failure attempts scoped cleanup and requires reinspection. sRGB defaults to color textures; explicitly use an available Non-Color space for data maps. Optional alpha_mode (STRAIGHT/PREMUL/CHANNEL_PACKED/NONE) is applied before authorized buffer verification; omission preserves the native load default. Verify appearance and save only if asked."""
+        return await self.registry.call("image.load", params(filepath=filepath, new_name=new_name, colorspace=colorspace, alpha_mode=alpha_mode))
 
     async def image_remove(self, image_name: StrictStr, confirm_unused: StrictBool = False) -> Any:
         """Remove one confirmed zero-user local image datablock in Object Mode; fake users or active users block it. Requires material-edit and deletion permission. Never deletes a source file; checkpoint and verify recovery."""

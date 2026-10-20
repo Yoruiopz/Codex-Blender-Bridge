@@ -176,6 +176,61 @@ def test_load_new_image_and_preserve_source_file(tools):
     assert len(images) == 1 and path.read_bytes() == png()
 
 
+@pytest.mark.parametrize("alpha", ["STRAIGHT", "PREMUL", "CHANNEL_PACKED", "NONE"])
+def test_explicit_alpha_role_is_set_before_authorized_buffer_verification(tools, monkeypatch, alpha):
+    module, _, images, _, context, path = tools
+    original_load = images.load
+    class AlphaImage(Image):
+        @property
+        def alpha_mode(self):
+            return self._alpha
+        @alpha_mode.setter
+        def alpha_mode(self, value):
+            self._alpha = value
+            self.has_data = False
+        @property
+        def size(self):
+            self.has_data = True  # model Blender's authorized lazy decode after an alpha change
+            return self._size
+    def load(*args, **kwargs):
+        original = original_load(*args, **kwargs)
+        image = AlphaImage(original.name, original.filepath)
+        image._alpha = "STRAIGHT"
+        image.bl_rna = NS(properties={"alpha_mode": NS(type="ENUM", array_length=0, is_readonly=False,
+            is_enum_flag=False, enum_items=[NS(identifier=v) for v in ("STRAIGHT", "PREMUL", "CHANNEL_PACKED", "NONE")])})
+        images[0] = image
+        return image
+    monkeypatch.setattr(images, "load", load)
+    result = module.load_image(context, {"filepath": str(path), "new_name": "Alpha", "alpha_mode": alpha})
+    assert result["image"]["alpha_mode"] == alpha and result["image"]["has_data"]
+
+
+@pytest.mark.parametrize("alpha", [True, 1, "unknown", "alpha_mode.value"])
+def test_invalid_alpha_role_fails_before_file_access(tools, monkeypatch, alpha):
+    module, _, images, _, context, path = tools
+    monkeypatch.setattr(module, "preflight_file", lambda *_: pytest.fail("Invalid alpha probed file"))
+    with pytest.raises(module.BridgeError) as caught:
+        module.load_image(context, {"filepath": str(path), "new_name": "Alpha", "alpha_mode": alpha})
+    assert caught.value.code == "INVALID_ARGUMENT" and not images
+
+
+def test_new_buffer_metadata_does_not_trigger_lazy_unloaded_decoding(tools):
+    module, _, images, _, context, path = tools
+    class UnloadedImage(Image):
+        @property
+        def is_float(self):
+            pytest.fail("Image.is_float can acquire an unloaded buffer")
+        @property
+        def is_dirty(self):
+            pytest.fail("Unloaded dirty metadata is not needed")
+    image = UnloadedImage("Unloaded", str(path), has_data=False)
+    images.append(image)
+    for _ in range(2):
+        summary = module.inspect_images(context, {"image_name": "Unloaded"})["images"][0]
+        assert summary["is_float"] is None and summary["is_dirty"] is None
+        assert summary["loaded_size"] is None and not image.has_data
+
+
 def test_explicit_same_file_loads_have_separate_image_color_roles(tools):
     module, _, images, _, context, path = tools
     module.load_image(context, {"filepath": str(path), "new_name": "Color"})
@@ -320,6 +375,8 @@ def test_mcp_schema_metadata_and_explicit_null_forwarding(addon_package):
                                   (MaterialTools.image_load, "filepath", 12),
                                   (MaterialTools.image_load, "new_name", False),
                                   (MaterialTools.image_load, "colorspace", 1),
+                                  (MaterialTools.image_load, "alpha_mode", True),
+                                  (MaterialTools.image_load, "alpha_mode", "UNKNOWN"),
                                   (NodeTools.nodes_set_image, "image_name", 42),
                                   (NodeTools.nodes_set_image, "extension", True)):
         with pytest.raises(ValidationError):
