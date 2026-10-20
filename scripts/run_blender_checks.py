@@ -13,6 +13,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 CASES = {
     "core": ("blender_smoke.py", "BLENDER_CODEX_SMOKE_OK "),
     "extended": ("blender_extended_smoke.py", "BRIDGE_EXTENDED_SMOKE "),
@@ -86,11 +88,6 @@ def run_case(blender: Path, case: str, output: Path, timeout: int) -> dict:
         directory = temporary / folder
         directory.mkdir()
         environment[key] = str(directory)
-    startup = None
-    if interactive and sys.platform == "win32":
-        startup = subprocess.STARTUPINFO()
-        startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        startup.wShowWindow = subprocess.SW_HIDE
     log = output / f"{case}.log"
     start = time.monotonic()
     result = {
@@ -101,20 +98,24 @@ def run_case(blender: Path, case: str, output: Path, timeout: int) -> dict:
         "log": str(log),
         "status": "failed",
         "exit_code": None,
-        "execution_mode": "interactive_hidden_on_windows" if interactive else "background",
+        "execution_mode": (
+            "private_windows_desktop" if interactive and sys.platform == "win32"
+            else "interactive_display" if interactive else "background"
+        ),
     }
     with log.open("wb") as stream:
         try:
-            process = subprocess.run(
-                command,
-                cwd=ROOT,
-                stdout=stream,
-                stderr=subprocess.STDOUT,
-                timeout=timeout,
-                check=False,
-                env=environment,
-                startupinfo=startup,
-            )
+            if interactive and sys.platform == "win32":
+                from scripts.windows_test_process import run_isolated
+
+                process = run_isolated(command, cwd=ROOT, stdout=stream,
+                                       timeout=timeout, env=environment)
+            else:
+                process = subprocess.run(
+                    command, cwd=ROOT, stdout=stream, stderr=subprocess.STDOUT,
+                    timeout=timeout, check=False, env=environment,
+                    creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+                )
             result["exit_code"] = process.returncode
         except subprocess.TimeoutExpired:
             result["status"] = "timeout"
@@ -171,7 +172,7 @@ def main() -> int:
     parser.add_argument(
         "--include-interactive",
         action="store_true",
-        help="Include UI-dependent native undo checks; requires a desktop/display",
+        help="Include UI checks (private desktop on Windows; visible display elsewhere)",
     )
     parser.add_argument(
         "--timeout", type=int, default=180, help="Seconds per isolated process (1-1800)"

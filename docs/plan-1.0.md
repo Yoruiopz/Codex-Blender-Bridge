@@ -231,7 +231,9 @@ native operator boundaries and manual edit interleaving. Keep the full recovery 
 
 Runner addition: `--case undo_lifecycle` runs the desktop-dependent case;
 `--include-interactive` includes it in the full matrix. Default background-only runs now
-truthfully report `all_cases_selected=false`. Windows UI processes are hidden. Child TEMP/
+truthfully report `all_cases_selected=false`. Windows UI launches initially requested
+`SW_HIDE`; Blender could override that hint. The [private-desktop runner](native-testing.md)
+now replaces that insufficient approach without switching the user's desktop. Child TEMP/
 TMP/TMPDIR directories isolate exit recovery files under the evidence output. The initial
 diagnostic probe used Blender's default temporary `quit.blend` location before this isolation
 was added; subsequent runs verified the isolated path. No open user project was used.

@@ -731,8 +731,13 @@ Run the native matrix with explicit Blender paths and `--include-interactive`, f
 
 The runner isolates each factory-startup scene, temporary recovery folder and Blender
 config/scripts/datafiles profile, records source/version evidence and keeps logs under the
-output folder. Undo-dependent fixtures need an interactive Blender context
-(hidden on Windows), so running every script with `--background` is not equivalent.
+output folder. Undo-dependent fixtures need a real UI context, so running every script with
+`--background` is not equivalent. On Windows, these fixtures run on a separate, non-visible
+desktop: Blender can create and draw its test windows without showing them on your desktop
+or taking keyboard focus. The runner never switches desktops or touches your open Blender
+session, and refuses the test if isolation fails (no visible fallback). Background tests also
+suppress console windows. On other platforms, opt-in UI tests still require a display and
+may show windows; private-desktop isolation is Windows-only. See [native test execution](docs/native-testing.md).
 Passing development checks does not by itself accept the 1.0 release gates.
 
 For optional code/document navigation, see the [local Graphify architecture map workflow](docs/architecture-map.md).

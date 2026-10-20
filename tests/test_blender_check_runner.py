@@ -75,6 +75,9 @@ def test_timeout_retains_failure_even_with_success_marker(runner, monkeypatch, t
 
 
 def test_interactive_case_uses_isolated_temporary_recovery(runner, monkeypatch, tmp_path):
+    from scripts import windows_test_process
+
+    monkeypatch.setattr(runner.sys, "platform", "win32")
     def run(command, **kwargs):
         assert "--factory-startup" in command and "--background" not in command
         for variable in ("TEMP", "TMP", "TMPDIR", "BLENDER_USER_CONFIG", "BLENDER_USER_SCRIPTS", "BLENDER_USER_DATAFILES"):
@@ -83,7 +86,45 @@ def test_interactive_case_uses_isolated_temporary_recovery(runner, monkeypatch, 
         kwargs["stdout"].write(b'BLENDER_UNDO_LIFECYCLE_OK {"blender":"5.1.2"}')
         return SimpleNamespace(returncode=0)
 
-    monkeypatch.setattr(runner.subprocess, "run", run)
+    monkeypatch.setattr(windows_test_process, "run_isolated", run)
+    monkeypatch.setattr(runner.subprocess, "run", lambda *_a, **_k: pytest.fail("visible fallback"))
     result = runner.run_case(Path("blender.exe"), "undo_lifecycle", tmp_path, 10)
     assert result["status"] == "passed"
-    assert result["execution_mode"] == "interactive_hidden_on_windows"
+    assert result["execution_mode"] == "private_windows_desktop"
+
+
+def test_private_desktop_failure_never_launches_visible_fallback(runner, monkeypatch, tmp_path):
+    from scripts import windows_test_process
+
+    monkeypatch.setattr(runner.sys, "platform", "win32")
+    def fail(*args, **kwargs):
+        raise OSError("Desktop access denied")
+    monkeypatch.setattr(windows_test_process, "run_isolated", fail)
+    monkeypatch.setattr(runner.subprocess, "run", lambda *_a, **_k: pytest.fail("visible fallback"))
+    result = runner.run_case(Path("blender.exe"), "undo_lifecycle", tmp_path, 10)
+    assert result["status"] == "failed" and result["exit_code"] is None
+    assert "Desktop access denied" in result["launch_error"]
+
+
+def test_non_windows_interactive_mode_is_not_claimed_hidden(runner, monkeypatch, tmp_path):
+    monkeypatch.setattr(runner.sys, "platform", "linux")
+    def run(command, **kwargs):
+        assert "--background" not in command
+        assert kwargs["creationflags"] == 0
+        kwargs["stdout"].write(b'BLENDER_UNDO_LIFECYCLE_OK {"blender":"5.1.2"}')
+        return SimpleNamespace(returncode=0)
+    monkeypatch.setattr(runner.subprocess, "run", run)
+    result = runner.run_case(Path("blender"), "undo_lifecycle", tmp_path, 10)
+    assert result["status"] == "passed"
+    assert result["execution_mode"] == "interactive_display"
+
+
+def test_background_windows_case_cannot_create_console(runner, monkeypatch, tmp_path):
+    monkeypatch.setattr(runner.sys, "platform", "win32")
+    monkeypatch.setattr(runner.subprocess, "CREATE_NO_WINDOW", 0x8000000, raising=False)
+    def run(command, **kwargs):
+        assert "--background" in command
+        assert kwargs["creationflags"] == 0x8000000
+        return SimpleNamespace(returncode=0)
+    monkeypatch.setattr(runner.subprocess, "run", run)
+    assert runner.run_case(Path("blender.exe"), "core", tmp_path, 10)["status"] == "failed"
