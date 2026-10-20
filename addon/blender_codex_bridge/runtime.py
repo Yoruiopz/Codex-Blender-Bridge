@@ -10,6 +10,7 @@ from .command_queue import CommandQueue
 from .constants import DEFAULT_HOST, DEFAULT_PORT, DEFAULT_REQUEST_TIMEOUT_SECONDS
 from .errors import BridgeError, ErrorCode
 from .executor import MainThreadExecutor
+from .jobs import PaintJobs
 from .permissions import PermissionManager, permission_snapshot
 from .selection import clear_selection_references
 from .server import LocalBridgeServer
@@ -38,9 +39,11 @@ def _before_file_load(_unused: Any) -> None:
 @persistent
 def _before_external_undo_redo(_unused: Any) -> None:
     """Native history navigation invalidates our process-local marker bookkeeping."""
-    if _RUNTIME is not None and not _RUNTIME.checkpoints.recovery_in_progress:
-        _RUNTIME.checkpoints.clear()
-        clear_selection_references()
+    if _RUNTIME is not None:
+        _RUNTIME.jobs.cancel_all("native undo/redo")
+        if not _RUNTIME.checkpoints.recovery_in_progress:
+            _RUNTIME.checkpoints.clear()
+            clear_selection_references()
 
 
 def _preferences() -> Any | None:
@@ -63,12 +66,15 @@ class BridgeRuntime:
         self.checkpoints = CheckpointManager()
         self.registry = ToolRegistry(enabled_toolsets=())
         register_all(self.registry)
+        self.jobs = PaintJobs(lambda: self.executor.context,
+                              lambda: getattr(_preferences(), "paint_job_budget_ms", 4))
         self.executor = MainThreadExecutor(
             command_queue=self.command_queue,
             registry=self.registry,
             state=self.state,
             permissions=self.permissions,
             checkpoints=self.checkpoints,
+            jobs=self.jobs,
         )
         self.server = LocalBridgeServer(submit=self.executor.submit, state=self.state)
         self._registered = False
@@ -76,6 +82,7 @@ class BridgeRuntime:
     def register(self) -> None:
         if self._registered:
             return
+        self.jobs.cancel_all("runtime registered")
         self.state.reset()
         clear_selection_references()
         self.registry.reset_enabled_toolsets()
@@ -107,6 +114,7 @@ class BridgeRuntime:
     def prepare_for_file_load(self) -> None:
         """Disconnect clients and discard all project-scoped transient state."""
 
+        self.jobs.cancel_all("project file replacement")
         self.server.stop()
         self.command_queue.cancel_all(
             BridgeError(ErrorCode.SERVER_ERROR, "Project file is being replaced in Blender.")
@@ -132,6 +140,7 @@ class BridgeRuntime:
         return self.server.start(host, port, request_timeout=request_timeout)
 
     def stop_server(self) -> None:
+        self.jobs.cancel_all("bridge stopped")
         self.server.stop()
         clear_selection_references()
         self.command_queue.cancel_all(
@@ -140,6 +149,7 @@ class BridgeRuntime:
 
     def emergency_stop(self) -> None:
         self.state.set_emergency_stopped(True)
+        self.jobs.cancel_all("emergency stop")
         self.command_queue.cancel_all(
             BridgeError(ErrorCode.EMERGENCY_STOPPED, "Request canceled by Blender emergency stop.")
         )

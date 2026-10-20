@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from .errors import BridgeError, ErrorCode
+from .request_lifecycle import RequestLifetime
 from .serialization import dumps, loads, to_jsonable
 
 PROTOCOL_VERSION = "1.0"
@@ -31,6 +32,8 @@ class Request:
     timestamp: str | None = None
     protocol_version: str = PROTOCOL_VERSION
     timeout_ms: int | None = None
+    # Trusted in-process transport metadata, never populated from a wire field.
+    _lifecycle: RequestLifetime | None = field(default=None, compare=False, repr=False)
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any]) -> Request:

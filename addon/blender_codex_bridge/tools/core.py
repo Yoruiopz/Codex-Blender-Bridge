@@ -67,6 +67,7 @@ def bridge_status(context: ToolContext, params: Mapping[str, Any]) -> dict[str, 
         ],
         "permissions": context.permissions.snapshot(),
         "enabled_toolsets": list(context.registry.enabled_toolsets),
+        "jobs": context.jobs.status() if context.jobs is not None else None,
         "agent": {
             "paused": state["paused"],
             "emergency_stopped": state["emergency_stopped"],

@@ -103,7 +103,19 @@ def create_image(context: Any, params: Mapping[str, Any]) -> dict:
             "file_written": False, "bound_to_nodes": False, "verification_required": True}
 
 
-def paint_version(context: Any, params: Mapping[str, Any]) -> dict:
+def source_role(source: Any) -> tuple[str, bool]:
+    animation = getattr(source, "animation_data", None)
+    animated = animation is not None and (getattr(animation, "action", None) is not None
+               or len(getattr(animation, "drivers", ())) or len(getattr(animation, "nla_tracks", ())))
+    if source.alpha_mode != "STRAIGHT" or animated:
+        raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Painting requires unanimated STRAIGHT-alpha source data.")
+    space = source.colorspace_settings.name
+    if space not in {"sRGB", "Linear Rec.709", "Non-Color"} or (space == "sRGB" and source.is_float):
+        raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Reviewed sources are byte-buffer sRGB or Linear Rec.709/Non-Color; other OCIO/float-sRGB semantics are not guessed.")
+    return ("DATA" if space == "Non-Color" else "COLOR"), space == "sRGB"
+
+
+def prepare_paint(context: Any, params: Mapping[str, Any]) -> dict:
     reject_unknown_params(params, {"image_name", "new_name", "strokes"})
     source_name, name = images._name(params, "image_name"), images._name(params, "new_name")
     # Validate syntax/counts without Blender/file work first. The actual image
@@ -118,22 +130,22 @@ def paint_version(context: Any, params: Mapping[str, Any]) -> dict:
     # The same loaded-source/file consent checks as binding run before getters
     # that can acquire a buffer. No implicit decode/reload or color-role mutation.
     images.binding_source(context, source)
-    animation = getattr(source, "animation_data", None)
-    animated = animation is not None and (getattr(animation, "action", None) is not None
-               or len(getattr(animation, "drivers", ())) or len(getattr(animation, "nla_tracks", ())))
-    if source.alpha_mode != "STRAIGHT" or animated:
-        raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Painting requires unanimated STRAIGHT-alpha source data.")
-    space = source.colorspace_settings.name
-    if space not in {"sRGB", "Linear Rec.709", "Non-Color"} or (space == "sRGB" and source.is_float):
-        raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Reviewed sources are byte-buffer sRGB or Linear Rec.709/Non-Color; other OCIO/float-sRGB semantics are not guessed.")
-    role = "DATA" if space == "Non-Color" else "COLOR"
+    role, srgb = source_role(source)
     width, height = brush.size(*(int(value) for value in source.size))
     strokes, tests = brush.prepare(params.get("strokes"), width, height, role)
     values, _, _, source_file = _read(context, source, modifying=True)
     before = brush.digest(values)
-    result, evidence = brush.paint(values, width, height, strokes, role, srgb=space == "sRGB", check=lambda: _require(context, source, modifying=True))
+    return {"source": source, "source_name": source_name, "name": name, "width": width, "height": height,
+            "role": role, "values": values, "strokes": strokes, "tests": tests, "srgb": srgb,
+            "source_file": source_file, "source_digest": before}
+
+
+def finish_paint(context: Any, prepared: dict, result: array, evidence: dict) -> dict:
+    source, source_name, name = prepared["source"], prepared["source_name"], prepared["name"]
+    width, height, role = prepared["width"], prepared["height"], prepared["role"]
+    before = prepared["source_digest"]
     _require(context, source, modifying=True)
-    new = _new(context, bpy, name, width, height, role, result)
+    new = _new(context, require_blender(), name, width, height, role, result)
     # Reinspect the entire original after allocation/readback, not just its size.
     # If this check fails, retain the created version and truthful mutation evidence
     # for confirmed recovery; do not delete an image with unexpected consumers.
@@ -148,10 +160,18 @@ def paint_version(context: Any, params: Mapping[str, Any]) -> dict:
                            "verification_required": True}) from exc
     return {"painted_image": images._summary(new), "source_image": source_name, "role": role,
             "source_pixels_sha256_float32_le": before, "pixels_sha256_float32_le": brush.digest(result),
-            "source_pixels_unchanged": True, "candidate_pixel_tests": tests, **evidence,
-            "file_written": False, "bound_to_nodes": False, "source_file_at_read": source_file,
+            "source_pixels_unchanged": True, "candidate_pixel_tests": prepared["tests"], **evidence,
+            "file_written": False, "bound_to_nodes": False, "source_file_at_read": prepared["source_file"],
             "stroke_coordinates": "UV [0,1], bottom-left origin; radius in image pixels, clipped at edges, no wrapping",
             "verification_required": True, "full_texture_paint_workflow_verified": False}
+
+
+def paint_version(context: Any, params: Mapping[str, Any]) -> dict:
+    prepared = prepare_paint(context, params)
+    result, evidence = brush.paint(prepared["values"], prepared["width"], prepared["height"], prepared["strokes"],
+                                   prepared["role"], srgb=prepared["srgb"],
+                                   check=lambda: _require(context, prepared["source"], modifying=True))
+    return finish_paint(context, prepared, result, evidence)
 
 
 def inspect_pixels(context: Any, params: Mapping[str, Any]) -> dict:

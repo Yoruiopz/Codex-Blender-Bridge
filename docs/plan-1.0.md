@@ -87,8 +87,10 @@ modeling, shell/display UVs, nested materials, texture variants and staged nativ
 PAINT-01 now includes generated linear/data canvases, bounded copy-on-write UV-image strokes,
 pixel digests/samples and a painted display revision in the reference workflow. Surface/viewport
 projection, masks, sculpt/vertex/weight brushes and complete paint acceptance remain open.
-Next implement responsive, cancellable source-frozen painting jobs before scaling images or
-adding native bakes; extend surface painting and dependency/durable-pixel lifecycle while retaining
+JOB-01 now has bounded source-frozen [cooperative painting jobs](painting-jobs.md): progress/cancel,
+live source/consent revalidation and guarded publication. Next extend acceptance under memory pressure,
+production-scale/tiled work and mixed-editor interleaving before general native bake jobs; extend
+surface painting and dependency/durable-pixel lifecycle while retaining
 the remaining memory-pressure, mixed-editor/domain and durable recovery acceptance work.
 Keep SAFE-02/JOB-01 and the remaining
 capability/UX/delivery/RC work open. Work in coherent user workflows, not an indefinite series
@@ -994,3 +996,68 @@ continue sculpt/vertex/weight painting, full atlas/bake/dependency/durable-deliv
 SAFE-02, character/animation, simulation, UX, installation/upgrade and clean-RC gates stay mandatory.
 No complete PAINT-01, scenario B, full artist or 1.0 release acceptance is claimed. User projects,
 preferences, published 0.3.0 assets, package versions and repository visibility are unchanged.
+
+## 2026-10-20 — cooperative paint jobs, transport ownership and guarded publication
+
+Implemented `image.paint_job_start` and core `jobs.inspect/list/cancel`, with typed stroke/
+deadline/ID schemas, one active source-frozen job, revisioned phase-local progress and 32
+bounded terminal summaries. Network threads set only lifetime flags; the main-thread timer
+services normal requests before bounded CPU slices. No computation advances before the start
+success is flushed to its owning socket. Independent job deadlines, disconnect/rejected
+handoff, pause, cancellation, emergency stop, file load, undo/redo and shutdown have explicit
+behavior. Source/metadata/animation/pixel/file/context/grant/name checks precede publication.
+An independent finalized native undo boundary is required, at commit rather than acceptance.
+The sidebar now shows progress, cancellation, retained-image warnings and accepted/terminal
+history, with a Blender-only 1–8 ms CPU-budget setting. Polling does not evict operation records;
+minimal control/status responses do not expose detailed results without inspection consent.
+
+Cancellation before commit allocates no image. A post-write stop or pause can retain a new
+image when deletion is not consented: truthful possible-mutation/finalized-boundary evidence
+and confirmed recovery are verified. Pause during publication reports `AGENT_PAUSED`, not a
+false success or suspended half-commit. Reentrant stop does not release an executing generator's
+buffers. Native transfers/allocation/validation/checkpoint calls remain bounded but not preemptible.
+No scripts, automatic binding, file writes or durable/general bake queue were added.
+
+The socket reader now retains bounded partial bytes across idle timeouts, avoiding the poisoned
+`socket.makefile().readline()` state on a live job connection. Framing, IDs and one terminal RPC
+response are unchanged; progress is polled, not emitted as NDJSON events. MCP registration now
+retains `Annotated` metadata: real SDK tests prove strict types/ranges and nested brush limits
+are advertised and rejected before forwarding, rather than stripped by `get_type_hints`.
+
+Validation: **82 focused tests**, then **1,218 on each** of MCP SDK 2.0.0 / 2.2.0; lint, mypy
+(35 files), generated README (**175 tools**), compilation, whitespace and a development add-on
+ZIP's layout/CRC/new-module checks passed. The final Windows Blender 4.5.1 LTS / 5.1.2 matrix
+passed **58/58**, 28 background and 30 private-desktop UI cases, at
+`build/paint-jobs-final-matrix-20261020-2/report.json`. Baseline `2a62da6` plus this then-dirty
+implementation; all **141** Python source paths/bytes independently match fingerprint
+`12e2495a874f688d2749b08445b367d52d197faf87d643a1fbf1e675689d9160`.
+Earlier runs, including the initial pause-state observation race, missing annotation metadata
+and the deliberately failing post-publication pause regression, are retained, not substituted
+for the final source-matched evidence.
+
+The new native fixture uses real loopback requests and the runtime timer. It independently
+checks full pixel hashes/numeric samples, protected state and recovery that preserves a transform
+completed while painting was pending. Fourteen new captures were retained; painted views were
+reviewed and each version's pre-binding/recovered and protected before/after/recovered pairs
+are byte-identical. The pre-acceptance view has different framing because the interleaved
+transform is intentionally retained; it is not mislabeled as the matched recovery baseline.
+Of 156 prior PNG-path pairs, 142 are byte-identical, two render outputs are pixel-identical
+despite different PNG bytes, and 12 scanner views vary. Scanner UV changes reach 4,538 pixels;
+material-preview changes reach 18,198 pixels with maximum channel difference 6/255. Current
+front/isometric/wire/UV variants were re-reviewed. This previously observed rerun variation
+remains unisolated, not production UV/look-quality acceptance.
+
+For the 512² job fixture at a 1 ms CPU setting, 950 / 875 status polls measured medians about
+15.7 / 8.5 ms and maxima about 360 / 375 ms here. These include bounded uninterruptible work,
+not a real-time guarantee or production throughput/memory-pressure acceptance. Graphify on
+the primary agent located the existing disconnect, cancellation fixture and executor timer;
+cloud navigation was at `2a62da6`, local map `cce4bf0`. Current source was authoritative,
+feedback was saved and the stale marker updated; no graph rebuild or subagents were used.
+
+Next: extend JOB-01 under memory pressure, larger/tiled images, canceled clients and mixed-editor
+interleaving; add surface/viewport stroke projection and masks, then exercise them in the
+reference workflow. Native simulation/bake isolation, sculpt/vertex/weight workflows, remaining
+SAFE-02/character/animation/UV/asset lifecycle, persistent UX, delivery, install/upgrade and clean
+RC gates remain mandatory. This closes neither JOB-01 nor PAINT-01 nor the requested full-artist
+1.0 target. No user project/preference was saved, published 0.3.0 asset changed, version bumped,
+release published or repository visibility changed.

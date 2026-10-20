@@ -51,6 +51,9 @@ from .uv import TOOL_NAMES as UV_TOOL_NAMES
 from .uv import load_definitions as load_uv_definitions
 
 CORE_REMOTE_TOOLS: tuple[tuple[str, str, bool, tuple[str, ...]], ...] = (
+    ("jobs.inspect", "Inspect session-local painting progress, result/error and recovery evidence.", False, ("INSPECT_SCENE",)),
+    ("jobs.list", "List bounded session-local painting jobs; no durable queue.", False, ("INSPECT_SCENE",)),
+    ("jobs.cancel", "Request safe-point painting cancellation, not rollback; available while paused.", False, ()),
     ("bridge.status", "Report Blender bridge, project, mode, and permission status.", False, ()),
     ("bridge.task.set", "Show the current high-level Codex task in Blender's UI.", False, ()),
     ("bridge.task.clear", "Clear the current high-level task from Blender's UI.", False, ()),

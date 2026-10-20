@@ -59,6 +59,12 @@ def test_official_mcp_sdk_discovers_structured_tools() -> None:
                 assert "render.execute" in tools
                 assert "python.execute" in tools
                 assert "bridge.task.set" in tools
+                for name in ("jobs.inspect", "jobs.list", "jobs.cancel", "image.paint_job_start"):
+                    assert name in tools
+                start_schema = tools["image.paint_job_start"].input_schema
+                assert start_schema["required"] == ["image_name", "new_name", "strokes"]
+                assert start_schema["properties"]["time_limit_seconds"]["maximum"] == 300
+                assert tools["jobs.list"].input_schema["properties"]["limit"]["maximum"] == 32
                 assert len(tools) >= 80
                 assert tools["object.create"].input_schema["required"] == ["object_type"]
                 assert "selection_id" in tools["mesh.bevel_selected"].input_schema["properties"]
@@ -103,3 +109,33 @@ def test_mcp_server_advertises_agent_workflow_instructions() -> None:
         assert "bridge.task.set" in instructions
     finally:
         asyncio.run(runtime.client.close())
+
+
+def test_sdk_enforces_annotated_bounds_and_strict_types_before_forwarding():
+    calls = []
+    class RecordingClient:
+        async def request(self, method, params=None, **kwargs):
+            calls.append((method, params))
+            return {"forwarded": method}
+        async def close(self):
+            pass
+    async def scenario():
+        runtime = build_runtime(client=RecordingClient())  # type: ignore[arg-type]
+        runtime.registry.enable("materials")
+        brush = {"points": [[.5, .5]], "radius_pixels": 2., "color": [1., 0., 0., 1.]}
+        async with Client(runtime.server) as client:
+            for name, params in (
+                ("jobs.list", {"limit": True}),
+                ("jobs.list", {"limit": 33}),
+                ("jobs.inspect", {"job_id": "not-a-job"}),
+                ("image.create", {"new_name": "Canvas", "width": True, "height": 4}),
+                ("image.paint_job_start", {"image_name": "Canvas", "new_name": "Painted", "strokes": [brush], "time_limit_seconds": 301}),
+                ("image.paint_job_start", {"image_name": "Canvas", "new_name": "Painted", "strokes": [{**brush, "radius_pixels": 257.}]}),
+            ):
+                assert (await client.call_tool(name, params)).is_error
+            assert calls == []
+            result = await client.call_tool("image.paint_job_start", {"image_name": "Canvas", "new_name": "Painted", "strokes": [brush]})
+            assert not result.is_error and calls[0][0] == "image.paint_job_start"
+            assert calls[0][1]["strokes"][0]["radius_pixels"] == 2.
+            assert calls[0][1]["time_limit_seconds"] == 60.
+    asyncio.run(scenario())

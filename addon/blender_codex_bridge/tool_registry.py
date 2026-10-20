@@ -8,6 +8,7 @@ from typing import Any
 
 from .errors import BridgeError, ErrorCode
 from .permissions import Permission, PermissionManager
+from .request_lifecycle import RequestLifetime
 from .state import BridgeState
 
 ToolHandler = Callable[["ToolContext", Mapping[str, Any]], Any]
@@ -23,6 +24,8 @@ class ToolSpec:
     description: str
     automatic_checkpoint: bool = True
     remote: bool = True
+    batchable: bool = True
+    record_history: bool = True
 
     def metadata(self, *, enabled: bool) -> dict[str, Any]:
         return {
@@ -46,6 +49,9 @@ class ToolContext:
     checkpoints: Any
     check_cancelled: Callable[[], None] | None = None
     evidence: Any = None
+    jobs: Any = None
+    request_lifecycle: RequestLifetime | None = None
+    request_id: str = ""
 
     def require(self, *permissions: Permission) -> None:
         self.permissions.require(permissions)
@@ -73,6 +79,8 @@ class ToolRegistry:
         description: str = "",
         automatic_checkpoint: bool = True,
         remote: bool = True,
+        batchable: bool = True,
+        record_history: bool = True,
     ) -> ToolSpec:
         if not name or "." not in name:
             raise ValueError("Tool names must be non-empty dotted identifiers.")
@@ -88,6 +96,8 @@ class ToolRegistry:
             description=description,
             automatic_checkpoint=automatic_checkpoint,
             remote=remote,
+            batchable=batchable,
+            record_history=record_history,
         )
         self._tools[name] = spec
         self._toolsets.add(toolset)
@@ -103,6 +113,8 @@ class ToolRegistry:
         description: str = "",
         automatic_checkpoint: bool = True,
         remote: bool = True,
+        batchable: bool = True,
+        record_history: bool = True,
     ) -> Callable[[ToolHandler], ToolHandler]:
         def decorator(handler: ToolHandler) -> ToolHandler:
             self.register(
@@ -114,6 +126,8 @@ class ToolRegistry:
                 description=description,
                 automatic_checkpoint=automatic_checkpoint,
                 remote=remote,
+                batchable=batchable,
+                record_history=record_history,
             )
             return handler
 

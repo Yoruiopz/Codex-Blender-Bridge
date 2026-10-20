@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import ipaddress
-from typing import BinaryIO
+import socket
+from typing import Protocol
 
 from .errors import BridgeError, ErrorCode
 from .protocol import MAX_MESSAGE_BYTES
@@ -40,7 +41,41 @@ def validate_port(port: int) -> int:
     return port
 
 
-def read_frame(stream: BinaryIO, *, maximum_bytes: int = MAX_MESSAGE_BYTES) -> bytes | None:
+class LineReader(Protocol):
+    def readline(self, size: int = -1) -> bytes: ...
+
+
+class SocketLineReader:
+    """Bounded socket buffering that remains usable after an idle read timeout.
+
+    socket.makefile().readline() cannot safely resume after socket.timeout. Keep
+    partial frames here instead; timeouts never discard bytes or change framing.
+    Only the connection reader thread owns this buffer.
+    """
+
+    def __init__(self, connection: socket.socket) -> None:
+        self.connection = connection
+        self._buffer = bytearray()
+
+    def readline(self, size: int = -1) -> bytes:
+        if size <= 0 or size > MAX_MESSAGE_BYTES + 3:
+            raise ValueError("Socket frame reads require a positive bounded size")
+        while True:
+            end = self._buffer.find(b"\n", 0, size)
+            if end >= 0 or len(self._buffer) >= size:
+                count = end + 1 if end >= 0 else size
+                result = bytes(self._buffer[:count])
+                del self._buffer[:count]
+                return result
+            chunk = self.connection.recv(min(65536, size - len(self._buffer)))
+            if not chunk:
+                result = bytes(self._buffer)
+                self._buffer.clear()
+                return result
+            self._buffer.extend(chunk)
+
+
+def read_frame(stream: LineReader, *, maximum_bytes: int = MAX_MESSAGE_BYTES) -> bytes | None:
     """Read one bounded newline-delimited frame."""
 
     line = stream.readline(maximum_bytes + 3)

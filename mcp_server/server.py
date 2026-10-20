@@ -165,7 +165,7 @@ def _register_tool(server: Any, *, name: str, handler: Any, description: str) ->
 
     # Resolve postponed annotations in the ORIGINAL function's namespace (some
     # wrappers use domain TypedDicts), retaining precise tool input schemas.
-    hints = get_type_hints(handler)
+    hints = get_type_hints(handler, include_extras=True)
     signature = inspect.signature(handler)
     safe_handler.__annotations__ = hints
     cast(Any, safe_handler).__signature__ = signature.replace(

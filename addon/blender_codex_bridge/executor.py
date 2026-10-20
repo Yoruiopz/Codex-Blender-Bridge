@@ -29,6 +29,8 @@ def _history_description(
     metadata: Mapping[str, Any] | None = None,
     fallback: str,
 ) -> str:
+    if request.method == "image.paint_job_start" and outcome == "completed" and metadata:
+        return f"Accepted paint job {metadata.get('job_id', '')}; image not yet committed"
     if request.method != "python.execute":
         return fallback
     effect = request.params.get("expected_effect")
@@ -63,6 +65,7 @@ class MainThreadExecutor:
         checkpoints: CheckpointManager,
         interval: float = 0.05,
         maximum_per_tick: int = 4,
+        jobs: Any = None,
     ) -> None:
         self.command_queue = command_queue
         self.registry = registry
@@ -70,6 +73,7 @@ class MainThreadExecutor:
         self.permissions = permissions
         self.checkpoints = checkpoints
         self.evidence = SceneEvidenceStore()
+        self.jobs = jobs
         self.interval = interval
         self.maximum_per_tick = maximum_per_tick
         self._running = False
@@ -85,6 +89,7 @@ class MainThreadExecutor:
             registry=self.registry,
             checkpoints=self.checkpoints,
             evidence=self.evidence,
+            jobs=self.jobs,
         )
 
     def start(self) -> None:
@@ -95,6 +100,8 @@ class MainThreadExecutor:
             bpy.app.timers.register(self._timer_callback, first_interval=self.interval, persistent=True)
 
     def stop(self) -> None:
+        if self.jobs is not None:
+            self.jobs.cancel_all("executor stopped")
         self._running = False
         try:
             bpy = require_blender()
@@ -166,6 +173,8 @@ class MainThreadExecutor:
         undo_group = None
         context = self.context
         context.check_cancelled = check_cancelled
+        context.request_lifecycle = request._lifecycle
+        context.request_id = request.id
         try:
             if check_cancelled is not None:
                 check_cancelled()
@@ -197,7 +206,7 @@ class MainThreadExecutor:
                 success=True,
                 duration_ms=duration_ms,
                 affected_objects=affected_objects_from_result(result),
-            )
+            ) if spec.record_history else None
             if spec.modifies and isinstance(result, Mapping):
                 result = dict(result)
                 operation = {"undo_boundary_created": undo_boundary, "undo_boundary_finalized": undo_finalized}
@@ -207,7 +216,7 @@ class MainThreadExecutor:
                     operation["undo_group"] = dict(undo_group)
                     if undo_group["state"] == "finalized":
                         operation["undo_boundary_finalized"] = True
-                operation["operation_id"] = record.operation_id
+                operation["operation_id"] = record.operation_id if record else None
                 result["operation"] = operation
             LOGGER.info("Completed %s in %.1f ms", request.method, duration_ms)
             self.state.end_execution()
@@ -289,4 +298,16 @@ class MainThreadExecutor:
                     queued.resolve(self.execute_request(queued.request, check_cancelled=queued.check_active))
             finally:
                 self.command_queue.task_done()
+        if self.jobs is not None and self.jobs.active is not None:
+            active = self.jobs.tick()
+            # Refresh sidebar progress without forcing expensive 3D redraws or
+            # reaching UI classes from the standalone MCP process/job manager.
+            screen = getattr(require_blender().context, "screen", None)
+            for area in getattr(screen, "areas", ()):
+                if area.type == "VIEW_3D":
+                    for region in area.regions:
+                        if region.type == "UI":
+                            region.tag_redraw()
+            if active:
+                return min(self.interval, 0.01)
         return self.interval

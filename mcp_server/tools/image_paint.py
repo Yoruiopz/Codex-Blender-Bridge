@@ -55,7 +55,15 @@ class ImagePaintTools:
         """Inspect already-loaded local simple RGBA buffers up to 1,048,576 pixels: full float32 little-endian digest, finite channel ranges/counts and up to 64 exact [x,y] samples from bottom-left origin. Raw stored floats, not display values or implicit color conversion. INSPECT_SCENE required; FILE data also needs approved path and ACCESS_EXTERNAL_FILES. No lazy loading/reload, pixels returned wholesale, mutation or appearance certification."""
         return await self.registry.call("image.inspect_pixels", {"image_name": image_name, "samples": samples or []})
 
+    async def image_paint_job_start(self, image_name: StrictStr, new_name: StrictStr,
+                                   strokes: Annotated[list[BrushStroke], Field(min_length=1, max_length=32)],
+                                   time_limit_seconds: Annotated[StrictFloat, Field(ge=1, le=300, allow_inf_nan=False)] = 60.) -> Any:
+        """Accept one source-frozen image.paint_version job, NOT a completed painting. Same brush/image/consent limits as the synchronous tool. Poll jobs.inspect/list (INSPECT_SCENE); retain the owning connection until terminal. CPU brush phases yield between main-thread slices. Cancellation/disconnect/deadline/emergency stop discards precommit work; pause holds it but deadline continues. Source identity/metadata/pixels and live grants are rechecked before one native undo-guarded publication in Object Mode. A missing native undo boundary refuses publication. Source copying, final validation, native image creation and readback are bounded but not preemptible. Late failure may retain an image when DELETE_OBJECTS cleanup is denied; inspect possible_mutation and finalized recovery flags, never assume CANCELLED means rollback. Session-local, not durable, one active job; no batch nesting, automatic binding, Python, saving or general bake jobs. Verify new/old pixels and appearance independently after SUCCEEDED."""
+        return await self.registry.call("image.paint_job_start", {"image_name": image_name, "new_name": new_name,
+            "strokes": [stroke.model_dump() for stroke in strokes], "time_limit_seconds": time_limit_seconds})
+
     def bindings(self) -> tuple[MCPToolBinding, ...]:
         return tuple(MCPToolBinding(name, handler, handler.__doc__ or "") for name, handler in (
             ("image.create", self.image_create), ("image.paint_version", self.image_paint_version),
+            ("image.paint_job_start", self.image_paint_job_start),
             ("image.inspect_pixels", self.image_inspect_pixels)))

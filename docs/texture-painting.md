@@ -15,6 +15,7 @@ space or binding. New image names must be unique non-control UTF-8, at most 63 b
 | --- | --- | --- |
 | `image.create` | `new_name`, `width`, `height`, optional `role="COLOR"`, `color=[0,0,0,1]` | `EDIT_MATERIALS` |
 | `image.paint_version` | `image_name`, `new_name`, complete `strokes` | `EDIT_MATERIALS`; FILE sources also need `ACCESS_EXTERNAL_FILES` and approved-path preflight |
+| `image.paint_job_start` | Same brush inputs plus `time_limit_seconds=60`; inspect/cancel by returned job ID | Same edit/file grants; separate polling needs `INSPECT_SCENE` |
 | `image.inspect_pixels` | `image_name`, optional `samples=[[x,y],...]` | `INSPECT_SCENE`; FILE sources also need `ACCESS_EXTERNAL_FILES` and approved-path preflight |
 
 Successful generated image creation/painting needs no external-file, raw-Python, deletion or project-save grant.
@@ -95,9 +96,11 @@ logical work explicitly; these bounds are not an accepted production-scale ceili
 
 CPU painting checks cancellation/live grants during source normalization, coverage and pixel
 application. Native buffer transfers/allocation/update are bounded but not interruptible.
-The tools still run synchronously on Blender's main thread; this is not a responsive background
-job. Progress, tiled/large-image work, memory-pressure/canceled-client acceptance and long
-native bakes remain in JOB-01, not silently moved out of 1.0.
+`image.paint_version` remains synchronous. Optional [cooperative painting jobs](painting-jobs.md)
+yield CPU work between main-thread timer slices, with polled progress and guarded publication.
+Native transfers, complete final validation and undo are not preemptible. Tiled/large-image work,
+memory-pressure/production-scale canceled-client acceptance and long native bakes remain in JOB-01,
+not silently moved out of 1.0.
 
 Complete float32 output readback is compared with the computed image. The original buffer is
 independently re-read and hashed after creating a paint version. Creation failure attempts

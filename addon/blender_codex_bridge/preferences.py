@@ -78,6 +78,11 @@ if bpy is not None:
             min=3,
             max=20,
         )
+        paint_job_budget_ms: IntProperty(
+            name="Paint Job CPU Budget (ms)",
+            description="Cooperative CPU work per timer tick, not a bound on native image transfers; not configurable through MCP",
+            default=4, min=1, max=8,
+        )
 
         def draw(self, context):
             del context
@@ -116,6 +121,7 @@ if bpy is not None:
             interface = layout.box()
             interface.label(text="Interface", icon="WINDOW")
             interface.prop(self, "ui_history_rows")
+            interface.prop(self, "paint_job_budget_ms")
 
 
     CLASSES = (BlenderCodexBridgePreferences,)

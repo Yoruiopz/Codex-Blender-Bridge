@@ -36,7 +36,7 @@ No current release should be described as a complete human-equivalent artist.
 | Stage and light | Collections, world, camera/light settings, layout | Camera composition/navigation, iterative lighting comparisons, asset-scale and placement constraints |
 | Render and composite | Render settings/execution, captures; reviewed compositor graph editing | Broader nodes/image assets, passes, color/output workflows, render diagnostics and job/progress management |
 | Deliver production assets | Permission-controlled project save | Reviewed import/export, dependencies/packing, formats and asset validation, explicit deliverable paths |
-| Operate interactively | Status/task/history, permissions, stop/pause | Persistent plan/progress, visual target resolution, preview/change summaries, user corrections and long-running jobs |
+| Operate interactively | Status/task/history, permissions, stop/pause; [bounded source-frozen painting jobs with polled progress/cancel](painting-jobs.md) | Persistent plan, visual target resolution, preview/change summaries, user corrections, larger/tiled painting and general long-operation/bake jobs |
 | Work safely and improve results | Checkpoints, bounded inspection, batch partial-failure evidence | Consistent preservation contracts, recoverability audits, structural diffs, aesthetic iteration and whole-project benchmarks |
 
 Each row needs representative end-to-end tasks with observable success, failure and recovery
@@ -98,6 +98,17 @@ Unsupported ownership returns `NOT_IMPLEMENTED` before editing or creating a UV 
 Inspection remains available for shared meshes. This does not silently copy data or make
 linked assets local; those are separate user decisions. Other editing domains are not
 covered by this guard and still require the audit above.
+
+## Cooperative painting lifecycle progress
+
+For the newer bounded painting lifecycle, see [cooperative painting jobs](painting-jobs.md)
+and the dated [execution evidence](plan-1.0.md#2026-10-20--cooperative-paint-jobs-transport-ownership-and-guarded-publication).
+Actual loopback/timer tests on Windows Blender 4.5.1/5.1.2 prove source-frozen progress,
+disconnect/cancel, paused deadline expiry, live permission/source checks and guarded native
+publication/recovery, including post-write pause and denied cleanup. A prior interleaved transform
+survives job undo. The source-matched 58-case matrix and both 1,218-test SDK suites pass.
+This does not close general long-operation/native bake, large/tiled-image, memory-pressure,
+full painting or any full-artist/RC gate; native transfers remain non-preemptible.
 
 ## Material-slot ownership progress
 

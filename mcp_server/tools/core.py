@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
+
+from pydantic import Field, StrictInt, StrictStr
 
 from ..tool_registry import ToolRegistry
 from ._common import MCPToolBinding, params
@@ -21,6 +23,18 @@ class CoreTools:
         """Show the current high-level task in Blender's bridge panel."""
 
         return await self.registry.call("bridge.task.set", {"description": description})
+
+    async def jobs_inspect(self, job_id: Annotated[StrictStr, Field(pattern=r"^job_[0-9a-f]{32}$")]) -> Any:
+        """Inspect session-local paint job state/revision, phase-local progress, final result/error and recovery flags. INSPECT_SCENE required. SUCCEEDED is completion, start acceptance is not. CANCELLED/FAILED may include possible mutation; reinspect scene. Terminal history retains 32 summaries, no pixel buffers. Polling does not crowd out operation history."""
+        return await self.registry.call("jobs.inspect", {"job_id": job_id})
+
+    async def jobs_list(self, limit: Annotated[StrictInt, Field(ge=1, le=32)] = 10) -> Any:
+        """List bounded session-local painting jobs, newest first (active then terminal). INSPECT_SCENE required; explicit truncation, one-active limit, 32 terminal summaries, no durable queue or general simulation/bake jobs."""
+        return await self.registry.call("jobs.list", {"limit": limit})
+
+    async def jobs_cancel(self, job_id: Annotated[StrictStr, Field(pattern=r"^job_[0-9a-f]{32}$")]) -> Any:
+        """Request cancellation of an exact painting job, even while paused. Does not authorize scene changes or deletion. Poll terminal status; cancellation takes effect at cooperative safe points, cannot preempt native transfers, and never promises rollback. Inspect possible-mutation/recovery evidence."""
+        return await self.registry.call("jobs.cancel", {"job_id": job_id})
 
     async def bridge_task_clear(self) -> Any:
         """Clear the current task from Blender's bridge panel."""
@@ -72,6 +86,9 @@ class CoreTools:
 
     def bindings(self) -> tuple[MCPToolBinding, ...]:
         return (
+            MCPToolBinding("jobs.inspect", self.jobs_inspect, self.jobs_inspect.__doc__ or ""),
+            MCPToolBinding("jobs.list", self.jobs_list, self.jobs_list.__doc__ or ""),
+            MCPToolBinding("jobs.cancel", self.jobs_cancel, self.jobs_cancel.__doc__ or ""),
             MCPToolBinding("bridge.status", self.bridge_status, self.bridge_status.__doc__ or ""),
             MCPToolBinding("bridge.task.set", self.bridge_task_set, self.bridge_task_set.__doc__ or ""),
             MCPToolBinding("bridge.task.clear", self.bridge_task_clear, self.bridge_task_clear.__doc__ or ""),

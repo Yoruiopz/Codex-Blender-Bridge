@@ -93,22 +93,25 @@ def srgb_to_linear(value: float) -> float:
     return value / 12.92 if value <= .04045 else ((value + .055) / 1.055) ** 2.4
 
 
-def paint(source: array, width: int, height: int, strokes: list[dict], role: str, *, srgb=False, check=lambda: None) -> tuple[array, dict]:
+def paint_steps(source: array, width: int, height: int, strokes: list[dict], role: str, *, srgb=False, check=lambda: None):
+    """Yield bounded CPU work progress; no Blender calls or mutation between yields."""
     result = array("f", source)
     for offset in range(0, len(result), 4):
-        if offset % 16384 == 0:
+        if offset % 1024 == 0:
             check()
+            yield {"phase": "normalizing", "completed": offset // 4, "total": width * height}
         if any(not math.isfinite(source[offset + channel]) or not 0 <= source[offset + channel] <= (1. if srgb or role == "DATA" or channel == 3 else 16.) for channel in range(4)):
             raise invalid_argument("Painting requires finite nonnegative RGB within its role bound and alpha within [0,1].")
         if srgb:
             for channel in range(3):
                 result[offset + channel] = srgb_to_linear(source[offset + channel])
     baseline = array("f", result)
-    for stroke in strokes:
+    for stroke_index, stroke in enumerate(strokes):
         # Maximum coverage per stroke avoids repeated opacity buildup at joins,
         # repeated points and overlapping segments. Separate strokes do accumulate.
         coverage: dict[int, float] = {}
         visits = 0
+        total_visits = sum((box[2] - box[0]) * (box[3] - box[1]) for _a, _b, box in stroke["regions"])
         radius, hardness = stroke["radius"], stroke["hardness"]
         for a, b, (x0, y0, x1, y1) in stroke["regions"]:
             dx, dy = b[0] - a[0], b[1] - a[1]
@@ -116,8 +119,9 @@ def paint(source: array, width: int, height: int, strokes: list[dict], role: str
             for y in range(y0, y1):
                 for x in range(x0, x1):
                     visits += 1
-                    if visits % 4096 == 0:
+                    if visits % 256 == 0:
                         check()
+                        yield {"phase": "coverage", "stroke": stroke_index + 1, "strokes": len(strokes), "completed": visits, "total": total_visits}
                     vx, vy = x + .5 - a[0], y + .5 - a[1]
                     t = max(0., min(1., (vx * dx + vy * dy) / length2)) if length2 else 0.
                     distance = math.hypot(vx - t * dx, vy - t * dy)
@@ -130,8 +134,9 @@ def paint(source: array, width: int, height: int, strokes: list[dict], role: str
                         coverage[index] = value
         color = stroke["color"]
         for count, (index, value) in enumerate(coverage.items()):
-            if count % 4096 == 0:
+            if count % 256 == 0:
                 check()
+                yield {"phase": "applying", "stroke": stroke_index + 1, "strokes": len(strokes), "completed": count, "total": len(coverage)}
             offset = index * 4
             if role == "DATA":
                 for channel in range(4):
@@ -149,8 +154,9 @@ def paint(source: array, width: int, height: int, strokes: list[dict], role: str
     changed = []
     count = 0
     for offset in range(0, len(result), 4):
-        if offset % 16384 == 0:
+        if offset % 1024 == 0:
             check()
+            yield {"phase": "comparing", "completed": offset // 4, "total": width * height}
         if result[offset:offset + 4] != baseline[offset:offset + 4]:
             count += 1
             if len(changed) < 64:
@@ -158,3 +164,12 @@ def paint(source: array, width: int, height: int, strokes: list[dict], role: str
     check()
     return result, {"painted_pixels": count, "changed_pixel_examples": changed,
                     "examples_truncated": count > len(changed), "source_srgb_converted_to_linear": srgb}
+
+
+def paint(source: array, width: int, height: int, strokes: list[dict], role: str, *, srgb=False, check=lambda: None) -> tuple[array, dict]:
+    work = paint_steps(source, width, height, strokes, role, srgb=srgb, check=check)
+    while True:
+        try:
+            next(work)
+        except StopIteration as completed:
+            return completed.value

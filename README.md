@@ -115,6 +115,13 @@ mixing without changing the original image or writing files. A painted scanner d
 native failure/recovery tests connect this to look development. Viewport-projected strokes,
 masks, sculpt/vertex painting, baking and durable delivery still need implementation.
 
+Unreleased [cooperative painting jobs](docs/painting-jobs.md) add `image.paint_job_start` and
+`jobs.inspect/list/cancel`, with polled progress, sidebar CPU-budget/control/history, frozen
+inputs and a single guarded publication boundary. Cancel/disconnect/pause/deadline behavior is
+explicit; native transfers are not preemptible and late failures may retain an image for
+confirmed recovery. One active bounded job, no batch nesting or durable/general bake queue.
+This advances responsive artist workflows without claiming full 1.0 coverage.
+
 Unreleased [nested shader-group tools](docs/shader-groups.md) add group creation, typed interface
 sockets, binding, one-instance copies and confirmed unused removal. Existing `nodes.*` tools now
 accept an explicit `group_path`. Ownership checks follow parent groups to material users; copying
@@ -355,10 +362,10 @@ is identified above, and the feature table describes the published release.
 Blender's local recovery UI also has an add-on-only restore action, not an extra MCP tool.
 
 <!-- BEGIN GENERATED MCP TOOLS -->
-Current registry: **171 MCP tools**.
+Current registry: **175 MCP tools**.
 
 <details>
-<summary>core — 18 tools</summary>
+<summary>core — 21 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
@@ -368,6 +375,9 @@ Current registry: **171 MCP tools**.
 | `checkpoint.create` | Create a logical agent undo checkpoint. |
 | `checkpoint.list` | List checkpoint labels, operation history and conservative recovery availability. |
 | `checkpoint.undo_last` | Use Blender global undo only with explicit acknowledgement of user-interleaving risk. |
+| `jobs.cancel` | Request safe-point painting cancellation, not rollback; available while paused. |
+| `jobs.inspect` | Inspect session-local painting progress, result/error and recovery evidence. |
+| `jobs.list` | List bounded session-local painting jobs; no durable queue. |
 | `object.inspect` | Inspect one object without dumping raw vertex coordinates. |
 | `project.info` | Inspect project metadata and render settings. |
 | `project.save` | Save the current project when Blender-side permission allows it. |
@@ -492,7 +502,7 @@ Current registry: **171 MCP tools**.
 </details>
 
 <details>
-<summary>materials — 15 tools</summary>
+<summary>materials — 16 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
@@ -500,6 +510,7 @@ Current registry: **171 MCP tools**.
 | `image.inspect` | Inspect bounded image metadata/direct users without loading unloaded buffers. |
 | `image.inspect_pixels` | Inspect complete bounded loaded RGBA pixel digests/ranges and up to 64 samples without implicit loading; FILE reads need external-file consent. |
 | `image.load` | Load a new bounded PNG/JPEG image from Blender's user-approved texture folder; no implicit reuse or file writes. |
+| `image.paint_job_start` | Accept one cooperative source-frozen paint job; poll final evidence, keep owner connected, native commit is not preemptible. |
 | `image.paint_version` | Paint bounded UV-image strokes into a new version, retaining original pixels; FILE reads need approved-folder/external-file consent. |
 | `image.remove` | Remove one explicitly confirmed unused image datablock, never its source file. |
 | `material.assign` | Assign a material to an exact object slot or append it. |

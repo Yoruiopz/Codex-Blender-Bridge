@@ -30,6 +30,7 @@ def register_all(registry: ToolRegistry) -> None:
         modifiers,
         nodes,
         objects,
+        paint_jobs,
         python_exec,
         render,
         rigging,
@@ -63,6 +64,7 @@ def register_all(registry: ToolRegistry) -> None:
     materials.register_tools(registry)
     images.register_tools(registry)
     image_paint.register_tools(registry)
+    paint_jobs.register_tools(registry)
     image_revisions.register_tools(registry)
     nodes.register_tools(registry)
     shader_groups.register_tools(registry)

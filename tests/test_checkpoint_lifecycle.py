@@ -11,10 +11,12 @@ def test_external_history_navigation_invalidates_markers(addon_package, monkeypa
     checkpoints = importlib.import_module(f"{addon_package}.checkpoints")
     manager = checkpoints.CheckpointManager()
     manager._undo_steps.append(checkpoints.UndoStep("tracked", "target", 1))
-    monkeypatch.setattr(runtime, "_RUNTIME", NS(checkpoints=manager))
+    cancellations = []
+    monkeypatch.setattr(runtime, "_RUNTIME", NS(checkpoints=manager, jobs=NS(cancel_all=cancellations.append)))
     references = []
     monkeypatch.setattr(runtime, "clear_selection_references", lambda: references.append("cleared"))
     runtime._before_external_undo_redo(None)
+    assert cancellations == ["native undo/redo"]
     assert references == ["cleared"]
     with pytest.raises(checkpoints.BridgeError, match="No tracked"):
         manager.restore_operation()
@@ -28,11 +30,13 @@ def test_own_undo_handler_guard_is_scoped_even_when_operator_fails(
     checkpoints = importlib.import_module(f"{addon_package}.checkpoints")
     manager = checkpoints.CheckpointManager()
     manager._undo_steps.append(checkpoints.UndoStep("tracked", "target", 1))
-    monkeypatch.setattr(runtime, "_RUNTIME", NS(checkpoints=manager))
+    cancellations = []
+    monkeypatch.setattr(runtime, "_RUNTIME", NS(checkpoints=manager, jobs=NS(cancel_all=cancellations.append)))
 
     def undo():
         assert manager.recovery_in_progress
         runtime._before_external_undo_redo(None)
+        assert cancellations == ["native undo/redo"]
         assert [step.label for step in manager._undo_steps] == ["tracked"]
         if failure:
             raise RuntimeError("fixture failure")

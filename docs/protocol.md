@@ -203,6 +203,17 @@ Only a failure known to occur before a frame was sent carries `executed:false` a
 
 ## Concurrency and ordering
 
+Unreleased `image.paint_job_start` returns a bounded accepted job descriptor, not completed paint.
+Trusted in-process lifetime flags are never accepted from wire fields. CPU work waits until its
+success response is flushed; failed delivery, observed disconnect or expired handoff cancels it.
+After handoff, a separate 1–300 second job deadline applies while the owning connection remains
+open. Main-thread timer slices service the normal request queue first. `jobs.inspect/list` poll
+revisioned phase-local progress and terminal result/error; `jobs.cancel` requests safe-point
+cancellation, not rollback. Native publication has its own final checkpoint/history record.
+No events, new envelopes or duplicate terminal responses are introduced. A connection reader
+preserves bounded partial frames across idle timeouts while active requests/jobs remain; inactive
+connections still expire. See [painting jobs](painting-jobs.md) for limits and recovery semantics.
+
 - Multiple requests may be in flight at the transport/client layer.
 - Writes on each socket are serialized so NDJSON frames never interleave.
 - The Blender main-thread executor processes one command at a time in queue order in 0.2.0.

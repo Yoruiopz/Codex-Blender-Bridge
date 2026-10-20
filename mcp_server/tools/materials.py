@@ -13,6 +13,7 @@ from .image_paint import ImagePaintTools
 MATERIAL_TOOL_DATA: tuple[tuple[str, str, bool, tuple[str, ...]], ...] = (
     ("image.create", "Create a bounded new floating-point linear-color/data texture without overwriting or writing files.", True, ("EDIT_MATERIALS",)),
     ("image.paint_version", "Paint bounded UV-image strokes into a new version, retaining original pixels; FILE reads need approved-folder/external-file consent.", True, ("EDIT_MATERIALS",)),
+    ("image.paint_job_start", "Accept one cooperative source-frozen paint job; poll final evidence, keep owner connected, native commit is not preemptible.", True, ("EDIT_MATERIALS",)),
     ("image.inspect_pixels", "Inspect complete bounded loaded RGBA pixel digests/ranges and up to 64 samples without implicit loading; FILE reads need external-file consent.", False, ("INSPECT_SCENE",)),
     ("image.inspect", "Inspect bounded image metadata/direct users without loading unloaded buffers.", False, ("INSPECT_SCENE",)),
     ("image.load", "Load a new bounded PNG/JPEG image from Blender's user-approved texture folder; no implicit reuse or file writes.", True, ("EDIT_MATERIALS", "ACCESS_EXTERNAL_FILES")),

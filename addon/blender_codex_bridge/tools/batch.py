@@ -28,7 +28,7 @@ SAFE_CORE = frozenset({"project.info", "scene.inspect", "scene.summary", "select
 
 
 def is_batch_supported(spec: ToolSpec) -> bool:
-    return spec.remote and (spec.toolset in SAFE_TOOLSETS or spec.name in SAFE_CORE)
+    return spec.remote and spec.batchable and (spec.toolset in SAFE_TOOLSETS or spec.name in SAFE_CORE)
 
 
 def _preflight(context: ToolContext, params: Mapping[str, Any]) -> list[tuple[str, ToolSpec, dict[str, Any]]]:

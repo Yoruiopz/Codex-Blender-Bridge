@@ -73,6 +73,19 @@ if bpy is not None:
             return {"FINISHED"}
 
 
+    class BCB_OT_cancel_job(bpy.types.Operator):
+        bl_idname = "blender_codex_bridge.cancel_job"
+        bl_label = "Cancel Paint Job"
+        bl_description = "Cancel private paint work at its next safe point; native commits cannot be preempted"
+
+        def execute(self, context):
+            del context
+            runtime = get_runtime()
+            if runtime.jobs.active is not None:
+                runtime.dispatch("jobs.cancel", {"job_id": runtime.jobs.active.job_id})
+            return {"FINISHED"}
+
+
     class BCB_OT_checkpoint_create(bpy.types.Operator):
         bl_idname = "blender_codex_bridge.checkpoint_create"
         bl_label = "Create Checkpoint"
@@ -356,6 +369,21 @@ if bpy is not None:
                         text="It also requires Delete, External Files, and Save permissions."
                     )
 
+            jobs = layout.box()
+            jobs.label(text="Painting Jobs", icon="BRUSH_DATA")
+            if preferences:
+                jobs.prop(preferences, "paint_job_budget_ms")
+            for job in runtime.jobs.list(limit=3)["jobs"]:
+                jobs.label(text=f"{job['state']}: {job['new_image'][:36]}")
+                progress = job["progress"]
+                jobs.label(text=f"{progress['phase']}: {progress['completed']}/{progress['total']}")
+                if not job["terminal"]:
+                    jobs.operator("blender_codex_bridge.cancel_job", icon="CANCEL")
+                if job["error"]:
+                    jobs.label(text=job["error"]["code"], icon="ERROR")
+                    if job["error"]["context"].get("possible_mutation"):
+                        jobs.label(text="Possible retained image; inspect/recover", icon="ERROR")
+            jobs.label(text="Session only; native transfers cannot be preempted")
             history = layout.box()
             history.label(text="History", icon="TIME")
             history_limit = preferences.ui_history_rows if preferences else 8
@@ -368,6 +396,8 @@ if bpy is not None:
                 row.alert = not record["success"]
                 row.label(text=record["tool"], icon=icon)
                 row.label(text=f"{record['duration_ms']:.1f} ms")
+                if record["tool"] == "image.paint_job_start":
+                    history.label(text=record["description"][:96])
                 if record["affected_objects"]:
                     history.label(text=f"Affected: {', '.join(record['affected_objects'][:4])}")
                 if record["error_code"]:
@@ -430,6 +460,7 @@ if bpy is not None:
         BCB_OT_stop_bridge,
         BCB_OT_toggle_pause,
         BCB_OT_emergency_stop,
+        BCB_OT_cancel_job,
         BCB_OT_checkpoint_create,
         BCB_OT_checkpoint_undo,
         BCB_OT_checkpoint_restore,

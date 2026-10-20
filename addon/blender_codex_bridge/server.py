@@ -9,16 +9,18 @@ import socketserver
 import threading
 import time
 from contextlib import suppress
+from dataclasses import replace
 from typing import Any
 
 from .command_queue import QueuedRequest
 from .constants import DEFAULT_REQUEST_TIMEOUT_SECONDS
 from .errors import BridgeError, ErrorCode
 from .protocol import Request, Response, decode_request, encode_response
+from .request_lifecycle import ConnectionLifetime, RequestLifetime
 from .selection import clear_selection_references
 from .serialization import loads
 from .state import BridgeState
-from .transport import normalize_loopback_host, read_frame, validate_port
+from .transport import SocketLineReader, normalize_loopback_host, read_frame, validate_port
 
 LOGGER = logging.getLogger(__name__)
 _STOP_WRITER = object()
@@ -52,6 +54,8 @@ class _RequestHandler(socketserver.StreamRequestHandler):
             raise ConnectionError("Bridge listener is stopping")
         clear_selection_references()
         self.request.settimeout(self.server.socket_read_timeout)
+        self._frame_reader = SocketLineReader(self.request)
+        self._lifetime = ConnectionLifetime()
         self._outbound: queue.Queue[Response | QueuedRequest | object] = queue.Queue(
             maxsize=512
         )
@@ -68,6 +72,7 @@ class _RequestHandler(socketserver.StreamRequestHandler):
         LOGGER.info("Bridge client connected from %s", self.client_address[0])
 
     def finish(self) -> None:
+        self._lifetime.disconnected.set()
         disconnect_error = BridgeError(
             ErrorCode.SERVER_ERROR,
             "Client disconnected before Blender began executing the request.",
@@ -90,7 +95,7 @@ class _RequestHandler(socketserver.StreamRequestHandler):
             request_id: str | None = None
             frame: bytes | None = None
             try:
-                frame = read_frame(self.rfile)
+                frame = read_frame(self._frame_reader)
                 if frame is None:
                     return
                 request = decode_request(frame)
@@ -98,6 +103,7 @@ class _RequestHandler(socketserver.StreamRequestHandler):
                 timeout = self.server.request_timeout
                 if request.timeout_ms is not None:
                     timeout = min(timeout, request.timeout_ms / 1000.0)
+                request = replace(request, _lifecycle=RequestLifetime(self._lifetime, time.monotonic() + timeout))
                 LOGGER.info("Received bridge method %s (%s)", request.method, request.id)
                 with self._inflight_lock:
                     if request.id in self._active_ids:
@@ -121,7 +127,7 @@ class _RequestHandler(socketserver.StreamRequestHandler):
                 self._outbound.put(queued)
             except TimeoutError:
                 with self._inflight_lock:
-                    if self._inflight:
+                    if self._inflight or self._lifetime.background_active.is_set():
                         # A writer may legitimately be waiting for an active
                         # Blender operation longer than the idle read timeout.
                         continue
@@ -180,10 +186,16 @@ class _RequestHandler(socketserver.StreamRequestHandler):
                 except BridgeError as error:
                     # Never write an unbounded result. Replace it with a compact
                     # correlated protocol error that the MCP client can surface.
-                    encoded = encode_response(Response.failure(response.id, error))
+                    response = Response.failure(response.id, error)
+                    encoded = encode_response(response)
                 self.wfile.write(encoded)
                 self.wfile.flush()
-            except (BrokenPipeError, ConnectionError, OSError):
+                if isinstance(work, QueuedRequest) and work.request._lifecycle is not None:
+                    work.request._lifecycle.acknowledge(response.ok)
+            except (BrokenPipeError, ConnectionError, OSError, ValueError):
+                self._lifetime.disconnected.set()
+                if isinstance(work, QueuedRequest) and work.request._lifecycle is not None:
+                    work.request._lifecycle.acknowledge(False)
                 with suppress(OSError):
                     self.request.shutdown(socket.SHUT_RDWR)
                 return
