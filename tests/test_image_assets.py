@@ -293,6 +293,30 @@ def test_cleanup_does_not_unlink_unexpected_new_users(tools, monkeypatch):
     assert len(images) == 1
 
 
+def test_failed_load_does_not_delete_owned_image_without_live_deletion_consent(tools):
+    module, _, images, grants, context, path = tools
+    grants["DELETE_OBJECTS"] = False
+    def cancelled():
+        if images:
+            raise module.BridgeError("TIMEOUT", "cancelled after allocation")
+    context.check_cancelled = cancelled
+    with pytest.raises(module.BridgeError) as caught:
+        module.load_image(context, {"filepath": str(path), "new_name": "Retained"})
+    assert caught.value.code == "TIMEOUT" and caught.value.context["cleanup_permission_denied"]
+    assert caught.value.context["possible_mutation"] and not caught.value.context["rollback_verified"]
+    assert images.get("Retained") is not None
+
+
+def test_unused_removal_rechecks_deletion_grant_after_cancellation_checkpoint(tools):
+    module, _, images, grants, context, _ = tools
+    image = Image("Unused")
+    images.append(image)
+    context.check_cancelled = lambda: grants.update(DELETE_OBJECTS=False)
+    with pytest.raises(module.BridgeError) as caught:
+        module.remove_image(context, {"image_name": "Unused", "confirm_unused": True})
+    assert caught.value.code == "PERMISSION_DENIED" and images == [image]
+
+
 @pytest.mark.parametrize("change", ["mode", "color", "collision", "unknown"])
 def test_load_prevalidation_does_not_probe_or_allocate(tools, monkeypatch, change):
     module, bpy, images, _, context, path = tools

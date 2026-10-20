@@ -87,12 +87,13 @@ def refresh_image(context: ToolContext, params: Mapping[str, Any]) -> dict:
     except Exception as exc:
         LOGGER.exception("Versioned texture revision failed; attempting scoped binding/creation restoration")
         restored = False
+        cleanup_denied = False
         try:
             node.image = old
             for key, value in samplers.items():
                 setattr(node, key, value)
-            if new is not None and new.users == 0:
-                bpy.data.images.remove(new, do_unlink=False)
+            if new is not None:
+                _removed, cleanup_denied = images.cleanup_created_image(context, bpy, new)
             restored = (new is not None and node.image == old and bpy.data.images.get(new_name) is None
                         and _retained(old) == previous and graph_guard(tree, node) == guard
                         and all(getattr(node, key) == value for key, value in samplers.items()))
@@ -103,6 +104,7 @@ def refresh_image(context: ToolContext, params: Mapping[str, Any]) -> dict:
                           {"execution_started": True, "affected_material": material.name,
                            "previous_image": old.name, "requested_new_image": new_name,
                            "rollback_verified": restored, "possible_mutation": not restored,
+                           "cleanup_permission_denied": cleanup_denied,
                            "verification_required": True}) from exc
 
 

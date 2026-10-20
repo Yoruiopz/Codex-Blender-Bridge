@@ -17,6 +17,7 @@ def register_all(registry: ToolRegistry) -> None:
         core,
         face_attributes,
         geometry_nodes,
+        image_paint,
         image_revisions,
         images,
         interaction,
@@ -61,6 +62,7 @@ def register_all(registry: ToolRegistry) -> None:
     mesh_repair.register_tools(registry)
     materials.register_tools(registry)
     images.register_tools(registry)
+    image_paint.register_tools(registry)
     image_revisions.register_tools(registry)
     nodes.register_tools(registry)
     shader_groups.register_tools(registry)

@@ -272,6 +272,8 @@ def run():
         root_before = graph("Working Surface", nested=False)
         nested_before = graph("Working Surface")
         for persistent in (False, True):
+            # Explicit fixture consent for cleanup of this exact new image only.
+            prefs.allow_delete_objects = True
             original_bind = images.set_node_image
             def fault(context, params, persistent=persistent, original_bind=original_bind):
                 original_bind(context, params)
@@ -290,6 +292,7 @@ def run():
                 raise AssertionError("Expected native failure")
             finally:
                 images.set_node_image = original_bind
+                prefs.allow_delete_objects = False
             assert current_node().image.name == "Original Albedo"
             undo()
             assert bpy.data.images.get("Failed Version") is None

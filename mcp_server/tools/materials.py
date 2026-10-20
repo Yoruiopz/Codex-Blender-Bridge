@@ -8,8 +8,12 @@ from pydantic import StrictBool, StrictInt, StrictStr
 
 from ..tool_registry import ToolDefinition, ToolRegistry, remote_tool
 from ._common import MCPToolBinding, params
+from .image_paint import ImagePaintTools
 
 MATERIAL_TOOL_DATA: tuple[tuple[str, str, bool, tuple[str, ...]], ...] = (
+    ("image.create", "Create a bounded new floating-point linear-color/data texture without overwriting or writing files.", True, ("EDIT_MATERIALS",)),
+    ("image.paint_version", "Paint bounded UV-image strokes into a new version, retaining original pixels; FILE reads need approved-folder/external-file consent.", True, ("EDIT_MATERIALS",)),
+    ("image.inspect_pixels", "Inspect complete bounded loaded RGBA pixel digests/ranges and up to 64 samples without implicit loading; FILE reads need external-file consent.", False, ("INSPECT_SCENE",)),
     ("image.inspect", "Inspect bounded image metadata/direct users without loading unloaded buffers.", False, ("INSPECT_SCENE",)),
     ("image.load", "Load a new bounded PNG/JPEG image from Blender's user-approved texture folder; no implicit reuse or file writes.", True, ("EDIT_MATERIALS", "ACCESS_EXTERNAL_FILES")),
     ("image.remove", "Remove one explicitly confirmed unused image datablock, never its source file.", True, ("EDIT_MATERIALS", "DELETE_OBJECTS")),
@@ -89,7 +93,7 @@ def load_definitions() -> tuple[ToolDefinition, ...]:
 load_material_definitions = load_definitions
 
 
-class MaterialTools:
+class MaterialTools(ImagePaintTools):
     def __init__(self, registry: ToolRegistry) -> None:
         self.registry = registry
 
@@ -223,6 +227,7 @@ class MaterialTools:
 
     def bindings(self) -> tuple[MCPToolBinding, ...]:
         return (
+            *super().bindings(),
             MCPToolBinding("image.inspect", self.image_inspect, self.image_inspect.__doc__ or ""),
             MCPToolBinding("image.load", self.image_load, self.image_load.__doc__ or ""),
             MCPToolBinding("image.remove", self.image_remove, self.image_remove.__doc__ or ""),

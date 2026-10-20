@@ -73,12 +73,16 @@ Evidence includes:
   1,616 pixels/metre with near-unity directional stretch. The 500 × 350 display atlas is
   explicitly front-priority: roughly 3,543 pixels/metre in front and lower back/side density,
   a deliberate approximately 3.04 ratio, not a uniform whole-asset atlas.
-- Nested materials with explicit UV Map nodes, sRGB color images and Non-Color roughness
+- Nested materials with explicit UV Map nodes, sRGB color sources, linear float painted output and Non-Color roughness
   data. The reviewed shader map now includes `ShaderNodeUVMap.uv_map` / `from_instancer`;
   names do not create UV layers or prove every consuming mesh has them.
 - Matched green calibration / blue telemetry variants through versioned `nodes.refresh_image`;
   original cached pixels retained, shader links/roles inspected, front/isometric/wire and
   UV-layout captures retained for actual visual review.
+- A coherent blue-display revision batch paints a cyan readiness underline and green indicator
+  through [bounded UV-image strokes](texture-painting.md) and binds only the new linear-color
+  version. Pixel inspection then verifies its digest. Original calibration/scan buffers remain unchanged.
+  This is not surface-projected painting, a complete paint stack or a baking workflow.
 - Material denial before face assignment, a native post-update face failure with measured
   local restoration, and a real non-atomic material batch failure after one valid edit.
   Confirmed native undo restores independently compared meshes, UVs, nested graphs and pixels.
@@ -93,7 +97,7 @@ Numeric slot readback alone did not establish the intended dark appearance. Prev
 are not final rendered production-delivery acceptance.
 
 The fixture calls add-on dispatch directly. It does **not** replace MCP transport, packaged
-installation/upgrade, production-scale performance, paint/sculpt/bake, full-asset evaluated
+installation/upgrade, production-scale performance, full surface-paint/sculpt/bake, full-asset evaluated
 UVs, deep dependency/pixel lifecycle, character/animation/simulation, cinematic or export
 acceptance. Temporary factory recovery files/captures are confined to the test output;
 the user's project and preferences are not saved or changed. Fixture markers deliberately

@@ -51,7 +51,7 @@ def revision(addon_package, monkeypatch, tmp_path):
     material = NS(name="Material", node_tree=tree, animation_data=None)
     bpy = NS(data=NS(images=collection), context=NS(mode="OBJECT"), types=NS(
         ColorManagedInputColorspaceSettings=NS(bl_rna=NS(properties={"name": NS(enum_items=[NS(identifier="sRGB")])}))))
-    grants = {"EDIT_MATERIALS": True, "ACCESS_EXTERNAL_FILES": True}
+    grants = {"EDIT_MATERIALS": True, "ACCESS_EXTERNAL_FILES": True, "DELETE_OBJECTS": True}
     def require(*permissions):
         if any(not grants.get(p.value, False) for p in permissions):
             raise module.BridgeError("PERMISSION_DENIED", "denied")
@@ -156,6 +156,21 @@ def test_failed_post_binding_revision_restores_old_binding_and_measures_cleanup(
     assert caught.value.context["rollback_verified"] is not leave_user
     assert caught.value.context["possible_mutation"] is leave_user
     assert len(bpy.data.images) == (2 if leave_user else 1)
+
+
+def test_revision_cleanup_denied_retains_new_image_but_restores_old_binding(revision, monkeypatch):
+    module, context, bpy, old, node, _, _, grants, _ = revision
+    grants["DELETE_OBJECTS"] = False
+    bind = module.images.set_node_image
+    def failed(*args, **kwargs):
+        bind(*args, **kwargs)
+        raise RuntimeError("failure after binding")
+    monkeypatch.setattr(module.images, "set_node_image", failed)
+    with pytest.raises(module.BridgeError) as caught:
+        module.refresh_image(context, params())
+    assert node.image is old and bpy.data.images.get("Revision") is not None
+    assert caught.value.context["cleanup_permission_denied"] and caught.value.context["possible_mutation"]
+    assert not caught.value.context["rollback_verified"]
 
 
 def test_source_changes_between_decode_and_binding_are_not_accepted(revision, monkeypatch):

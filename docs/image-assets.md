@@ -1,7 +1,8 @@
 # Texture images and material binding
 
 Unreleased on `main`; not in the published 0.3.0 packages. These structured tools add image
-assets and shader binding, not painting, baking, packing or unrestricted file access.
+assets and shader binding. Separate [pixel/brush tools](texture-painting.md) create generated
+textures and paint independent versions. Baking, packing and unrestricted file access remain unsupported.
 
 ## Set up in Blender
 
@@ -80,14 +81,19 @@ Inspect the scene, mode, selection and material ownership; create a logical chec
 
 Loading hashes/checks the file before and after native decoding and independently verifies loaded
 dimensions, color space and source identity. A decode-time fault/cancellation attempts to remove
-only the newly created zero-user image. Unexpected users block cleanup; the error reports
+only the newly created zero-user, non-fake-user image **with live `DELETE_OBJECTS` consent**.
+Normal successful loading still needs no deletion grant. Denied cleanup retains the image,
+reports `cleanup_permission_denied=true` and requires inspection/confirmed recovery or separately
+authorized unused removal. Unexpected users block cleanup even when deletion is permitted; the error reports
 `rollback_verified` / `possible_mutation`. Binding faults attempt to restore the previous reference
 and changed sampler properties, verifying readback and unchanged link identities. Reinspect after
 any failed mutation; recovery remains tracked if restoration cannot be verified.
 
-Inspection reports dimensions only for already-loaded simple images; it does not read pixels or
+`image.inspect` reports dimensions only for already-loaded simple images; it does not read pixels or
 probe/reload unloaded files. A source hash at binding describes the current file, **not proof that
 an existing buffer is current with that file**. Structural success is not artistic approval.
+Use `image.inspect_pixels` for explicitly authorized, bounded loaded-buffer evidence; it does
+not replace metadata inspection, file-currency checks or visual review.
 
 ## Evidence and remaining work
 

@@ -308,10 +308,24 @@ def run():
                                  "segments": 3, "limit_method": "ANGLE", "angle_limit": .5, "use_clamp_overlap": True}}})
         batch("Non-destructive manufactured edge finish", bevels)
         captures["calibration_variant"] = capture("front")
-        revision = call("nodes.refresh_image", material_name=display_material, group_path=["Surface"], node_name="Albedo",
-                        new_image_name="Scanner LCD Scan", filepath=str(textures["lcd_scan"]))
+        revision_batch = batch("Blue telemetry texture and painted readiness accents", [
+            {"method": "nodes.refresh_image", "params": {"material_name": display_material, "group_path": ["Surface"],
+             "node_name": "Albedo", "new_image_name": "Scanner LCD Scan", "filepath": str(textures["lcd_scan"])}},
+            {"method": "image.paint_version", "params": {"image_name": "Scanner LCD Scan", "new_name": "Scanner LCD Painted",
+             "strokes": [{"points": [[.055, .784], [.209, .784]], "radius_pixels": 1.5, "hardness": .8,
+                          "color": [.1, .8, 1., 1.], "opacity": .9},
+                         {"points": [[.677, .35]], "radius_pixels": 3., "hardness": 1., "color": [.02, .8, .1, 1.]}]}},
+            {"method": "nodes.set_image", "params": {"material_name": display_material, "group_path": ["Surface"],
+             "node_name": "Albedo", "image_name": "Scanner LCD Painted"}},
+        ])
+        revision = revision_batch["results"][0]["result"]
         assert revision["revision_mode"] == "new_image_for_node" and not revision["previous_buffer_reloaded"]
-        assert surface(display_material).nodes["Albedo"].image.name == "Scanner LCD Scan"
+        paint = revision_batch["results"][1]["result"]
+        assert paint["source_pixels_unchanged"] and paint["painted_pixels"] > 0
+        assert surface(display_material).nodes["Albedo"].image.name == "Scanner LCD Painted"
+        assert surface(display_material).nodes["Albedo"].image.colorspace_settings.name == "Linear Rec.709"
+        painted_inspection = call("image.inspect_pixels", image_name="Scanner LCD Painted")
+        assert painted_inspection["pixels_sha256_float32_le"] == paint["pixels_sha256_float32_le"]
         assert image_hash("Scanner LCD Calibration") == calibration_pixels and image_hash("Scanner LCD Scan") != calibration_pixels
         bpy.context.view_layer.update()
         all_points = [obj.matrix_world @ vertex.co for obj in (bpy.data.objects[p["name"]] for p in parts if not p.get("temporary")) for vertex in obj.data.vertices]
@@ -349,7 +363,7 @@ def run():
             graphs = {material: call("nodes.inspect", material_name=material, group_path=["Surface"], max_nodes=32, max_sockets_per_direction=64)
                       for material in (shell_material, display_material)}
             return {"meshes": meshes, "graphs": graphs,
-                    "pixels": {name: image_hash(name) for name in ("Scanner Shell Color", "Scanner Roughness", "Scanner LCD Calibration", "Scanner LCD Scan")}}
+                    "pixels": {name: image_hash(name) for name in ("Scanner Shell Color", "Scanner Roughness", "Scanner LCD Calibration", "Scanner LCD Scan", "Scanner LCD Painted")}}
         asset_before_failure = asset_state()
         try:
             batch("Failed material refinement with measured recovery", [
@@ -390,6 +404,7 @@ def run():
               "logical_stages": stages, "structured_requests": request_count[0], "captures": captures,
               "visual_review_required": True, "uv_and_texture_workflow_verified": True,
               "partial_failure_recovery_verified": True, "face_attribute_failure_restoration_verified": True,
+              "painted_readiness_accents_verified": True, "painted_display_pixels": paint["painted_pixels"],
               "grille_material_index": grille_material_index,
               "whole_build_checkpoint_id": checkpoint["checkpoint_id"],
               "recovery_capacity_before_staged_restore": capacity_before_recovery,

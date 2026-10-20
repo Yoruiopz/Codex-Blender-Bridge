@@ -73,7 +73,11 @@ dispatcher provides one history/checkpoint boundary for the coherent load-and-bi
 
 On a decode failure, the existing loader owns scoped cleanup of its new image. After decoding,
 binding or post-verification failures attempt to restore the old binding/samplers and remove
-only the newly created zero-user image. Unexpected users are never forcibly unlinked.
+only the newly created zero-user, non-fake-user image with live `DELETE_OBJECTS` consent.
+Normal successful refresh still needs no deletion grant. Denied cleanup keeps the new image,
+reports `cleanup_permission_denied=true` and cannot claim complete rollback even if the old
+binding is restored. Inspect and use confirmed recovery or separately authorized unused removal.
+Unexpected users are never forcibly unlinked, even when deletion is permitted.
 `rollback_verified`, `possible_mutation`, `execution_started` and `verification_required`
 report the measured outcome. An unresolved partial revision requires reinspection and confirmed
 snapshot recovery where available; no blanket transaction/rollback guarantee is made.
@@ -105,7 +109,9 @@ pause/stop/unsupported-mode/animation rejections and deliberately incomplete cle
 No user project/preferences are saved. Run through the [non-visible test runner](native-testing.md).
 
 This is not a representative production prop or full LOOK-01 acceptance. In-place image editing,
-durable pixel recovery, packing/unpacking/saving, painting/baking, compositor images, broader
+durable pixel recovery, packing/unpacking/saving, full painting/baking, compositor images, broader
 formats and jobs remain mandatory in the [full 1.0 plan](plan-1.0.md).
+Separate [bounded UV-image brushes](texture-painting.md) now create generated paint versions;
+they do not solve these identity-preserving or durable image lifecycle requirements.
 
 Native data semantics: [Blender Image API](https://docs.blender.org/api/4.5/bpy.types.Image.html).

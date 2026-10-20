@@ -23,6 +23,22 @@ def _check(context: ToolContext) -> None:
         context.check_cancelled()
 
 
+def cleanup_created_image(context: ToolContext, bpy: Any, image: Any) -> tuple[bool, bool]:
+    """Only for a handle allocated by this operation; never forced unlink or implicit deletion consent."""
+    if image.users != 0 or image.use_fake_user:
+        return False, False
+    try:
+        context.require(Permission.DELETE_OBJECTS)
+    except BridgeError as error:
+        if error.code == ErrorCode.PERMISSION_DENIED.value:
+            return False, True
+        raise
+    if image.users != 0 or image.use_fake_user:
+        return False, False
+    bpy.data.images.remove(image, do_unlink=False)
+    return True, False
+
+
 def _name(params: Mapping[str, Any], key: str) -> str:
     value = params.get(key)
     if not isinstance(value, str) or not value.strip() or any(ord(c) < 32 for c in value):
@@ -171,17 +187,20 @@ def load_image(context: ToolContext, params: Mapping[str, Any]) -> dict:
     except Exception as exc:
         LOGGER.exception("Image loading failed; attempting cleanup of only the newly created image")
         recovered = False
+        cleanup_denied = False
         try:
-            if image is not None and image.users == 0:
-                bpy.data.images.remove(image, do_unlink=False)
-                image = None
+            if image is not None:
+                removed, cleanup_denied = cleanup_created_image(context, bpy, image)
+                if removed:
+                    image = None
             recovered = image is None and len(bpy.data.images) == before
         except Exception:
             LOGGER.exception("Image loading cleanup failed")
         raise BridgeError(exc.code if isinstance(exc, BridgeError) else ErrorCode.OPERATION_FAILED,
                           "Image loading did not complete; inspect image state before continuing.",
                           {"execution_started": True, "requested_image": name,
-                           "rollback_verified": recovered, "possible_mutation": not recovered}) from exc
+                           "rollback_verified": recovered, "possible_mutation": not recovered,
+                           "cleanup_permission_denied": cleanup_denied}) from exc
 
 
 def remove_image(context: ToolContext, params: Mapping[str, Any]) -> dict:
@@ -197,6 +216,7 @@ def remove_image(context: ToolContext, params: Mapping[str, Any]) -> dict:
     if image.users != 0 or image.use_fake_user:
         raise invalid_argument("Image is still in use or has a fake user; no forced unlink is performed.", users=image.users)
     _check(context)
+    context.require(Permission.EDIT_MATERIALS, Permission.DELETE_OBJECTS)
     bpy.data.images.remove(image, do_unlink=False)
     return {"removed_image": name, "file_deleted": False, "remaining_same_name": sum(i.name == name for i in bpy.data.images)}
 

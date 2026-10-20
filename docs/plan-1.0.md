@@ -83,8 +83,12 @@ LOOK-01 also adds versioned node texture refresh/relocation with explicit file c
 original-buffer retention. Native probes show in-place reload is not recovered by global undo;
 identity-preserving edits and durable pixel recovery remain mandatory, not silently dropped.
 An [original reference-constrained scanner](field-scanner-workflow.md) now integrates structured
-modeling, shell/display UVs, nested materials, texture variants and staged native recovery. Next
-extend the prop workflow to paint/bake and dependency/durable-pixel lifecycle while retaining
+modeling, shell/display UVs, nested materials, texture variants and staged native recovery.
+PAINT-01 now includes generated linear/data canvases, bounded copy-on-write UV-image strokes,
+pixel digests/samples and a painted display revision in the reference workflow. Surface/viewport
+projection, masks, sculpt/vertex/weight brushes and complete paint acceptance remain open.
+Next implement responsive, cancellable source-frozen painting jobs before scaling images or
+adding native bakes; extend surface painting and dependency/durable-pixel lifecycle while retaining
 the remaining memory-pressure, mixed-editor/domain and durable recovery acceptance work.
 Keep SAFE-02/JOB-01 and the remaining
 capability/UX/delivery/RC work open. Work in coherent user workflows, not an indefinite series
@@ -909,3 +913,84 @@ production data. Extend representative repair/preservation and evaluated/full-as
 keep SAFE-02/JOB-01, character/animation, simulations, UX, delivery and packaged upgrade/RC
 acceptance mandatory. Scenario B, LOOK-01 and the full 1.0 artist goal remain unaccepted.
 No user project/preferences, published release assets, version or repository visibility changed.
+
+### 2026-10-20 — Copy-on-write texture brushes, pixel evidence and deletion-consent recovery
+
+PAINT-01 / LOOK-01 now include three structured tools: `image.create` for new generated float
+color/data canvases, `image.paint_version` for bounded UV-image strokes in a new named version,
+and `image.inspect_pixels` for complete stored-buffer digests/ranges plus selected samples.
+The [contract](texture-painting.md) specifies 1,048,576 pixels, 32 strokes / 128 points each,
+256 segments and two million candidate pixel tests. COLOR supports source-over and alpha erase;
+DATA uses weighted RGBA mixing. Smoothstep coverage uses the maximum across segments within
+each stroke, avoiding repeated-point/join overdraw. Explicit node binding remains separate.
+
+Native evidence informed the implementation: `Image.pixels` returned encoded byte-sRGB values,
+not automatically linearized values, on both versions. Painting converts supported sRGB
+sources to a new Linear Rec.709 float image; alpha is not gamma-transformed. Independent
+standard-sRGB/source-over values and untouched samples are checked, not only calls back into
+the conversion being tested. Generated image type is native `UV_TEST`, including blank canvases;
+the first native attempt exposed and corrected an overly narrow IMAGE-only check. Unknown
+OCIO/float-sRGB, animated and non-STRAIGHT-alpha sources are rejected explicitly. No in-place
+painting, source-file write or durable pixel recovery is claimed.
+
+The reference scanner's blue-display revision is now one batch: approved image refresh, a
+painted cyan readiness underline/green indicator and exact nested binding. Pixel inspection
+follows the batch. Old calibration
+and scan buffers remain unchanged. Structural/UV evidence and all fourteen logical build/context
+restores still pass at unchanged 32-step history. This extends a real connected workflow rather
+than treating new tool names as artistic acceptance.
+
+Consent review found that owned-image failure cleanup must not bypass deletion permission.
+A shared helper now requires live `DELETE_OBJECTS` immediately before removing a newly allocated
+zero-user, non-fake-user image; image loading, source revisions and painting all use it. Normal
+successful creation/loading/painting still need no deletion grant. Denied cleanup retains the
+image with `cleanup_permission_denied=true`, `rollback_verified=false`, `possible_mutation=true`
+and tracked recovery. Explicit unused removal also rechecks live grants just before execution.
+Unit/native faults distinguish granted cleanup, denied cleanup, unexpected consumers and
+post-write cancellation; confirmed global recovery removes the retained allocation and restores
+independently compared source pixels, protected consumers and material bindings. Other domain
+cleanup/ownership/recovery audits remain SAFE-02 work, not implicitly accepted by this helper.
+
+Graphify ran on the primary agent in `dino-s-workspace`. The verified cloud index remains
+`f029d27` (2026-10-20T12:42:59Z); the local map remains `cce4bf0`. A narrow image query and exact
+file outline localized `binding_source`, bounded metadata inspection and cancel-after-decode
+tests. Current source exposed the cleanup-consent gap and supplied the implementation; the
+new brush code and scanner changes were not claimed indexed. Query feedback and the stale marker
+are kept locally; no rebuild, watcher or new external service was installed.
+
+Validation: **185 focused tests**, then **1,166 tests on each** of MCP SDK 2.0.0 / 2.2.0; lint,
+mypy (35 files), generated README inventory (**171 tools**) and whitespace checks passed.
+The final Windows Blender 4.5.1 LTS / 5.1.2 matrix passed **56/56** at
+`build/texture-paint-final-matrix-20261020-2/report.json`, including the stricter cleanup policy:
+28 background and 28 private, non-input-desktop UI cases. Baseline `b411d75` plus this then-dirty
+implementation, 137 independently matched Python files and fingerprint
+`36885c788279e6cf3c9911010a90af55040954a12a9a193d094cc96b2fa67731`.
+The actual source-file set and scanner brief/reference/texture hashes also match. Earlier runs,
+including the first registration-test omission and pre-consent matrix, remain local; they are
+not substituted for this final evidence.
+
+A 1024² workload changed 192,124 pixels across 794,624 candidate tests: creation measured about
+0.13–0.14 s, painting 1.73 s and full inspection 0.59–0.86 s here. These synchronous main-thread
+measurements are not a responsive-job or universal latency promise; memory pressure, larger
+images and production-scale throughput remain unaccepted. Native buffer transfers/update are
+not interruptible, while CPU brush phases poll cancellation and live permissions.
+
+Thirty-six scanner/paint captures were retained; front/isometric, brush/erase, conversion-only
+and UV views were reviewed. Twenty-five match the focused artifacts byte-for-byte. Eleven scanner
+captures show rerun variation: up to 4,531 changed UV-layout pixels and 17,743 material-preview
+pixels with maximum channel difference 6/255; current views were re-reviewed, not labeled
+identical. The underlying rerun variation remains unisolated. Conversion-only previews differ
+from their byte-source baseline in 31 / 30 pixels, maximum channel difference 5 / 4, with mean
+channel differences below 0.00006; this is not a pixel-identical OCIO guarantee. Protected and
+within-run recovered views match their own baselines exactly on both versions. All 62 earlier
+image/shader/group/revision captures match previously reviewed artifacts.
+
+Next prioritize JOB-01: read the protocol/lifecycle contracts, design source-frozen owned painting
+jobs with bounded cooperative work, correlated progress, queued/running cancellation, disconnect
+policy and a single verified commit/recovery boundary. Prove that canceled callers cannot leave
+untracked allocations before scaling images or adding native baking. Then add surface/viewport
+stroke projection, masks/stencils and the remaining brush/color/alpha workflows on this asset;
+continue sculpt/vertex/weight painting, full atlas/bake/dependency/durable-delivery acceptance.
+SAFE-02, character/animation, simulation, UX, installation/upgrade and clean-RC gates stay mandatory.
+No complete PAINT-01, scenario B, full artist or 1.0 release acceptance is claimed. User projects,
+preferences, published 0.3.0 assets, package versions and repository visibility are unchanged.

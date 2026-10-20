@@ -99,13 +99,21 @@ Unreleased [texture-image tools](docs/image-assets.md) inspect/load/remove image
 and bind loaded images to material Image Texture nodes. Choose an **Approved Texture Folder**
 in Blender and grant external-file access for supported PNG/JPEG reads; MCP cannot change the
 folder. The workflow checks color/data roles, material isolation, texture revisions and undo.
-No implicit reuse/reload, image writes, packing, painting or baking is claimed; see its limits.
+Loading/binding never edits pixels; image writes, packing and baking remain open. For bounded
+copy-on-write brush edits, use the separate [texture-painting workflow](docs/texture-painting.md).
 
 Unreleased [versioned texture refresh](docs/image-revisions.md) adds `nodes.refresh_image`:
 reread a changed texture or repair its source path through a newly named image version,
 retaining the original image/buffer and the node's color/alpha role, sampling and wiring.
 It works at root/nested paths with explicit scope and file consent, including missing sources.
 This is not in-place image reload or a durable pixel backup; those remain 1.0 work.
+
+Unreleased [texture-painting tools](docs/texture-painting.md) create new linear-color/data
+canvases, paint bounded UV-image strokes into separate versions, and inspect complete pixel
+digests/ranges with selected samples. They support color source-over, alpha erasing and data
+mixing without changing the original image or writing files. A painted scanner display and
+native failure/recovery tests connect this to look development. Viewport-projected strokes,
+masks, sculpt/vertex painting, baking and durable delivery still need implementation.
 
 Unreleased [nested shader-group tools](docs/shader-groups.md) add group creation, typed interface
 sockets, binding, one-instance copies and confirmed unused removal. Existing `nodes.*` tools now
@@ -347,7 +355,7 @@ is identified above, and the feature table describes the published release.
 Blender's local recovery UI also has an add-on-only restore action, not an extra MCP tool.
 
 <!-- BEGIN GENERATED MCP TOOLS -->
-Current registry: **168 MCP tools**.
+Current registry: **171 MCP tools**.
 
 <details>
 <summary>core — 18 tools</summary>
@@ -484,12 +492,15 @@ Current registry: **168 MCP tools**.
 </details>
 
 <details>
-<summary>materials — 12 tools</summary>
+<summary>materials — 15 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
+| `image.create` | Create a bounded new floating-point linear-color/data texture without overwriting or writing files. |
 | `image.inspect` | Inspect bounded image metadata/direct users without loading unloaded buffers. |
+| `image.inspect_pixels` | Inspect complete bounded loaded RGBA pixel digests/ranges and up to 64 samples without implicit loading; FILE reads need external-file consent. |
 | `image.load` | Load a new bounded PNG/JPEG image from Blender's user-approved texture folder; no implicit reuse or file writes. |
+| `image.paint_version` | Paint bounded UV-image strokes into a new version, retaining original pixels; FILE reads need approved-folder/external-file consent. |
 | `image.remove` | Remove one explicitly confirmed unused image datablock, never its source file. |
 | `material.assign` | Assign a material to an exact object slot or append it. |
 | `material.copy_for_object` | Copy a material for one object slot without changing shared mesh data. |
