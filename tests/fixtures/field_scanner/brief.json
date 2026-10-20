@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "id": "field-scanner-v1",
+  "units": "metres",
+  "front_axis": "-Y",
+  "description": "Original compact industrial field scanner: chamfered orange shell, recessed blue telemetry screen, black carry loop and three tactile controls.",
+  "dimension_tolerance": 0.00005,
+  "shell": {"width": 0.144, "height": 0.220, "thickness": 0.042, "corner": 0.009, "fascia_inset": 0.006, "fascia_recess": 0.002},
+  "bezel": {"outer": [0.112, 0.082], "inner": [0.100, 0.070], "center_z": 0.151, "front_y": -0.025, "back_y": -0.019},
+  "glass": {"width": 0.099, "height": 0.069, "center_z": 0.151, "front_y": -0.0242, "back_y": -0.0215},
+  "handle": {"outer": [0.110, 0.042], "inner": [0.086, 0.024], "center_z": 0.239, "front_y": -0.010, "back_y": 0.010},
+  "buttons": {"x": [-0.040, 0.0, 0.040], "center_z": 0.052, "radius": 0.010, "front_y": -0.030, "back_y": -0.019, "segments": 48},
+  "status": {"x": -0.049, "z": 0.202, "radius": 0.003, "front_y": -0.026, "back_y": -0.020},
+  "fasteners": {"x": [-0.059, 0.059], "z": [0.024, 0.201], "radius": 0.0032, "front_y": -0.0255, "back_y": -0.019},
+  "grille": {"width": 0.074, "height": 0.0015, "z": [0.078, 0.083, 0.088, 0.093], "cutter_front_y": -0.023, "cutter_back_y": -0.016, "recess_depth": 0.003},
+  "overall_dimensions": [0.144, 0.051, 0.260],
+  "protected_object": "Calibration Block",
+  "required_surface_maps": ["Scanner Shell", "Scanner Glass"],
+  "material_roles": {
+    "shell": {"name": "Scanner Shell Finish", "color": [0.8, 0.23, 0.018, 1.0], "roughness": 0.48, "metallic": 0.05},
+    "bezel": {"name": "Scanner Bezel Finish", "color": [0.018, 0.024, 0.032, 1.0], "roughness": 0.28, "metallic": 0.55},
+    "glass": {"name": "Scanner Display Finish", "color": [0.015, 0.06, 0.12, 1.0], "roughness": 0.22, "metallic": 0.05},
+    "rubber": {"name": "Scanner Rubber Finish", "color": [0.022, 0.026, 0.032, 1.0], "roughness": 0.68, "metallic": 0.0},
+    "metal": {"name": "Scanner Fastener Finish", "color": [0.25, 0.29, 0.34, 1.0], "roughness": 0.30, "metallic": 0.85},
+    "status": {"name": "Scanner Status Finish", "color": [0.02, 0.65, 0.11, 1.0], "roughness": 0.25, "metallic": 0.0}
+  },
+  "review": {
+    "silhouette": "144 mm wide chamfered shell; 260 mm overall height; visibly open carry loop, not a solid tab.",
+    "front": "Display centered above three evenly spaced controls, four horizontal grille slots and four corner fasteners; green status indicator above the display.",
+    "finish": "Orange matte casing, dark bezel/handle, blue telemetry visible through a recessed display; no orange checkerboard across the finished casing.",
+    "uv": "Complete nondegenerate measured UV maps on shell/display, no positive-area overlaps in the tested scope, layout captures and declared texture resolution.",
+    "preserve": "Calibration object geometry/UVs/weights/materials/transforms, factory camera/light, selection, active object and temporary capture settings remain unchanged.",
+    "limits": "This brief does not waive paint/bake, character, simulation, production-scale, delivery, durable recovery or install/upgrade/RC requirements. Auxiliary solid-color parts are not an accepted whole-asset atlas."
+  }
+}

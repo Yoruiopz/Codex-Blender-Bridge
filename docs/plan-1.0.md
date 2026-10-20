@@ -77,12 +77,14 @@ and a connected repair/unwrap/material fixture. LOOK-01 adds approved images, ne
 group lifecycle and measured instance isolation. A logical-batch revision works at default undo
 capacity; longer separate operations exposed an eviction gap. REC-01 now has conservative
 capacity reporting/pruning and long/manual-eviction native cases, not guaranteed history access.
-LOOK-01 now includes reviewed scalar/enum settings on 13 shader node types, complete Color Ramp
+LOOK-01 now includes reviewed scalar/enum settings on 14 shader node types, complete Color Ramp
 replacement and sampled RGB/HSV/HSL interpretation with measured local/native failure recovery.
 LOOK-01 also adds versioned node texture refresh/relocation with explicit file consent and
 original-buffer retention. Native probes show in-place reload is not recovered by global undo;
 identity-preserving edits and durable pixel recovery remain mandatory, not silently dropped.
-Next integrate a representative textured prop and extend dependency/pixel lifecycle while retaining
+An [original reference-constrained scanner](field-scanner-workflow.md) now integrates structured
+modeling, shell/display UVs, nested materials, texture variants and staged native recovery. Next
+extend the prop workflow to paint/bake and dependency/durable-pixel lifecycle while retaining
 the remaining memory-pressure, mixed-editor/domain and durable recovery acceptance work.
 Keep SAFE-02/JOB-01 and the remaining
 capability/UX/delivery/RC work open. Work in coherent user workflows, not an indefinite series
@@ -835,3 +837,75 @@ unbounded sequence of unrelated tools:
 SAFE-02, JOB-01, remaining shader/compositor and nested evidence work, painting, character/
 animation, simulations, interactive UX, delivery and the full release audit remain open.
 Published 0.3.0 assets, version and repository visibility are unchanged.
+
+### 2026-10-20 — Reference-constrained scanner integrates modeling, UVs and nested textures
+
+ASSET-01 / LOOK-01 now have an original owned numeric brief and three-view SVG reference,
+plus a reproducible [field-scanner workflow](field-scanner-workflow.md). A disposable factory
+scene builds twelve final components through structured bridge tools: wire-ring bridge/caps,
+inset/extrusion, real Boolean grille pockets, smooth-sided controls, an open carry handle,
+seams/unwrapping/packing, an explicit display atlas and nested image materials. Colors use
+sRGB; roughness uses Non-Color. Explicit UV Map settings extend the reviewed shader subset
+to fourteen types. Versioned green/blue display revisions retain original cached pixels.
+The fixture uses direct add-on dispatch, not an end-to-end packaged MCP installation.
+
+Two bounded additions support this workflow: creation-time `face_smooth`, and selected
+`mesh.set_face_attributes` for polygon shading/existing material-slot indices. Fresh references,
+active single-object local/single-user Edit Mode scope, typed bounds, dynamic Blender-side
+material consent, cancellation and measured local restoration are enforced. No arbitrary RNA
+or custom-normal access is introduced. The new tool has public schema/registry documentation.
+
+Evidence changed the implementation. An extruded recessed fascia initially retained its base
+cap and created eight non-manifold edges. Supplying native BMesh with the full region edge set
+fixed attachment cleanup while preserving standalone-region bases. Native regressions measure
+attached-cube and standalone one-/two-quad counts, manifold edges, signed volume and actual undo.
+Visual review then exposed orange grille walls in elevated views: these narrow deep pockets
+hide their floors. Actual inner walls now get the dark finish, and slot indices come from
+current results rather than assuming index 1 (the two Blender versions return different layouts).
+
+Measured base world bounds are 144 × 51 × 260 mm within 50 micrometres; evaluated handle rays
+verify an open 86 × 24 mm clearance. Complete shell/display UV analysis reports no positive-area
+overlap, degenerate/mirrored/folded mappings and near-unity pixel-direction stretch. Shell
+density is approximately 1,616 pixels/metre at 1024². The display's 500 × 350 atlas deliberately
+prioritizes its front; the approximately 3.04 density ratio is explicit, not uniform-atlas acceptance.
+Auxiliary solid-color components are not a fully mapped production asset.
+
+Native faults test material denial before face assignment, a post-update face-attribute failure
+with independently checked restoration, and a real non-atomic shader batch failure after one
+valid edit. Confirmed native recovery compares geometry/UVs, nested graphs and complete fixture
+pixel buffers separately; root snapshots alone do not prove nested shader coverage. All fourteen
+logical build/context operations then recover separately at unchanged default 32-step history,
+restoring original datablock names and protected scope. This is a small isolated-case result,
+not memory-pressure, interleaving, durable recovery or unlimited-history acceptance.
+
+Graphify was used on the primary agent in `dino-s-workspace`: file outlines localized modeling
+primitives, and a narrowed recovery query located current capacity/finalization contracts and
+their tests. An earlier broad query was noisy; the narrowed response was capped/skeletonized,
+not an exact complete call chain. Cloud indexing reached `f029d27` (2026-10-20T12:42:59Z), while
+the local map remains at `cce4bf0`; neither contains these new edits. Current source and native
+evidence remained authoritative. Useful retrieval feedback and the stale marker are local.
+
+Validation: **88 focused tests**, then **1,098 tests on each** of MCP SDK 2.0.0 / 2.2.0; lint,
+mypy (34 files), generated README inventory (**168 tools**) and whitespace checks passed.
+Windows Blender 4.5.1 LTS / 5.1.2 passed the complete **54/54** native matrix at
+`build/field-scanner-final-matrix-20261020-1/report.json`: 28 background cases, 26 private-desktop
+UI cases, baseline `f029d27` plus this then-dirty implementation. All 133 Python hashes and the
+actual source file set match; fingerprint
+`d7c0fb4c78d0c1270a1cf40b71eab7b8a17edf5c6ddf8f1a7c1077e985790227`.
+Brief/reference and generated texture hashes are also independently checked.
+
+Twenty scanner captures were retained and front/isometric/wire, green/blue and UV views reviewed.
+Fourteen match the focused run byte-for-byte. Six Blender 5.1 captures differ slightly between
+runs: 133 changed shell-layout pixels, at most 1,018 material-preview pixels with maximum channel
+difference 5/255, and five wire pixels with maximum difference 2/255. Those current artifacts
+were re-reviewed, not labeled identical; the underlying rerun variation is not yet isolated.
+Protected and within-run recovered views match baseline bytes exactly on both versions.
+All 62 earlier image/shader/group/revision captures match previously reviewed artifacts.
+Earlier failed modeling/injection/recipe runs remain local evidence, not reported as passes.
+
+Next complete the missing prop paint/bake and approved dependency/durable-pixel workflows,
+starting with explicit ownership, file and long-operation recovery contracts before mutating
+production data. Extend representative repair/preservation and evaluated/full-asset UV tests;
+keep SAFE-02/JOB-01, character/animation, simulations, UX, delivery and packaged upgrade/RC
+acceptance mandatory. Scenario B, LOOK-01 and the full 1.0 artist goal remain unaccepted.
+No user project/preferences, published release assets, version or repository visibility changed.

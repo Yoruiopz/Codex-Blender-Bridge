@@ -3,9 +3,10 @@ from __future__ import annotations
 import asyncio
 import importlib
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, get_type_hints
 
 import pytest
+from pydantic import TypeAdapter, ValidationError
 
 from mcp_server.tools.catalog import MESH_TOOL_NAMES, load_mesh_definitions
 from mcp_server.tools.mesh import MeshTools
@@ -42,6 +43,32 @@ def test_mesh_create_prevalidates_and_copies_complete_request(addon_package: str
     assert prepared.faces[-1] == (1, 3, 2)
     assert prepared.location == (1.0, 2.0, 3.0)
     assert prepared.rotation_mode == "ZYX"
+
+
+def test_mesh_create_copies_optional_per_face_smooth_flags(addon_package):
+    mesh = importlib.import_module(f"{addon_package}.tools.mesh")
+    params = {**_valid_params(), "face_smooth": [True, False, True, False]}
+    prepared = mesh._prepare_mesh_create(params)
+    params["face_smooth"][0] = False
+    assert prepared.face_smooth == (True, False, True, False)
+    assert mesh._prepare_mesh_create(_valid_params()).face_smooth is None
+
+
+@pytest.mark.parametrize("flags", [True, "smooth", [], [True], [1, False, True, False], [None] * 4, [False] * 100_001])
+def test_mesh_smooth_flags_rejected_before_blender(addon_package, monkeypatch, flags):
+    mesh = importlib.import_module(f"{addon_package}.tools.mesh")
+    monkeypatch.setattr(mesh, "require_blender", lambda: pytest.fail("Invalid smooth flags reached Blender"))
+    with pytest.raises(Exception) as caught:
+        mesh.create_mesh(object(), {**_valid_params(), "face_smooth": flags})
+    assert caught.value.code == "INVALID_ARGUMENT"
+
+
+def test_mesh_smooth_mcp_schema_is_bounded_and_strict():
+    adapter = TypeAdapter(get_type_hints(MeshTools.mesh_create, include_extras=True)["face_smooth"])
+    assert adapter.validate_python([True, False]) == [True, False]
+    for value in ([1], ["true"], [False] * 100_001):
+        with pytest.raises(ValidationError):
+            adapter.validate_python(value)
 
 
 @pytest.mark.parametrize(
@@ -81,8 +108,9 @@ def test_invalid_mesh_request_never_reaches_blender(
     assert reached_blender is False
 
 
-def test_mesh_create_rolls_back_object_and_mesh_when_linking_fails(
-    addon_package: str, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("stage", ["link", "smooth_readback"])
+def test_mesh_create_rolls_back_object_and_mesh_on_failure(
+    addon_package: str, monkeypatch: pytest.MonkeyPatch, stage: str
 ) -> None:
     mesh_module = importlib.import_module(f"{addon_package}.tools.mesh")
 
@@ -90,6 +118,10 @@ def test_mesh_create_rolls_back_object_and_mesh_when_linking_fails(
         def __init__(self, name: str) -> None:
             self.name = name
             self.users = 0
+            class Polygons(list):
+                def foreach_set(self, *_args):
+                    pass  # Inject a native setter that does not retain the request.
+            self.polygons = Polygons([SimpleNamespace(use_smooth=False) for _ in range(4)])
 
         def from_pydata(self, vertices: Any, edges: Any, faces: Any) -> None:
             self.input = (vertices, edges, faces)
@@ -141,6 +173,8 @@ def test_mesh_create_rolls_back_object_and_mesh_when_linking_fails(
     )
     params = _valid_params()
     params["collection_name"] = None
+    if stage == "smooth_readback":
+        params["face_smooth"] = [True] * 4
     monkeypatch.setattr(mesh_module, "require_blender", lambda: bpy)
     monkeypatch.setattr(mesh_module, "get_collection", lambda _: collection)
 
@@ -148,7 +182,7 @@ def test_mesh_create_rolls_back_object_and_mesh_when_linking_fails(
         mesh_module.create_mesh(object(), params)
 
     assert caught.value.code == "OPERATION_FAILED"
-    assert objects.removed is True
+    assert objects.removed is (stage == "link")
     assert meshes.removed is True
 
 
@@ -192,6 +226,7 @@ def test_mesh_create_mcp_definition_and_wrapper_forward_all_fields() -> None:
             faces=[[0, 1, 2]],
             collection_name="Geometry",
             location=[1.0, 2.0, 3.0],
+            face_smooth=[True],
         )
     )
 
@@ -202,3 +237,4 @@ def test_mesh_create_mcp_definition_and_wrapper_forward_all_fields() -> None:
     assert registry.call_args[1]["mesh_name"] == "Triangle Mesh"
     assert registry.call_args[1]["faces"] == [[0, 1, 2]]
     assert registry.call_args[1]["collection_name"] == "Geometry"
+    assert registry.call_args[1]["face_smooth"] == [True]

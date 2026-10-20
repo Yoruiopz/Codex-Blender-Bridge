@@ -115,11 +115,17 @@ batch and verifies protected data, partial-failure recovery and native undo with
 default history. Native history remains finite; see the workflow and limitations before use.
 
 Unreleased [shader-setting and Color Ramp tools](docs/shader-settings.md) inspect native choices,
-edit reviewed properties on 13 shader node types, and replace complete 1–32-stop palettes at
+edit reviewed properties on 14 shader node types, and replace complete 1–32-stop palettes at
 root or nested paths. Matched procedural-material variants verify protected group data and
 measured failure recovery. The inspector distinguishes stored ramp interpolation from Blender's
 effective RGB/HSV/HSL behavior. Broader properties, animation and production look acceptance
 remain open; no arbitrary Python or file write is needed for these edits.
+
+Unreleased [face shading and material assignment](docs/field-scanner-workflow.md) adds per-face
+smooth flags during mesh creation and `mesh.set_face_attributes` for fresh, bounded Edit Mode
+face selections. A reference-constrained field-scanner fixture now combines structured modeling,
+measured UVs, nested color/data textures, display variants and staged native recovery. It is
+development evidence, not complete 1.0 artist acceptance; painting, baking and delivery remain open.
 
 Unreleased `scene.snapshot` and `scene.compare` add bounded before/after evidence for named
 objects: transforms, hierarchy, visibility, base mesh geometry, UVs, weights, material slots
@@ -341,7 +347,7 @@ is identified above, and the feature table describes the published release.
 Blender's local recovery UI also has an add-on-only restore action, not an extra MCP tool.
 
 <!-- BEGIN GENERATED MCP TOOLS -->
-Current registry: **167 MCP tools**.
+Current registry: **168 MCP tools**.
 
 <details>
 <summary>core — 18 tools</summary>
@@ -498,7 +504,7 @@ Current registry: **167 MCP tools**.
 </details>
 
 <details>
-<summary>mesh — 16 tools</summary>
+<summary>mesh — 17 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
@@ -517,6 +523,7 @@ Current registry: **167 MCP tools**.
 | `mesh.mark_seams` | Mark or clear UV seams on selected edges of one local single-user Edit Mode mesh. |
 | `mesh.merge_by_distance` | Weld only selected vertices within an explicit local-space distance. |
 | `mesh.recalculate_normals` | Recalculate normals for the selected mesh region. |
+| `mesh.set_face_attributes` | Set smooth shading and/or an existing material-slot index on bounded referenced faces; material changes additionally require EDIT_MATERIALS. |
 | `mesh.subdivide_selected` | Subdivide selected edges without smoothing under a conservative growth budget. |
 
 </details>

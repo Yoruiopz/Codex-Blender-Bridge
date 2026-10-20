@@ -7,6 +7,7 @@ import sys
 import traceback
 from pathlib import Path
 
+import bmesh
 import bpy
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -102,6 +103,16 @@ def run():
         )
         assert exit_result["operation"]["undo_boundary_finalized"]
         assert exit_result["operation"]["undo_group"]["state"] == "finalized"
+        # Region extrusion must replace the attached base face, not retain an
+        # interior cap with three incident faces along every old boundary edge.
+        actual = bmesh.new()
+        actual.from_mesh(bpy.data.objects[cube.name].data)
+        try:
+            assert (len(actual.verts), len(actual.edges), len(actual.faces)) == (12, 20, 10)
+            assert all(edge.is_manifold for edge in actual.edges)
+            assert abs(actual.calc_volume(signed=True) - 9.) < .00001
+        finally:
+            actual.free()
         changed = runtime.dispatch("scene.compare", {"snapshot_id": before["snapshot_id"]})
         assert changed["status"] == "changed" and changed["coverage_complete"]
         assert {item["object"] for item in changed["changes"]} == {cube.name}
@@ -123,7 +134,6 @@ def run():
         assert bpy.context.view_layer.objects.active.name == active_before
         assert runtime.checkpoints.list()[0]["checkpoint_id"] == checkpoint["checkpoint_id"]
         # A failed tool inside the editor keeps its pre-session point available.
-        import bmesh
 
         runtime.dispatch("context.set_mode", {"object_name": "Cube", "mode": "EDIT"})
 
@@ -173,6 +183,35 @@ def run():
             runtime.dispatch("scene.compare", {"snapshot_id": original["snapshot_id"]})["status"]
             == "unchanged_within_scope"
         )
+        # Standalone open regions have different native base-retention semantics
+        # from an attached cube face. Do not fix the latter by deleting all bases.
+        for paired in (False, True):
+            vertices = [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]]
+            faces = [[0, 1, 2, 3]]
+            if paired:
+                vertices += [[2, 0, 0], [2, 1, 0]]
+                faces += [[1, 4, 5, 2]]
+            runtime.dispatch("mesh.create", {"object_name": "Standalone Region", "mesh_name": "Standalone Region Mesh",
+                                            "vertices": vertices, "faces": faces})
+            runtime.dispatch("context.set_mode", {"object_name": "Standalone Region", "mode": "EDIT"})
+            selection = runtime.dispatch("mesh.select_components", {"object_name": "Standalone Region", "element_type": "FACE", "indices": list(range(len(faces)))})
+            runtime.dispatch("mesh.extrude_selected", {"object_name": "Standalone Region", "offset": [0, 0, 1],
+                "selection_id": selection["selection"]["mesh_selection"]["selection_id"]})
+            runtime.dispatch("context.set_mode", {"object_name": "Standalone Region", "mode": "OBJECT"})
+            actual = bmesh.new()
+            actual.from_mesh(bpy.data.objects["Standalone Region"].data)
+            try:
+                assert len(actual.verts) == len(vertices) * 2
+                assert len(actual.faces) == (10 if paired else 6)
+                assert all(edge.is_manifold for edge in actual.edges)
+                assert abs(actual.calc_volume(signed=True) - (2 if paired else 1)) < 1e-5
+            finally:
+                actual.free()
+            for _ in range(2):
+                assert runtime.dispatch("checkpoint.undo_last", {"confirm_global_undo": True, "restore_snapshot": True})["snapshot_marker_verified"]
+            assert bpy.data.objects.get("Standalone Region") is None
+        assert sorted(obj.name for obj in bpy.context.selected_objects) == selected_before
+        assert bpy.context.view_layer.objects.active.name == active_before and bpy.context.mode == "OBJECT"
         blender_codex_bridge.unregister()
         print(
             "BLENDER_MESH_EDIT_RECOVERY_OK "
@@ -186,6 +225,7 @@ def run():
                     "permission_pause_and_emergency_gates_verified": True,
                     "partial_editor_failure_recovered": True,
                     "earlier_object_operation_recovers_separately": True,
+                    "attached_and_standalone_extrusion_topology_verified": True,
                     "project_saved": False,
                 }
             ),

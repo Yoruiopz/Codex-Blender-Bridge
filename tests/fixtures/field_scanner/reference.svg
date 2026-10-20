@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 560" role="img" aria-label="Original field scanner front side and top reference">
+  <title>Field scanner v1 — original three-view design reference</title>
+  <metadata>Canonical dimensions and component roles: brief.json. One Blender unit equals one metre in the fixture. This diagram is not measurement evidence.</metadata>
+  <defs>
+    <pattern id="grid" width="20" height="20" patternUnits="userSpaceOnUse"><path d="M20 0H0V20" fill="none" stroke="#25313d" stroke-width="0.5"/></pattern>
+    <marker id="arrow" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0 0 10 5 0 10" fill="#9ab6ce"/></marker>
+  </defs>
+  <rect width="1100" height="560" fill="#101923"/><rect x="22" y="80" width="1056" height="420" fill="url(#grid)"/>
+  <g font-family="Segoe UI, sans-serif" fill="#dce8f1">
+    <text x="34" y="38" font-size="22">FIELD SCANNER / V1</text><text x="34" y="61" font-size="12" fill="#9ab6ce">Original project-owned reference · numeric brief is authoritative · front = −Y · dimensions in mm</text>
+    <text x="220" y="107" font-size="15">FRONT</text><text x="572" y="107" font-size="15">RIGHT SIDE</text><text x="822" y="107" font-size="15">TOP</text>
+  </g>
+  <!-- Front: X horizontal, Z upward, 1.35 px/mm. Shell bottom z=0 at y=468. -->
+  <g transform="translate(260 468) scale(1.35 -1.35)" stroke="#101923" stroke-width="1">
+    <path d="M-72 9 -63 0 63 0 72 9 72 211 63 220 -63 220 -72 211Z" fill="#d88c2f"/>
+    <path d="M-66 11 -61 6 61 6 66 11 66 209 61 214 -61 214 -66 209Z" fill="#e9a545" stroke="#b77225"/>
+    <path d="M-55 218V260H55V218ZM-43 227H43V251H-43Z" fill="#303d48" fill-rule="evenodd"/>
+    <rect x="-56" y="110" width="112" height="82" rx="2" fill="#26333f"/>
+    <rect x="-50" y="116" width="100" height="70" fill="#123d62"/>
+    <path d="M-43 129 -30 129 -22 146 -12 138 0 157 12 142 25 150 43 150" fill="none" stroke="#64d1ec" stroke-width="2"/>
+    <path d="M-41 174H14M-41 169H-8M26 174H42M30 169H42" stroke="#b2e9f7" stroke-width="1.5"/>
+    <g fill="#25313b"><circle cx="-40" cy="52" r="10"/><circle cx="0" cy="52" r="10"/><circle cx="40" cy="52" r="10"/></g>
+    <g fill="#495863"><circle cx="-59" cy="24" r="3.2"/><circle cx="59" cy="24" r="3.2"/><circle cx="-59" cy="201" r="3.2"/><circle cx="59" cy="201" r="3.2"/></g>
+    <circle cx="-49" cy="202" r="3" fill="#61ce6c"/>
+    <path d="M-37 78H37M-37 83H37M-37 88H37M-37 93H37" stroke="#35414b" stroke-width="1.5"/>
+  </g>
+  <!-- Side: Y depth horizontal, Z upward. -->
+  <g transform="translate(616 468) scale(1.35 -1.35)" stroke="#101923" stroke-width="1">
+    <path d="M-21 0H21V220H-21Z" fill="#d88c2f"/><path d="M-19 8H-21V212H-19" fill="none" stroke="#b77225"/>
+    <rect x="-10" y="218" width="20" height="42" fill="#303d48"/>
+    <rect x="-25" y="110" width="6" height="82" fill="#26333f"/><rect x="-24.2" y="116.5" width="2.7" height="69" fill="#45a6ca"/>
+    <rect x="-30" y="42" width="11" height="20" rx="2" fill="#25313b"/>
+  </g>
+  <!-- Top: X horizontal, Y depth downward; handle and bezel thickness are visible. -->
+  <g transform="translate(875 194) scale(1.35)" stroke="#101923" stroke-width="1">
+    <rect x="-72" y="-21" width="144" height="42" fill="#d88c2f"/>
+    <rect x="-55" y="-10" width="110" height="20" fill="#303d48"/>
+    <rect x="-56" y="-25" width="112" height="6" fill="#26333f"/>
+  </g>
+  <g fill="none" stroke="#9ab6ce" stroke-width="1" marker-start="url(#arrow)" marker-end="url(#arrow)">
+    <path d="M162.8 491H357.2"/><path d="M130 468V117"/><path d="M575.5 491H644.35"/><path d="M817 266H933"/>
+  </g>
+  <g font-family="Segoe UI, sans-serif" fill="#9ab6ce" font-size="12">
+    <text x="238" y="513">144 mm</text><text x="91" y="298" transform="rotate(-90 91 298)">260 mm overall</text><text x="574" y="513">51 mm max depth</text>
+    <text x="813" y="291">86 × 24 mm clear loop</text><text x="785" y="331">100 × 70 mm bezel opening</text><text x="785" y="353">Glass sits 0.8 mm behind bezel</text><text x="785" y="375">3 controls · 40 mm centre spacing</text>
+    <text x="34" y="541">Reference geometry is illustrative. Inspect Blender dimensions, topology, clearance, UVs and protected state; review matched views separately.</text>
+  </g>
+</svg>

@@ -54,6 +54,7 @@ class _PreparedMesh:
     rotation: tuple[float, float, float]
     scale: tuple[float, float, float]
     rotation_mode: str
+    face_smooth: tuple[bool, ...] | None = None
 
 
 def _id_name(value: Any, parameter: str) -> str:
@@ -188,6 +189,12 @@ def _prepare_mesh_create(params: Mapping[str, Any]) -> _PreparedMesh:
         unique_faces.add(canonical_face)
         faces.append(indices)
 
+    smooth = params.get("face_smooth")
+    if smooth is not None:
+        smooth = _bounded_array(smooth, "face_smooth", _MAX_CREATE_FACES)
+        if len(smooth) != len(faces) or any(not isinstance(value, bool) for value in smooth):
+            raise invalid_argument("'face_smooth' must contain exactly one boolean per face.", parameter="face_smooth")
+        smooth = tuple(smooth)
     location = vector3(params.get("location"), "location", default=(0.0, 0.0, 0.0))
     rotation = vector3(params.get("rotation"), "rotation", default=(0.0, 0.0, 0.0))
     scale = vector3(params.get("scale"), "scale", default=(1.0, 1.0, 1.0))
@@ -212,6 +219,7 @@ def _prepare_mesh_create(params: Mapping[str, Any]) -> _PreparedMesh:
         rotation=rotation,
         scale=scale,
         rotation_mode=rotation_mode,
+        face_smooth=smooth,
     )
 
 
@@ -256,6 +264,10 @@ def create_mesh(context: ToolContext, params: Mapping[str, Any]) -> dict[str, An
                 ErrorCode.INVALID_ARGUMENT,
                 "Blender found invalid topology after structured prevalidation.",
             )
+        if prepared.face_smooth is not None:
+            mesh.polygons.foreach_set("use_smooth", prepared.face_smooth)
+            if any(polygon.use_smooth != smooth for polygon, smooth in zip(mesh.polygons, prepared.face_smooth, strict=True)):
+                raise BridgeError(ErrorCode.OPERATION_FAILED, "Blender did not retain the requested per-face shading flags.")
         mesh.update(calc_edges=True, calc_edges_loose=True)
         obj = bpy.data.objects.new(prepared.object_name, mesh)
         if obj.name != prepared.object_name:
@@ -291,6 +303,9 @@ def create_mesh(context: ToolContext, params: Mapping[str, Any]) -> dict[str, An
         "created": True,
         "object": obj.name,
         "mesh_data_name": mesh.name,
+        "face_shading": {"smooth_faces": sum(p.use_smooth for p in mesh.polygons),
+                         "flat_faces": sum(not p.use_smooth for p in mesh.polygons),
+                         "scope": "creation-time polygon smooth flags, not custom or split normals"},
         "affected_objects": [obj.name],
         "collections": [item.name for item in obj.users_collection],
         "mesh_counts": {
@@ -503,7 +518,12 @@ def extrude_selected(context: ToolContext, params: Mapping[str, Any]) -> dict[st
             "Face-region extrusion requires one or more selected faces.",
         )
     before = _mesh_counts(bm)
-    output = bmesh.ops.extrude_face_region(bm, geom=faces, use_keep_orig=False)
+    # Blender detects adjacency to unextruded faces through explicitly flagged
+    # input edges. Faces alone skip that branch and retain an interior base cap.
+    # Include the complete region edge set once; let native region extrusion
+    # handle standalone islands versus attached patches and attribute transfer.
+    edges = list(dict.fromkeys(edge for face in faces for edge in face.edges))
+    output = bmesh.ops.extrude_face_region(bm, geom=[*faces, *edges], use_keep_orig=False)
     extruded = list(output["geom"])
     new_vertices = [element for element in extruded if isinstance(element, bmesh.types.BMVert)]
     if any(offset):

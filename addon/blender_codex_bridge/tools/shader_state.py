@@ -23,6 +23,7 @@ SETTINGS = {
     "ShaderNodeMapRange": frozenset({"data_type", "interpolation_type", "clamp"}),
     "ShaderNodeClamp": frozenset({"clamp_type"}),
     "ShaderNodeNormalMap": frozenset({"space", "uv_map"}),
+    "ShaderNodeUVMap": frozenset({"uv_map", "from_instancer"}),
     "ShaderNodeVectorTransform": frozenset({"vector_type", "convert_from", "convert_to"}),
     "ShaderNodeBsdfPrincipled": frozenset({"distribution", "subsurface_method"}),
 }

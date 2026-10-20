@@ -113,6 +113,7 @@ OBJECT_TOOL_DATA: tuple[tuple[str, str, bool, tuple[str, ...]], ...] = (
 OBJECT_TOOL_NAMES = tuple(item[0] for item in OBJECT_TOOL_DATA)
 
 MESH_TOOL_DATA: tuple[tuple[str, str, bool], ...] = (
+    ("mesh.set_face_attributes", "Set smooth shading and/or an existing material-slot index on bounded referenced faces; material changes additionally require EDIT_MATERIALS.", True),
     ("mesh.analyze", "Inspect bounded base-mesh topology, adjacent winding and triangle crossing/contact candidates with explicit completeness.", False),
     ("mesh.edge_ring_inspect", "Preview paginated measured edges and expected topology for a complete connected quad ring.", False),
     ("mesh.loop_cut", "Cut the entire connected quad ring with evenly spaced cuts, including unselected faces.", True),

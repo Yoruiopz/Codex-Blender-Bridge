@@ -15,6 +15,7 @@ def register_all(registry: ToolRegistry) -> None:
         compositor,
         constraints,
         core,
+        face_attributes,
         geometry_nodes,
         image_revisions,
         images,
@@ -54,6 +55,7 @@ def register_all(registry: ToolRegistry) -> None:
     objects.register_tools(registry)
     transforms.register_tools(registry)
     mesh.register_tools(registry)
+    face_attributes.register_tools(registry)
     mesh_analysis.register_tools(registry)
     mesh_loops.register_tools(registry)
     mesh_repair.register_tools(registry)

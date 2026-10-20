@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 
-from pydantic import StrictFloat, StrictInt
+from pydantic import Field, StrictBool, StrictFloat, StrictInt, StrictStr
 
 from ..tool_registry import ToolRegistry
 from ._common import MCPToolBinding, params
@@ -13,6 +13,13 @@ from ._common import MCPToolBinding, params
 class MeshTools:
     def __init__(self, registry: ToolRegistry) -> None:
         self.registry = registry
+
+    async def mesh_set_face_attributes(self, object_name: StrictStr, selection_id: StrictStr,
+                                       smooth: StrictBool | None = None,
+                                       material_index: Annotated[StrictInt, Field(ge=0, le=255)] | None = None) -> Any:
+        """Set reviewed face attributes on 1-20,000 non-hidden faces in one active local single-user Edit Mode mesh. Requires a fresh face selection reference. smooth changes polygon shading, not custom/split normals; material_index uses a non-empty existing object slot and additionally requires live EDIT_MATERIALS. No material is created, copied or edited. Readback and scoped failure restoration are measured; recheck topology/UVs/material assignment, inspect rollback evidence and capture the appearance."""
+        return await self.registry.call("mesh.set_face_attributes", params(object_name=object_name,
+            selection_id=selection_id, smooth=smooth, material_index=material_index))
 
     async def mesh_analyze(
         self, object_name: str, distance_tolerance: StrictFloat = 1e-6,
@@ -86,8 +93,9 @@ class MeshTools:
         rotation: list[float] | None = None,
         scale: list[float] | None = None,
         rotation_mode: str = "XYZ",
+        face_smooth: Annotated[list[StrictBool], Field(max_length=100_000)] | None = None,
     ) -> Any:
-        """Create an arbitrary mesh from fully prevalidated bounded topology arrays."""
+        """Create an arbitrary mesh from fully prevalidated bounded topology arrays. Optional face_smooth is one strict boolean per input face (up to 100,000), applied and read back before linking the new object. Omission uses native flat-face defaults. This is creation-time shading, not custom/split-normal editing. Verify topology, silhouette and shading after creation."""
 
         return await self.registry.call(
             "mesh.create",
@@ -102,6 +110,7 @@ class MeshTools:
                 rotation=rotation,
                 scale=scale,
                 rotation_mode=rotation_mode,
+                face_smooth=face_smooth,
             ),
         )
 
@@ -234,6 +243,7 @@ class MeshTools:
 
     def bindings(self) -> tuple[MCPToolBinding, ...]:
         return (
+            MCPToolBinding("mesh.set_face_attributes", self.mesh_set_face_attributes, self.mesh_set_face_attributes.__doc__ or ""),
             MCPToolBinding("mesh.analyze", self.mesh_analyze, self.mesh_analyze.__doc__ or ""),
             MCPToolBinding("mesh.edge_ring_inspect", self.mesh_edge_ring_inspect, self.mesh_edge_ring_inspect.__doc__ or ""),
             MCPToolBinding("mesh.loop_cut", self.mesh_loop_cut, self.mesh_loop_cut.__doc__ or ""),

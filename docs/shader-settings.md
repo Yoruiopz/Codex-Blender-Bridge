@@ -51,10 +51,11 @@ types return `NOT_IMPLEMENTED`; unknown properties/values on a reviewed type are
 | `ShaderNodeMapRange` | `data_type`, `interpolation_type`, `clamp` |
 | `ShaderNodeClamp` | `clamp_type` |
 | `ShaderNodeNormalMap` | `space`, `uv_map` |
+| `ShaderNodeUVMap` | `uv_map`, `from_instancer` |
 | `ShaderNodeVectorTransform` | `vector_type`, `convert_from`, `convert_to` |
 | `ShaderNodeBsdfPrincipled` | `distribution`, `subsurface_method` |
 
-Normal Map's `uv_map` accepts an empty name or validated non-control UTF-8 text up to 63 bytes.
+Normal Map and UV Map `uv_map` accept an empty name or validated non-control UTF-8 text up to 63 bytes.
 It does not create a UV layer or prove that every consuming mesh has that layer. Inspect the
 relevant mesh UV data before using a named map. Other shader settings, pointers, attributes,
 Script/IES and file paths are not exposed by this tool. Image Texture settings remain in
@@ -127,7 +128,7 @@ whole user goal or transitive scene preservation.
 
 ## Native evidence and remaining work
 
-`blender_shader_settings_smoke.py` exercises all 13 reviewed node types on Windows Blender
+`blender_shader_settings_smoke.py` exercises all 14 reviewed node types on Windows Blender
 4.5.1/5.1.2, root same-count comparisons, nested group isolation, native enums, one/32 stops,
 tied positions/HDR, permission/pause/stop and direct-animation rejection. It injects real
 partial ramp failures, measures local restoration versus unresolved mutation, and verifies
