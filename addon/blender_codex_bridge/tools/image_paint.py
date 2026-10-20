@@ -10,7 +10,7 @@ from typing import Any
 
 from ..errors import BridgeError, ErrorCode, invalid_argument
 from ..permissions import Permission
-from ..utils import reject_unknown_params, require_blender
+from ..utils import bool_param, reject_unknown_params, require_blender
 from . import images
 from . import pixel_brush as brush
 
@@ -31,14 +31,21 @@ def _require(context: Any, image: Any | None = None, *, modifying=False) -> None
         required.append(Permission.ACCESS_EXTERNAL_FILES)
     context.require(*required)
     images._check(context)
+    state = getattr(context, "state", None)
+    if modifying and state is not None:
+        flags = state.snapshot()
+        if flags["emergency_stopped"]:
+            raise BridgeError(ErrorCode.EMERGENCY_STOPPED, "Pixel modifications were emergency-stopped before their next safe action.")
+        if flags["paused"]:
+            raise BridgeError(ErrorCode.AGENT_PAUSED, "Pixel modifications were paused before their next safe action.")
 
 
-def _read(context: Any, image: Any, *, modifying=False) -> tuple[array, int, int, dict | None]:
+def _read(context: Any, image: Any, *, modifying=False, maximum_pixels=brush.MAX_PIXELS) -> tuple[array, int, int, dict | None]:
     _require(context, image, modifying=modifying)
     file = images.binding_source(context, image)
     if (image.source, image.type) not in {("FILE", "IMAGE"), ("GENERATED", "UV_TEST")} or image.channels != 4:
         raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Pixel tools support loaded simple four-channel RGBA images only.")
-    width, height = brush.size(*(int(value) for value in image.size))
+    width, height = brush.size(*(int(value) for value in image.size), maximum_pixels=maximum_pixels)
     if len(image.pixels) != width * height * 4:
         raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Pixel buffer length does not match its complete RGBA dimensions.")
     _require(context, image, modifying=modifying)
@@ -59,6 +66,7 @@ def _new(context: Any, bpy: Any, name: str, width: int, height: int, role: str, 
     before = len(bpy.data.images)
     try:
         image = bpy.data.images.new(name, width, height, alpha=True, float_buffer=True)
+        _require(context, modifying=True)
         image.use_fake_user = False
         image.colorspace_settings.name = SPACES[role]
         image.alpha_mode = "STRAIGHT"
@@ -68,8 +76,10 @@ def _new(context: Any, bpy: Any, name: str, width: int, height: int, role: str, 
         _require(context, modifying=True)
         actual, w, h, _ = _read(context, image, modifying=True)
         if (image.name != name or image.source != "GENERATED" or not image.is_float or image.alpha_mode != "STRAIGHT"
-                or image.colorspace_settings.name != SPACES[role] or (w, h) != (width, height) or actual != values):
+                or image.colorspace_settings.name != SPACES[role] or (w, h) != (width, height)
+                or brush.digest(actual) != brush.digest(values)):
             raise RuntimeError("Generated image metadata or complete float32 pixels did not match readback")
+        _require(context, modifying=True)
         return image
     except Exception as exc:
         LOGGER.exception("New pixel image failed; attempting only owned zero-user image cleanup")
@@ -115,7 +125,7 @@ def source_role(source: Any) -> tuple[str, bool]:
     return ("DATA" if space == "Non-Color" else "COLOR"), space == "sRGB"
 
 
-def prepare_paint(context: Any, params: Mapping[str, Any]) -> dict:
+def prepare_paint(context: Any, params: Mapping[str, Any], *, allow_large=False) -> dict:
     reject_unknown_params(params, {"image_name", "new_name", "strokes"})
     source_name, name = images._name(params, "image_name"), images._name(params, "new_name")
     # Validate syntax/counts without Blender/file work first. The actual image
@@ -131,8 +141,9 @@ def prepare_paint(context: Any, params: Mapping[str, Any]) -> dict:
     # that can acquire a buffer. No implicit decode/reload or color-role mutation.
     images.binding_source(context, source)
     role, srgb = source_role(source)
-    width, height = brush.size(*(int(value) for value in source.size))
-    strokes, tests = brush.prepare(params.get("strokes"), width, height, role)
+    width, height = brush.size(*(int(value) for value in source.size), maximum_pixels=brush.MAX_PIXELS if allow_large else brush.MAX_SYNC_PIXELS)
+    strokes, tests = brush.prepare(params.get("strokes"), width, height, role,
+                                   check=lambda: _require(context, source, modifying=True))
     values, _, _, source_file = _read(context, source, modifying=True)
     before = brush.digest(values)
     return {"source": source, "source_name": source_name, "name": name, "width": width, "height": height,
@@ -175,7 +186,8 @@ def paint_version(context: Any, params: Mapping[str, Any]) -> dict:
 
 
 def inspect_pixels(context: Any, params: Mapping[str, Any]) -> dict:
-    reject_unknown_params(params, {"image_name", "samples"})
+    reject_unknown_params(params, {"image_name", "samples", "include_statistics"})
+    statistics = bool_param(params, "include_statistics", True)
     image = images.image_exact(require_blender(), images._name(params, "image_name"))
     raw = params.get("samples", [])
     if not isinstance(raw, list) or len(raw) > 64:
@@ -185,11 +197,11 @@ def inspect_pixels(context: Any, params: Mapping[str, Any]) -> dict:
         if not isinstance(point, list) or len(point) != 2 or any(isinstance(v, bool) or not isinstance(v, int) or not 0 <= v < brush.MAX_DIMENSION for v in point):
             raise invalid_argument("Each pixel sample must be two nonnegative integers.")
         points.append(point)
-    values, width, height, file = _read(context, image)
+    values, width, height, file = _read(context, image, maximum_pixels=brush.MAX_SYNC_PIXELS if statistics else brush.MAX_PIXELS)
     if any(x >= width or y >= height for x, y in points):
         raise invalid_argument("A pixel sample lies outside the image dimensions.")
     minima, maxima, invalid = [math.inf] * 4, [-math.inf] * 4, 0
-    for index, value in enumerate(values):
+    for index, value in enumerate(values if statistics else ()):
         if index % 16384 == 0:
             _require(context, image)
         if not math.isfinite(value):
@@ -198,12 +210,14 @@ def inspect_pixels(context: Any, params: Mapping[str, Any]) -> dict:
         channel = index % 4
         minima[channel], maxima[channel] = min(minima[channel], value), max(maxima[channel], value)
     return {"image": images._summary(image), "pixel_count": width * height,
-            "pixels_sha256_float32_le": brush.digest(values), "nonfinite_channels": invalid,
-            "channel_min": [v if math.isfinite(v) else None for v in minima],
-            "channel_max": [v if math.isfinite(v) else None for v in maxima],
+            "pixels_sha256_float32_le": brush.digest(values), "nonfinite_channels": invalid if statistics else None,
+            "channel_min": [v if math.isfinite(v) else None for v in minima] if statistics else None,
+            "channel_max": [v if math.isfinite(v) else None for v in maxima] if statistics else None,
             "samples": [{"pixel": p, "rgba": [v if math.isfinite(v) else None for v in values[(p[1] * width + p[0]) * 4:(p[1] * width + p[0]) * 4 + 4]]} for p in points],
             "value_space": "Raw stored-buffer floats, not display values or an implicit color transform",
-            "source_file_at_read": file, "analysis_complete": True, "appearance_verified": False}
+            "source_file_at_read": file, "analysis_complete": statistics, "appearance_verified": False,
+            "statistics_included": statistics, "pixel_digest_complete": True,
+            "analysis_scope": "Complete pixel digest/samples and channel statistics" if statistics else "Complete pixel digest/samples only; channel ranges/nonfinite scan omitted"}
 
 
 def register_tools(registry: Any) -> None:
@@ -212,4 +226,4 @@ def register_tools(registry: Any) -> None:
     registry.register("image.paint_version", paint_version, toolset="materials", modifies=True, permissions=(Permission.EDIT_MATERIALS,),
                       description="Paint bounded UV-image brush strokes into a new image version, preserving the original; FILE sources also require approved-path/external-file consent.")
     registry.register("image.inspect_pixels", inspect_pixels, toolset="materials", permissions=(Permission.INSPECT_SCENE,),
-                      description="Inspect bounded loaded RGBA pixels with complete digest/ranges and up to 64 samples; FILE sources require approved-path/external-file consent, no implicit loading.")
+                      description="Inspect complete loaded RGBA digests/samples; default statistics <=1M pixels, explicit include_statistics=false for <=16M with no ranges/nonfinite scan; FILE reads require approved-path/external-file consent.")

@@ -11,8 +11,10 @@ from itertools import pairwise
 from typing import Any
 
 from ..errors import invalid_argument
+from .brush_tiles import TILE_SIZE, comparison_rows, segment_tiles
 
-MAX_PIXELS = 1_048_576
+MAX_PIXELS = 16_777_216
+MAX_SYNC_PIXELS = 1_048_576
 MAX_DIMENSION = 4096
 MAX_STROKES = 32
 MAX_POINTS = 128
@@ -38,11 +40,11 @@ def vector(value: Any, name: str, size: int, maximum: float = 1.) -> tuple[float
     return tuple(number(item, name, 0., 1. if index == 3 else maximum) for index, item in enumerate(value))
 
 
-def size(width: Any, height: Any) -> tuple[int, int]:
+def size(width: Any, height: Any, *, maximum_pixels: int = MAX_PIXELS) -> tuple[int, int]:
     if any(isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= MAX_DIMENSION for value in (width, height)):
         raise invalid_argument("Image dimensions must be integers from 1 to 4096.")
-    if width * height > MAX_PIXELS:
-        raise invalid_argument("Pixel operations are bounded to 1,048,576 pixels per image.")
+    if width * height > maximum_pixels:
+        raise invalid_argument(f"This pixel operation is bounded to {maximum_pixels:,} pixels; use cooperative paint jobs or digest-only inspection for larger images.")
     return width, height
 
 
@@ -50,10 +52,10 @@ def digest(values: array) -> str:
     if sys.byteorder != "little":  # SHA representation is portable, not host-endian.
         values = array("f", values)
         values.byteswap()
-    return hashlib.sha256(values.tobytes()).hexdigest()
+    return hashlib.sha256(values).hexdigest()
 
 
-def prepare(strokes: Any, width: int, height: int, role: str) -> tuple[list[dict], int]:
+def prepare(strokes: Any, width: int, height: int, role: str, *, check=lambda: None) -> tuple[list[dict], int]:
     if not isinstance(strokes, list) or not 1 <= len(strokes) <= MAX_STROKES:
         raise invalid_argument("Supply 1-32 typed brush strokes.")
     prepared, tests, segments = [], 0, 0
@@ -77,14 +79,18 @@ def prepare(strokes: Any, width: int, height: int, role: str) -> tuple[list[dict
         if segments > MAX_SEGMENTS:
             raise invalid_argument("A paint operation supports at most 256 brush segments.")
         regions = []
+        tiles: dict[tuple[int, int], list] = {}
         for a, b in pairs:
             box = (max(0, math.floor(min(a[0], b[0]) - radius)), max(0, math.floor(min(a[1], b[1]) - radius)),
                    min(width, math.ceil(max(a[0], b[0]) + radius)), min(height, math.ceil(max(a[1], b[1]) + radius)))
-            tests += max(0, box[2] - box[0]) * max(0, box[3] - box[1])
-            if tests > MAX_TESTS:
-                raise invalid_argument("Brush bounding regions exceed 2,000,000 candidate pixel tests; split the logical work explicitly.")
+            for key, clipped in segment_tiles(a, b, box, radius):
+                check()
+                tests += (clipped[2] - clipped[0]) * (clipped[3] - clipped[1])
+                if tests > MAX_TESTS:
+                    raise invalid_argument("Brush tiled regions exceed 2,000,000 candidate pixel tests; split the logical work explicitly.")
+                tiles.setdefault(key, []).append((a, b, clipped))
             regions.append((a, b, box))
-        prepared.append({"regions": regions, "radius": radius, "color": color, "opacity": opacity,
+        prepared.append({"regions": regions, "tiles": tiles, "radius": radius, "color": color, "opacity": opacity,
                          "hardness": hardness, "blend": blend})
     return prepared, tests
 
@@ -105,65 +111,90 @@ def paint_steps(source: array, width: int, height: int, strokes: list[dict], rol
         if srgb:
             for channel in range(3):
                 result[offset + channel] = srgb_to_linear(source[offset + channel])
-    baseline = array("f", result)
+    touched: set[tuple[int, int]] = set()
+    max_coverage_bytes = 0
     for stroke_index, stroke in enumerate(strokes):
         # Maximum coverage per stroke avoids repeated opacity buildup at joins,
         # repeated points and overlapping segments. Separate strokes do accumulate.
-        coverage: dict[int, float] = {}
         visits = 0
-        total_visits = sum((box[2] - box[0]) * (box[3] - box[1]) for _a, _b, box in stroke["regions"])
+        applied = 0
+        total_visits = sum((box[2] - box[0]) * (box[3] - box[1]) for regions in stroke["tiles"].values() for _a, _b, box in regions)
+        total_apply = sum(min(TILE_SIZE, width - tx) * min(TILE_SIZE, height - ty) for tx, ty in stroke["tiles"])
         radius, hardness = stroke["radius"], stroke["hardness"]
-        for a, b, (x0, y0, x1, y1) in stroke["regions"]:
-            dx, dy = b[0] - a[0], b[1] - a[1]
-            length2 = dx * dx + dy * dy
-            for y in range(y0, y1):
-                for x in range(x0, x1):
-                    visits += 1
-                    if visits % 256 == 0:
-                        check()
-                        yield {"phase": "coverage", "stroke": stroke_index + 1, "strokes": len(strokes), "completed": visits, "total": total_visits}
-                    vx, vy = x + .5 - a[0], y + .5 - a[1]
-                    t = max(0., min(1., (vx * dx + vy * dy) / length2)) if length2 else 0.
-                    distance = math.hypot(vx - t * dx, vy - t * dy)
-                    if distance >= radius:
-                        continue
-                    fraction = 1. if distance <= radius * hardness else (radius - distance) / (radius * (1 - hardness))
-                    value = max(0., min(1., fraction * fraction * (3 - 2 * fraction))) * stroke["opacity"]
-                    index = y * width + x
-                    if value > coverage.get(index, 0.):
-                        coverage[index] = value
-        color = stroke["color"]
-        for count, (index, value) in enumerate(coverage.items()):
-            if count % 256 == 0:
-                check()
-                yield {"phase": "applying", "stroke": stroke_index + 1, "strokes": len(strokes), "completed": count, "total": len(coverage)}
-            offset = index * 4
-            if role == "DATA":
-                for channel in range(4):
-                    result[offset + channel] = result[offset + channel] * (1 - value) + color[channel] * value
-            else:
-                value *= color[3]
-                if stroke["blend"] == "ERASE_ALPHA":
-                    result[offset + 3] *= 1 - value
+        for (tx, ty), regions in stroke["tiles"].items():
+            touched.add((tx, ty))
+            tw, th = min(TILE_SIZE, width - tx), min(TILE_SIZE, height - ty)
+            coverage = array("d", [0.]) * (tw * th)
+            max_coverage_bytes = max(max_coverage_bytes, len(coverage) * coverage.itemsize)
+            for a, b, (x0, y0, x1, y1) in regions:
+                dx, dy = b[0] - a[0], b[1] - a[1]
+                length2 = dx * dx + dy * dy
+                for y in range(y0, y1):
+                    for x in range(x0, x1):
+                        visits += 1
+                        if visits % 256 == 0:
+                            check()
+                            yield {"phase": "coverage", "stroke": stroke_index + 1, "strokes": len(strokes), "completed": visits, "total": total_visits}
+                        vx, vy = x + .5 - a[0], y + .5 - a[1]
+                        t = max(0., min(1., (vx * dx + vy * dy) / length2)) if length2 else 0.
+                        distance = math.hypot(vx - t * dx, vy - t * dy)
+                        if distance >= radius:
+                            continue
+                        fraction = 1. if distance <= radius * hardness else (radius - distance) / (radius * (1 - hardness))
+                        value = max(0., min(1., fraction * fraction * (3 - 2 * fraction))) * stroke["opacity"]
+                        index = (y - ty) * tw + x - tx
+                        if value > coverage[index]:
+                            coverage[index] = value
+            color = stroke["color"]
+            for index, value in enumerate(coverage):
+                if applied % 256 == 0:
+                    check()
+                    yield {"phase": "applying", "stroke": stroke_index + 1, "strokes": len(strokes), "completed": applied, "total": total_apply}
+                applied += 1
+                if not value:
+                    continue
+                offset = ((ty + index // tw) * width + tx + index % tw) * 4
+                if role == "DATA":
+                    for channel in range(4):
+                        result[offset + channel] = result[offset + channel] * (1 - value) + color[channel] * value
                 else:
-                    alpha = value + result[offset + 3] * (1 - value)
-                    if alpha:
-                        for channel in range(3):
-                            result[offset + channel] = (color[channel] * value + result[offset + channel] * result[offset + 3] * (1 - value)) / alpha
-                    result[offset + 3] = alpha
+                    value *= color[3]
+                    if stroke["blend"] == "ERASE_ALPHA":
+                        result[offset + 3] *= 1 - value
+                    else:
+                        alpha = value + result[offset + 3] * (1 - value)
+                        if alpha:
+                            for channel in range(3):
+                                result[offset + channel] = (color[channel] * value + result[offset + channel] * result[offset + 3] * (1 - value)) / alpha
+                        result[offset + 3] = alpha
+            del coverage
     changed = []
     count = 0
-    for offset in range(0, len(result), 4):
-        if offset % 1024 == 0:
+    total_compare = sum(min(TILE_SIZE, width - tx) * min(TILE_SIZE, height - ty) for tx, ty in touched)
+    baseline_rgb = array("f", [0., 0., 0.])
+    for compared, index in enumerate(comparison_rows(touched, width, height)):
+        offset = index * 4
+        if compared % 256 == 0:
             check()
-            yield {"phase": "comparing", "completed": offset // 4, "total": width * height}
-        if result[offset:offset + 4] != baseline[offset:offset + 4]:
+            yield {"phase": "comparing", "completed": compared, "total": total_compare}
+        if srgb:
+            for channel in range(3):
+                baseline_rgb[channel] = srgb_to_linear(source[offset + channel])
+            differs = any(result[offset + channel] != baseline_rgb[channel] for channel in range(3)) or result[offset + 3] != source[offset + 3]
+        else:
+            differs = any(result[offset + channel] != source[offset + channel] for channel in range(4))
+        if differs:
             count += 1
             if len(changed) < 64:
                 changed.append([offset // 4 % width, offset // 4 // width])
     check()
     return result, {"painted_pixels": count, "changed_pixel_examples": changed,
-                    "examples_truncated": count > len(changed), "source_srgb_converted_to_linear": srgb}
+                    "examples_truncated": count > len(changed), "source_srgb_converted_to_linear": srgb,
+                    "coverage_tile_size": TILE_SIZE, "coverage_scratch_max_bytes": max_coverage_bytes,
+                    "baseline_copy_bytes": 0, "comparison_pixels": total_compare,
+                    "pixel_array_bytes": len(result) * result.itemsize,
+                    "private_pixel_buffers_peak_estimate_bytes": 2 * len(result) * result.itemsize + max(max_coverage_bytes, 12),
+                    "memory_estimate_scope": "Source/output pixel arrays and bounded coverage/comparison scratch only; excludes plan metadata, Blender/native/GPU/undo/file buffers and allocator overhead."}
 
 
 def paint(source: array, width: int, height: int, strokes: list[dict], role: str, *, srgb=False, check=lambda: None) -> tuple[array, dict]:

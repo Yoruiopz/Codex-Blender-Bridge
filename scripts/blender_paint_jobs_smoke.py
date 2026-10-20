@@ -309,4 +309,5 @@ def setup():
     return None
 
 
-bpy.app.timers.register(setup, first_interval=1.)
+if __name__ == "__main__":
+    bpy.app.timers.register(setup, first_interval=1.)

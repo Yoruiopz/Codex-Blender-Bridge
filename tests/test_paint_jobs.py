@@ -301,3 +301,19 @@ def test_polling_does_not_evict_operation_history_and_async_jobs_cannot_nest_in_
     assert not batch.is_batch_supported(context.registry.get("image.paint_job_start"))
     with pytest.raises(env.module.BridgeError, match="batch-supported"):
         batch.batch_plan(context, {"steps": [{"method": "image.paint_job_start", "params": {}}]})
+
+
+@pytest.mark.parametrize("stage", ["output", "coverage"])
+def test_controlled_private_allocation_failure_does_not_allocate_scene_image(jobs, monkeypatch, stage):
+    env = jobs
+    start(env)
+    original = env.paint.brush.array
+    def allocate(kind, *args):
+        if kind == ("f" if stage == "output" else "d"):
+            raise MemoryError("controlled owned-buffer allocation fault, not host pressure")
+        return original(kind, *args)
+    monkeypatch.setattr(env.paint.brush, "array", allocate)
+    result = finish(env)
+    assert result["state"] == "FAILED" and result["error"]["code"] == "OPERATION_FAILED"
+    assert not result["execution_started"] and result["error"]["context"]["possible_mutation"] is False
+    assert len(env.images) == 1 and not env.manager.history[0].prepared and env.manager.history[0].work is None

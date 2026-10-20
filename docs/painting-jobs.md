@@ -29,7 +29,7 @@ Do not issue dependent work against the output name before completion and verifi
 
 | Tool | Blender permission | Contract |
 | --- | --- | --- |
-| `image.paint_job_start` | `EDIT_MATERIALS`; FILE sources also need approved-path and `ACCESS_EXTERNAL_FILES` consent | Same typed brush/image bounds as `image.paint_version`, plus finite 1–300 second job deadline |
+| `image.paint_job_start` | `EDIT_MATERIALS`; FILE sources also need approved-path and `ACCESS_EXTERNAL_FILES` consent | Typed brushes, up to 16,777,216 pixels/4,096 per axis, finite 1–300 second job deadline; sync painting stays <=1M |
 | `jobs.inspect` | `INSPECT_SCENE` | State, monotonic revision, phase-local progress, final result or structured failure/recovery evidence |
 | `jobs.list` | `INSPECT_SCENE` | 1–32 summaries, newest active then terminal; explicit truncation |
 | `jobs.cancel` | No scene-edit grant | Requests internal cancellation, including while paused; does not authorize deletion or promise rollback |
@@ -96,9 +96,22 @@ or separately consented `image.remove` is needed. Unexpected consumers prevent f
 Copying source/native buffers, array allocation, complete final source/file validation, image
 creation/update/readback and undo operations are bounded but **not preemptible**. Their time
 is outside the CPU-slice target. There is no real-time UI, maximum cancellation-latency or memory-
-pressure guarantee. Maximum image size remains 1,048,576 pixels, 4,096 per axis; candidate work
-remains capped at 2,000,000. Larger/tiled images and production throughput remain required 1.0
-work, not an accepted ceiling. This does not implement surface-projected painting, masks,
+pressure guarantee. Jobs and canvas creation now support 16,777,216 pixels (4K square),
+4,096 per axis. Synchronous paint and default full inspector statistics remain capped at 1M;
+explicit `image.inspect_pixels(include_statistics=false)` reads complete large digests/samples
+without a range/nonfinite scan. A large digest is complete evidence of stored bytes, not proof
+of finite values or artistic correctness. Candidate work remains capped at 2,000,000, using
+conservative 64×64 segment bands with maximum per-stroke float64 coverage, at most 32 KiB
+coverage scratch and no whole-image normalized baseline. Changed-pixel examples remain in
+global row-major order. `workload` and final results expose scoped pixel-buffer estimates,
+excluding plan metadata/native/GPU/undo/file/allocator memory; these are not process caps.
+This is tile-bounded brush scratch, not out-of-core storage: full frozen source and output
+arrays remain. At 4K square those two float32 RGBA arrays alone total 512 MiB.
+
+Use an explicit longer deadline when needed; e.g. `time_limit_seconds=300` for the 4K fixture.
+The CPU-slice preference is a responsiveness/work-share choice, not permission to exceed the
+job deadline. 8K/UDIM, real memory-pressure and broader production throughput remain mandatory
+1.0 work, not an accepted final ceiling. This does not implement surface-projected painting, masks,
 sculpt/vertex/weight brushes, native bake jobs, packing or durable pixel delivery.
 
 ## Evidence
@@ -117,3 +130,13 @@ boundaries, schemas, permission separation, batch exclusion and history preserva
 These fixtures prove the documented bounded painting lifecycle, not all JOB-01, full PAINT-01,
 full artist capability or release readiness. Broader lifecycle/production/artist gates remain
 in the [1.0 plan](plan-1.0.md) and [acceptance ledger](release-1.0-readiness.md).
+
+The `large_paint` fixture adds a real 4096² canvas/job, complete digest-only inspection and
+independent numeric samples, explicit material binding, protected-state/capture comparisons,
+interleaved-transform-preserving undo and cancellation after observed CPU progress. It probes
+the whole isolated process's resident/peak memory rather than substituting array estimates.
+On Windows it refuses the test before allocation if less than 8 GiB host RAM is available;
+it never forces global memory pressure or opens a visible fallback. This headroom guard is a
+test requirement, not a guarantee about all user scenes or an accepted production RAM minimum.
+Run with `--case large_paint --timeout 480` through the non-interrupting runner. An actual
+native error/insufficient headroom is a failed check, not evidence that the workflow passed.

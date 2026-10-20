@@ -13,10 +13,10 @@ space or binding. New image names must be unique non-control UTF-8, at most 63 b
 
 | Tool | Inputs beyond the exact image name | Blender permission |
 | --- | --- | --- |
-| `image.create` | `new_name`, `width`, `height`, optional `role="COLOR"`, `color=[0,0,0,1]` | `EDIT_MATERIALS` |
+| `image.create` | `new_name`, `width`, `height`, optional `role="COLOR"`, `color=[0,0,0,1]`; up to 4K square | `EDIT_MATERIALS` |
 | `image.paint_version` | `image_name`, `new_name`, complete `strokes` | `EDIT_MATERIALS`; FILE sources also need `ACCESS_EXTERNAL_FILES` and approved-path preflight |
 | `image.paint_job_start` | Same brush inputs plus `time_limit_seconds=60`; inspect/cancel by returned job ID | Same edit/file grants; separate polling needs `INSPECT_SCENE` |
-| `image.inspect_pixels` | `image_name`, optional `samples=[[x,y],...]` | `INSPECT_SCENE`; FILE sources also need `ACCESS_EXTERNAL_FILES` and approved-path preflight |
+| `image.inspect_pixels` | `image_name`, optional `samples=[[x,y],...]`, `include_statistics=true`; explicit false for larger digest-only reads | `INSPECT_SCENE`; FILE sources also need `ACCESS_EXTERNAL_FILES` and approved-path preflight |
 
 Successful generated image creation/painting needs no external-file, raw-Python, deletion or project-save grant.
 Verification inside a mutator uses its editing grant; it does not secretly require the separate
@@ -88,11 +88,29 @@ vertex/weight brush workflows and baking; do not describe this subset as all pai
 
 ## Bounds, failure and verification
 
-Dimensions are 1–4,096 each, at most **1,048,576 pixels** total. A request accepts 1–32
-strokes, 1–128 points per stroke, 256 total segments and **2,000,000 candidate pixel tests**
-summed from clipped segment bounding rectangles. Even overlapping rectangles count against
-the work budget. Shape/count/role/footprint validation precedes allocation. Split larger
-logical work explicitly; these bounds are not an accepted production-scale ceiling for 1.0.
+Dimensions are 1–4,096 each. Generated canvas creation and cooperative paint jobs support
+**16,777,216 pixels** (4K square). Synchronous `image.paint_version` remains limited to
+**1,048,576 pixels**; use jobs above that size. Full inspector channel statistics retain the
+same 1M limit; explicit `include_statistics=false` permits complete 16M digests/samples without
+the channel-range/nonfinite scan. Native copying/allocation/readback and checkpoint calls remain
+non-preemptible, even when CPU painting is cooperative. Larger work can need a longer explicit
+job deadline; do not confuse it with the Blender-only CPU-slice setting.
+
+A request accepts 1–32 strokes, 1–128 points per stroke, 256 total segments and
+**2,000,000 candidate pixel tests**, summed from clipped segment rectangles within conservative
+64×64 tile-row bands. A long diagonal no longer scans its entire enclosing rectangle. Repeated/
+overlapping segment regions still count separately. Shape/count/role/footprint validation and
+cancellation checks precede the owned pixel copy. This is not a distance-based approximation:
+each retained candidate uses the same pixel-center capsule and maximum-coverage math.
+
+Coverage scratch is at most **32 KiB** of float64 values, preserving the prior double-precision
+stroke semantics. There is no full normalized baseline array: only union tiles are compared
+against the frozen source, with explicit float32 sRGB normalization when needed. Examples keep
+global row-major order. Digests hash the contiguous array buffer without making a second whole
+bytes image on little-endian hosts. Pixel-buffer estimates exclude Python plan metadata,
+Blender/native/GPU/undo/file storage and allocator overhead; they are not memory caps.
+Split work exceeding the candidate budget explicitly. 8K/UDIM, memory-pressure and broader
+production throughput acceptance remain required 1.0 work, not an accepted final ceiling.
 
 CPU painting checks cancellation/live grants during source normalization, coverage and pixel
 application. Native buffer transfers/allocation/update are bounded but not interruptible.
@@ -112,10 +130,18 @@ for `image.remove`; the agent cannot grant itself deletion permission. Unexpecte
 cleanup even when deletion is permitted. Failed postallocation source
 verification retains the new image for reinspection/recovery instead of claiming rollback.
 Detailed errors stay local; structured failures retain normal logical history/checkpoint data.
+Ordinary canvas/version mutation safe points recheck live pause/emergency state too, including
+immediately after native allocation and after readback/hash verification. A reentrant stop is
+not reported as success; denied cleanup retains possible-mutation and finalized-boundary evidence
+for explicitly confirmed recovery. Read-only pixel inspection remains available while paused.
 
 `image.inspect_pixels` returns a SHA-256 digest of every stored RGBA float in little-endian
-float32 representation, complete finite-channel ranges/nonfinite counts, and at most 64
-requested integer samples. Nonfinite sample/range values become null, never invalid JSON.
+float32 representation, optional complete finite-channel ranges/nonfinite counts, and at most
+64 requested integer samples. Default `include_statistics=true` keeps the existing complete
+statistics contract. Explicit false returns `pixel_digest_complete=true`,
+`statistics_included=false`, `analysis_complete=false`, null ranges/nonfinite count and an
+explicit scope description. It does not certify all pixels finite. Nonfinite samples/ranges
+become null, never invalid JSON.
 It does not return full pixel arrays or silently convert raw storage values to display colors.
 A complete digest is not an artistic verdict or proof that a FILE buffer matches its current
 disk source. Metadata inspection remains separate through `image.inspect`.

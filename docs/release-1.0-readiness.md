@@ -101,6 +101,14 @@ covered by this guard and still require the audit above.
 
 ## Cooperative painting lifecycle progress
 
+The [tile-bounded 4K increment](plan-1.0.md#2026-10-21--tile-bounded-coverage-4k-paint-jobs-and-explicit-inspection-scope)
+adds 4096² canvases/jobs, complete large digest-only inspection, scoped memory estimates and
+direct canvas pause/emergency safe points. Both 1,278-test SDK suites and the source-matched
+60-case Windows Blender matrix pass. Native 4K jobs still measured roughly 37–42 s and
+status-poll tail stalls near eight seconds here; full source/output arrays and native/GPU/undo
+memory remain. Tile scratch and logical release are not production latency or memory-pressure
+acceptance. Surface projection, masks, out-of-core/UDIM, broad paint and full artist gates remain open.
+
 For the newer bounded painting lifecycle, see [cooperative painting jobs](painting-jobs.md)
 and the dated [execution evidence](plan-1.0.md#2026-10-20--cooperative-paint-jobs-transport-ownership-and-guarded-publication).
 Actual loopback/timer tests on Windows Blender 4.5.1/5.1.2 prove source-frozen progress,

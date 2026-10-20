@@ -11,10 +11,10 @@ from ._common import MCPToolBinding, params
 from .image_paint import ImagePaintTools
 
 MATERIAL_TOOL_DATA: tuple[tuple[str, str, bool, tuple[str, ...]], ...] = (
-    ("image.create", "Create a bounded new floating-point linear-color/data texture without overwriting or writing files.", True, ("EDIT_MATERIALS",)),
+    ("image.create", "Create a new float linear-color/data canvas up to 4096/axis and 16,777,216 pixels; native transfer is not preemptible, no overwrite/file writes.", True, ("EDIT_MATERIALS",)),
     ("image.paint_version", "Paint bounded UV-image strokes into a new version, retaining original pixels; FILE reads need approved-folder/external-file consent.", True, ("EDIT_MATERIALS",)),
-    ("image.paint_job_start", "Accept one cooperative source-frozen paint job; poll final evidence, keep owner connected, native commit is not preemptible.", True, ("EDIT_MATERIALS",)),
-    ("image.inspect_pixels", "Inspect complete bounded loaded RGBA pixel digests/ranges and up to 64 samples without implicit loading; FILE reads need external-file consent.", False, ("INSPECT_SCENE",)),
+    ("image.paint_job_start", "Accept one cooperative source-frozen tiled paint job up to 16,777,216 pixels; poll evidence, keep owner connected, native commit is not preemptible.", True, ("EDIT_MATERIALS",)),
+    ("image.inspect_pixels", "Inspect complete RGBA digests/samples; default statistics <=1M pixels, explicit include_statistics=false for <=16M (no ranges/nonfinite scan); FILE reads need external-file consent.", False, ("INSPECT_SCENE",)),
     ("image.inspect", "Inspect bounded image metadata/direct users without loading unloaded buffers.", False, ("INSPECT_SCENE",)),
     ("image.load", "Load a new bounded PNG/JPEG image from Blender's user-approved texture folder; no implicit reuse or file writes.", True, ("EDIT_MATERIALS", "ACCESS_EXTERNAL_FILES")),
     ("image.remove", "Remove one explicitly confirmed unused image datablock, never its source file.", True, ("EDIT_MATERIALS", "DELETE_OBJECTS")),

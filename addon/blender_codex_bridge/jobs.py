@@ -62,6 +62,7 @@ class PaintJob:
     operation_id: str | None = None
     in_commit: bool = False
     in_tick: bool = False
+    workload: dict = field(default_factory=dict)
 
     def summary(self) -> dict:
         return {"job_id": self.job_id, "kind": "image.paint_version", "request_id": self.request_id,
@@ -70,7 +71,7 @@ class PaintJob:
                 "created_at": self.created_at, "result": self.result, "error": self.error,
                 "execution_started": self.execution_started, "undo_boundary_created": self.boundary_created,
                 "undo_boundary_finalized": self.boundary_finalized, "operation_id": self.operation_id,
-                "verification_required": True, "durable": False}
+                "verification_required": True, "durable": False, "workload": dict(self.workload)}
 
 
 class PaintJobs:
@@ -108,11 +109,18 @@ class PaintJobs:
                               {"active_job_id": self.active.job_id})
         time_limit = pixel_brush.number(time_limit, "time_limit_seconds", 1., 300.)
         started = time.monotonic()
-        prepared = image_paint.prepare_paint(context, params)
+        prepared = image_paint.prepare_paint(context, params, allow_large=True)
         lifetime = getattr(context, "request_lifecycle", None) or RequestLifetime.local()
         job = PaintJob("job_" + uuid.uuid4().hex, getattr(context, "request_id", ""), prepared["source_name"], prepared["name"],
                        lifetime, started + time_limit, prepared, _identity(prepared["source"]), _metadata(prepared["source"]),
                        prepared["source"].source == "FILE", started=started)
+        pixel_bytes = prepared["width"] * prepared["height"] * 16
+        job.workload = {"image_size": [prepared["width"], prepared["height"]],
+                        "frozen_source_pixel_bytes": pixel_bytes, "candidate_pixel_tests": prepared["tests"],
+                        "coverage_tile_size": pixel_brush.TILE_SIZE,
+                        "private_pixel_buffers_peak_estimate_bytes": 2 * pixel_bytes + pixel_brush.TILE_SIZE**2 * 8,
+                        "estimate_excludes": "Plan metadata, Blender/native/GPU/undo/file buffers and allocator overhead",
+                        "large_image_requires_job": prepared["width"] * prepared["height"] > pixel_brush.MAX_SYNC_PIXELS}
         self._check(job, context)
         images._check(context)
         self.active = job

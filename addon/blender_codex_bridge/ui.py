@@ -375,6 +375,12 @@ if bpy is not None:
                 jobs.prop(preferences, "paint_job_budget_ms")
             for job in runtime.jobs.list(limit=3)["jobs"]:
                 jobs.label(text=f"{job['state']}: {job['new_image'][:36]}")
+                workload = job["workload"]
+                if workload:
+                    size = workload["image_size"]
+                    jobs.label(text=f"{size[0]} x {size[1]} pixels; {workload['candidate_pixel_tests']} candidates")
+                    jobs.label(text=f"Private pixel estimate: {workload['private_pixel_buffers_peak_estimate_bytes'] / 1048576:.1f} MiB")
+                    jobs.label(text="Excludes native/GPU/undo buffers")
                 progress = job["progress"]
                 jobs.label(text=f"{progress['phase']}: {progress['completed']}/{progress['total']}")
                 if not job["terminal"]:

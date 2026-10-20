@@ -4,7 +4,16 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StrictFloat, StrictInt, StrictStr
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictFloat,
+    StrictInt,
+    StrictStr,
+)
 
 from ._common import MCPToolBinding
 
@@ -38,7 +47,7 @@ class ImagePaintTools:
 
     async def image_create(self, new_name: StrictStr, width: Dimension, height: Dimension,
                            role: Literal["COLOR", "DATA"] = "COLOR", color: RGBA | None = None) -> Any:
-        """Create a NEW unique local generated float RGBA texture in Object Mode, up to 4096/axis and 1,048,576 pixels. COLOR is straight-alpha scene-linear Rec.709 RGB [0,16]; DATA is Non-Color RGBA [0,1]. Alpha [0,1] in both. Default opaque black. Normal creation needs EDIT_MATERIALS, not file/Python/save/deletion grants. Removing a failed owned allocation additionally needs live DELETE_OBJECTS; denied cleanup retains the image with possible-mutation evidence for confirmed recovery. No overwrite, binding, packing or file write. Verify pixels, bind explicitly and capture appearance; unsaved image data/history is not durable delivery."""
+        """Create a NEW unique local generated float RGBA texture in Object Mode, up to 4096/axis and 16,777,216 pixels (4K square). Native allocation/transfers/readback are not preemptible or included in job CPU budgets. COLOR is straight-alpha scene-linear Rec.709 RGB [0,16]; DATA is Non-Color RGBA [0,1]. Alpha [0,1] in both. Default opaque black. EDIT_MATERIALS required, not file/Python/save/deletion grants. Failed owned allocation cleanup additionally needs live DELETE_OBJECTS; denied cleanup retains possible-mutation/recovery evidence. No overwrite, binding, packing or file write. Use image.paint_job_start above 1,048,576 pixels; inspect with include_statistics=false for larger digests/samples. Independently verify pixels, appearance and recovery; unsaved images/history are not durable delivery."""
         values = {"new_name": new_name, "width": width, "height": height, "role": role}
         if color is not None:
             values["color"] = color
@@ -51,14 +60,16 @@ class ImagePaintTools:
                                          "strokes": [stroke.model_dump() for stroke in strokes]})
 
     async def image_inspect_pixels(self, image_name: StrictStr,
-                                   samples: Annotated[list[Pixel], Field(max_length=64)] | None = None) -> Any:
-        """Inspect already-loaded local simple RGBA buffers up to 1,048,576 pixels: full float32 little-endian digest, finite channel ranges/counts and up to 64 exact [x,y] samples from bottom-left origin. Raw stored floats, not display values or implicit color conversion. INSPECT_SCENE required; FILE data also needs approved path and ACCESS_EXTERNAL_FILES. No lazy loading/reload, pixels returned wholesale, mutation or appearance certification."""
-        return await self.registry.call("image.inspect_pixels", {"image_name": image_name, "samples": samples or []})
+                                   samples: Annotated[list[Pixel], Field(max_length=64)] | None = None,
+                                   include_statistics: StrictBool = True) -> Any:
+        """Inspect already-loaded local simple RGBA buffers. Default include_statistics=true supports <=1,048,576 pixels and full digest/channel ranges/nonfinite counts. Explicit false allows <=16,777,216 pixels (4096/axis) for a COMPLETE float32 little-endian digest and up to 64 exact bottom-left [x,y] samples, but returns null ranges/nonfinite counts and analysis_complete=false: no statistics or finite-pixel certification. Raw stored floats, not display values or color conversion. INSPECT_SCENE required; FILE reads also need approved path and ACCESS_EXTERNAL_FILES. Native whole-buffer copying/hash are bounded but not preemptible. No lazy loading/reload, arrays returned wholesale, mutation or appearance certification."""
+        return await self.registry.call("image.inspect_pixels", {"image_name": image_name, "samples": samples or [],
+                                                               "include_statistics": include_statistics})
 
     async def image_paint_job_start(self, image_name: StrictStr, new_name: StrictStr,
                                    strokes: Annotated[list[BrushStroke], Field(min_length=1, max_length=32)],
                                    time_limit_seconds: Annotated[StrictFloat, Field(ge=1, le=300, allow_inf_nan=False)] = 60.) -> Any:
-        """Accept one source-frozen image.paint_version job, NOT a completed painting. Same brush/image/consent limits as the synchronous tool. Poll jobs.inspect/list (INSPECT_SCENE); retain the owning connection until terminal. CPU brush phases yield between main-thread slices. Cancellation/disconnect/deadline/emergency stop discards precommit work; pause holds it but deadline continues. Source identity/metadata/pixels and live grants are rechecked before one native undo-guarded publication in Object Mode. A missing native undo boundary refuses publication. Source copying, final validation, native image creation and readback are bounded but not preemptible. Late failure may retain an image when DELETE_OBJECTS cleanup is denied; inspect possible_mutation and finalized recovery flags, never assume CANCELLED means rollback. Session-local, not durable, one active job; no batch nesting, automatic binding, Python, saving or general bake jobs. Verify new/old pixels and appearance independently after SUCCEEDED."""
+        """Accept one source-frozen image paint job, NOT a completed painting. Supports <=16,777,216 pixels (4096/axis); synchronous painting remains <=1,048,576. Same brush/consent/color rules. 64x64 double-precision coverage tiles and conservative segment bands bound scratch work; 2M candidate tests, 32 strokes/256 segments. Large jobs may need an explicit larger time_limit_seconds (up to 300), not a larger private CPU-slice setting. Poll jobs.inspect/list (INSPECT_SCENE), retain owner connection until terminal. Workload reports pixel-buffer estimates excluding plan metadata/native/GPU/undo memory, NOT a process memory cap. Pause holds private CPU work while deadline continues; cancel/disconnect/deadline/emergency discards precommit work. Source identity/metadata/animation/pixels and live grants are rechecked before one native undo-guarded Object Mode publication. Native copying/allocation/update/readback/validation and undo are not preemptible. Late failures can retain an image when DELETE_OBJECTS cleanup is denied; inspect possible_mutation and recovery flags, never assume CANCELLED means rollback. Session-local, one active job, no batch nesting, automatic binding, saving or generic bake queue. After SUCCEEDED inspect large new/old digests with include_statistics=false, bind explicitly, capture and verify recovery."""
         return await self.registry.call("image.paint_job_start", {"image_name": image_name, "new_name": new_name,
             "strokes": [stroke.model_dump() for stroke in strokes], "time_limit_seconds": time_limit_seconds})
 

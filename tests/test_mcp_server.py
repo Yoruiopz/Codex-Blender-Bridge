@@ -129,6 +129,7 @@ def test_sdk_enforces_annotated_bounds_and_strict_types_before_forwarding():
                 ("jobs.list", {"limit": 33}),
                 ("jobs.inspect", {"job_id": "not-a-job"}),
                 ("image.create", {"new_name": "Canvas", "width": True, "height": 4}),
+                ("image.inspect_pixels", {"image_name": "Canvas", "include_statistics": "false"}),
                 ("image.paint_job_start", {"image_name": "Canvas", "new_name": "Painted", "strokes": [brush], "time_limit_seconds": 301}),
                 ("image.paint_job_start", {"image_name": "Canvas", "new_name": "Painted", "strokes": [{**brush, "radius_pixels": 257.}]}),
             ):
@@ -138,4 +139,6 @@ def test_sdk_enforces_annotated_bounds_and_strict_types_before_forwarding():
             assert not result.is_error and calls[0][0] == "image.paint_job_start"
             assert calls[0][1]["strokes"][0]["radius_pixels"] == 2.
             assert calls[0][1]["time_limit_seconds"] == 60.
+            result = await client.call_tool("image.inspect_pixels", {"image_name": "Canvas", "include_statistics": False})
+            assert not result.is_error and calls[1][1]["include_statistics"] is False
     asyncio.run(scenario())

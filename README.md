@@ -122,6 +122,13 @@ explicit; native transfers are not preemptible and late failures may retain an i
 confirmed recovery. One active bounded job, no batch nesting or durable/general bake queue.
 This advances responsive artist workflows without claiming full 1.0 coverage.
 
+The tiled kernel now supports 4K-square canvases and cooperative jobs, with at most 32 KiB of
+coverage scratch, conservative diagonal bands and no whole-image baseline copy. Synchronous
+painting/full channel statistics remain <=1M pixels; use `include_statistics=false` for complete
+large digests/samples, with omitted statistics reported explicitly. Native transfers/undo still
+block at bounded stages and memory estimates exclude Blender/GPU/undo storage. See the
+[large-image workflow and limits](docs/painting-jobs.md), not a production real-time guarantee.
+
 Unreleased [nested shader-group tools](docs/shader-groups.md) add group creation, typed interface
 sockets, binding, one-instance copies and confirmed unused removal. Existing `nodes.*` tools now
 accept an explicit `group_path`. Ownership checks follow parent groups to material users; copying
@@ -506,11 +513,11 @@ Current registry: **175 MCP tools**.
 
 | Tool | What it does |
 | --- | --- |
-| `image.create` | Create a bounded new floating-point linear-color/data texture without overwriting or writing files. |
+| `image.create` | Create a new float linear-color/data canvas up to 4096/axis and 16,777,216 pixels; native transfer is not preemptible, no overwrite/file writes. |
 | `image.inspect` | Inspect bounded image metadata/direct users without loading unloaded buffers. |
-| `image.inspect_pixels` | Inspect complete bounded loaded RGBA pixel digests/ranges and up to 64 samples without implicit loading; FILE reads need external-file consent. |
+| `image.inspect_pixels` | Inspect complete RGBA digests/samples; default statistics <=1M pixels, explicit include_statistics=false for <=16M (no ranges/nonfinite scan); FILE reads need external-file consent. |
 | `image.load` | Load a new bounded PNG/JPEG image from Blender's user-approved texture folder; no implicit reuse or file writes. |
-| `image.paint_job_start` | Accept one cooperative source-frozen paint job; poll final evidence, keep owner connected, native commit is not preemptible. |
+| `image.paint_job_start` | Accept one cooperative source-frozen tiled paint job up to 16,777,216 pixels; poll evidence, keep owner connected, native commit is not preemptible. |
 | `image.paint_version` | Paint bounded UV-image strokes into a new version, retaining original pixels; FILE reads need approved-folder/external-file consent. |
 | `image.remove` | Remove one explicitly confirmed unused image datablock, never its source file. |
 | `material.assign` | Assign a material to an exact object slot or append it. |

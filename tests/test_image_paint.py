@@ -117,7 +117,8 @@ def test_segment_and_candidate_budgets_reject_preallocation(kernel):
         )
     with pytest.raises(Exception, match="DATA"):
         kernel.prepare([stroke(blend="ERASE_ALPHA")], 1, 1, "DATA")
-    for dimensions in ((True, 4), (4097, 1), (4096, 4096)):
+    assert kernel.size(4096, 4096) == (4096, 4096)
+    for dimensions in ((True, 4), (4097, 1), (4096, 4097)):
         with pytest.raises(type(kernel.invalid_argument("x"))):
             kernel.size(*dimensions)
 
@@ -381,7 +382,7 @@ def test_registry_permissions_and_modification_metadata(addon_package):
         {"role": "UNKNOWN"},
         {"color": [0, 0, 0, 2]},
         {"role": "DATA", "color": [1.1, 0, 0, 1]},
-        {"width": 4096, "height": 4096},
+        {"width": 4096, "height": 4097},
     ],
 )
 def test_invalid_new_image_parameters_never_allocate(paint_tools, change):
@@ -535,3 +536,63 @@ def test_cleanup_denial_retains_owned_image_and_reports_possible_mutation(paint_
         not caught.value.context["rollback_verified"] and caught.value.context["possible_mutation"]
     )
     assert caught.value.context["cleanup_permission_denied"] and images.get("Retained") is not None
+
+
+def test_digest_only_inspection_omits_statistics_without_claiming_analysis_complete(paint_tools):
+    module, context, images, _, _ = paint_tools
+    images[0].pixels.values[0] = math.nan
+    result = module.inspect_pixels(context, {"image_name": "Original", "samples": [[0, 0]], "include_statistics": False})
+    assert result["pixel_digest_complete"] and not result["analysis_complete"] and not result["statistics_included"]
+    assert result["nonfinite_channels"] is result["channel_min"] is result["channel_max"] is None
+    assert result["samples"][0]["rgba"][0] is None
+
+
+@pytest.mark.parametrize("value", [0, 1, "false", None])
+def test_statistics_control_requires_explicit_boolean(paint_tools, value):
+    module, context, _, _, _ = paint_tools
+    with pytest.raises(module.BridgeError):
+        module.inspect_pixels(context, {"image_name": "Original", "include_statistics": value})
+
+
+def test_large_statistics_and_sync_paint_refuse_before_buffer_copy(paint_tools, monkeypatch):
+    module, context, images, _, _ = paint_tools
+    images[0].size = [4096, 4096]
+    monkeypatch.setattr(images[0].pixels, "foreach_get", lambda _output: pytest.fail("large default buffer copy"))
+    with pytest.raises(module.BridgeError, match="1,048,576"):
+        module.inspect_pixels(context, {"image_name": "Original"})
+    with pytest.raises(module.BridgeError, match="1,048,576"):
+        module.paint_version(context, {"image_name": "Original", "new_name": "Denied", "strokes": [stroke()]})
+
+
+@pytest.mark.parametrize("flag,code", [("paused", "AGENT_PAUSED"), ("emergency_stopped", "EMERGENCY_STOPPED")])
+def test_direct_canvas_publication_observes_reentrant_stop_after_native_write(paint_tools, monkeypatch, flag, code):
+    module, context, images, _, grants = paint_tools
+    flags = {"paused": False, "emergency_stopped": False}
+    context.state = NS(snapshot=lambda: dict(flags))
+    grants["DELETE_OBJECTS"] = False
+    original = Image.update
+    def update(image):
+        original(image)
+        flags[flag] = True
+    monkeypatch.setattr(Image, "update", update)
+    with pytest.raises(module.BridgeError) as caught:
+        module.create_image(context, {"new_name": "Stopped Canvas", "width": 4, "height": 4})
+    assert caught.value.code == code and caught.value.context["possible_mutation"]
+    assert caught.value.context["cleanup_permission_denied"] and images.get("Stopped Canvas") is not None
+
+
+def test_stop_after_allocation_prevents_following_metadata_edits(paint_tools, monkeypatch):
+    module, context, images, _, grants = paint_tools
+    flags = {"paused": False, "emergency_stopped": False}
+    context.state = NS(snapshot=lambda: dict(flags))
+    grants["DELETE_OBJECTS"] = False
+    original = images.new
+    def allocate(*args, **kwargs):
+        image = original(*args, **kwargs)
+        flags["paused"] = True
+        return image
+    monkeypatch.setattr(images, "new", allocate)
+    with pytest.raises(module.BridgeError) as caught:
+        module.create_image(context, {"new_name": "Stopped Before Metadata", "width": 4, "height": 4, "role": "DATA"})
+    assert caught.value.code == "AGENT_PAUSED"
+    assert images.get("Stopped Before Metadata").colorspace_settings.name == "Linear Rec.709"

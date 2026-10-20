@@ -71,7 +71,7 @@ and “accepted for release” are separate states.
 | 14 / RC-01 | Compatibility, installation, upgrade and release audit | Resolve claimed matrix, test packaged bits and old-release upgrade; requires all capability and reliability evidence |
 
 The original sequence began with EVID-01, SAFE-01 and REC-01; their development increments
-are recorded below, not blanket release acceptance. Current focus (2026-10-20): ASSET-01 has
+are recorded below, not blanket release acceptance. Current focus (2026-10-21): ASSET-01 has
 bounded repair, loop modeling, UV authoring, measured UV-quality and mesh-winding/contact analysis,
 and a connected repair/unwrap/material fixture. LOOK-01 adds approved images, nested shader paths,
 group lifecycle and measured instance isolation. A logical-batch revision works at default undo
@@ -87,9 +87,10 @@ modeling, shell/display UVs, nested materials, texture variants and staged nativ
 PAINT-01 now includes generated linear/data canvases, bounded copy-on-write UV-image strokes,
 pixel digests/samples and a painted display revision in the reference workflow. Surface/viewport
 projection, masks, sculpt/vertex/weight brushes and complete paint acceptance remain open.
-JOB-01 now has bounded source-frozen [cooperative painting jobs](painting-jobs.md): progress/cancel,
-live source/consent revalidation and guarded publication. Next extend acceptance under memory pressure,
-production-scale/tiled work and mixed-editor interleaving before general native bake jobs; extend
+JOB-01 now has source-frozen [cooperative painting jobs](painting-jobs.md): progress/cancel,
+live source/consent revalidation, guarded publication and tile-bounded coverage for 4K canvases.
+Full source/output arrays remain; measured native tail stalls prevent real-time/production acceptance.
+Next extend acceptance under memory pressure, broader scale and mixed-editor interleaving before general native bake jobs; extend
 surface painting and dependency/durable-pixel lifecycle while retaining
 the remaining memory-pressure, mixed-editor/domain and durable recovery acceptance work.
 Keep SAFE-02/JOB-01 and the remaining
@@ -1061,3 +1062,70 @@ SAFE-02/character/animation/UV/asset lifecycle, persistent UX, delivery, install
 RC gates remain mandatory. This closes neither JOB-01 nor PAINT-01 nor the requested full-artist
 1.0 target. No user project/preference was saved, published 0.3.0 asset changed, version bumped,
 release published or repository visibility changed.
+
+## 2026-10-21 — tile-bounded coverage, 4K paint jobs and explicit inspection scope
+
+Replaced whole-stroke coverage dictionaries with 64×64 float64 coverage tiles (at most 32 KiB
+raw coverage), and whole-image normalized baselines with comparison over union tiles. Conservative
+segment-row bands prune a long diagonal's enclosing rectangle without approximating its pixel-center
+capsule. Stroke accumulation, join maxima, color/data/alpha math, exact float32 results and global
+row-major changed-pixel examples match the pre-tiled reference in 45 deterministic adversarial cases.
+Preparation checks cancellation; little-endian digests hash the contiguous buffer without a second
+whole bytes image. Scoped estimates are exposed in job workload/results and the panel, not asserted
+as process/GPU/undo caps. A controlled allocation-failure test proves no precommit scene image, not
+real host-memory-pressure acceptance. This is not out-of-core: two 4K float32 arrays still total 512 MiB.
+
+Canvas creation and cooperative painting now permit 4096²/16,777,216 pixels. Synchronous painting and
+default channel statistics remain <=1M. Explicit `image.inspect_pixels(include_statistics=false)`
+returns a complete large digest/samples with null statistics, `pixel_digest_complete=true` and
+`analysis_complete=false`; it never substitutes omitted ranges/nonfinite counts for a full analysis.
+Source identity/metadata/animation/pixels/file evidence, permissions, context/name conflict and
+checkpoint revalidation remain authoritative. Native readback compares complete float32 digests.
+
+A final regression exposed pre-existing direct canvas safe-point gaps: pause/emergency set during
+native publication could report success, and metadata edits could follow an allocation-time stop.
+Image mutator checks now observe live flags after allocation and at subsequent safe points, not
+only job gates. Native tests retain denied-cleanup images with truthful possible-mutation/finalized-
+boundary evidence and explicitly restore them. Read-only verification remains usable while paused.
+No deletion grant is invented, no unexpected consumer is unlinked, and no project/preference is saved.
+
+Validation: **190 focused tests**, then **1,278 tests on each** MCP SDK 2.0.0/2.2.0; lint, mypy
+(35 files), generated README inventory (**175 tools**), compilation, ZIP layout/CRC/new-module
+checks and whitespace validation passed. The final Windows Blender 4.5.1 LTS / 5.1.2 matrix passed
+**60/60** (28 background, 32 private-desktop UI) at
+`build/paint-tiles-final-matrix-20261021-2/report.json`. Baseline `8136ed9` plus this then-dirty
+implementation; all **143** Python source paths/bytes independently match fingerprint
+`97466e4fd56c630a2080c6bb4bfeb175d1d369ea986a673d65b8d648d72b8215`.
+Earlier passing matrices and deliberately failing stop regressions remain local, not substituted
+for the final source-matched evidence. Test UI never falls back onto the user's input desktop.
+
+The new 4K fixture uses real sockets/timers, independent center/outside samples and complete source/
+output digests, explicit material binding, protected scene assertions, cancellation after observed CPU
+progress and verified undo preserving an interleaved transform. Its 14 new captures were retained;
+painted views were reviewed, and protected before/after/recovered and pre-binding/recovered pairs
+are byte-identical on both versions. Of 170 prior PNG-path pairs, 157 are byte-identical, two render
+outputs are pixel-identical with differing PNG bytes, and 11 scanner views show the known rerun
+variation (133 changed UV pixels; material previews up to 1,002 changed pixels, max 5/255; wire
+up to five pixels/max 2). Those variants were re-reviewed; the underlying nondeterminism and
+production UV/look acceptance are not claimed resolved.
+
+At an explicit 8 ms CPU setting and 300 s deadline, the 4K stroke changed **531,832 pixels** across
+**937,980 candidates**. Full job wall times here were about **41.5 / 37.0 s**, creation **4.0 / 4.1 s**,
+status-poll medians **11.9 / 13.8 ms** but maxima **7.75 / 7.99 s**. Whole isolated-process peak working
+sets reached **1,614,106,624 / 1,739,960,320 bytes**; these include native/undo/staging and lifetime
+setup, not just array memory, and do not prove a cap or RSS return under pressure. The fixture
+requires 8 GiB available Windows host RAM before starting and fails rather than hiding insufficient
+headroom. No global pressure is induced. Replacing numeric readback comparison with hashing is
+byte-level verification, not evidence of a throughput improvement: native tail latency remains open.
+
+Graphify ran on the primary agent in `dino-s-workspace`. The broad query was clipped and mixed
+render code; exact `pixel_brush.py` symbols narrowed it to `prepare`, `digest` and `paint` in cloud
+`2a62da6`, while current source at/after `8136ed9` governed implementation. Local map `cce4bf0`
+remains stale, feedback was saved and the marker updated; no rebuild, extra agents or dependencies.
+
+Next prioritize measured native/source-copy/normalization tail latency and memory-pressure cases,
+then surface/viewport projection and masks in the reference workflow. Also retain 8K/UDIM,
+identity-preserving/durable pixels, sculpt/vertex/weight painting, full character/animation,
+procedural simulation/baking, SAFE-02, persistent UX, delivery and clean install/upgrade/RC gates.
+Neither JOB-01 nor PAINT-01 nor scenario B nor the full artist target is closed. Published 0.3.0
+assets, package versions and repository visibility are unchanged; no 1.0 release was published.
