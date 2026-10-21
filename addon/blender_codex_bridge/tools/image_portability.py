@@ -14,7 +14,7 @@ import math
 import struct
 import sys
 from array import array
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from contextlib import suppress
 from itertools import islice
 from typing import Any
@@ -33,12 +33,31 @@ MAX_PIXELS = brush.MAX_SYNC_PIXELS
 MAX_BYTES = 20 * 1024 * 1024
 MAX_USERS = 100
 REQUIRED = (Permission.EDIT_MATERIALS,)
+_BYTE_SCALE = array("f", [1. / 255.])[0]
+_BYTE_CHANNEL_BITS = frozenset(struct.pack("<f", index * _BYTE_SCALE) for index in range(256))
 
 
-def _gate(context: Any, image: Any | None = None) -> None:
-    context.require(*REQUIRED)
-    image_paint._require(context, image, modifying=True)
-    context.require(*REQUIRED)
+def _gate(context: Any, image: Any | None = None, *, extra_permissions: tuple = ()) -> None:
+    base = (*REQUIRED, *extra_permissions)
+    required = (*base, Permission.ACCESS_EXTERNAL_FILES) if image is not None and image.source == "FILE" else base
+    context.require(*required)
+    images._check(context)
+    # Permission providers and cancellation callbacks may change Blender state.
+    # The last provider must precede every callback-free state/scope check.
+    file_source = image is not None and image.source == "FILE"
+    required = (*base, Permission.ACCESS_EXTERNAL_FILES) if file_source else base
+    context.require(*required)
+    if image is not None and (image.source == "FILE") != file_source:
+        raise BridgeError(ErrorCode.OPERATION_FAILED, "Image source changed while checking live recovery permissions.")
+    lifetime = getattr(context, "request_lifecycle", None)
+    if lifetime is not None:
+        lifetime.check()
+    flags = context.state.snapshot()
+    if flags.get("emergency_stopped"):
+        raise BridgeError(ErrorCode.EMERGENCY_STOPPED, "Image recovery is emergency-stopped.")
+    if flags.get("paused"):
+        raise BridgeError(ErrorCode.AGENT_PAUSED, "Image recovery is paused.")
+    images._object_mode(require_blender())
 
 
 def _local(image: Any) -> None:
@@ -110,21 +129,33 @@ def _file_bytes(context: Any, image: Any) -> tuple[bytes, dict, str]:
     return bytes(data), {key: value for key, value in proof.items() if not key.startswith("_")}, str(path)
 
 
-def _cleanup(context: Any, bpy: Any, image: Any | None) -> tuple[bool, bool]:
+def _cleanup(context: Any, bpy: Any, image: Any | None, *, owned_fake: bool = False) -> tuple[bool, bool]:
     if image is None:
         return True, False
     try:
         context.require(Permission.DELETE_OBJECTS)
+        _gate(context, extra_permissions=(Permission.DELETE_OBJECTS,))
     except BridgeError as error:
         if error.code == ErrorCode.PERMISSION_DENIED.value:
             return False, True
         raise
     # The fake-user flag was created by this operation. Never unlink real users.
-    if image.users != int(bool(image.use_fake_user)):
+    if bool(image.use_fake_user) != owned_fake or image.users != int(owned_fake):
         return False, False
     image.use_fake_user = False
     bpy.data.images.remove(image, do_unlink=False)
     return True, False
+
+
+def _owned_version(context: Any, bpy: Any, image: Any, source: Any, name: str, *, owned_fake=False) -> None:
+    """Callbacks must not turn a new private version into a protected consumer."""
+    _gate(context, source)
+    images._object_mode(bpy)
+    if (bpy.data.images.get(name) != image or not images.local_editable(image)
+            or bool(image.use_fake_user) != owned_fake or image.users != int(owned_fake)
+            or bpy.data.user_map(subset={image}).get(image, ())):
+        raise BridgeError(ErrorCode.OPERATION_FAILED,
+                          "New packed version acquired changed ownership/consumers; further writes are refused.")
 
 
 def pack_version(context: Any, params: Mapping[str, Any]) -> dict:
@@ -141,7 +172,14 @@ def pack_version(context: Any, params: Mapping[str, Any]) -> dict:
     _local(source)
     if bpy.data.images.get(name) is not None:
         raise invalid_argument("The packed-version name already exists; overwrite/reuse/automatic rename is forbidden.")
-    values, width, height, source_file = image_paint._read(context, source, modifying=True, maximum_pixels=MAX_PIXELS)
+    if mode == "FILE_BYTES":
+        values, width, height, source_file = image_paint._read(context, source, modifying=True, maximum_pixels=MAX_PIXELS)
+    else:
+        # CURRENT_PIXELS reads only the already-loaded buffer. A vanished or
+        # changed external file must not prevent preserving these current bits.
+        # Live FILE consent remains required; no external-source proof is claimed.
+        values, width, height = _buffer(context, source)
+        source_file = None
     image_paint.source_role(source)
     original_identity, original_metadata = image_masks.identity(source), _metadata(source)
     original_digest = brush.digest(values)
@@ -166,6 +204,7 @@ def pack_version(context: Any, params: Mapping[str, Any]) -> dict:
         raise BridgeError(ErrorCode.OPERATION_FAILED, "Original image changed while preparing a packed version.")
     new = None
     created_image_name = None
+    owned_fake = False
     try:
         _gate(context, source)
         images._object_mode(bpy)
@@ -173,11 +212,17 @@ def pack_version(context: Any, params: Mapping[str, Any]) -> dict:
             raise invalid_argument("Packed-version name became occupied before allocation.")
         new = bpy.data.images.new(name, width, height, alpha=True, float_buffer=True)
         created_image_name = new.name
-        _gate(context, source)
-        new.source, new.filepath = "FILE", filepath
-        new.colorspace_settings.name, new.alpha_mode = colorspace, alpha_mode
+        _owned_version(context, bpy, new, source, name)
+        new.source = "FILE"
+        _owned_version(context, bpy, new, source, name)
+        new.filepath = filepath
+        _owned_version(context, bpy, new, source, name)
+        new.colorspace_settings.name = colorspace
+        _owned_version(context, bpy, new, source, name)
+        new.alpha_mode = alpha_mode
+        _owned_version(context, bpy, new, source, name)
         new.pack(data=payload, data_len=len(payload))
-        _gate(context, source)
+        _owned_version(context, bpy, new, source, name)
         if new.name != name or _packed(new) != payload:
             raise RuntimeError("New packed bytes/name did not match the explicit version")
         # These getters explicitly decode only this operation's packed memory.
@@ -189,7 +234,10 @@ def pack_version(context: Any, params: Mapping[str, Any]) -> dict:
         current_pixels_verified = mode == "CURRENT_PIXELS" and brush.digest(actual) == original_digest
         if mode == "CURRENT_PIXELS" and not current_pixels_verified:
             raise RuntimeError("Raw packed snapshot did not preserve every original float channel")
-        retained, w, h, _ = image_paint._read(context, source, modifying=True, maximum_pixels=MAX_PIXELS)
+        if mode == "FILE_BYTES":
+            retained, w, h, _ = image_paint._read(context, source, modifying=True, maximum_pixels=MAX_PIXELS)
+        else:
+            retained, w, h = _buffer(context, source)
         if (brush.digest(retained) != original_digest or (w, h) != (width, height)
                 or image_masks.identity(source) != original_identity or _metadata(source) != original_metadata):
             raise RuntimeError("Original image changed during packed-version allocation")
@@ -198,12 +246,21 @@ def pack_version(context: Any, params: Mapping[str, Any]) -> dict:
                     "alpha_mode": source.alpha_mode, "is_float": bool(source.is_float),
                     "pixels_sha256_float32_le": original_digest,
                     "packed_sha256": hashlib.sha256(payload).hexdigest()}
+        _owned_version(context, bpy, new, source, name)
         new[METADATA_KEY] = json.dumps(metadata, separators=(",", ":"), sort_keys=True)
+        _owned_version(context, bpy, new, source, name)
         new[OWNER_KEY] = source
+        _owned_version(context, bpy, new, source, name)
         new.use_fake_user = True  # Explicit retention; packed bytes, not this flag, preserve pixels.
-        _gate(context, source)
+        owned_fake = True
+        _owned_version(context, bpy, new, source, name, owned_fake=True)
         if new.name != name or not images.local_editable(new) or _packed(new) != payload:
             raise RuntimeError("Packed version identity/name/bytes changed before success")
+        original_check = array("f", [0.]) * len(values)
+        source.pixels.foreach_get(original_check)
+        if (brush.digest(original_check) != original_digest or image_masks.identity(source) != original_identity
+                or _metadata(source) != original_metadata):
+            raise RuntimeError("Original image changed at the final packed-version permission boundary")
         return {"created": True, "mode": mode, "image": images._summary(new), "original_image": source.name,
                 "packed_bytes": len(payload), "packed_sha256": metadata["packed_sha256"],
                 "source_pixels_sha256_float32_le": original_digest,
@@ -221,7 +278,7 @@ def pack_version(context: Any, params: Mapping[str, Any]) -> dict:
             with suppress(ReferenceError):
                 created_image_name = new.name
         try:
-            removed, denied = _cleanup(context, bpy, new)
+            removed, denied = _cleanup(context, bpy, new, owned_fake=owned_fake)
         except Exception:
             LOGGER.exception("Owned packed-version cleanup failed")
         raise BridgeError(exc.code if isinstance(exc, BridgeError) else ErrorCode.OPERATION_FAILED,
@@ -275,13 +332,14 @@ def _snapshot(snapshot: Any, target: Any) -> dict:
     return metadata
 
 
-def _snapshot_buffer(context: Any, snapshot: Any, metadata: dict) -> array:
+def _snapshot_buffer(context: Any, snapshot: Any, metadata: dict, *, check: Callable[[], None] | None = None) -> array:
     """Decode only our exact canonical packed layout, with no native/file getter.
 
     A .blend's custom properties are untrusted. Passing arbitrary packed bytes
     to native Image getters could fall back to a filepath; canonical in-memory
     parsing avoids granting such a reload through recovery.
     """
+    check = check or (lambda: _gate(context))
     payload = _packed(snapshot)
     width, height = metadata["width"], metadata["height"]
     header = pixel_codecs.exr_header(width, height, "EXR32_RAW", "DATA")
@@ -293,7 +351,7 @@ def _snapshot_buffer(context: Any, snapshot: Any, metadata: dict) -> array:
         raise invalid_argument("Snapshot scanline offsets changed.")
     values = array("f", [0.]) * (width * height * 4)
     for row, offset in enumerate(offsets):
-        _gate(context)
+        check()
         if struct.unpack_from("<ii", payload, offset) != (row, width * 16):
             raise invalid_argument("Snapshot scanline coordinates/length changed.")
         for plane, channel in enumerate((3, 2, 1, 0)):
@@ -304,10 +362,27 @@ def _snapshot_buffer(context: Any, snapshot: Any, metadata: dict) -> array:
                 channels.byteswap()
             target = (height - 1 - row) * width * 4 + channel
             values[target:target + width * 4:4] = channels
-    _gate(context)
+    check()
     if any(not math.isfinite(value) for value in values) or brush.digest(values) != metadata["pixels_sha256_float32_le"]:
         raise invalid_argument("Snapshot complete decoded channels do not match their raw digest.")
     return values
+
+
+def _storage_values(context: Any, values: array, *, is_float: bool, check: Callable[[], None] | None = None) -> None:
+    """Refuse lossy byte writes before touching the original's ImBuf.
+
+    Native byte getters use float32(byte * float32(1/255)), which differs by a
+    bit from Python's mathematical byte/255 for some channels. Snapshot metadata
+    is untrusted: a matching digest alone does not prove byte representability.
+    """
+    if is_float:
+        return
+    check = check or (lambda: _gate(context))
+    for index, value in enumerate(values):
+        if index % 4096 == 0:
+            check()
+        if struct.pack("<f", value) not in _BYTE_CHANNEL_BITS:
+            raise invalid_argument("Snapshot channels are not exact native byte-buffer values; lossy recovery is refused before writing.")
 
 
 def _scope(bpy: Any, target: Any, snapshot: Any, allow_shared: bool) -> dict:
@@ -346,11 +421,11 @@ def restore_pixels(context: Any, params: Mapping[str, Any]) -> dict:
     _local(snapshot)
     if not target.has_data:
         raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Durable restore currently requires an already-loaded original; missing/unloaded identity recovery remains open.")
-    if not target.is_float:
-        raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Identity-preserving restore is currently verified only for float target buffers; byte-buffer restoration remains open.")
+    image_paint.source_role(target)
     metadata = _snapshot(snapshot, target)
     before, width, height = _buffer(context, target)
     values = _snapshot_buffer(context, snapshot, metadata)
+    _storage_values(context, values, is_float=bool(target.is_float))
     if ((width, height) != (metadata["width"], metadata["height"])
             or target.source != metadata["source"] or target.colorspace_settings.name != metadata["colorspace"]
             or target.alpha_mode != metadata["alpha_mode"] or bool(target.is_float) != metadata["is_float"]
@@ -381,6 +456,13 @@ def restore_pixels(context: Any, params: Mapping[str, Any]) -> dict:
                 or _snapshot(snapshot, target) != metadata
                 or _scope(bpy, target, snapshot, allow_shared) != ownership):
             raise RuntimeError("Restoration inputs changed at the final permission boundary")
+        # Callbacks above can interleave manual edits without changing an
+        # already-dirty flag. Compare every current target channel after the
+        # last callback; this native read and the following write do not yield.
+        publication_before = array("f", [0.]) * len(before)
+        target.pixels.foreach_get(publication_before)
+        if brush.digest(publication_before) != brush.digest(before):
+            raise RuntimeError("Original pixels changed before restoration; newer work is preserved")
         started = True
         target.pixels.foreach_set(values)
         target.update()
@@ -402,7 +484,7 @@ def restore_pixels(context: Any, params: Mapping[str, Any]) -> dict:
                 "image_identity_preserved": True, "complete_pixels_verified": True,
                 "ownership": ownership, "project_saved": False, "snapshot_retained": True,
                 "file_written": False, "verification_required": True,
-                "scope": "Loaded float target, matching original ID/dimensions/roles; save explicitly for durability. Native undo, unloaded/byte/4K/Windows recovery remain unaccepted."}
+                "scope": "Loaded float or exact byte target, matching original ID/dimensions/roles; save explicitly for durability. Native undo, unloaded/4K/Windows recovery remain unaccepted."}
     except Exception as exc:
         LOGGER.exception("Pixel restoration failed; original/snapshot retained for inspection and confirmed recovery")
         raise BridgeError(exc.code if isinstance(exc, BridgeError) else ErrorCode.OPERATION_FAILED,
@@ -417,4 +499,4 @@ def register_tools(registry: Any) -> None:
     registry.register("image.pack_version", pack_version, permissions=REQUIRED, toolset="materials", modifies=True,
                       description="Create an explicit packed FILE_BYTES version or exact raw CURRENT_PIXELS snapshot; <=1M pixels, no save or binding.")
     registry.register("image.restore_pixels", restore_pixels, permissions=REQUIRED, toolset="materials", modifies=True,
-                      description="Restore a retained CURRENT_PIXELS snapshot into its exact loaded float original image ID, preserving consumers; <=1M pixels.")
+                      description="Restore a retained CURRENT_PIXELS snapshot into its exact loaded float/byte original image ID, preserving consumers; <=1M pixels.")

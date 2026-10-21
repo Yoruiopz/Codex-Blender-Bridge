@@ -10,7 +10,7 @@ status, permissions and recovery controls inside Blender.
 
 This is **alpha software**. Try it on a disposable scene or a copy of your project.
 The published **0.3.0** packages provide **108 MCP tools**. The current development branch
-has **229 registered tools**, including unreleased features and safety changes.
+has **246 registered tools**, including unreleased features and safety changes.
 Development builds still use 0.3.0 metadata; they are not the published release and must
 be installed as matching add-on/server builds from one checkout.
 
@@ -118,7 +118,7 @@ It is checked against the registry in CI. It does not describe the 108-tool 0.3.
 The local recovery UI also has an add-on-only action, not an extra MCP tool.
 
 <!-- BEGIN GENERATED MCP TOOLS -->
-Current registry: **229 MCP tools**.
+Current registry: **246 MCP tools**.
 
 <details>
 <summary>core — 29 tools</summary>
@@ -158,11 +158,16 @@ Current registry: **229 MCP tools**.
 </details>
 
 <details>
-<summary>animation — 7 tools</summary>
+<summary>animation — 12 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
+| `animation.action_bind` | Assign/clear an exact object Action/slot with expected old binding and explicit affected-object scope. |
 | `animation.action_copy` | Copy and bind an explicit independent active Action; source remains in this session, unused source retention across saves is not guaranteed. |
+| `animation.action_create` | Create an unbound OBJECT-slot Action with explicit fake-user retention; never saves. |
+| `animation.action_inspect` | Inspect one exact Action's bounded content, slots, direct references and save retention. |
+| `animation.action_remove` | Confirm removal of one unused unretained Action ID without unlinking or automatic recreation. |
+| `animation.action_update` | Rename/set fake-user retention on one Action; clearing retention additionally needs DELETE_OBJECTS. |
 | `animation.curve_edit` | Edit interpolation/easing/handles on at most 256 existing keyframes of one local unshared active-Action curve; at most 1024 curve points, no insertion or arbitrary RNA. |
 | `animation.inspect` | Inspect one object's bounded action, F-curves, keyframes, slots, and drivers. |
 | `animation.keyframe_delete` | Delete a keyframe from an explicit object RNA data path. |
@@ -173,7 +178,7 @@ Current registry: **229 MCP tools**.
 </details>
 
 <details>
-<summary>animation_layers — 8 tools</summary>
+<summary>animation_layers — 12 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
@@ -181,20 +186,26 @@ Current registry: **229 MCP tools**.
 | `drivers.add` | Create a non-scripted transform driver from explicit independent source objects. |
 | `drivers.remove` | Remove one exact object transform driver. |
 | `nla.add_strip` | Add an existing action as an explicit NLA strip on a new named track, with slot selection. |
+| `nla.clip_add` | Add one explicit Action/slot clip into an existing unlocked track without overlap or channel mapping. |
 | `nla.edit_strip` | Configure a named single-track CLIP strip or explicitly remove it. |
 | `nla.edit_track` | Rename, mute or lock an exact NLA track, or remove an unlocked empty track without deleting actions. |
 | `nla.push_down` | Push a standard active action into a new top NLA track, preserving its action/slot and frame range; rollback on failure. |
 | `nla.solo_track` | Set an exact track's solo state; replacing another solo requires explicit acknowledgement and unlocked tracks. |
+| `nla.track_reorder` | Reorder the complete explicit track permutation with native identities preserved; requires an existing NLA Editor. |
+| `nla.transition_add` | Create one real native transition between explicitly named adjacent gapped clips; requires an existing NLA Editor. |
+| `nla.transition_remove` | Confirm removal of exactly one native transition while preserving its neighboring clips and Action contents. |
 
 </details>
 
 <details>
-<summary>asset_delivery — 2 tools</summary>
+<summary>asset_delivery — 4 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
 | `asset.export` | Export a current previewed asset to an approved unused GLB/FBX path. |
 | `asset.export_preview` | Preview exact static/skinned asset scope and GLB/FBX format limits. |
+| `asset.import` | Import a current preview over frozen private source bytes into a new owned collection. |
+| `asset.import_preview` | Validate complete approved static GLB/FBX bytes and preview source/destination fingerprint. |
 
 </details>
 
@@ -289,7 +300,7 @@ Current registry: **229 MCP tools**.
 </details>
 
 <details>
-<summary>materials — 21 tools</summary>
+<summary>materials — 23 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
@@ -303,8 +314,10 @@ Current registry: **229 MCP tools**.
 | `image.paint_surface_job_start` | Accept one frozen-input surface paint job; private overlap/projection/visibility/painting yields after delivery, poll final pixel/recovery evidence. |
 | `image.paint_surface_version` | Project bounded orthographic world strokes/raw stencils through explicit opaque geometry into a NEW UV image; preserve inputs and verify pixels/appearance. |
 | `image.paint_version` | Paint bounded UV-image strokes with optional raw RGBA-channel mask/inversion/resampling into a new version; preserve both inputs, FILE reads need external-file consent. |
+| `image.recovery_preview` | Preview exact unloaded FILE image identity, packed replacement and complete bounded consumers; <=1M pixels. |
 | `image.remove` | Remove one explicitly confirmed unused image datablock, never its source file. |
-| `image.restore_pixels` | Restore a retained raw snapshot to its exact loaded float original image ID, preserving consumers; <=1M pixels. |
+| `image.restore_packed_snapshot` | Confirm current preview and reconstruct an unloaded original FILE Image ID by replacing packed bytes; <=1M pixels. |
+| `image.restore_pixels` | Restore a retained raw snapshot to its exact loaded float/byte original image ID, preserving consumers; <=1M pixels. |
 | `material.assign` | Assign a material to an exact object slot or append it. |
 | `material.copy_for_object` | Copy a material for one object slot without changing shared mesh data. |
 | `material.create` | Create a named material with optional nodes and viewport color. |
@@ -458,7 +471,7 @@ Current registry: **229 MCP tools**.
 </details>
 
 <details>
-<summary>scene_edit — 7 tools</summary>
+<summary>scene_edit — 11 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
@@ -468,6 +481,10 @@ Current registry: **229 MCP tools**.
 | `collection.rename` | Rename an explicit collection without collisions. |
 | `light.configure` | Configure a named Blender light's type, energy, color, and shape settings. |
 | `scene.configure` | Configure an explicit scene's camera, units, and gravity. |
+| `scene.variant.apply` | Apply an exact fresh preview with live consent, ownership and protected-state CAS checks. |
+| `scene.variant.capture` | Store exact current camera/light controls and protected static scene proof as Scene JSON without saving. |
+| `scene.variant.inspect` | Inspect bounded inert Scene cinematic records and exact library CAS. |
+| `scene.variant.preview` | Render matched current/candidate images and restore owned settings; issue a fresh session-bound apply token. |
 | `world.configure` | Create, assign, and configure a scene world and Background node. |
 
 </details>

@@ -58,3 +58,6 @@ uses `anim_offset=0`; its normal importer default shifts the timeline. Blender's
 can add a hidden bone-display Icosphere; target geometry is checked separately from support
 objects. This fixture is bounded geometry/deformation evidence, not material, artistic,
 cross-platform or full-version acceptance. Windows Blender 4.5/5.x acceptance remains open.
+
+Approved-source typed import has a separate [bounded static contract](asset-import.md),
+including source admission, owned native staging and fresh saved-project reopen evidence.

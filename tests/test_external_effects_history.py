@@ -129,3 +129,55 @@ def test_external_effect_history_obeys_existing_retention_bound(history_env):
         env.state.record_operation(tool="fixture", description=str(index), success=True,
             duration_ms=0., external_effects=env.effects)
     assert len(env.state.history(100)) == 3
+
+
+def test_managed_preview_pair_is_bounded_copied_and_inspection_redacted(history_env):
+    env = history_env
+    artifacts = [{"filepath": f"/managed/{name}.png", "file_sha256": name*64, "file_bytes": 512}
+                 for name in ("a", "b")]
+    effects = {"artifacts": artifacts, "native_undo_removes_external_file": False,
+               "render_result_replaced": True}
+    response = invoke(env, lambda *_: {"external_effects": effects})
+    assert response.ok
+    retained = env.state.history(1)[0]["external_effects"]
+    assert retained["artifacts"] == artifacts
+    assert retained["artifacts_truncated"] is False and retained["artifacts_incomplete"] is False
+    artifacts[0]["filepath"] = "caller changed"
+    assert retained["artifacts"][0]["filepath"] == "/managed/a.png"
+    env.grants["INSPECT_SCENE"] = False
+    denied = env.core.checkpoint_list(env.executor.context, {"limit": 1})["operation_history"][0]
+    assert denied["external_effects"] is None and denied["external_effects_redacted"]
+    assert "/managed/" not in str(denied) and "b"*64 not in str(denied)
+
+
+@pytest.mark.parametrize("effects", [{"render_result_replaced": True},
+    {"artifacts": [{"filepath": "/managed/preview.png", "file_sha256": None, "file_bytes": None}]}])
+def test_preview_effects_survive_failure_and_force_possible_mutation(history_env, effects):
+    env = history_env
+    def fail(*_):
+        raise env.errors.BridgeError("TIMEOUT", "preview interrupted",
+                                     {"possible_mutation": False, "external_effects": effects})
+    response = invoke(env, fail)
+    assert not response.ok and response.error["context"]["possible_mutation"]
+    assert response.error["context"]["verification_required"]
+    assert env.state.history(1)[0]["external_effects"]
+
+
+def test_artifact_list_does_not_traverse_nested_cyclic_or_unbounded_data(history_env):
+    env = history_env
+    item = {"filepath": "/managed/a.png", "file_sha256": "a"*64, "file_bytes": 1}
+    item["nested"] = item
+    parsed = env.state_mod.bounded_external_effects({"artifacts": [item]*10})
+    assert len(parsed["artifacts"]) == env.state_mod.MAX_EXTERNAL_ARTIFACTS == 4
+    assert parsed["artifacts_truncated"] is True
+    assert parsed["artifacts_incomplete"] is False
+    assert all(set(record) == {"filepath", "file_sha256", "file_bytes"} for record in parsed["artifacts"])
+
+
+def test_invalid_artifacts_remain_incomplete_without_fabricated_hashes(history_env):
+    env = history_env
+    parsed = env.state_mod.bounded_external_effects({"artifacts": [None,
+        {"filepath": "x"*4097, "file_sha256": "a"*64, "file_bytes": 1},
+        {"filepath": "/managed/retained.png", "file_sha256": "bad", "file_bytes": True}]})
+    assert parsed["artifacts_incomplete"] is True and parsed["artifacts_truncated"] is False
+    assert parsed["artifacts"] == [{"filepath": "/managed/retained.png"}]

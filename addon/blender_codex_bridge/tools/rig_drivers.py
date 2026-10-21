@@ -12,6 +12,7 @@ import logging
 import math
 from collections import deque
 from collections.abc import Mapping
+from functools import partial
 from itertools import islice
 from types import SimpleNamespace
 from typing import Any
@@ -20,6 +21,7 @@ from ..errors import BridgeError, ErrorCode, invalid_argument
 from ..permissions import Permission
 from ..tool_registry import ToolContext, ToolRegistry
 from ..utils import bool_param, int_param, reject_unknown_params, require_blender
+from . import _animation_scope
 from ._object_safety import require_local_editable_id, require_local_object
 from .shader_scope import name
 
@@ -38,12 +40,17 @@ def _check(context: ToolContext) -> None:
 
 def _gate(context: ToolContext) -> None:
     _check(context)
+    context.require(Permission.EDIT_ANIMATION)
+    _running(context)
+
+
+def _running(context: ToolContext) -> None:
+    """Check flags after the last permission provider, without invoking callbacks."""
     flags = context.state.snapshot()
     if flags.get("emergency_stopped"):
         raise BridgeError(ErrorCode.EMERGENCY_STOPPED, "Rig control mutation emergency-stopped.")
     if flags.get("paused"):
         raise BridgeError(ErrorCode.AGENT_PAUSED, "Rig control mutation paused.")
-    context.require(Permission.EDIT_ANIMATION)
 
 
 def _key(owner: Any) -> int:
@@ -52,6 +59,8 @@ def _key(owner: Any) -> int:
 
 def _object(bpy: Any, raw: Any) -> Any:
     exact = name(raw, "object_name")
+    if len(bpy.context.scene.objects) > 65536:
+        raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Rig control lookup exceeds 65536 scene objects.")
     matches = list(islice((obj for obj in bpy.context.scene.objects if obj.name == exact), 2))
     if len(matches) != 1:
         raise invalid_argument("Object must resolve exactly in the current scene.", object_name=exact)
@@ -145,7 +154,10 @@ def _curves(obj: Any) -> Any:
 
 
 def _curve(obj: Any, path: str, index: int) -> Any:
-    matches = [curve for curve in _curves(obj) if curve.data_path == path and curve.array_index == index]
+    curves = list(islice(_curves(obj), MAX_DRIVERS+1))
+    if len(curves) > MAX_DRIVERS:
+        raise invalid_argument("Rig control driver lookup exceeds 128 curves.")
+    matches = [curve for curve in curves if curve.data_path == path and curve.array_index == index]
     if len(matches) > 1:
         raise invalid_argument("Driver channel is ambiguous.")
     return matches[0] if matches else None
@@ -186,7 +198,8 @@ def _variable(context: ToolContext, bpy: Any, raw: Any) -> dict[str, Any]:
     return result
 
 
-def _dependencies(context: ToolContext, bpy: Any, seeds: list[Any], proposed: tuple[Any, list[dict[str, Any]]] | None = None) -> dict[str, Any]:
+def _dependencies(context: ToolContext, bpy: Any, seeds: list[Any], proposed: tuple[Any, list[dict[str, Any]]] | None = None,
+                  *, ignored_curve: Any = None) -> dict[str, Any]:
     """Conservative unit graph: transforms depend on parent units and driver transforms.
 
     Static numeric properties are leaves, distinct from their owner's transform.
@@ -233,10 +246,14 @@ def _dependencies(context: ToolContext, bpy: Any, seeds: list[Any], proposed: tu
             if bone.parent is not None:
                 edges[unit].add((identity, bone.parent.name))
         curves = _curves(obj)
-        total_drivers += len(curves)
+        if len(curves) > MAX_DRIVERS:
+            raise invalid_argument("Rig dependency scope exceeds 128 drivers.")
+        total_drivers += sum(1 for curve in curves if ignored_curve is None or _key(curve) != _key(ignored_curve))
         if total_drivers > MAX_DRIVERS:
             raise invalid_argument("Rig dependency scope exceeds 128 drivers.")
         for curve in curves:
+            if ignored_curve is not None and _key(curve) == _key(ignored_curve):
+                continue
             _check(context)
             driver = curve.driver
             if (driver.type not in DRIVER_TYPES or driver.use_self or len(curve.modifiers)
@@ -309,16 +326,66 @@ def _result(obj: Any, bone_name: str | None, dependencies: dict[str, Any], consu
             **consumers, "verification_required": True, "evaluated_motion_verified": False, "project_saved": False}
 
 
-def _token(obj: Any, owner: Any) -> tuple[int, int, int | None]:
+def _token(obj: Any, owner: Any) -> tuple[Any, ...]:
     data = getattr(obj, "data", None)
-    return _key(obj), _key(owner), None if data is None else _key(data)
+    return (_key(obj), getattr(obj, "session_uid", None), _key(owner), getattr(owner, "session_uid", None),
+            None if data is None else _key(data), getattr(data, "session_uid", None))
 
 
-def _current_owner(bpy: Any, params: Mapping[str, Any], expected: tuple[int, int, int | None]) -> tuple[Any, Any]:
+def _current_owner(bpy: Any, params: Mapping[str, Any], expected: tuple[Any, ...]) -> tuple[Any, Any]:
     obj, owner, _ = _owner(bpy, params, modify=True)
     if _token(obj, owner) != expected:
         raise invalid_argument("Rig control target identity changed; reinspect before retrying.")
     return obj, owner
+
+
+def _consumer_signature(bpy: Any, obj: Any, *, owned_curve: Any = None) -> tuple[Any, ...]:
+    owners = list(islice(bpy.data.user_map(subset={obj}).get(obj, ()), 101))
+    if len(owners) > 100:
+        raise invalid_argument("Rig control direct-consumer scope exceeds 100 datablocks.")
+    records = []
+    for owner in owners:
+        require_local_editable_id(owner, operation="Rig control consumer preservation")
+        references = int(owner.user_of_id(obj)) if hasattr(owner, "user_of_id") else None
+        if owned_curve is not None and _key(owner) == _key(obj) and references is not None:
+            # A SINGLE_PROP/TRANSFORMS source on this rig adds an exact self ID
+            # reference owned by the new curve. Preserve all pre-existing self
+            # references while accounting only for those exact target fields.
+            references -= sum(1 for variable in owned_curve.driver.variables for target in variable.targets
+                              if target.id is not None and _key(target.id) == _key(obj))
+            if references < 0:
+                raise invalid_argument("Native driver self-reference accounting is inconsistent.")
+            if references == 0:
+                continue
+        records.append((_key(owner), getattr(owner, "session_uid", None), owner.name,
+                        references))
+    return tuple(sorted(records))
+
+
+class _MutationBoundary:
+    """Live consent followed by callback-free identity and consumer comparisons."""
+
+    def __init__(self, bpy: Any, context: ToolContext, params: Mapping[str, Any], obj: Any, owner: Any, method: str):
+        self.bpy, self.context, self.params, self.obj, self.method = bpy, context, params, obj, method
+        self.token, self.session = _token(obj, owner), self._session()
+        self.consumers = _consumer_signature(bpy, obj)
+        self.owned_curve: Any = None
+
+    def _session(self) -> tuple[Any, ...]:
+        return (_key(self.bpy.context.scene), _key(getattr(self.bpy.context, "view_layer", None)),
+                getattr(self.bpy.data, "filepath", ""), self.bpy.context.mode)
+
+    def check(self) -> None:
+        _gate(self.context)
+        registry = getattr(self.context, "registry", None)
+        if registry is not None:
+            registry.prepare(self.method, self.context)
+        _running(self.context)
+        if self._session() != self.session:
+            raise invalid_argument("Rig control session changed; writes and compensation refused.")
+        _current_owner(self.bpy, self.params, self.token)
+        if _consumer_signature(self.bpy, self.obj, owned_curve=self.owned_curve) != self.consumers:
+            raise invalid_argument("Rig control consumers changed; writes and compensation refused.")
 
 
 def _validation_context(context: ToolContext) -> Any:
@@ -329,6 +396,12 @@ def _validation_context(context: ToolContext) -> Any:
 
 def _property_matches(owner: Any, key: str, existed: bool, value: Any) -> bool:
     return (key in owner) is existed and (not existed or (type(owner[key]) is type(value) and owner[key] == value))
+
+
+def _empty_animation_data(obj: Any) -> bool:
+    data = obj.animation_data
+    return (data is not None and data.action is None and not len(data.nla_tracks)
+            and not len(data.drivers) and not data.use_tweak_mode)
 
 
 def _failed(error: Exception, message: str, *, restored: bool = False, **evidence: Any) -> BridgeError:
@@ -360,11 +433,10 @@ def property_set(context: ToolContext, params: Mapping[str, Any]) -> dict[str, A
     if len(owner.keys()) >= 128 and not existed:
         raise invalid_argument("Numeric control ownership exceeds 128 custom properties.")
     previous = _number(owner[key]) if existed else None
-    token = _token(obj, owner)
     dependencies = _dependencies(context, bpy, [obj])
     consumers = _consumers(context, bpy, obj)
-    _gate(context)
-    _current_owner(bpy, params, token)
+    boundary = _MutationBoundary(bpy, context, params, obj, owner, "rig.property_set")
+    boundary.check()
     if not _property_matches(owner, key, existed, previous):
         raise invalid_argument("Numeric control changed after inspection; reinspect before retrying.")
     validation = _validation_context(context)
@@ -373,8 +445,7 @@ def property_set(context: ToolContext, params: Mapping[str, Any]) -> dict[str, A
     try:
         owner[key] = value
         obj.update_tag()
-        _gate(context)
-        _current_owner(bpy, params, token)
+        boundary.check()
         if key not in owner or _number(owner[key]) != value:
             raise RuntimeError("Numeric control readback mismatch")
         return {"property_name": key, "created": not existed, "previous_value": previous, "value": owner[key],
@@ -383,8 +454,8 @@ def property_set(context: ToolContext, params: Mapping[str, Any]) -> dict[str, A
         LOGGER.exception("Numeric rig control edit failed")
         restored = False
         try:
-            context.require(Permission.EDIT_ANIMATION)
-            _current_owner(bpy, params, token)
+            boundary.check()
+            _dependencies(validation, bpy, [obj])
             if _property_matches(owner, key, existed, previous):
                 restored = True
             elif not _property_matches(owner, key, True, value):
@@ -394,6 +465,7 @@ def property_set(context: ToolContext, params: Mapping[str, Any]) -> dict[str, A
             elif key in owner:
                 del owner[key]
             obj.update_tag()
+            boundary.check()
             restored = (_number(owner[key]) == previous) if existed else key not in owner
         except Exception:
             LOGGER.exception("Numeric rig control recovery failed")
@@ -431,7 +503,12 @@ def _driver_configuration(curve: Any) -> dict[str, Any]:
         raise invalid_argument("Driver expression metadata exceeds its ownership-verification budget.")
     return {**result, "expression_sha256": hashlib.sha256(expression.encode()).hexdigest(),
             "use_self": bool(curve.driver.use_self), "keyframe_count": len(curve.keyframe_points),
-            "sample_count": len(curve.sampled_points)}
+            "sample_count": len(curve.sampled_points), "curve_content": _animation_scope.curve_content(curve),
+            "driver_rna": _animation_scope.rna_state(curve.driver, exclude=frozenset({"expression"})),
+            "variables_rna": tuple((_animation_scope.rna_state(variable),
+                                    tuple((_animation_scope.rna_state(target),
+                                           None if target.id is None else (_key(target.id), getattr(target.id, "session_uid", None)))
+                                          for target in variable.targets)) for variable in curve.driver.variables)}
 
 
 def _normalize_new_driver_mapping(curve: Any) -> int:
@@ -495,9 +572,9 @@ def driver_add(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any
     curve = None
     curve_key = None
     owned_config = None
-    token = _token(obj, bone)
-    _gate(context)
-    _current_owner(bpy, params, token)
+    had_animation_data = obj.animation_data is not None
+    boundary = _MutationBoundary(bpy, context, params, obj, bone, "rig.driver_add")
+    boundary.check()
     _channel(params, obj, bone, validate_rotation=True)
     if _curve(obj, path, index) is not None:
         raise invalid_argument("Driver channel changed after inspection; no existing curve is reused or overwritten.")
@@ -508,34 +585,61 @@ def driver_add(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any
             raise invalid_argument("Driver source identity changed after inspection; reinspect before retrying.")
     _dependencies(validation, bpy, [obj, *[item["object"] for item in current_variables]], ((_key(obj), bone_name), current_variables))
     _consumers(validation, bpy, obj)
+    mapping_reviewed = False
+
+    def fresh() -> None:
+        boundary.check()
+        _channel(params, obj, bone, validate_rotation=True)
+        current = _curve(obj, path, index)
+        if current is None or _key(current) != curve_key or owned_config is None or _driver_configuration(current) != owned_config:
+            raise invalid_argument("Driver ownership/configuration changed; further setup and cleanup refused.")
+        current_sources = [_variable(validation, bpy, item) for item in raw_variables]
+        if any(old["owner_token"] != current["owner_token"] for old, current in zip(variables, current_sources, strict=True)):
+            raise invalid_argument("Driver source identity changed during setup.")
+        _dependencies(validation, bpy, [obj, *[item["object"] for item in current_sources]],
+                      ((_key(obj), bone_name), current_sources), ignored_curve=current)
+
+    def write(operation: Any) -> Any:
+        nonlocal owned_config
+        fresh()
+        try:
+            return operation()
+        finally:
+            # No caller callbacks run between the trusted RNA write and this
+            # bounded snapshot. The next live gate must match this exact state.
+            current = _curve(obj, path, index)
+            if current is not None and _key(current) == curve_key:
+                owned_config = _driver_configuration(current)
+
     try:
         curve = obj.driver_add(path, index)
         curve_key = _key(curve)
-        removed_mapping_keys = _normalize_new_driver_mapping(curve)
+        boundary.owned_curve = curve
+        owned_config = _driver_configuration(curve)
+        removed_mapping_keys = write(lambda: _normalize_new_driver_mapping(curve))
+        mapping_reviewed = True
         driver = curve.driver
-        driver.type = kind
-        driver.use_self = False
+        write(lambda: setattr(driver, "type", kind))
+        write(lambda: setattr(driver, "use_self", False))
         # These belong only to the newly allocated curve, never an existing driver.
         for modifier in list(curve.modifiers):
-            curve.modifiers.remove(modifier)
+            write(lambda modifier=modifier: curve.modifiers.remove(modifier))
         for variable in list(driver.variables):
-            driver.variables.remove(variable)
+            write(lambda variable=variable: driver.variables.remove(variable))
         for ordinal, item in enumerate(variables):
-            variable = driver.variables.new()
-            variable.name = f"v{ordinal}"
-            variable.type = "SINGLE_PROP" if item["kind"] == "PROPERTY" else "TRANSFORMS"
+            variable = write(driver.variables.new)
+            write(partial(setattr, variable, "name", f"v{ordinal}"))
+            write(partial(setattr, variable, "type", "SINGLE_PROP" if item["kind"] == "PROPERTY" else "TRANSFORMS"))
             target = variable.targets[0]
-            target.id = item["object"]
+            write(partial(setattr, target, "id", item["object"]))
             if item["kind"] == "PROPERTY":
-                target.data_path = item["data_path"]
+                write(partial(setattr, target, "data_path", item["data_path"]))
             else:
-                target.bone_target = item["bone_name"] or ""
-                target.transform_type = item["transform_type"]
-                target.transform_space = item["transform_space"]
-        obj.update_tag()
-        owned_config = _driver_configuration(curve)
-        _gate(context)
-        _current_owner(bpy, params, token)
+                write(partial(setattr, target, "bone_target", item["bone_name"] or ""))
+                write(partial(setattr, target, "transform_type", item["transform_type"]))
+                write(partial(setattr, target, "transform_space", item["transform_space"]))
+        write(obj.update_tag)
+        fresh()
         current_curve = _curve(obj, path, index)
         if current_curve is None or _key(current_curve) != curve_key or _driver_configuration(current_curve) != owned_config:
             raise invalid_argument("Driver ownership/configuration changed after allocation; reinspect before recovery.")
@@ -561,23 +665,29 @@ def driver_add(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any
         cleanup_skipped = False
         retained = path
         try:
-            context.require(Permission.EDIT_ANIMATION)
-            _current_owner(bpy, params, token)
+            boundary.check()
             current_curve = _curve(obj, path, index)
             if current_curve is not None and (curve_key is None or _key(current_curve) != curve_key
-                                              or owned_config is None or _driver_configuration(current_curve) != owned_config):
+                                              or owned_config is None or not mapping_reviewed or _driver_configuration(current_curve) != owned_config):
                 cleanup_skipped = True
                 retained = None  # This may be someone else's replacement; never suggest deleting it as ours.
                 raise invalid_argument("Driver ownership/configuration changed; automatic cleanup skipped.")
             if current_curve is not None:
+                fresh()
                 obj.driver_remove(path, index)
-            restored = _curve(obj, path, index) is None
+                boundary.owned_curve = None
+            boundary.check()
+            curve_removed = _curve(obj, path, index) is None
+            if curve_removed:
+                retained = None
+            restored = curve_removed and (had_animation_data or obj.animation_data is None)
             obj.update_tag()
         except Exception:
             LOGGER.exception("Bone driver cleanup failed")
         raise _failed(error, "Bone driver creation failed; inspect channel and recovery evidence.", restored=restored,
                       cleanup_skipped=cleanup_skipped, retained_driver_path=None if restored else retained,
-                      retained_driver_index=None if restored or retained is None else index) from error
+                      retained_driver_index=None if restored or retained is None else index,
+                      retained_empty_anim_data=not had_animation_data and _empty_animation_data(obj)) from error
 
 
 def driver_remove(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
@@ -587,27 +697,32 @@ def driver_remove(context: ToolContext, params: Mapping[str, Any]) -> dict[str, 
     if bone_name is None:
         raise invalid_argument("Bone driver removal requires an explicit bone_name.")
     path, index = _channel(params, obj, bone)
-    dependencies = _dependencies(context, bpy, [obj])
-    consumers = _consumers(context, bpy, obj)
     curve = _curve(obj, path, index)
     if curve is None:
         raise invalid_argument("The exact bone channel has no driver.")
+    # A retained fresh allocation may still have its native GENERATOR/identity
+    # keys or incomplete variables. It is safe to remove that exact channel;
+    # validate the remaining graph without treating the removed mapping as input.
+    dependencies = _dependencies(context, bpy, [obj], ignored_curve=curve)
+    consumers = _consumers(context, bpy, obj)
     previous = _driver_summary(curve)
-    token, curve_key, configuration = _token(obj, bone), _key(curve), _driver_configuration(curve)
-    _gate(context)
-    _current_owner(bpy, params, token)
+    curve_key, configuration = _key(curve), _driver_configuration(curve)
+    boundary = _MutationBoundary(bpy, context, params, obj, bone, "rig.driver_remove")
+    boundary.owned_curve = curve
+    boundary.consumers = _consumer_signature(bpy, obj, owned_curve=curve)
+    boundary.check()
     current = _curve(obj, path, index)
     if current is None or _key(current) != curve_key or _driver_configuration(current) != configuration:
         raise invalid_argument("Driver changed after inspection; no replacement curve is removed.")
     validation = _validation_context(context)
-    _dependencies(validation, bpy, [obj])
+    _dependencies(validation, bpy, [obj], ignored_curve=current)
     _consumers(validation, bpy, obj)
     try:
         if not obj.driver_remove(path, index):
             raise RuntimeError("Blender refused bone driver removal")
+        boundary.owned_curve = None
         obj.update_tag()
-        _gate(context)
-        _current_owner(bpy, params, token)
+        boundary.check()
         if _curve(obj, path, index) is not None:
             raise RuntimeError("Bone driver removal readback mismatch")
         dependencies = _dependencies(validation, bpy, [obj])

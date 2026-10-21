@@ -1,0 +1,129 @@
+{
+  "schema_version": 1,
+  "kind": "development-native-selection-receipt",
+  "commit": "bf5c53ee7c027588762b4d5e6b59ac7c71526d16",
+  "source_sha256": "62652ba7af435ff96cdddf20085cf1d99ccbf92bd25031e3066830f988a72453",
+  "source_file_count": 212,
+  "worktree_dirty": false,
+  "platform": "Linux x86_64",
+  "original_runner_interrupted": true,
+  "original_completed_at": null,
+  "resume_completed_at": "2026-10-21T23:19:55.399670+00:00",
+  "reports": [
+    {
+      "path": "native-clean/report.json",
+      "sha256": "d6a4727695eaaf6d5818863c17638ec78a213120f9ab1dc5d27fdc763647bc70",
+      "completed": false,
+      "results": 87
+    },
+    {
+      "path": "native-clean-resume/report.json",
+      "sha256": "434c7755899b845d26df05ca648c89e58711f164569d596abe94962428eaa29f",
+      "completed": true,
+      "results": 19
+    }
+  ],
+  "version_results": {
+    "4.5.14 LTS": {
+      "selected_cases": 53,
+      "passed": 53,
+      "all_cases_covered": true
+    },
+    "5.2.2 LTS": {
+      "selected_cases": 53,
+      "passed": 53,
+      "all_cases_covered": true
+    }
+  },
+  "limits": [
+    "Two retained runner invocations at identical clean source; original incomplete report is not rewritten.",
+    "Native fixtures include background/UI/phased workflows; installed add-on/plugin scenarios are separate.",
+    "No Windows, constrained-memory, human artistic or release acceptance claim."
+  ],
+  "release_readiness": "NOT_ASSESSED",
+  "implementation_pr": "https://github.com/Yoruiopz/Codex-Blender-Bridge/pull/2",
+  "merged_as": "7bf15710fa90de293b040bfa55c46098ced7cfa5",
+  "python_test_commit": "4c05657c84d389fb17df21472eeb288ee94c5c82",
+  "python_tests": {
+    "20": {
+      "python": "3.12.14",
+      "tests": 2818,
+      "skipped": 3,
+      "errors": 0,
+      "failures": 0,
+      "report_sha256": "55f538f620a51ea42d955037c48ed70d5653133d20587d5fece181013a56155e"
+    },
+    "22": {
+      "python": "3.12.14",
+      "tests": 2818,
+      "skipped": 3,
+      "errors": 0,
+      "failures": 0,
+      "report_sha256": "75dc29973eb1f269c7c50b7d5c7c6126831063e3d0a20461def4d516a3aba9fc"
+    }
+  },
+  "ci": {
+    "run_id": 39690171441,
+    "commit": "4c05657c84d389fb17df21472eeb288ee94c5c82",
+    "jobs": [
+      {
+        "id": 119534119409,
+        "name": "test (3.10, 2.2.0)",
+        "conclusion": "success",
+        "path": "ci/job-119534119409.log"
+      },
+      {
+        "id": 119534119691,
+        "name": "test (3.11, 2.0.0)",
+        "conclusion": "success",
+        "path": "ci/job-119534119691.log"
+      },
+      {
+        "id": 119534119722,
+        "name": "test (3.11, 2.2.0)",
+        "conclusion": "success",
+        "path": "ci/job-119534119722.log"
+      },
+      {
+        "id": 119534119740,
+        "name": "test (3.10, 2.0.0)",
+        "conclusion": "success",
+        "path": "ci/job-119534119740.log"
+      },
+      {
+        "id": 119534119792,
+        "name": "test (3.12, 2.2.0)",
+        "conclusion": "success",
+        "path": "ci/job-119534119792.log"
+      },
+      {
+        "id": 119534119820,
+        "name": "test (3.12, 2.0.0)",
+        "conclusion": "success",
+        "path": "ci/job-119534119820.log"
+      },
+      {
+        "id": 119534668874,
+        "name": "packages",
+        "conclusion": "success",
+        "path": "ci/job-119534668874.log"
+      }
+    ]
+  },
+  "packages": {
+    "commit": "bf5c53ee7c027588762b4d5e6b59ac7c71526d16",
+    "source_sha256": "62652ba7af435ff96cdddf20085cf1d99ccbf92bd25031e3066830f988a72453",
+    "source_file_count": 212,
+    "tools_discovered": 229,
+    "source_export_unchanged_after_build": true,
+    "package_crc_and_source_bytes_verified": true,
+    "package_checksums_verified": true,
+    "installed_stdio_verified": true,
+    "distribution_manifest_sha256": "bd21de175ac01f6fd567c637ef16dd2fe33f49fa8b772558d7b4efbe043d14d3",
+    "installed_wheel_evidence_sha256": "8336e51def7c6c2ea7727712fe1797018a3b05e3f8b4ca8c769c3034c3153f23",
+    "release_readiness": "NOT_ASSESSED",
+    "development_only": true
+  },
+  "evidence_location": "build/artist-next-20261022; this index retains fingerprints, not the complete artifact bundle",
+  "all_fourteen_requirements_open": true
+}

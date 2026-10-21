@@ -112,6 +112,7 @@ class AnimationTools:
         index: int = -1,
         group: str | None = None,
         options: list[str] | None = None,
+        affected_objects: list[str] | None = None,
     ) -> Any:
         """Insert a keyframe on one explicit object RNA path and array index."""
 
@@ -124,6 +125,7 @@ class AnimationTools:
                 index=index,
                 group=group,
                 options=options,
+                affected_objects=affected_objects,
             ),
         )
 
@@ -134,6 +136,7 @@ class AnimationTools:
         frame: float | None = None,
         index: int = -1,
         group: str | None = None,
+        affected_objects: list[str] | None = None,
     ) -> Any:
         """Delete a keyframe on one explicit object RNA path and array index."""
 
@@ -145,6 +148,7 @@ class AnimationTools:
                 frame=frame,
                 index=index,
                 group=group,
+                affected_objects=affected_objects,
             ),
         )
 

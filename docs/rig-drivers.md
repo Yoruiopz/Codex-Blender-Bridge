@@ -64,12 +64,14 @@ whole-scene deformation still require further evidence.
 
 ## Failure and recovery
 
-Permission, pause/stop and cancellation are checked before and after mutation. A numeric
-property failure attempts to restore its prior value/absence. Driver creation owns only
-its new curve and attempts scoped cleanup; it never overwrites an existing driver.
-After the final control callback, a bounded callback-free preflight rechecks exact
-object/data/pose identities, source identities, dependencies, consumer editability and
-channel/property state immediately before allocation. Stale named replacements are refused.
+Permission, pause/stop, toolset state and cancellation are checked before each driver setup
+write and before compensation. A numeric property failure attempts to restore its prior
+value/absence only while those live gates still permit it. Driver creation owns only its
+new curve and attempts scoped cleanup; it never overwrites an existing driver. After each
+control callback, bounded callback-free reads compare the exact scene/view-layer/file/mode,
+object/data/pose identities, source identities, direct consumer identities/reference counts
+and complete owned curve configuration. Stale named replacements are refused. Only the
+new curve's explicit self-source references are excluded from the protected consumer count.
 Readback verifies driver type, variable kind/count/name, source identity, source path or
 bone/transform settings. Default modifiers/variables on the newly allocated curve are
 removed so the requested non-scripted operation has no implicit mapping layer.
@@ -84,33 +86,50 @@ Unexpected mappings or samples are retained with explicit failure evidence. Exis
 drivers, including an identical native identity mapping, remain unsupported and unchanged.
 This does not add general F-curve mapping support or execute a supplied expression.
 
-If permission is revoked after allocation, cleanup also respects that revocation. The
+If permission is revoked, pause/stop is activated or the caller is canceled after allocation,
+setup and cleanup stop. A fresh native curve or partially configured curve may remain;
+the tool does not finish setup or undo changes after the stop. The
 error reports `possible_mutation`, `rollback_verified` and any retained driver path/index.
 Compensation also rechecks the exact owned write/configuration: a property changed by an
 interleaved callback is retained, and a replaced or edited curve is never deleted as cleanup.
 `cleanup_skipped=true` identifies a changed driver ownership/configuration requiring inspection.
-Reinspect before retrying or explicitly removing the retained driver. A removal failure
+Reinspect before retrying or explicitly removing the retained driver. After authorization
+and execution state are restored, `rig.driver_remove` can remove the exact retained channel
+even when its native mapping or variable setup is incomplete: it snapshots that curve and
+validates the remaining dependency graph separately, without evaluating or normalizing the
+removed mapping. A removal failure
 does not claim that the previous driver was reconstructed; use measured inspection and
 confirmed checkpoint recovery. No undo-capacity or durable-backup guarantee is implied.
+Native `driver_add` may allocate an AnimData container as well as the curve. Cleanup never
+clears that container implicitly. If the curve is removed but a newly allocated empty
+container remains, `retained_empty_anim_data=true`, `possible_mutation=true` and
+`rollback_verified=false` describe that remaining difference. A pre-existing unchanged
+container can support verified scoped rollback.
 
 ## Development evidence
 
 `tests/test_rig_drivers.py` covers typed metadata/wrappers, quoted names, bounded numeric
 controls, dependency denial/cycles, local ownership, post-allocation cleanup/retention,
-permission/pause/stop and exact channel removal.
+permission/pause/stop at five setup stages, persistent caller cancellation, changed sessions,
+same-name source replacements, newly acquired consumers and exact partial-channel removal.
 
 The isolated `rig_drivers` fixture uses typed runtime calls to drive a pose bone from a
 numeric control and an independent object transform. It independently verifies a two-unit
 pose translation and complete displacement of three skinned vertices, then restores the
 control and original geometry. A shared-armature-data object's pose remains unchanged.
 It also checks quoted paths, descendant-cycle rejection and permission revocation with a
-retained driver followed by explicit typed cleanup. It records the fresh native defaults,
+retained driver followed by explicit typed cleanup. It also pauses/stops/cancels immediately
+after native allocation, proves the complete retained curve configuration is unchanged,
+then performs separately authorized typed cleanup. A postwrite property pause retains the
+measured value and refuses compensation. It records the fresh native defaults,
 verifies that normalization leaves no keys/samples/modifiers, and separately verifies
 that a pre-existing keyed driver is rejected without changing its mapping or control.
 
 Run through `scripts/run_blender_checks.py --case rig_drivers` with an explicit Blender
 executable and unused evidence directory. Linux Blender 4.5.14 LTS and 5.2.2 development
-evidence is at `build/rig-driver-normalization-20261022-2/report.json`; earlier 4.3.2 evidence
+evidence for the per-write guards and compatible object-driver API is at
+`build/next-wave-all-driver-guards-20261022-2/report.json`;
+earlier normalization evidence is at `build/rig-driver-normalization-20261022-2/report.json`, and earlier 4.3.2 evidence
 is at `build/rig-drivers-native-20261022-d/report.json`. Reports retain
 `release_readiness=NOT_ASSESSED`. Windows 4.5/5.x, actual native undo,
 action/constraint interleaving, production control rigs,

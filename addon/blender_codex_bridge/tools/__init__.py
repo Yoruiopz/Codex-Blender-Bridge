@@ -12,7 +12,9 @@ def register_all(registry: ToolRegistry) -> None:
         animation,
         animation_curves,
         animation_layers,
+        animation_lifecycle,
         asset_delivery,
+        asset_import,
         batch,
         compositor,
         constraints,
@@ -25,6 +27,7 @@ def register_all(registry: ToolRegistry) -> None:
         image_delivery,
         image_paint,
         image_portability,
+        image_recovery,
         image_revisions,
         image_surface_paint,
         images,
@@ -38,6 +41,7 @@ def register_all(registry: ToolRegistry) -> None:
         mesh_slide,
         mesh_surface,
         modifiers,
+        nla_lifecycle,
         nodes,
         objects,
         paint_jobs,
@@ -47,6 +51,7 @@ def register_all(registry: ToolRegistry) -> None:
         rig_ik,
         rigging,
         scene_edit,
+        scene_variants,
         shader_groups,
         shader_settings,
         simulation,
@@ -66,9 +71,12 @@ def register_all(registry: ToolRegistry) -> None:
     core.register_tools(registry)
     task_plan.register_tools(registry)
     animation_curves.register_tools(registry)
+    animation_lifecycle.register_tools(registry)
     asset_delivery.register_tools(registry)
+    asset_import.register_tools(registry)
     for module in (animation_layers, compositor, simulation, weights):
         module.register_tools(registry)
+    nla_lifecycle.register_tools(registry)
     weight_brushes.register_tools(registry)
     batch.register_tools(registry)
     interaction.register_tools(registry)
@@ -91,6 +99,7 @@ def register_all(registry: ToolRegistry) -> None:
     image_paint.register_tools(registry)
     image_surface_paint.register_tools(registry)
     image_portability.register_tools(registry)
+    image_recovery.register_tools(registry)
     paint_jobs.register_tools(registry)
     image_delivery.register_tools(registry)
     image_revisions.register_tools(registry)
@@ -111,6 +120,7 @@ def register_all(registry: ToolRegistry) -> None:
     rig_ik.register_tools(registry)
     deformation.register_tools(registry)
     scene_edit.register_tools(registry)
+    scene_variants.register_tools(registry)
     render.register_tools(registry)
     python_exec.register_tools(registry)
 

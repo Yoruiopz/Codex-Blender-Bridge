@@ -4,7 +4,7 @@ Unreleased development tools, not included in 0.3.0. These bounded foundations
 advance texture portability and durable edited-input recovery; they do not close
 the full 1.0 delivery, recovery, compatibility or artistic acceptance gates.
 
-Both tools require Object Mode and **Edit Materials**. A FILE source/target also
+The original packing/loaded restoration tools require Object Mode and **Edit Materials**. A FILE source/target also
 requires live **Access External Files**. Packing modifies project datablocks in
 memory; it does not grant save consent or write an external file. An explicit
 `project.save` still independently requires **Save Project** and its path policy.
@@ -27,6 +27,10 @@ is not a pixel backup.
   zero are retained without color conversion or alpha association. This snapshot
   uses `Non-Color` and `CHANNEL_PACKED` as recovery storage, with the original's
   role recorded separately. It is not an automatically equivalent shader binding.
+  This mode reads only the complete already-loaded buffer and can preserve it
+  after the backing file disappears. It performs no source-file read or implicit
+  load, and returns `source_file_at_read=null`. FILE_BYTES keeps its independent
+  approved-path/complete-file-proof requirements.
 
 Names never overwrite/reuse an existing datablock. Source and complete pixels
 are checked before and after publication. Failure cleanup can delete only the
@@ -46,8 +50,8 @@ same-name image cannot substitute for the original; the native ID relationship
 survives an explicit save and fresh-process reopen.
 
 The target must currently be local, editable, unanimated, already loaded and
-float, with the original dimensions, FILE/GENERATED source and color/alpha roles.
-Unloaded/missing-target allocation, byte-buffer restoration and changed-role or
+float or byte, with the original dimensions, FILE/GENERATED source and color/alpha roles.
+Unloaded/missing-target allocation and changed-role or
 resized targets are explicitly unsupported. A saved packed FILE_BYTES original
 can therefore reopen its old buffer and receive its separately saved raw edited
 pixels, preserving the original image ID and existing material consumers.
@@ -89,6 +93,79 @@ On the measured Linux Blender 4.3.2 probe, ordinary dirty PNG16 COLOR `pack()` d
 not reproduce the edited raw digest. Explicit raw CURRENT_PIXELS snapshots did.
 That observation is a reason to retain the two content contracts, not a universal
 claim about native Blender packing. Windows 4.5/5.x, actual UI undo/redo,
-memory-pressure, 4K, unloaded/byte/identity-wide recovery and full artist acceptance
+memory-pressure, 4K, unloaded/identity-wide recovery and full artist acceptance
 remain open. This fixture is development evidence, always `NOT_ASSESSED` for
 release readiness.
+
+## Byte-buffer recovery and native allocation research
+
+Loaded byte targets now use the same explicit raw snapshot and identity-preserving
+write contract. Every snapshot channel must be one of the exact float32 values
+returned by Blender's byte getter. A mathematically similar value, hidden clipping
+or negative-zero conversion is refused before writing. A final full target digest
+after permission/cancellation callbacks preserves newer interleaved manual pixels.
+
+The `image_recovery_probe` fixture demonstrates every byte value across FILE and
+GENERATED targets, sRGB/Linear Rec.709/Non-Color, and STRAIGHT/CHANNEL_PACKED roles
+on Linux Blender 4.5.14 and 5.2.2. This is distinct from persistence: native
+`pack(data=...)` on a GENERATED image retained the current buffer but fresh reopen
+recreated generated pixels instead. A separately packed raw snapshot still retains
+the edited channels; native generated packing is not an equivalent backup.
+
+Native injection of new packed PNG bytes recovered missing-path, unloaded FILE
+byte images while retaining their IDs, metadata and bindings through fresh reopen.
+That changes packed bytes, so it does **not** extend `image.restore_pixels`, which
+preserves an existing packed payload. Likewise, reloading raw float EXR bytes with
+Linear Rec.709/STRAIGHT interpretation changed association and failed exact pixel
+recovery. An unloaded-target lifecycle therefore uses the separately explicit contract below.
+The probe retains these negative observations and establishes no 4K, native-undo,
+Windows, memory-pressure or complete artist-workflow acceptance.
+
+## Reconstruct an unloaded original FILE image
+
+`image.recovery_preview(image_name, snapshot_name, allow_shared=false)` validates
+the retained raw snapshot and an unloaded local original FILE image without
+loading its missing buffer or reading any external path. It requires **Inspect
+Scene**, plus live **Access External Files** for the FILE target; edit permission
+is not needed for the read-only preview. Its fingerprint includes process/session
+identity, native image identities, snapshot owner/metadata/hash, target roles and
+loaded state, old packed bytes, and every bounded direct consumer's identity and
+reference count. A fresh preview is required after any measured change or restart.
+
+`image.restore_packed_snapshot(..., expected_target_fingerprint,
+confirm_replace_packed_bytes=true, allow_shared=false)` additionally requires
+**Edit Materials** and unpaused, non-stopped state. It reconstructs the existing
+Image ID from its exact referenced snapshot and **replaces the packed payload**.
+The original name/path/color/alpha roles and consumer bindings remain unchanged.
+The previous loaded buffer/storage cannot be observed when it is missing; the
+explicit preview reports reconstruction dimensions/storage from snapshot metadata.
+No external reload, new Image ID, external file write or automatic save occurs.
+The retained snapshot remains available. Save explicitly to persist replacement.
+
+The demonstrated unloaded contract supports byte sRGB/Linear Rec.709/Non-Color
+with STRAIGHT/CHANNEL_PACKED alpha, and float Non-Color or linear CHANNEL_PACKED.
+Associated linear float color is rejected before mutation. Byte channels must
+exactly match the native byte getter's representable values; no clipping or
+approximation is used. Both this preview and reconstruction retain the synchronous
+1M-pixel/20MiB bounds. Native pack/decode/readback are non-preemptible; these tools
+do not promise responsive 4K operations.
+
+An input or permission change before publication leaves the target unmodified.
+A late cancellation, permission revocation or native failure can follow actual
+packed-byte replacement. Errors retain the original and snapshot, report
+`possible_mutation`, and do not automatically replay old bytes through revoked
+consent. Inspect and confirm recovery explicitly. The phased `image_recovery`
+fixture verifies nine role/storage combinations, complete raw channels, vanished
+backing files, native ID references, material bindings, permission denial, stale
+manual-metadata protection, post-native revocation and separately saved fresh
+reopen on Linux Blender 4.5.14/5.2.2. It also proves a new snapshot acquired by an
+incoming consumer receives no subsequent metadata/payload/owner writes.
+Native UI undo, Windows, 4K, constrained-memory and complete artist acceptance
+remain open requirements.
+
+Recovery gates place their final live permission providers before callback-free
+lifetime, pause/emergency, mode and identity/consumer checks. A provider that
+returns a grant while pausing, stopping or switching to Edit Mode cannot permit
+the next pixel, packed-byte or snapshot-metadata write. Owned allocation cleanup
+also rechecks Delete Objects after its cancellation callback. Native fixtures
+exercise all three state changes at all three publication boundaries.

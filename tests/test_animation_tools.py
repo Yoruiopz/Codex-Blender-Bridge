@@ -98,11 +98,27 @@ def test_set_range_validates_before_mutating_scene(
         use_preview_range=False,
         frame_preview_start=1,
         frame_preview_end=250,
+        frame_current=1,
+        frame_subframe=0.,
+        library=None,
+        override_library=None,
+        is_editable=True,
+    )
+    permissions = importlib.import_module(f"{addon_package}.permissions")
+    registry_module = importlib.import_module(f"{addon_package}.tool_registry")
+    registry = registry_module.ToolRegistry(enabled_toolsets=("animation",))
+    animation.register_tools(registry)
+    context = registry_module.ToolContext(
+        state=SimpleNamespace(snapshot=lambda: {"paused": False, "emergency_stopped": False}),
+        permissions=permissions.PermissionManager(lambda: {"EDIT_ANIMATION": True}),
+        registry=registry,
+        checkpoints=None,
     )
     monkeypatch.setattr(
         animation,
         "require_blender",
-        lambda: SimpleNamespace(context=SimpleNamespace(scene=scene)),
+        lambda: SimpleNamespace(context=SimpleNamespace(scene=scene, mode="OBJECT", view_layer=SimpleNamespace()),
+                                data=SimpleNamespace(filepath="", scenes=SimpleNamespace(get=lambda name: scene))),
     )
 
     with pytest.raises(errors.BridgeError) as caught:
@@ -111,19 +127,35 @@ def test_set_range_validates_before_mutating_scene(
     assert caught.value.code == errors.ErrorCode.INVALID_ARGUMENT.value
     assert (scene.frame_start, scene.frame_end) == (1, 250)
     result = animation.set_range(
-        object(),
+        context,
         {
-            "start": -10,
+            "start": 0,
             "end": 40,
             "use_preview": True,
             "preview_start": 0,
             "preview_end": 30,
         },
     )
-    assert result["frame_start"] == -10
+    assert result["frame_start"] == 0
     assert result["frame_end"] == 40
     assert result["preview_start"] == 0
     assert result["preview_end"] == 30
+    with pytest.raises(errors.BridgeError):
+        animation.set_range(context, {"start": -1, "end": 30})
+    assert (scene.frame_start, scene.frame_end) == (0, 40)
+    flags = {"paused": False, "emergency_stopped": False}
+    context.state = SimpleNamespace(snapshot=lambda: flags)
+    context.registry = None
+
+    def permission_provider():
+        flags["paused"] = True
+        return {"EDIT_ANIMATION": True}
+
+    context.permissions = permissions.PermissionManager(permission_provider)
+    with pytest.raises(errors.BridgeError) as denied:
+        animation.set_range(context, {"start": 5, "end": 30})
+    assert denied.value.code == "AGENT_PAUSED"
+    assert (scene.frame_start, scene.frame_end) == (0, 40)
 
 
 def test_action_inspection_bounds_curves_and_keyframes(addon_package: str) -> None:
@@ -171,3 +203,21 @@ def test_animation_rejects_non_finite_or_oversized_inputs(addon_package: str) ->
         animation._frame_param({"frame": float("nan")}, "frame", 1.0)
     with pytest.raises(errors.BridgeError):
         animation._data_path({"data_path": "x" * 513})
+
+
+def test_removed_native_ids_keep_structured_possible_mutation_evidence(addon_package: str) -> None:
+    animation = importlib.import_module(f"{addon_package}.tools.animation")
+
+    class Removed:
+        def __getattribute__(self, name):
+            raise ReferenceError("StructRNA has been removed")
+
+    boundary = object.__new__(animation.mutation.Timeline)
+    boundary.scene = Removed()
+    observed = boundary.measured_state()
+    assert observed == {"observed_timeline": None, "timeline_identity_observed": False}
+    retained = animation.mutation.retained_action(Removed())
+    assert retained == {"observed_action": None, "action_identity_observed": False}
+    error = animation.mutation.failed(ReferenceError("Removed"), "Inspection required", started=True, **retained)
+    assert error.context["possible_mutation"] and not error.context["rollback_verified"]
+    assert error.context["action_identity_observed"] is False

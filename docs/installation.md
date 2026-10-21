@@ -31,6 +31,16 @@ GitHub's automatic **Source code** archives are for development, not Blender ins
 
 Leave Blender open. Never expose or tunnel this port to another computer.
 
+### Published alpha discovery issue
+
+Current Linux checks on Blender 4.5.14 and 5.2.2 found that the published 0.3.0 ZIP can
+install without appearing in the add-on list. Its discovery metadata needs a literal version;
+the fix is in development source and has not changed the published downloads. If the add-on
+is missing, use the matching source add-on and MCP server from the
+[development installation](../CONTRIBUTING.md#set-up-a-checkout), or wait for a qualified replacement release.
+Reinstalling the same ZIP does not fix this metadata issue. Windows installation remains
+unqualified for current development source.
+
 ## 3. Connect Codex
 
 On **Windows**, with the wheel in Downloads, run PowerShell:
@@ -117,6 +127,10 @@ For 0.1.0 or 0.2.0 → 0.3.0:
 No bridge scene-file migration is required. Updating does not intentionally rewrite your
 `.blend`. To roll back, reinstall **both** older packages and restart both sides; restore a
 project backup if needed. Downgrading software does not undo scene edits.
+
+Use a clean add-on directory for replacement: Blender's overwrite installer can retain obsolete
+files. The isolated development probe verifies clean-directory replacement, enablement and
+reconnect; preference migration and complete Windows upgrade/rollback acceptance remain open.
 
 
 [Back to README](../README.md) · [Troubleshooting](troubleshooting.md)

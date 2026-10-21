@@ -3,13 +3,30 @@
 from __future__ import annotations
 
 import math
+import struct
 from collections.abc import Mapping
+from copy import deepcopy
+from types import SimpleNamespace
 from typing import Any
 
 from ..errors import BridgeError, ErrorCode, invalid_argument
 from ..permissions import Permission
 from ..utils import get_object, int_param, reject_unknown_params, require_blender
-from ._rna import apply_assignments, bounded_name, prepare_assignments, settings_mapping
+from . import _legacy_object_drivers
+from ._animation_scope import (
+    Guard,
+    action_content,
+    action_token,
+    action_users,
+    affected_scope,
+    bounded,
+    key,
+    object_scope,
+    rna_state,
+    validate_slot,
+)
+from ._nla_controls import controls, new_clip, new_influence
+from ._rna import bounded_name, prepare_assignments, settings_mapping
 from .geometry_nodes import _editable
 
 STRIP_PROPERTIES = frozenset(
@@ -32,6 +49,254 @@ STRIP_PROPERTIES = frozenset(
 )
 CHANNELS = {"location", "rotation_euler", "scale"}
 TRANSFORMS = {f"{kind}_{axis}" for kind in ("LOC", "ROT", "SCALE") for axis in "XYZ"}
+
+
+def _nla_context(context: Any) -> None:
+    if context is None or not all(hasattr(context, field) for field in ("require", "state", "check_cancelled")):
+        raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "NLA mutation requires a live permission/state context.")
+
+
+def _nla_authority(context: Any, method: str) -> None:
+    context.require(Permission.EDIT_ANIMATION)
+    flags = context.state.snapshot()
+    if flags.get("emergency_stopped") or flags.get("paused"):
+        raise BridgeError(ErrorCode.EMERGENCY_STOPPED if flags.get("emergency_stopped") else ErrorCode.AGENT_PAUSED,
+                          "NLA mutation stopped before its next write.")
+    registry = getattr(context, "registry", None)
+    if registry is not None and registry.get(method).toolset not in registry.enabled_toolsets:
+        raise BridgeError(ErrorCode.TOOLSET_DISABLED, "NLA toolset was disabled during live permission validation.")
+
+
+def _nla_slot(slot: Any) -> Any:
+    return None if slot is None else (key(slot), slot.identifier, int(slot.handle), slot.target_id_type)
+
+
+class _LegacyNlaGuard:
+    """Stage-specific compare-and-swap for legacy NLA writes and recovery.
+
+    Capturing a newly returned native allocation requires unchanged old state and
+    its reviewed constructor defaults. Ordinary writes never refresh expected
+    state from arbitrary observations after a setter/cancellation callback.
+    """
+
+    def __init__(self, context: Any, obj: Any, method: str, extra_actions: tuple[Any, ...] = ()):
+        self.bpy, self.obj, self.data = require_blender(), obj, obj.animation_data
+        self.guard = Guard(self.bpy, context, method)
+        self.guard.remember(obj, self.bpy.data.objects)
+        self.name, self.object_token, self.data_token = obj.name, action_token(obj), key(self.data)
+        self.actions: dict[Any, Any] = {}
+        self.extra_actions = extra_actions
+        self.created_tracks: list[Any] = []
+        self.started = False
+        for action in extra_actions:
+            self._action(action)
+        self.expected = self.read()
+        self.original = deepcopy(self.expected)
+
+    def _action(self, action: Any) -> None:
+        if action is not None and action_token(action) not in self.actions:
+            self.actions[action_token(action)] = action
+            self.guard.remember(action, self.bpy.data.actions)
+
+    def _strip(self, strip: Any) -> dict[str, Any]:
+        if strip.type not in {"CLIP", "TRANSITION"}:
+            raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "NLA recovery snapshot supports CLIP/TRANSITION strips, not nested META data.")
+        if len(getattr(strip, "modifiers", ())):
+            raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Strip modifiers need a broader native recovery snapshot.")
+        action = getattr(strip, "action", None)
+        self._action(action)
+        return {"id": key(strip), "type": strip.type, "action": action_token(action), "controls": controls(strip),
+                "slot": _nla_slot(getattr(strip, "action_slot", None)),
+                "settings": dict(rna_state(strip, exclude=frozenset({"action", "action_slot", "action_slot_handle", "last_slot_identifier"})))}
+
+    def _track(self, track: Any) -> dict[str, Any]:
+        return {"id": key(track), "settings": dict(rna_state(track)),
+                "strips": [self._strip(strip) for strip in bounded(track.strips, 64, "NLA strips")]}
+
+    def read(self) -> dict[str, Any]:
+        obj, data = self.obj, self.obj.animation_data
+        if action_token(obj) != self.object_token or key(data) != self.data_token:
+            raise invalid_argument("NLA owner/AnimData identity changed; writes and recovery refused.")
+        object_scope(self.bpy, obj)
+        if data.use_tweak_mode or len(data.drivers):
+            raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Reviewed NLA mutation excludes tweak mode and drivers.")
+        closure = affected_scope(self.bpy, obj, [])
+        tracks = bounded(data.nla_tracks, 16, "NLA tracks")
+        if sum(len(track.strips) for track in tracks) > 64:
+            raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "NLA recovery scope exceeds 64 total strips.")
+        self._action(getattr(data, "action", None))
+        if data.action is not None:
+            validate_slot(obj, data.action, getattr(data, "action_slot", None))
+        for track in tracks:
+            for strip in track.strips:
+                if strip.action is not None:
+                    validate_slot(obj, strip.action, getattr(strip, "action_slot", None))
+        records = [self._track(track) for track in tracks]
+        consumers = []
+        for owner in bounded(self.bpy.data.user_map(subset={obj}).get(obj, ()), 100, "NLA object consumers"):
+            _editable(owner)
+            consumers.append((action_token(owner), owner.name, int(owner.user_of_id(obj))))
+        for action in self.extra_actions:
+            slots = bounded(getattr(action, "slots", ()), 64, "Action slots")
+            suitable = [slot for slot in slots if slot.target_id_type == "OBJECT"]
+            if slots and (len(slots) != 1 or len(suitable) != 1):
+                raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Created clips require one exact suitable Action slot.")
+            validate_slot(obj, action, suitable[0] if suitable else None)
+        if len(self.actions) > 16:
+            raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Reviewed NLA snapshot exceeds 16 Actions.")
+        actions = {}
+        for token, action in self.actions.items():
+            actions[token] = {"name": action.name, "content": action_content(action),
+                              "range": tuple(float(value) for value in action.frame_range),
+                              "users": action_users(self.bpy, action)}
+        edit = getattr(getattr(self.bpy.context, "preferences", None), "edit", None)
+        preferences = None if edit is None else (edit.fcurve_new_auto_smoothing, edit.keyframe_new_handle_type, edit.keyframe_new_interpolation_type)
+        return {"object": (action_token(obj), obj.name, key(getattr(obj, "data", None))), "data": key(data),
+                "control_preferences": preferences,
+                "session": (key(self.bpy.context.scene), key(self.bpy.context.view_layer), self.bpy.data.filepath, self.bpy.context.mode),
+                "closure": closure, "frame": (self.bpy.context.scene.frame_current, self.bpy.context.scene.frame_subframe),
+                "selection": tuple((key(item), bool(item.select_get())) for item in bounded(self.bpy.context.view_layer.objects, 256, "view-layer objects")),
+                "active_object": key(self.bpy.context.view_layer.objects.active),
+                "settings": dict(rna_state(data, exclude=frozenset({"action", "action_slot", "action_slot_handle", "last_slot_identifier"}))),
+                "active_action": action_token(getattr(data, "action", None)),
+                "slot": _nla_slot(getattr(data, "action_slot", None)), "tracks": records,
+                "active_track": key(data.nla_tracks.active), "actions": actions,
+                "consumers": tuple(sorted(consumers, key=lambda record: record[0][0]))}
+
+    def gate(self) -> None:
+        self.guard.gate()
+        _nla_authority(self.guard.context, self.guard.method)
+        if self.read() != self.expected:
+            raise invalid_argument("NLA ownership, settings, Action/slot/content or consumer scope changed; writes and recovery refused.")
+
+    def verify(self) -> None:
+        if self.read() != self.expected:
+            raise invalid_argument("NLA setter changed state outside its exact expected stage; reinspect retained data.")
+
+    def write(self, expected: dict[str, Any], operation: Any) -> None:
+        self.gate()
+        previous = self.expected
+        self.started = True
+        try:
+            operation()
+        except Exception:
+            try:
+                observed = self.read()
+                if observed == expected:
+                    self.expected = expected
+                elif observed != previous:
+                    # Do not accept a partial setter or callback's unrelated change.
+                    self.expected = previous
+            except Exception:
+                # Observation failure never authorizes compensation or replaces
+                # the setter's primary failure.
+                self.expected = previous
+            raise
+        self.expected = expected
+        self.verify()
+
+    def track(self, model: dict[str, Any], owner: Any) -> dict[str, Any]:
+        return next(record for record in model["tracks"] if record["id"] == key(owner))
+
+    def references(self, model: dict[str, Any], action: Any, delta: int) -> None:
+        users = model["actions"][action_token(action)]["users"]
+        refs = list(users["references"])
+        matches = [index for index, record in enumerate(refs) if record[0] == key(self.obj)]
+        if not matches and delta == 1:
+            refs.append((key(self.obj), getattr(self.obj, "session_uid", None), self.obj.name,
+                         getattr(getattr(self.obj, "bl_rna", None), "identifier", "unknown"), 0,
+                         self.obj.library is None and self.obj.override_library is None and bool(self.obj.is_editable)))
+            matches = [len(refs)-1]
+        if len(matches) != 1 or refs[matches[0]][4]+delta < 0:
+            raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "NLA Action reference delta has no exact existing owner.")
+        index = matches[0]
+        record = refs[index]
+        if record[4]+delta:
+            refs[index] = (*record[:4], record[4]+delta, record[5])
+        else:
+            refs.pop(index)
+        users.update(users=users["users"]+delta, real_users=users["real_users"]+delta,
+                     references=tuple(sorted(refs, key=lambda record: record[0])))
+
+    def add_track(self) -> Any:
+        self.gate()
+        self.started = True
+        tracks = self.data.nla_tracks
+        track = tracks.new(prev=tracks[-1]) if len(tracks) else tracks.new()
+        self.created_tracks.append(track)
+        record = self._track(track)
+        settings = record["settings"]
+        if (record["strips"] or settings.get("lock") or settings.get("mute") or settings.get("is_solo")
+                or settings.get("select") is not True):
+            raise invalid_argument("New NLA track does not retain its empty private constructor scope.")
+        expected = deepcopy(self.expected)
+        expected["tracks"].append(record)
+        expected["active_track"] = key(track)
+        self.expected = expected
+        self.verify()
+        return track
+
+    def add_strip(self, track: Any, name: str, start: float, end: float, action: Any, slot: Any,
+                  source_start: float | None = None, source_end: float | None = None) -> Any:
+        self.gate()
+        self.started = True
+        strip = track.strips.new(name, int(start), action)
+        record = self._strip(strip)
+        if not new_clip(strip, name, start, end,
+                        start if source_start is None else source_start,
+                        end if source_end is None else source_end, action, slot):
+            raise invalid_argument("New NLA strip does not match its complete reviewed native constructor scope.")
+        expected = deepcopy(self.expected)
+        self.track(expected, track)["strips"].append(record)
+        self.references(expected, action, 1)
+        self.expected = expected
+        self.verify()
+        return strip
+
+    def influence(self, track: Any, strip: Any, expected: dict[str, Any]) -> None:
+        """Adopt only the fully demonstrated private native one-key allocation."""
+        self.gate()
+        previous = deepcopy(self.expected)
+        before = next(item for item in self.track(previous, track)["strips"] if item["id"] == key(strip))
+        prefs = previous["control_preferences"]
+        if prefs is None or (before["settings"].get("use_animated_time", False)
+                and not any(curve.data_path == "strip_time" for curve in strip.fcurves)):
+            raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Influence allocation requires reviewed preferences and an already complete animated-time control scope.")
+        edit = SimpleNamespace(fcurve_new_auto_smoothing=prefs[0], keyframe_new_handle_type=prefs[1], keyframe_new_interpolation_type=prefs[2])
+        self.started = True
+        setter_error = None
+        try:
+            strip.use_animated_influence = True
+        except Exception as error:
+            setter_error = error
+        after = self.read()
+        if after == previous:
+            if setter_error is not None:
+                raise setter_error
+            raise invalid_argument("Native animated-influence setter made no expected allocation.")
+        record = next(item for item in self.track(after, track)["strips"] if item["id"] == key(strip))
+        old_ids = {item[0] for item in before["controls"]}
+        new = [curve for curve in strip.fcurves if key(curve) not in old_ids]
+        if (len(new) != 1 or not new_influence(new[0], before["settings"], edit)
+                or record["controls"][:-1] != before["controls"] or record["controls"][-1][0] != key(new[0])):
+            raise invalid_argument("New NLA influence control exceeds its exact reviewed native constructor; retained without further writes.")
+        target = next(item for item in self.track(expected, track)["strips"] if item["id"] == key(strip))
+        target["controls"] = record["controls"]
+        if after != expected:
+            raise invalid_argument("Influence allocation changed protected NLA/Action/context data; retained without further writes.")
+        self.expected = expected
+        if setter_error is not None:
+            raise setter_error
+
+    def retained_track(self, track: Any) -> Any:
+        try:
+            if track is None and self.created_tracks:
+                track = self.created_tracks[-1]
+            if track is not None and any(key(item) == key(track) for item in self.obj.animation_data.nla_tracks):
+                return {"name": str(track.name)[:1024], "identity": key(track)}
+        except Exception:
+            pass
+        return None
 
 
 def _object(params: Mapping[str, Any], modify: bool = False) -> Any:
@@ -127,88 +392,13 @@ def inspect(context: Any, params: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def driver_add(context: Any, params: Mapping[str, Any]) -> dict[str, Any]:
-    reject_unknown_params(params, {"object_name", "data_path", "index", "driver_type", "variables"})
-    obj = _object(params, True)
-    path, index = _channel(params)
-    kind = params.get("driver_type", "AVERAGE")
-    if obj.animation_data and len(obj.animation_data.drivers) >= 128:
-        raise invalid_argument("Driver limit reached.")
-    if not isinstance(kind, str) or kind not in {"AVERAGE", "SUM", "MIN", "MAX"}:
-        raise invalid_argument("Only non-scripted AVERAGE, SUM, MIN and MAX drivers are supported.")
-    if path == "rotation_euler" and obj.rotation_mode in {"QUATERNION", "AXIS_ANGLE"}:
-        raise invalid_argument("Euler rotation drivers require an Euler rotation mode.")
-    data = obj.animation_data
-    if data and (
-        any(c.data_path == path and c.array_index == index for c in data.drivers)
-        or data.action
-        or len(data.nla_tracks)
-    ):
-        raise invalid_argument(
-            "Driver target must have no existing driver on the channel, active action or NLA tracks."
-        )
-    variables = params.get("variables")
-    if not isinstance(variables, list) or not 1 <= len(variables) <= 8:
-        raise invalid_argument("variables must contain 1-8 transform sources.")
-    prepared = []
-    for variable in variables:
-        if not isinstance(variable, Mapping) or set(variable) != {
-            "object_name",
-            "transform_type",
-            "transform_space",
-        }:
-            raise invalid_argument(
-                "Each variable requires object_name, transform_type and transform_space."
-            )
-        target = get_object(variable["object_name"], allow_active=False)
-        if (
-            target == obj
-            or target.parent is not None
-            or len(target.constraints)
-            or target.animation_data is not None
-        ):
-            raise invalid_argument(
-                "Driver sources must be distinct, independent objects without animation/drivers/constraints; cyclic or indirect dependencies are not inferred."
-            )
-        if (
-            not all(isinstance(v, str) for v in variable.values())
-            or variable["transform_type"] not in TRANSFORMS
-            or variable["transform_space"] not in {"WORLD_SPACE", "LOCAL_SPACE", "TRANSFORM_SPACE"}
-        ):
-            raise invalid_argument("Unsupported transform channel or space.")
-        prepared.append((target, variable["transform_type"], variable["transform_space"]))
-    had_data = data is not None
-    curve = obj.driver_add(path, index)
-    try:
-        curve.driver.type = kind
-        for variable in list(curve.driver.variables):
-            curve.driver.variables.remove(variable)
-        for i, (target, transform, space) in enumerate(prepared):
-            variable = curve.driver.variables.new()
-            variable.name = f"source_{i}"
-            variable.type = "TRANSFORMS"
-            variable.targets[0].id = target
-            variable.targets[0].transform_type = transform
-            variable.targets[0].transform_space = space
-    except Exception:
-        obj.driver_remove(path, index)
-        if not had_data:
-            obj.animation_data_clear()
-        raise
-    obj.update_tag()
-    require_blender().context.view_layer.update()
-    return {"affected_objects": [obj.name], **inspect(context, {"object_name": obj.name})}
+    result = _legacy_object_drivers.add(context, params)
+    return {**result, **inspect(context, {"object_name": params["object_name"]})}
 
 
 def driver_remove(context: Any, params: Mapping[str, Any]) -> dict[str, Any]:
-    reject_unknown_params(params, {"object_name", "data_path", "index"})
-    obj = _object(params, True)
-    path, index = _channel(params)
-    if not obj.animation_data or not any(
-        c.data_path == path and c.array_index == index for c in obj.animation_data.drivers
-    ):
-        raise invalid_argument("Driver does not exist on the named channel.")
-    obj.driver_remove(path, index)
-    return {"affected_objects": [obj.name], **inspect(context, {"object_name": obj.name})}
+    result = _legacy_object_drivers.remove(context, params)
+    return {**result, **inspect(context, {"object_name": params["object_name"]})}
 
 
 def nla_add(context: Any, params: Mapping[str, Any]) -> dict[str, Any]:
@@ -223,6 +413,7 @@ def nla_add(context: Any, params: Mapping[str, Any]) -> dict[str, Any]:
             "slot_identifier",
         },
     )
+    _nla_context(context)
     obj = _object(params, True)
     track_name = bounded_name(params.get("track_name"), "track_name", maximum=63)
     strip_name = bounded_name(params.get("strip_name"), "strip_name", maximum=63)
@@ -247,27 +438,220 @@ def nla_add(context: Any, params: Mapping[str, Any]) -> dict[str, Any]:
         raise invalid_argument(
             "nla.add_strip creates a new named track; existing tracks are not reused implicitly."
         )
+    bpy = require_blender()
+    source_start, source_end = map(float, action.frame_range)
+    if not (math.isfinite(source_start) and math.isfinite(source_end)
+            and source_start.is_integer() and source_end.is_integer()
+            and -100_000 <= source_start < source_end <= 100_000
+            and source_end-source_start <= 100_000 and start+source_end-source_start <= 100_000):
+        raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "New NLA clips require a positive bounded integral Action range.")
+    if slots and len(slots) != 1:
+        raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "New NLA tracks currently require one exact suitable Action slot.")
+    validate_slot(obj, action, choices[0] if choices else None)
     had_data = obj.animation_data is not None
-    data = obj.animation_data_create()
-    if len(data.nla_tracks) >= 64:
-        raise invalid_argument("NLA track limit reached.")
-    track = data.nla_tracks.new()
+    if not had_data:
+        guard = Guard(bpy, context, "nla.add_strip")
+        guard.remember(obj, bpy.data.objects)
+        guard.remember(action, bpy.data.actions)
+        source_signature = (action_token(action), action.name, action_content(action), action_users(bpy, action), tuple(action.frame_range))
+        created_data = None
+        try:
+            guard.gate()
+            _nla_authority(context, "nla.add_strip")
+            object_scope(bpy, obj)
+            affected_scope(bpy, obj, [])
+            if obj.animation_data is not None or source_signature != (action_token(action), action.name, action_content(action), action_users(bpy, action), tuple(action.frame_range)):
+                raise invalid_argument("Preflight Action or empty AnimData scope changed; allocation refused.")
+            # Retain an owned empty AnimData on later failure instead of clearing
+            # a container that might have acquired foreign dependencies.
+            created_data = obj.animation_data_create()
+            guard.gate()
+            _nla_authority(context, "nla.add_strip")
+            if (key(obj.animation_data) != key(created_data) or created_data.action is not None
+                    or len(created_data.nla_tracks) or len(created_data.drivers) or created_data.use_tweak_mode
+                    or source_signature != (action_token(action), action.name, action_content(action), action_users(bpy, action), tuple(action.frame_range))):
+                raise invalid_argument("Created AnimData or source Action acquired foreign state; retained for recovery.")
+        except Exception as error:
+            raise BridgeError(error.code if isinstance(error, BridgeError) else ErrorCode.OPERATION_FAILED,
+                              "NLA AnimData allocation failed or scope changed; inspect the exact owner.",
+                              {"possible_mutation": created_data is not None or obj.animation_data is not None,
+                               "execution_started": created_data is not None, "verification_required": True,
+                               "retained_anim_data": key(obj.animation_data)}) from error
+    data = obj.animation_data
+    if len(data.nla_tracks) >= 16:
+        raise invalid_argument("Reviewed NLA mutation supports at most 16 tracks.")
+    _nla_context(context)
+    scope = _LegacyNlaGuard(context, obj, "nla.add_strip", (action,))
+    previous_active, track = data.nla_tracks.active, None
     try:
-        track.name = track_name
-        strip = track.strips.new(strip_name, start, action)
-        strip.name = strip_name
-        if choices:
-            strip.action_slot = choices[0]
-    except Exception:
-        data.nla_tracks.remove(track)
-        if not had_data:
-            obj.animation_data_clear()
-        raise
+        track = scope.add_track()
+        if track.name != track_name:
+            expected = deepcopy(scope.expected)
+            scope.track(expected, track)["settings"]["name"] = track_name
+            scope.write(expected, lambda: setattr(track, "name", track_name))
+        scope.add_strip(track, strip_name, float(start), start+source_end-source_start, action,
+                        choices[0] if choices else None, source_start, source_end)
+        scope.gate()
+    except Exception as error:
+        restored = False
+        try:
+            scope.gate()
+            owned = track if track is not None else scope.created_tracks[-1] if scope.created_tracks else None
+            if owned is not None:
+                expected = deepcopy(scope.expected)
+                record = scope.track(expected, owned)
+                for strip in record["strips"]:
+                    if strip["action"] != action_token(action):
+                        raise invalid_argument("Created track acquired foreign strips; cleanup refused.")
+                    scope.references(expected, action, -1)
+                if previous_active is not None and expected["active_track"] != key(previous_active):
+                    active_state = deepcopy(scope.expected)
+                    active_state["active_track"] = key(previous_active)
+                    scope.write(active_state, lambda: setattr(data.nla_tracks, "active", previous_active))
+                    expected["active_track"] = key(previous_active)
+                expected["tracks"] = [item for item in expected["tracks"] if item["id"] != key(owned)]
+                if expected["active_track"] == key(owned):
+                    expected["active_track"] = None
+                scope.write(expected, lambda: data.nla_tracks.remove(owned))
+            scope.gate()
+            restored = had_data and scope.expected == scope.original
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception("New NLA track recovery refused or failed")
+        raise BridgeError(error.code if isinstance(error, BridgeError) else ErrorCode.OPERATION_FAILED,
+                          "NLA creation failed; inspect retained tracks and finalized checkpoint.",
+                          {"object": scope.name, "execution_started": scope.started or not had_data,
+                           "rollback_verified": restored, "possible_mutation": (scope.started or not had_data) and not restored,
+                           "retained_track": scope.retained_track(track), "retained_empty_anim_data": not had_data,
+                           "verification_required": True}) from error
     return {"affected_objects": [obj.name], **inspect(context, {"object_name": obj.name})}
+
+
+def _native_float(value: float) -> float:
+    return struct.unpack("f", struct.pack("f", value))[0]
+
+
+def _strip_stage(settings: dict[str, Any], name: str, value: Any) -> dict[str, Any]:
+    """Predict reviewed isolated-CLIP RNA setters, including native float storage.
+
+    Mirrors reviewed native RNA semantics, not arbitrary post-setter observation:
+    scale/repeat/source-range recalculate end; transform updates clamp blends;
+    frame_start/end aliases share storage. Native fixtures prove these on each
+    supported development runtime. Global auto-blend validation is predicted
+    separately; influence child allocation uses its reviewed native constructor.
+    """
+    result = dict(settings)
+    value = _native_float(float(value)) if isinstance(value, (int, float)) and not isinstance(value, bool) else value
+    result[name] = value
+    if name in {"action_frame_start", "action_frame_end", "scale", "repeat"}:
+        length = _native_float(result["action_frame_end"]-result["action_frame_start"])
+        if length < 1.:
+            raise invalid_argument("Reviewed source Action range must stay at least one frame long.")
+        mapping = _native_float(result["scale"]*result["repeat"])
+        result["frame_end"] = _native_float(_native_float(length*mapping)+result["frame_start"])
+    if not -100_000 <= result["frame_start"] < result["frame_end"] <= 100_000 or result["frame_end"]-result["frame_start"] < 1.:
+        raise invalid_argument("Reviewed NLA extents must remain ordered, bounded and at least one frame long.")
+    length = _native_float(result["frame_end"]-result["frame_start"])
+    if name in {"blend_in", "blend_out"}:
+        other = "blend_out" if name == "blend_in" else "blend_in"
+        if value < 0 or value > length-result[other]:
+            raise invalid_argument("Explicit blend duration must fit the strip without native clamping.")
+    if name == "use_auto_blend" and not value:
+        result["blend_in"] = result["blend_out"] = 0.
+
+    if name in {"frame_start", "frame_end", "action_frame_start", "action_frame_end", "scale", "repeat"}:
+        # The native transform-update uses double intermediates for blend limits.
+        total = result["frame_end"]-result["frame_start"]
+        result["blend_in"] = _native_float(max(0., min(result["blend_in"], max(0., total-result["blend_out"]))))
+        result["blend_out"] = _native_float(max(0., min(result["blend_out"], total-result["blend_in"])))
+    for field in ("frame_start", "frame_end"):
+        for suffix in ("_raw", "_ui"):
+            if field+suffix in result:
+                result[field+suffix] = result[field]
+    return result
+
+
+def _native_autoblend(model: dict[str, Any]) -> None:
+    """Predict native 4.5/5.2 global validation without mutating any RNA.
+
+    Only reviewed plain strip extents enter the model. Invalid or displaced
+    transitions fail before the setter instead of letting native validation
+    remove/rewrite them. The caller rejects predicted writes outside its strip.
+    """
+    tracks = model["tracks"]
+    def equal(a: float, b: float) -> bool:
+        return abs(a-b) <= 1.1920928955078125e-7
+    def overlaps(target: dict[str, Any], neighbors: list[dict[str, Any]]) -> tuple[Any, Any]:
+        begin = end = None
+        for index, record in enumerate(neighbors):
+            other = record["settings"]
+            if other["frame_start"] <= target["frame_start"] and other["frame_end"] >= target["frame_end"]:
+                return None, None
+            if other["frame_end"] < target["frame_start"]:
+                continue
+            if other["frame_start"] > target["frame_end"]:
+                return begin, end
+            if (index+1 == len(neighbors) or not equal(neighbors[index+1]["settings"]["frame_start"], other["frame_end"])) and target["frame_start"] < other["frame_end"] < target["frame_end"]:
+                begin = other["frame_end"]
+            if (index == 0 or not equal(neighbors[index-1]["settings"]["frame_end"], other["frame_start"])) and target["frame_start"] < other["frame_start"] < target["frame_end"]:
+                end = other["frame_start"]
+        return begin, end
+    for index, track in enumerate(tracks):
+        strips = track["strips"]
+        for at, record in enumerate(strips):
+            setting = record["settings"]
+            if record["type"] == "TRANSITION" and (at == 0 or at+1 == len(strips)
+                    or setting["frame_start"] != strips[at-1]["settings"]["frame_end"]
+                    or setting["frame_end"] != strips[at+1]["settings"]["frame_start"]
+                    or setting["frame_start"] >= setting["frame_end"]):
+                raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Native auto-blend validation would rewrite/remove a transition; repair its exact neighbors first.")
+            if len(tracks) > 1 and setting.get("use_auto_blend", False):
+                ps, pe = overlaps(setting, tracks[index-1]["strips"]) if index else (None, None)
+                ns, ne = overlaps(setting, tracks[index+1]["strips"]) if index+1 < len(tracks) else (None, None)
+                # The reviewed native condition gives the previous-track endpoint
+                # precedence whenever it exists; preserve that exact behavior.
+                begin = ps if ps is not None else ns
+                end = pe if pe is not None else ne
+                setting["blend_in"] = _native_float(begin-setting["frame_start"]) if begin is not None and (at == 0 or not equal(strips[at-1]["settings"]["frame_end"], setting["frame_start"])) else 0.
+                setting["blend_out"] = _native_float(setting["frame_end"]-end) if end is not None and (at+1 == len(strips) or not equal(strips[at+1]["settings"]["frame_start"], setting["frame_end"])) else 0.
+            length = setting["frame_end"]-setting["frame_start"]
+            setting["blend_in"] = _native_float(max(0., min(setting["blend_in"], max(0., length-setting["blend_out"]))))
+            setting["blend_out"] = _native_float(max(0., min(setting["blend_out"], length-setting["blend_in"])))
+
+
+def _strip_expected(scope: _LegacyNlaGuard, model: dict[str, Any], track: Any, strip_id: int, field: str, value: Any) -> dict[str, Any]:
+    expected = deepcopy(model)
+    record = next(item for item in scope.track(expected, track)["strips"] if item["id"] == strip_id)
+    record["settings"] = _strip_stage(record["settings"], field, value)
+    if (field == "use_auto_blend" and value) or (field in {"frame_start", "frame_end", "action_frame_start", "action_frame_end", "scale", "repeat"} and record["settings"].get("use_auto_blend", False)):
+        _native_autoblend(expected)
+        for old_track, new_track in zip(model["tracks"], expected["tracks"], strict=True):
+            for before, after in zip(old_track["strips"], new_track["strips"], strict=True):
+                if before["id"] != strip_id and before != after:
+                    raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Native automatic blending would change another strip; no cross-strip edits are inferred.",
+                                      {"protected_strip_native_id": before["id"]})
+    return expected
+
+
+def _retained_controls(strip: Any) -> Any:
+    try:
+        return [key(curve) for curve in bounded(strip.fcurves, 8, "retained NLA controls")]
+    except Exception:
+        return None
+
+
+def _legacy_failure(error: Exception, scope: _LegacyNlaGuard, *, restored: bool = False, **evidence: Any) -> BridgeError:
+    return BridgeError(error.code if isinstance(error, BridgeError) else ErrorCode.OPERATION_FAILED,
+                       "NLA edit failed; reinspect retained state and finalized recovery checkpoint.",
+                       {**(error.context if isinstance(error, BridgeError) else {}), "object": scope.name,
+                        "execution_started": scope.started, "rollback_verified": restored,
+                        "possible_mutation": scope.started and not restored,
+                        "verification_required": True, **evidence})
 
 
 def nla_edit(context: Any, params: Mapping[str, Any]) -> dict[str, Any]:
     reject_unknown_params(params, {"object_name", "track_name", "strip_name", "settings", "remove"})
+    _nla_context(context)
     obj = _object(params, True)
     track_name = bounded_name(params.get("track_name"), "track_name")
     strip_name = bounded_name(params.get("strip_name"), "strip_name")
@@ -280,36 +664,70 @@ def nla_edit(context: Any, params: Mapping[str, Any]) -> dict[str, Any]:
     remove = params.get("remove", False)
     if type(remove) is not bool:
         raise invalid_argument("remove must be boolean.")
-    if remove:
-        if params.get("settings"):
-            raise invalid_argument("Removal cannot include settings.")
-        track.strips.remove(strip)
-    else:
+    if remove and params.get("settings"):
+        raise invalid_argument("Removal cannot include settings.")
+    assignments = []
+    if not remove:
         if len(track.strips) != 1:
-            raise invalid_argument(
-                "Strip timing edits require a single-strip track to avoid overlap side effects."
-            )
+            raise invalid_argument("Strip timing edits require a single-strip track to avoid overlap side effects.")
         settings = settings_mapping(params)
         for name in ("scale", "repeat"):
             value = settings.get(name)
             if value is not None and (type(value) not in {int, float} or not 0.01 <= value <= 100):
                 raise invalid_argument(f"{name} must be between 0.01 and 100.")
-        apply_assignments(
-            strip,
-            prepare_assignments(
-                strip,
-                settings,
-                allowed=STRIP_PROPERTIES,
-                object_pointers=frozenset(),
-                bpy=require_blender(),
-            ),
-        )
+        assignments = prepare_assignments(strip, settings, allowed=STRIP_PROPERTIES,
+                                         object_pointers=frozenset(), bpy=require_blender())
+    scope = _LegacyNlaGuard(context, obj, "nla.edit_strip")
+    strip_id = key(strip)
+    original = dict(next(item for item in scope.track(scope.expected, track)["strips"] if item["id"] == strip_id)["settings"])
+    # Preflight every requested intermediate stage before the first write.
+    allocates_influence = any(item.name == "use_animated_influence" and item.value for item in assignments) and not any(curve.data_path == "influence" for curve in strip.fcurves)
+    incomplete_controls = scope.expected["control_preferences"] is None or (getattr(strip, "use_animated_time", False) and not any(curve.data_path == "strip_time" for curve in strip.fcurves))
+    if allocates_influence and incomplete_controls:
+        raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Influence allocation requires reviewed preferences and complete animated-time control scope.")
+    prediction = deepcopy(scope.expected)
+    for assignment in assignments:
+        prediction = _strip_expected(scope, prediction, track, strip_id, assignment.name, assignment.value)
+    completed = []
+    try:
+        if remove:
+            expected = deepcopy(scope.expected)
+            record = scope.track(expected, track)
+            record["strips"] = [item for item in record["strips"] if item["id"] != strip_id]
+            scope.references(expected, strip.action, -1)
+            scope.write(expected, lambda: track.strips.remove(strip))
+        else:
+            for assignment in assignments:
+                expected = _strip_expected(scope, scope.expected, track, strip_id, assignment.name, assignment.value)
+                if assignment.name == "use_animated_influence" and assignment.value and not any(curve.data_path == "influence" for curve in strip.fcurves):
+                    scope.influence(track, strip, expected)
+                else:
+                    scope.write(expected, lambda assignment=assignment: setattr(strip, assignment.name, assignment.value))
+                completed.append(assignment.name)
+        scope.gate()
+    except Exception as error:
+        restored = False
+        if not remove:
+            try:
+                scope.gate()
+                for name in reversed(completed):
+                    expected = _strip_expected(scope, scope.expected, track, strip_id, name, original[name])
+                    scope.write(expected, lambda name=name: setattr(strip, name, original[name]))
+                scope.gate()
+                restored = scope.expected == scope.original
+            except Exception:
+                import logging
+                logging.getLogger(__name__).exception("NLA strip compensation refused or incomplete")
+        raise _legacy_failure(error, scope, restored=restored, strip_name=strip_name,
+                              removed_strip_requires_checkpoint_recovery=remove and scope.started,
+                              retained_control_curve_ids=[] if remove else _retained_controls(strip)) from error
     return {"affected_objects": [obj.name], **inspect(context, {"object_name": obj.name})}
 
 
 def nla_edit_track(context: Any, params: Mapping[str, Any]) -> dict[str, Any]:
     """Rename/mute/lock an exact NLA track, or remove an explicitly empty track."""
     reject_unknown_params(params, {"object_name", "track_name", "settings", "remove"})
+    _nla_context(context)
     obj = _object(params, True)
     name = bounded_name(params.get("track_name"), "track_name")
     track = obj.animation_data.nla_tracks.get(name) if obj.animation_data else None
@@ -318,46 +736,63 @@ def nla_edit_track(context: Any, params: Mapping[str, Any]) -> dict[str, Any]:
     remove = params.get("remove", False)
     if type(remove) is not bool:
         raise invalid_argument("remove must be boolean.")
+    assignments = []
     if remove:
         if params.get("settings") is not None:
             raise invalid_argument("Removal cannot include settings.")
         if track.lock or len(track.strips):
-            raise invalid_argument(
-                "Track removal requires an unlocked, empty track; strips/actions are never deleted implicitly."
-            )
-        obj.animation_data.nla_tracks.remove(track)
+            raise invalid_argument("Track removal requires an unlocked, empty track; strips/actions are never deleted implicitly.")
     else:
         settings = settings_mapping(params)
         if track.lock and (set(settings) != {"lock"} or settings["lock"] is not False):
-            raise invalid_argument(
-                "A locked track must first be explicitly unlocked with lock=false."
-            )
+            raise invalid_argument("A locked track must first be explicitly unlocked with lock=false.")
         if "name" in settings:
             new_name = bounded_name(settings["name"], "name", maximum=63)
             existing = obj.animation_data.nla_tracks.get(new_name)
             if len(new_name.encode("utf-8")) > 63 or (existing is not None and existing != track):
                 raise invalid_argument("Track name is unavailable or exceeds 63 UTF-8 bytes.")
-        apply_assignments(
-            track,
-            prepare_assignments(
-                track,
-                settings,
-                allowed=frozenset({"name", "mute", "lock"}),
-                object_pointers=frozenset(),
-                bpy=require_blender(),
-            ),
-        )
-    return {
-        "affected_objects": [obj.name],
-        "previous_track_name": name,
-        "removed": remove,
-        **inspect(context, {"object_name": obj.name}),
-    }
+        assignments = prepare_assignments(track, settings, allowed=frozenset({"name", "mute", "lock"}),
+                                         object_pointers=frozenset(), bpy=require_blender())
+    scope = _LegacyNlaGuard(context, obj, "nla.edit_track")
+    original, completed = dict(scope.track(scope.expected, track)["settings"]), []
+    try:
+        if remove:
+            expected = deepcopy(scope.expected)
+            expected["tracks"] = [item for item in expected["tracks"] if item["id"] != key(track)]
+            if expected["active_track"] == key(track):
+                expected["active_track"] = None
+            scope.write(expected, lambda: obj.animation_data.nla_tracks.remove(track))
+        else:
+            for assignment in assignments:
+                expected = deepcopy(scope.expected)
+                scope.track(expected, track)["settings"][assignment.name] = assignment.value
+                scope.write(expected, lambda assignment=assignment: setattr(track, assignment.name, assignment.value))
+                completed.append(assignment.name)
+        scope.gate()
+    except Exception as error:
+        restored = False
+        if not remove:
+            try:
+                scope.gate()
+                for field in reversed(completed):
+                    expected = deepcopy(scope.expected)
+                    scope.track(expected, track)["settings"][field] = original[field]
+                    scope.write(expected, lambda field=field: setattr(track, field, original[field]))
+                scope.gate()
+                restored = scope.expected == scope.original
+            except Exception:
+                import logging
+                logging.getLogger(__name__).exception("NLA track compensation refused or incomplete")
+        raise _legacy_failure(error, scope, restored=restored, previous_track_name=name,
+                              removed_track_requires_checkpoint_recovery=remove and scope.started) from error
+    return {"affected_objects": [obj.name], "previous_track_name": name,
+            "removed": remove, **inspect(context, {"object_name": obj.name})}
 
 
 def nla_push_down(context: Any, params: Mapping[str, Any]) -> dict[str, Any]:
     """Move a standard active action into a new top NLA track without copying its keys."""
     reject_unknown_params(params, {"object_name", "track_name", "strip_name"})
+    _nla_context(context)
     obj = _object(params, True)
     names = [bounded_name(params.get(key), key, maximum=63) for key in ("track_name", "strip_name")]
     if any(len(name.encode("utf-8")) > 63 for name in names):
@@ -401,59 +836,78 @@ def nla_push_down(context: Any, params: Mapping[str, Any]) -> dict[str, Any]:
             "Push-down requires a nonzero integral action range of at most 100000 frames.",
         )
     previous_active = data.nla_tracks.active
-    track = None
-    if getattr(context, "check_cancelled", None):
-        context.check_cancelled()
+    scope = _LegacyNlaGuard(context, obj, "nla.push_down")
+    track = strip = None
     try:
-        track = (
-            data.nla_tracks.new(prev=data.nla_tracks[-1])
-            if len(data.nla_tracks)
-            else data.nla_tracks.new()
-        )
-        track.name = names[0]
-        strip = track.strips.new(names[1], int(start), action)
-        strip.name = names[1]
-        if slot is not None:
-            strip.action_slot = slot
-        strip.action_frame_start, strip.action_frame_end = start, end
-        strip.frame_start, strip.frame_end = start, end
-        strip.blend_type, strip.extrapolation, strip.influence = "REPLACE", "HOLD", 1.0
-        if (
-            strip.action != action
-            or (slot is not None and strip.action_slot != slot)
-            or strip.frame_start != start
-            or strip.frame_end != end
-            or strip.scale != 1.0
-        ):
-            raise RuntimeError("Created strip does not match the active action")
-        data.action = None
+        track = scope.add_track()
+        if track.name != names[0]:
+            expected = deepcopy(scope.expected)
+            scope.track(expected, track)["settings"]["name"] = names[0]
+            scope.write(expected, lambda: setattr(track, "name", names[0]))
+        strip = scope.add_strip(track, names[1], start, end, action, slot)
+        # Reviewed native constructor supplies exact timing, REPLACE/HOLD and the
+        # matching slot on 4.5/5.2. Influence alone defaults to zero.
+        expected = deepcopy(scope.expected)
+        scope.track(expected, track)["strips"][0]["settings"]["influence"] = 1.
+        scope.write(expected, lambda: setattr(strip, "influence", 1.))
+        expected = deepcopy(scope.expected)
+        expected["active_action"], expected["slot"] = action_token(None), None
+        scope.references(expected, action, -1)
+        scope.write(expected, lambda: setattr(data, "action", None))
         if previous_active is not None:
-            data.nla_tracks.active = previous_active
-        if data.action is not None:
-            raise RuntimeError("Active action was not cleared")
+            expected = deepcopy(scope.expected)
+            expected["active_track"] = key(previous_active)
+            scope.write(expected, lambda: setattr(data.nla_tracks, "active", previous_active))
+        scope.gate()
     except Exception as exc:
-        restored = True
+        restored = False
         try:
-            data.action = action
-            if slot is not None:
-                data.action_slot = slot
-            if track is not None:
-                data.nla_tracks.remove(track)
-            if previous_active is not None:
-                data.nla_tracks.active = previous_active
+            if scope.started:
+                scope.gate()
+                if scope.expected["active_action"] != action_token(action):
+                    expected = deepcopy(scope.expected)
+                    expected["active_action"], expected["slot"] = action_token(action), None
+                    scope.references(expected, action, 1)
+                    scope.write(expected, lambda: setattr(data, "action", action))
+                    if slot is not None:
+                        expected = deepcopy(scope.expected)
+                        expected["slot"] = _nla_slot(slot)
+                        scope.write(expected, lambda: setattr(data, "action_slot", slot))
+                if previous_active is not None and scope.expected["active_track"] != key(previous_active):
+                    expected = deepcopy(scope.expected)
+                    expected["active_track"] = key(previous_active)
+                    scope.write(expected, lambda: setattr(data.nla_tracks, "active", previous_active))
+                if track is not None:
+                    expected = deepcopy(scope.expected)
+                    owned = scope.track(expected, track)
+                    if strip is not None:
+                        if [record["id"] for record in owned["strips"]] != [key(strip)]:
+                            raise invalid_argument("Created NLA track acquired foreign strips; cleanup refused.")
+                        scope.references(expected, action, -1)
+                    elif owned["strips"]:
+                        raise invalid_argument("Created NLA track acquired foreign strips; cleanup refused.")
+                    expected["tracks"] = [record for record in expected["tracks"] if record["id"] != key(track)]
+                    if expected["active_track"] == key(track):
+                        expected["active_track"] = key(previous_active)
+                    scope.write(expected, lambda: data.nla_tracks.remove(track))
+                scope.gate()
+                restored = scope.expected == scope.original
         except Exception:
             import logging
 
-            logging.getLogger(__name__).exception("NLA push-down rollback failed")
-            restored = False
+            logging.getLogger(__name__).exception("NLA push-down recovery refused or failed")
         raise BridgeError(
-            ErrorCode.OPERATION_FAILED,
+            exc.code if isinstance(exc, BridgeError) else ErrorCode.OPERATION_FAILED,
             "Action push-down failed; reinspect before retrying.",
             {
-                "object": obj.name,
-                "execution_started": True,
+                "object": scope.name,
+                "execution_started": scope.started,
                 "verification_required": True,
                 "rollback_performed": restored,
+                "rollback_verified": restored,
+                "possible_mutation": scope.started and not restored,
+                "recovery_skipped_or_incomplete": scope.started and not restored,
+                "retained_track": scope.retained_track(track),
             },
         ) from exc
     return {
@@ -493,6 +947,7 @@ def register_tools(registry: Any) -> None:
 def nla_solo_track(context: Any, params: Mapping[str, Any]) -> dict[str, Any]:
     """Set one track's solo state with explicit consent to replace an existing solo."""
     reject_unknown_params(params, {"object_name", "track_name", "enabled", "replace_existing"})
+    _nla_context(context)
     obj = _object(params, True)
     name = bounded_name(params.get("track_name"), "track_name")
     enabled = params.get("enabled")
@@ -521,37 +976,50 @@ def nla_solo_track(context: Any, params: Mapping[str, Any]) -> dict[str, Any]:
         )
     before = [(t, t.is_solo) for t in data.nla_tracks]
     expected = [(t, enabled if t == track else False if enabled else value) for t, value in before]
-    if getattr(context, "check_cancelled", None):
-        context.check_cancelled()
+    scope = _LegacyNlaGuard(context, obj, "nla.solo_track")
     try:
         if enabled:
             for other in others:
-                other.is_solo = False
-        track.is_solo = enabled
+                next_state = deepcopy(scope.expected)
+                scope.track(next_state, other)["settings"]["is_solo"] = False
+                scope.write(next_state, lambda other=other: setattr(other, "is_solo", False))
+        if track.is_solo != enabled:
+            next_state = deepcopy(scope.expected)
+            scope.track(next_state, track)["settings"]["is_solo"] = enabled
+            scope.write(next_state, lambda: setattr(track, "is_solo", enabled))
+        scope.gate()
         if any(t.is_solo != value for t, value in expected):
             raise RuntimeError("Blender did not retain the requested solo state")
     except Exception as exc:
-        restored = True
-        # Restore false flags before true flags because Blender soloing is exclusive.
-        for desired in (False, True):
-            for item, value in before:
-                if value == desired:
-                    try:
-                        item.is_solo = value
-                    except Exception:
-                        import logging
+        restored = False
+        try:
+            if scope.started:
+                scope.gate()
+                # Restore false flags before true flags, and only settings that
+                # still exactly match this operation's known partial state.
+                for desired in (False, True):
+                    for item, value in before:
+                        if value == desired and scope.track(scope.expected, item)["settings"]["is_solo"] != value:
+                            next_state = deepcopy(scope.expected)
+                            scope.track(next_state, item)["settings"]["is_solo"] = value
+                            scope.write(next_state, lambda item=item, value=value: setattr(item, "is_solo", value))
+                scope.gate()
+                restored = scope.expected == scope.original
+        except Exception:
+            import logging
 
-                        logging.getLogger(__name__).exception("NLA solo rollback failed")
-                        restored = False
-        restored = restored and all(t.is_solo == value for t, value in before)
+            logging.getLogger(__name__).exception("NLA solo recovery refused or failed")
         raise BridgeError(
-            ErrorCode.OPERATION_FAILED,
+            exc.code if isinstance(exc, BridgeError) else ErrorCode.OPERATION_FAILED,
             "Solo edit failed; reinspect animation layers.",
             {
-                "object": obj.name,
-                "execution_started": True,
+                "object": scope.name,
+                "execution_started": scope.started,
                 "verification_required": True,
                 "rollback_performed": restored,
+                "rollback_verified": restored,
+                "possible_mutation": scope.started and not restored,
+                "recovery_skipped_or_incomplete": scope.started and not restored,
             },
         ) from exc
     return {

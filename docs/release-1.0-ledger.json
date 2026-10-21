@@ -11,20 +11,73 @@
   },
   "packages": {},
   "requirements": {
-    "EVID-01": {"status": "open", "evidence": []},
-    "SAFE-01": {"status": "open", "evidence": []},
-    "SAFE-02": {"status": "open", "evidence": [], "progress": "Object/data/Action/camera/light/World guards implemented; full mutator/dependency audit and Windows recovery acceptance remain."},
-    "REC-01": {"status": "open", "evidence": [], "progress": "Bounded packed raw snapshots restore matching loaded float image IDs; byte/unloaded/4K/UI-undo/memory-pressure and full mixed-editor recovery remain."},
-    "JOB-01": {"status": "open", "evidence": []},
-    "EVID-02": {"status": "open", "evidence": [], "progress": "Optional bounded rig, animation and nested shader dependency snapshots implemented; full preservation acceptance remains."},
-    "ASSET-01": {"status": "open", "evidence": [], "progress": "Previewed explicit-rail vertex/edge slides and exact-corner UV align/stitch/island relax implemented; full reference-constrained modeling/retopology and reviewed production quality remain."},
-    "LOOK-01": {"status": "open", "evidence": []},
-    "PAINT-01": {"status": "open", "evidence": [], "progress": "Explicit-mask base-mesh PUSH/SMOOTH, POINT/CORNER color lifecycle/painting and weight brush strokes implemented; surface texture projection/stencils, broader sculpt/paint and production/native-undo acceptance remain."},
-    "CHAR-01": {"status": "open", "evidence": [], "progress": "Independent Action/curve revision, weight brushes/geometric mirror/barycentric surface transfer, numeric rig controls and non-scripted bone drivers implemented; full IK/control rigs, NLA/action lifecycle, deformation diagnostics and protected character benchmark remain."},
-    "SIM-01": {"status": "open", "evidence": [], "progress": "Reviewed nested GN instances/copies and modifier inputs implemented; broader zones, solver/cache/bake jobs and production simulation remain."},
-    "UX-01": {"status": "open", "evidence": [], "progress": "Revisioned task plans, explicit persistence and advisory protected comparisons implemented; references/variants/previews/full artist interaction remain."},
-    "DELIVER-01": {"status": "open", "evidence": [], "progress": "Stored relative textures, fresh-process 4K FILE delivery, bounded packed snapshots and material-free GLB/FBX export implemented; broad import/material/production acceptance remains."},
-    "RC-01": {"status": "open", "evidence": [], "progress": "Qualification checker and manual gated publication workflow implemented; Windows 11 machine unavailable, exact packaged A-F and upgrade/rollback acceptance absent."}
+    "EVID-01": {
+      "status": "open",
+      "evidence": []
+    },
+    "SAFE-01": {
+      "status": "open",
+      "evidence": []
+    },
+    "SAFE-02": {
+      "status": "open",
+      "evidence": [],
+      "progress": "Bounded domain ownership/live-context guards include projection, IK, zone edits, paint publication and cloth cache callbacks; complete mutator/dependency audit and Windows recovery acceptance remain."
+    },
+    "REC-01": {
+      "status": "open",
+      "evidence": [],
+      "progress": "Bounded packed raw snapshots restore loaded float/byte original IDs; explicit previewed unloaded FILE reconstruction replaces packed bytes while preserving native identity and bindings. 4K native research passes; public cooperative 4K jobs, UI undo, constrained-memory, mixed-editor/general recovery and Windows acceptance remain."
+    },
+    "JOB-01": {
+      "status": "open",
+      "evidence": []
+    },
+    "EVID-02": {
+      "status": "open",
+      "evidence": [],
+      "progress": "Optional bounded rig, animation and nested shader dependency snapshots implemented; full preservation acceptance remains."
+    },
+    "ASSET-01": {
+      "status": "open",
+      "evidence": [],
+      "progress": "Previewed explicit-rail vertex/edge slides and exact-corner UV align/stitch/island relax implemented; full reference-constrained modeling/retopology and reviewed production quality remain."
+    },
+    "LOOK-01": {
+      "status": "open",
+      "evidence": [],
+      "progress": "Reviewed nested material/group operations and static camera/light variants implemented; native shader interface proof records animated socket-index aliasing and lossy conversion. Typed interface lifecycle and full look-development acceptance remain."
+    },
+    "PAINT-01": {
+      "status": "open",
+      "evidence": [],
+      "progress": "Explicit-mask sculpt/vertex/weight brushes and bounded orthographic surface texture strokes/stencils implemented; perspective/4K surface workflows, broader sculpt/paint and production/native-undo acceptance remain."
+    },
+    "CHAR-01": {
+      "status": "open",
+      "evidence": [],
+      "progress": "Weight brushes/mirror/surface transfer, bounded IK/deformation inspection, Action lifecycle, explicit NLA clips/transitions/reordering and guarded curve/driver edits implemented. Broader control rigs, complete mutator audit and protected character acceptance remain."
+    },
+    "SIM-01": {
+      "status": "open",
+      "evidence": [],
+      "progress": "Reviewed nested GN instances/copies, typed modifier constants, identifier-preserving zone/interface edits and guarded cloth cache lifecycle implemented; broader zone/solver/cache/bake jobs and production simulation remain."
+    },
+    "UX-01": {
+      "status": "open",
+      "evidence": [],
+      "progress": "Revisioned plans and explicit persistence, advisory protected comparisons, and bounded persistent static-scene camera/light variants with matched previews implemented; reference management, enforced persistent constraints and full artist interaction remain."
+    },
+    "DELIVER-01": {
+      "status": "open",
+      "evidence": [],
+      "progress": "Stored-relative/fresh-process textures, bounded packed image recovery, reviewed GLB/FBX export and approved-source static GLB/material-free FBX import implemented. General textured FBX, skinning/animation import, full packaging and production acceptance remain."
+    },
+    "RC-01": {
+      "status": "open",
+      "evidence": [],
+      "progress": "Qualification checker and manual gated publication workflow implemented; Windows 11 machine unavailable, exact packaged A-F and upgrade/rollback acceptance absent."
+    }
   },
   "quality_matrix": null,
   "native_matrices": [],

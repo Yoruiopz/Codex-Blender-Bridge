@@ -12,11 +12,20 @@ import bpy  # type: ignore
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPOSITORY_ROOT / "addon"))
 
+import blender_codex_bridge  # noqa: E402
 from blender_codex_bridge.errors import BridgeError, ErrorCode  # noqa: E402
+from blender_codex_bridge.permissions import Permission, PermissionManager  # noqa: E402
+from blender_codex_bridge.runtime import get_runtime  # noqa: E402
+from blender_codex_bridge.tools import _animation_scope as animation_scope  # noqa: E402
 from blender_codex_bridge.tools import animation, rigging  # noqa: E402
 
 
 def main() -> None:
+    blender_codex_bridge.register()
+    runtime = get_runtime()
+    grants = {item.value: True for item in Permission}
+    runtime.permissions = runtime.executor.permissions = PermissionManager(lambda: grants)
+    runtime.registry.enable_toolset("animation")
     created_objects: list[str] = []
     try:
         mesh_data = bpy.data.meshes.new("RigSmokeMeshData")
@@ -174,21 +183,36 @@ def main() -> None:
         assert automatic_binding["parent"] == armature_name
         assert automatic_binding["vertex_group_count"] >= 1
 
-        animation.set_range(
-            object(),
-            {"start": -5, "end": 48, "use_preview": True, "preview_start": 1, "preview_end": 24},
+        runtime.dispatch(
+            "animation.set_range",
+            {"start": 0, "end": 48, "use_preview": True, "preview_start": 1, "preview_end": 24},
         )
-        frame = animation.set_frame(object(), {"frame": 12.5})
+        frame = runtime.dispatch("animation.set_frame", {"frame": 12.5})
         assert math.isclose(frame["frame_final"], 12.5)
         data_path = 'pose.bones["Forearm.L"].rotation_euler'
-        inserted = animation.insert_keyframe(
-            object(),
+        scene = bpy.context.scene
+        particle = scene.tool_settings.particle_edit
+        particle_state = (animation_scope.key(particle.object), animation_scope.rna_state(particle), animation_scope.rna_state(particle.brush))
+        gravity = scene.tool_settings.sculpt.gravity_object
+        scene.tool_settings.sculpt.gravity_object = mesh
+        try:
+            runtime.dispatch("animation.keyframe_insert", {"object_name": armature_name, "data_path": data_path,
+                "frame": 12.5, "index": 1, "affected_objects": [mesh.name, automatic_mesh.name]})
+        except BridgeError as error:
+            assert error.code == ErrorCode.NOT_IMPLEMENTED
+        else:
+            raise AssertionError("An extra Scene gravity reference was counted as ordinary particle UI context")
+        finally:
+            scene.tool_settings.sculpt.gravity_object = gravity
+        assert armature.animation_data is None
+        inserted = runtime.dispatch(
+            "animation.keyframe_insert",
             {
                 "object_name": armature_name,
                 "data_path": data_path,
                 "frame": 12.5,
                 "index": 1,
-                "group": "Forearm.L",
+                "group": "Forearm.L", "affected_objects": [mesh.name, automatic_mesh.name],
             },
         )
         assert inserted["inserted"] is True
@@ -219,17 +243,18 @@ def main() -> None:
             assert animation.inspect_animation(object(), {"object_name": protected_alias.name}) == protected_animation
         bpy.data.objects.remove(protected_alias, do_unlink=True)
 
-        deleted = animation.delete_keyframe(
-            object(),
+        deleted = runtime.dispatch(
+            "animation.keyframe_delete",
             {
                 "object_name": armature_name,
                 "data_path": data_path,
                 "frame": 12.5,
                 "index": 1,
-                "group": "Forearm.L",
+                "group": "Forearm.L", "affected_objects": [mesh.name, automatic_mesh.name],
             },
         )
         assert deleted["deleted"] is True
+        assert (animation_scope.key(particle.object), animation_scope.rna_state(particle), animation_scope.rna_state(particle.brush)) == particle_state
 
         rig_state = rigging.inspect_rig(
             object(),

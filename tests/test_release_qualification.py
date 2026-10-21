@@ -23,7 +23,7 @@ def evidence(tmp_path: Path):
     source.mkdir()
     files = {
         "pyproject.toml": 'version = "1.0.0"\n',
-        "addon/blender_codex_bridge/__init__.py": "",
+        "addon/blender_codex_bridge/__init__.py": 'bl_info = {"version": (1, 0, 0)}\n',
         "addon/blender_codex_bridge/constants.py": "ADDON_VERSION = (1, 0, 0)\n",
         "addon/blender_codex_bridge/blender_manifest.toml": 'version = "1.0.0"\n',
         "mcp_server/__init__.py": '__version__ = "1.0.0"\n',
@@ -257,7 +257,8 @@ def test_mismatched_package_source_and_checksums_are_rejected(evidence) -> None:
     source, ledger_path, ledger = evidence
     addon = Path(ledger["packages"]["addon"]["path"])
     with ZipFile(addon, "w") as archive:
-        archive.writestr("blender_codex_bridge/__init__.py", "# different source")
+        archive.writestr("blender_codex_bridge/__init__.py", 'bl_info = {"version": (1, 0, 0)}\n# different source')
+        archive.writestr("blender_codex_bridge/constants.py", 'ADDON_VERSION = (1, 0, 0)\n')
         archive.writestr("blender_codex_bridge/blender_manifest.toml", 'version = "1.0.0"')
     ledger["packages"]["addon"]["sha256"] = gate.sha256(addon)
     check = gate.Qualification(ledger_path, source)
