@@ -12,13 +12,17 @@ Do not enable write permissions to diagnose a connection problem.
 
 ## The add-on ZIP does not install
 
-Build the supported archive from the repository root:
+For the published alpha, use `blender_codex_bridge-0.3.0.zip` from the
+[0.3.0 release](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.3.0).
+Do not install GitHub's automatic source archive. Contributors can build an archive from
+the repository root:
 
 ```powershell
 python .\scripts\build_addon.py
 ```
 
-Install `dist/blender_codex_bridge-0.2.0.zip`. Inspecting the ZIP should show:
+Install the matching `dist/blender_codex_bridge-<version>.zip` produced by that checkout.
+Pair it with the MCP server from the same source. Inspecting the ZIP should show:
 
 ```text
 blender_codex_bridge/__init__.py
@@ -100,7 +104,9 @@ Do not expose the port over LAN or a tunnel as a workaround.
 Run `toolsets.list`. The running registry is authoritative.
 
 - Core tools should be visible without a domain toolset.
-- Every optional domain starts disabled. Current toolsets are `objects`, `mesh`, `materials`, `nodes`, `uv`, `modifiers`, `constraints`, `animation`, `rigging`, `scene_edit`, `render`, and `python`.
+- Every optional domain starts disabled. Query `toolsets.list` for the installed build's
+  domains; [the development inventory](../README.md#complete-tool-inventory--main-branch)
+  includes unreleased domains absent from 0.3.0 downloads.
 - A roadmap entry does not mean the tool is implemented.
 - Restart Codex after upgrading the MCP package so it refreshes tool definitions.
 

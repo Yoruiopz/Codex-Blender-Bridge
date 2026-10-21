@@ -1,414 +1,121 @@
 # Blender Codex Bridge
 
-Let Codex inspect and edit your Blender scene through local, permission-controlled tools.
-Model objects, edit materials and shader nodes, unwrap UVs, work with rigs and animation,
-configure lights and cameras, and render—with status and controls inside Blender.
+Let Codex inspect and edit Blender through local, permission-controlled MCP tools.
+Work with objects, meshes, materials, UVs, rigs, animation, lights and renders, with
+status, permissions and recovery controls inside Blender.
 
-**[Download 0.3.0](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.3.0)** ·
-[Upgrade instructions](#upgrading) · [Troubleshooting](docs/troubleshooting.md)
+**[Download 0.3.0 alpha](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.3.0)** ·
+[Install](#install--no-source-build-needed) · [Troubleshooting](docs/troubleshooting.md) ·
+[Contribute](CONTRIBUTING.md)
 
-This is **alpha software**. Start with a copy of an unimportant scene.
-The repository is currently private; downloads require a GitHub account with repository access.
-**0.3.0** adds faster structured scene workflows and Geometry Nodes editing.
-See [release notes](docs/releases/0.3.0.md) and [workflow examples](docs/agent-workflows.md).
+This is **alpha software**. Try it on a disposable scene or a copy of your project.
+The published **0.3.0** packages provide **108 MCP tools**. The current development branch
+has **218 registered tools**, including unreleased features and safety changes.
+Development builds still use 0.3.0 metadata; they are not the published release and must
+be installed as matching add-on/server builds from one checkout.
 
-The main branch also includes **unreleased seam-authoring development**: `mesh.mark_seams`
-and edge seam flags in component inspection, plus opt-in UV coordinate pages in `uv.inspect`.
-These are not included in the 0.3.0 downloads.
-
-Development is working toward **1.0.0** through explicit [release-readiness gates](docs/release-1.0-readiness.md),
-following the [milestones and prioritized execution plan](docs/plan-1.0.md),
-with a [full 3D-artist capability target](docs/release-1.0-readiness.md#10-product-direction-a-full-3d-artist-workflow),
-not a tool-count target or a claim that current releases already replace an artist.
-Unreleased [mesh-quality inspection](docs/mesh-analysis.md) now reports bounded topology,
-adjacent winding and triangle crossing/contact evidence. It separates review findings from
-incomplete budget/precision coverage; it is not an outward-normal or whole-scene certificate.
-Main also hardens mesh/UV edits against implicit changes to linked
-duplicates: selection-scoped mesh edits and UV unwrap/Smart Project/packing now reject shared,
-library-linked or override data. Inspection remains available; no automatic data copying occurs.
-
-Unreleased material-slot edits (`material.assign`, `material.unassign`, `material.slot_add`,
-`material.slot_remove`) likewise require Object Mode and local, editable, non-override,
-single-user object data, with a 256-slot limit. Shared data now returns `NOT_IMPLEMENTED`
-before mutation, including OBJECT-linked slot cases not yet reviewed. This prevents implicit
-changes to linked duplicates.
-
-Unreleased shader edits (`material.set_principled` and modifying `nodes.*` tools) and
-material deletion now check material ownership in Blender. Inspect `material.inspect` first:
-shared use requires explicit `allow_shared=true`; linked/override/read-only materials remain
-protected. Responses include bounded object-slot and direct datablock users. This is not a
-complete transitive dependency graph—Geometry Nodes and collection instances need additional
-inspection. Forced unlink also checks editable users and Object Mode. Ambiguous local/library
-material names are rejected, and scopes above 100 users cannot be edited through these tools.
-No material is copied or made local automatically. These changes are not in the 0.3.0 download.
-
-To change only one object that shares a material, use the unreleased
-`material.copy_for_object(object_name, slot_index, new_name)` tool first. It creates a named
-material/root-shader-tree copy and an **OBJECT-level slot binding**, without copying the mesh
-or changing another object's slots—even when both objects share mesh data. Then edit the new
-material normally. The target must be local, editable, non-override and in Object Mode.
-Nested groups, images and other referenced datablocks are **not deep-copied**. The tool verifies
-its binding and attempts measured local recovery if copying or assignment fails; inspect any
-failure before continuing. See the [scope and recovery limits](docs/release-1.0-readiness.md#object-specific-material-copy-progress).
-
-Unreleased recovery hardening invalidates bridge checkpoint bookkeeping after Blender-native
-undo/redo, preventing reuse of stale labels. For measured operation-boundary recovery, call
-`checkpoint.undo_last(confirm_global_undo=true, restore_snapshot=true)` from Object Mode.
-The Blender recovery button uses this path. Omitting `restore_snapshot` keeps the legacy
-single-global-undo behavior. Recovery can still affect interleaved manual work; inspect afterwards.
-Internal `_codex_bridge_undo_marker` scene metadata identifies snapshots and may be saved with
-your project; normal add-on shutdown removes this session's current marker. It is not a backup.
-See [tested recovery cases and remaining 1.0 gates](docs/release-1.0-readiness.md#native-undo-lifecycle-progress).
-
-Checkpoint availability now reports finite undo limits in `checkpoint.list`, `bridge.status`
-and the Blender panel. Known-expired operation boundaries are pruned; named checkpoints show
-expiry, and recovery refuses if its guard would exceed the observed budget. Other points remain
-**unverified**, since manual edits and memory limits can evict them too. No preferences are
-expanded automatically. See [recovery availability and limits](docs/native-recovery.md).
-
-Structured single-mesh Edit Mode sessions now retain a recovery group from mode entry
-through the return to Object Mode. The checkpoint panel and tool results show when that
-group is deferred or finalized. Confirmed snapshot recovery restores the grouped interval;
-see the [mode/edit/recovery workflow](docs/mesh-edit-recovery.md) for its scope and limits.
-
-Unreleased mesh repair adds `mesh.subdivide_selected`, `mesh.merge_by_distance` and
-`mesh.fill_holes`: bounded edge subdivision, selected-only local-distance welding and closed
-boundary-loop caps. They require one active, local, single-user Edit Mode mesh. Caps start with
-zero UVs and need unwrapping; shared/linked/override and shape-key meshes are not supported.
-See [tool limits and the verified repair/recovery workflow](docs/mesh-repair.md).
-Isolated viewport capture also now restores the selection of temporarily hidden objects.
-
-Unreleased UV authoring adds exact face-corner coordinate edits, pivot/scale/rotation/offset
-transforms, individual pin anchors, and UV-layer create/copy/rename/activation/confirmed removal.
-Coordinate/pin tools use scoped Edit Mode data; layer lifecycle is explicit in Object Mode.
-Other layers and mesh selection are preserved, and Blender 4.5/5.1 selection-storage differences
-are reported. See [UV tools, limits and the verified workflow](docs/uv-authoring.md).
-
-Unreleased loop modeling adds a paginated quad-ring preview, evenly spaced ring cuts, and
-bridging of two closed boundary/wire loops. UV layout PNGs now provide measured-coordinate
-visual evidence without changing the viewport or Render Result. A connected test workflow
-repairs a prop, unwraps it, gives it a separate finish and verifies staged recovery while
-preserving a protected duplicate. See [scope, limits and workflow](docs/mesh-loops.md).
-
-Unreleased `uv.analyze` adds bounded numeric checks for overlap, mirrored/folded mappings,
-pixel-direction stretch and texel density at a declared texture resolution. It uses native
-base-mesh triangulation and world transforms, reports incomplete budgets honestly, and does
-not alter UVs or selection. See [measurements, thresholds and limitations](docs/uv-analysis.md).
-
-Unreleased [texture-image tools](docs/image-assets.md) inspect/load/remove image datablocks
-and bind loaded images to material Image Texture nodes. Choose an **Approved Texture Folder**
-in Blender and grant external-file access for reviewed PNG/JPEG/float-EXR reads; MCP cannot change the
-folder. The workflow checks color/data roles, material isolation, texture revisions and undo.
-Loading/binding never edits pixels; reviewed export/reimport is implemented, while broader
-dependency lifecycle, packing and baking acceptance remain open. For bounded
-copy-on-write brush edits, use the separate [texture-painting workflow](docs/texture-painting.md).
-Bounded [packed versions and raw snapshots](docs/image-portability.md) distinguish original
-FILE bytes from CURRENT_PIXELS and restore a matching loaded float original without changing
-its ID or consumers. Their <=1M-pixel contract is separate from larger export jobs.
-
-Unreleased [versioned texture refresh](docs/image-revisions.md) adds `nodes.refresh_image`:
-reread a changed texture or repair its source path through a newly named image version,
-retaining the original image/buffer and the node's color/alpha role, sampling and wiring.
-It works at root/nested paths with explicit scope and file consent, including missing sources.
-This is not in-place image reload or a durable pixel backup; those remain 1.0 work.
-
-Unreleased [texture-painting tools](docs/texture-painting.md) create new linear-color/data
-canvases, paint bounded UV-image strokes into separate versions, and inspect complete pixel
-digests/ranges with selected samples. They support color source-over, alpha erasing and data
-mixing without changing the original image or writing files. A painted scanner display and
-native failure/recovery tests connect this to look development. Optional
-[UV-image masks](docs/texture-painting.md#uv-image-channel-masks) select raw R/G/B/A weights,
-support inversion and bilinear sampling across different image sizes, and preserve/revalidate
-both input images. FILE-mask reads require live approved-path consent. Viewport-projected
-strokes/stencils, sculpt/vertex painting, baking and durable delivery still need implementation.
-
-Generated paint canvases now use independent raw RGBA with native CHANNEL_PACKED alpha, fixing
-a Blender 4.5 Cycles transparency discrepancy while preserving requested channel values. Reviewed
-associated linear float inputs normalize explicitly before painting; inspection/masks remain raw.
-[Texture-delivery work](docs/texture-delivery.md) adds internal PNG/float-EXR encoders, approved-folder
-staging, no-overwrite publication and complete file-hash checks, including a 4K native round trip.
-It requires live edit, external-file and save consent; cleanup never deletes the published file.
-Reviewed plain RGBA FLOAT32 EXR and large PNG imports now use the shared bounded reader,
-with explicit EXR color/alpha interpretation and complete file checks.
-`image.export_job_start` adds frozen-source PNG8/PNG16/float-EXR export and verified reimport,
-including the full 4K path. Poll image-job progress and terminal file/image evidence; publication
-never overwrites a target, and **cancel or Blender undo does not delete a published file**.
-Stored `//` image dependencies now resolve against saved local projects with live source and
-approved-folder revalidation. A separate-process save/reopen fixture verifies eight small
-format/role variants and a complete 4K raw DATA texture; this remains development evidence.
-Durable edited-input recovery, broader packing and production delivery remain in progress;
-see the [delivery contract](docs/texture-delivery.md) and [import limits](docs/image-assets.md).
-
-Unreleased [cooperative painting jobs](docs/painting-jobs.md) add `image.paint_job_start` and
-`jobs.inspect/list/cancel`, with polled progress, sidebar CPU-budget/control/history, frozen
-inputs and a single guarded publication boundary. Cancel/disconnect/pause/deadline behavior is
-explicit; native transfers are not preemptible and late failures may retain an image for
-confirmed recovery. One active bounded job, no batch nesting or durable/general bake queue.
-This advances responsive artist workflows without claiming full 1.0 coverage.
-
-The tiled kernel now supports 4K-square canvases and cooperative jobs, with at most 32 KiB of
-coverage scratch, conservative diagonal bands and no whole-image baseline copy. Synchronous
-painting/full channel statistics remain <=1M pixels; use `include_statistics=false` for complete
-large digests/samples, with omitted statistics reported explicitly. Native transfers/undo still
-block at bounded stages and memory estimates exclude Blender/GPU/undo storage. See the
-[large-image workflow and limits](docs/painting-jobs.md), not a production real-time guarantee.
-
-Unreleased [nested shader-group tools](docs/shader-groups.md) add group creation, typed interface
-sockets, binding, one-instance copies and confirmed unused removal. Existing `nodes.*` tools now
-accept an explicit `group_path`. Ownership checks follow parent groups to material users; copying
-a material alone does not isolate its children. A matched texture-revision test uses one logical
-batch and verifies protected data, partial-failure recovery and native undo without expanding the
-default history. Native history remains finite; see the workflow and limitations before use.
-
-Unreleased [shader-setting and Color Ramp tools](docs/shader-settings.md) inspect native choices,
-edit reviewed properties on 14 shader node types, and replace complete 1–32-stop palettes at
-root or nested paths. Matched procedural-material variants verify protected group data and
-measured failure recovery. The inspector distinguishes stored ramp interpolation from Blender's
-effective RGB/HSV/HSL behavior. Broader properties, animation and production look acceptance
-remain open; no arbitrary Python or file write is needed for these edits.
-
-Unreleased [face shading and material assignment](docs/field-scanner-workflow.md) adds per-face
-smooth flags during mesh creation and `mesh.set_face_attributes` for fresh, bounded Edit Mode
-face selections. A reference-constrained field-scanner fixture now combines structured modeling,
-measured UVs, nested color/data textures, display variants and staged native recovery. It is
-development evidence, not complete 1.0 artist acceptance; painting, baking and delivery remain open.
-
-Unreleased `scene.snapshot` and `scene.compare` add bounded before/after evidence for named
-objects: transforms, hierarchy, visibility, base mesh geometry, UVs, weights, material slots
-and root shader socket values/links, reviewed properties and color ramps. They can detect edits that leave object or vertex counts
-unchanged. Results identify changed fields, complete matching scope, or incomplete evidence
-that needs further inspection. See [fields, limits and the protected-material workflow](docs/scene-evidence.md).
-
-Optional snapshot fields now include rig rest/current pose, active/layered animation,
-drivers/NLA and nested shader dependencies. New [artist plans](docs/task-plans.md) track bounded
-steps and advisory protected objects across client reconnects; explicit scene persistence does
-not save the project. The sidebar shows plan progress, and protected comparisons remain explicit.
-
-Unreleased [Action/curve authoring](docs/animation-curves.md) adds independent active-Action
-copies and bounded interpolation/handle edits. [Nested Geometry Nodes](docs/geometry-node-groups.md)
-adds explicit group-instance isolation and stable-identifier modifier inputs. Their native
-development fixtures do not close full character, procedural or simulation acceptance.
-
-Unreleased [GLB/FBX delivery](docs/asset-delivery.md) previews explicit static/skinned asset
-scope, requires format-loss acknowledgement and publishes to a separate Approved Asset Folder
-without overwrite. The current subset rejects materials/textures and other unsupported data;
-full production exchange remains open. Published files survive undo/cancellation, and bounded
-file effects remain in operation history with inspection-based redaction.
+**1.0 is not ready.** Follow the [development status](docs/development-status.md),
+[roadmap](docs/roadmap.md) and [release plan](docs/plan-1.0.md).
+Current Linux development evidence does not qualify Windows 11, Blender 4.5 LTS/stable 5.x,
+or the installed end-to-end workflows required by the [release gates](docs/release-1.0-readiness.md).
 
 ## Install — no source build needed
 
-You need Blender **4.2+**, standalone **Python 3.10+**, and a local Codex client with MCP support.
-Blender's bundled Python is not the Python used for the MCP server.
-Recent integration checks use Blender 4.5.1 and 5.1.2; other versions are not exhaustively tested.
+For the published alpha you need Blender **4.2+**, standalone **Python 3.10+**, and a
+local Codex client with MCP support. Blender's bundled Python does not run the MCP server.
+The declared minimum is not a guarantee that every Blender version or platform is tested;
+see [0.3.0 release notes](docs/releases/0.3.0.md) for release-specific evidence.
 
 ### 1. Download the packages
 
-Open the [0.3.0 release](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.3.0)
-and expand **Assets**:
+Get these assets from the [0.3.0 release](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.3.0):
 
-| Download | Purpose |
+| Asset | Purpose |
 | --- | --- |
-| `blender_codex_bridge-0.3.0.zip` | Required Blender add-on; do not extract it |
-| `blender_codex_bridge-0.3.0-py3-none-any.whl` | Required MCP server; install with pip below |
-| `blender-codex-bridge-plugin-0.3.0.zip` | Optional Codex plugin and Blender Studio guidance |
-| `SHA256SUMS.txt` | Checksums for verifying downloads |
+| `blender_codex_bridge-0.3.0.zip` | Required Blender add-on; keep it zipped |
+| `blender_codex_bridge-0.3.0-py3-none-any.whl` | Required standalone MCP server |
+| `blender-codex-bridge-plugin-0.3.0.zip` | Optional Codex plugin and workflow guidance |
+| `SHA256SUMS.txt` | Download checksums |
 
-GitHub's automatic **Source code** archives are for development, not Blender installation.
+Use the release assets rather than GitHub's automatic source archives.
 
 ### 2. Install in Blender
 
-1. Open **Edit → Preferences → Add-ons → Install from Disk…** (in the top-right menu).
-2. Select the add-on ZIP, then enable **Blender Codex Bridge**.
-3. In a **3D Viewport**, press **N** and open **Codex Bridge**.
-4. Review permissions and click **Start Bridge**. Keep `127.0.0.1:9876`.
-
-Leave Blender open. Never expose or tunnel this port to another computer.
+In **Edit → Preferences → Add-ons → Install from Disk…**, select the add-on ZIP and enable
+**Blender Codex Bridge**. Open a **3D Viewport**, press **N**, open **Codex Bridge**, review
+permissions and click **Start Bridge**. Keep the listener at `127.0.0.1:9876`.
 
 ### 3. Connect Codex
 
-On **Windows**, with the wheel in Downloads, run PowerShell:
-
-```powershell
-$bridgeHome = Join-Path $env:LOCALAPPDATA 'BlenderCodexBridge'
-py -3 -m venv "$bridgeHome\.venv"
-& "$bridgeHome\.venv\Scripts\python.exe" -m pip install "$env:USERPROFILE\Downloads\blender_codex_bridge-0.3.0-py3-none-any.whl"
-codex mcp add blender_codex_bridge -- "$bridgeHome\.venv\Scripts\blender-codex-mcp.exe"
-codex mcp list
-```
-
-Adjust the wheel path if necessary. Pip installs dependencies, so this step needs internet.
-The absolute executable path avoids PATH and virtual-environment activation issues.
-
-On **macOS/Linux**:
-
-```bash
-python3 -m venv "$HOME/.local/share/blender-codex-bridge/.venv"
-"$HOME/.local/share/blender-codex-bridge/.venv/bin/python" -m pip install "$HOME/Downloads/blender_codex_bridge-0.3.0-py3-none-any.whl"
-codex mcp add blender_codex_bridge -- "$HOME/.local/share/blender-codex-bridge/.venv/bin/blender-codex-mcp"
-```
-
-If the CLI is unavailable, use your client's MCP settings: select **STDIO** and enter the
-same absolute executable path as the command, with no arguments.
-See [OpenAI's MCP setup documentation](https://developers.openai.com/codex/mcp/).
-Restart the client if needed and **start a new Codex task** to discover the tools.
-
-**Compatibility:** 0.3.0 is tested with MCP SDK 2.0.0 and 2.2.0; the old SDK pin is no
-longer needed. If deliberately installing historical 0.2.0, follow its
-[release-specific instructions](docs/releases/0.2.0.md), including `mcp==2.0.0`.
-
-The optional plugin is an alternative, not a requirement: extract its ZIP and install
-the contained plugin directory using your client's local-plugin workflow. It needs
-`blender-codex-mcp` on the PATH visible to Codex. **Use plugin registration or manual
-MCP registration, not both.** Manual registration above works with an isolated virtual environment.
+Install the wheel in a standalone Python virtual environment, then register its absolute
+`blender-codex-mcp` executable path with Codex. The [installation guide](docs/installation.md)
+has copyable Windows and macOS/Linux commands, checksum checks and optional plugin setup.
+Use manual MCP registration or plugin registration once. Start a new Codex task afterward.
 
 ### 4. Try it
 
-Start with:
+Begin with a read-only request:
 
 > Check Blender bridge status, summarize my scene, and inspect my selection. Do not change anything.
 
-Then try:
+Then try a small edit on a disposable scene:
 
 > Create a cube named BridgeTest. Inspect it afterward and show me a preview. Do not save the project.
 
-Codex can enable a needed toolset. Only **you** can grant a disabled Blender permission
-in the panel; the MCP server cannot grant itself permission.
+Codex can enable a toolset. Only you can grant Blender permissions in the panel.
 
 ## How it works
 
-**Codex → MCP server → local Blender add-on → Blender main thread.**
+**Codex → local MCP server → Blender add-on → Blender main thread.**
 
-The add-on validates requests, checks permissions, and executes registered operations.
-It returns measured scene state so Codex can inspect the result instead of assuming success.
-
-The sidebar includes connection status, current task, toolsets, permissions, history,
-**Pause**, **Emergency Stop**, and recovery controls. Stop controls prevent new edits;
-an already-running Blender operation may need to finish. Inspect before retrying.
-
-The workflow is **inspect → checkpoint → edit → inspect again → preview when useful**.
-Checkpoints use Blender's global undo stack: they are not saved backups and can include
-interleaved manual work. Keep normal backups and save only when intended.
-
-0.3.0 provides **108 MCP tools** across modeling, materials/shader nodes, UVs, modifiers,
-constraints, animation, rigging, scene settings, rendering, and inspection. It does not cover
-every Blender editor or operator. Python is a dangerous last resort, disabled by default,
-requiring Python, deletion, external-file, and save permissions together. It is **not a sandbox**.
-
-The Blender connection stays on your machine, but scene summaries/images returned to Codex
-are provided to the AI client. Local transport does not mean local-only model processing.
-
-## Features
-
-**0.3.0** contains all 88 tools from 0.2.0 plus 20 new tools (108 total).
-Rows marked **New in 0.3.0** are not available in older downloads.
-Optional domain toolsets start disabled;
-enabling a toolset does not grant Blender permissions.
-
-| Area | Supported workflows | Availability |
-| --- | --- | --- |
-| Inspection and evidence | Project and scene summaries, object state, active object/selection, mesh statistics, viewport previews | 0.2.0+ |
-| Objects and transforms | Create primitives, duplicate, rename, delete, parent, organize in collections; set/apply transforms | 0.2.0+ |
-| Mesh modeling | Create arbitrary meshes from bounded topology arrays; inspect, extrude, inset, bevel, dissolve, delete selected components, recalculate normals | 0.2.0+ |
-| Materials | Create/inspect/delete materials, manage slots and assignments, configure Principled shader inputs | 0.2.0+ |
-| Shader nodes | Inspect material node trees; add/remove/rename nodes, set inputs, connect/disconnect sockets | 0.2.0+ |
-| UVs | Inspect UVs, unwrap, smart-project, pack islands | 0.2.0+ |
-| Modifiers and constraints | Inspect, add, configure and remove supported types; apply modifiers | 0.2.0+ |
-| Rigging | Create armatures, add/update/remove bones, pose transforms, bone constraints, mesh binding | 0.2.0+ |
-| Animation | Inspect animation, set frame/range, insert/delete keyframes | 0.2.0+ |
-| Scene and look development | Scene settings, collections, cameras, lights and world configuration | 0.2.0+ |
-| Rendering | Inspect/configure settings, execute renders; permission-controlled external output | 0.2.0+ |
-| Recovery and controls | Task/status display, permissions, toolset controls, history, logical undo checkpoints, pause/emergency stop, explicit project save | 0.2.0+ |
-| Python execution | Explicitly armed, broad `bpy` access for unsupported workflows; bounded returned evidence and diagnostic output | 0.2.0+; disabled by default |
-| Context and selection | Set object selection and active object; enter supported object/mesh/armature modes; inspect/select vertex, edge or face indices with fresh selection evidence | **New in 0.3.0** |
-| Search and bulk layout | Filter scene objects; transform up to 128 objects; align/distribute independent objects along measured world-space origins | **New in 0.3.0** |
-| Geometry Nodes | Create/inspect graphs, add interface sockets and reviewed node types, configure properties/inputs, link/unlink/remove nodes, attach as modifiers | **New in 0.3.0** |
-| Efficient batches | Plan and execute 1–32 ordered structured steps with permission checks, bounded results, per-step history and partial-failure evidence | **New in 0.3.0** |
-
-### Faster agent workflows in 0.3.0
-
-Use filtered scene queries and compact component inspection to find precise targets, then
-bulk tools or short batches to reduce MCP round trips. Blender execution stays serial on
-the main thread. A batch plan checks method availability and permissions; it is **not** a
-simulation or full argument validation. Batches stop at the first failure and do **not**
-automatically roll back completed edits. Cancellation is checked between steps, not inside
-an active Blender operation. Reinspect before retrying a partial or timed-out operation.
-
-Geometry Nodes uses a reviewed node allowlist and explicit acknowledgement for shared
-graphs. Bulk alignment/distribution uses object origins, not surface spacing, and rejects
-dependent objects it cannot safely handle. See [workflow limits and examples](docs/agent-workflows.md).
-
-Try this with matching 0.3.0 packages:
-
-> Find the independent objects named Prop_*. Inspect them, plan an even distribution along
-> X, preserve their materials and off-axis positions, then verify the result. Do not save.
+The add-on checks permissions and returns measured state for verification. Its sidebar shows
+status, toolsets, permissions, history, **Pause**, **Emergency Stop** and recovery controls.
+Inspect before editing, create a checkpoint, and verify the result structurally and visually.
 
 ### Scope and limitations
 
-This is broad Blender access, **not a claim that every Blender action has a structured tool**.
-Tools support their declared schemas and reviewed types, not every property in Blender.
-Unreleased `main` adds structured compositor editing, explicit-mask sculpt and vertex-color
-strokes, weight brushes and geometric mirror/surface transfer, numeric rig controls and
-non-scripted bone drivers, Action/curve revision, NLA clips, nested Geometry Nodes inputs,
-paired simulation/repeat zones, and scoped in-memory cloth baking. Mesh slides require an
-explicit preview and topology rails; UV alignment, stitching and relaxation use explicit
-corner/island scope. These are bounded implementations with domain-specific ownership and
-recovery limits. Full retopology/sculpt workflows, surface texture strokes/stencils,
-fluid/rigid-body baking, broader NLA workflows and full production delivery remain open.
-See [artist-tool contracts and limits](docs/artist-tools.md). Context-sensitive
-operations can require a particular mode and selection. Unsupported requests must fail
-explicitly rather than pretend to succeed.
+- Keep Blender and the MCP server on the same trusted workstation. Never expose or tunnel
+  the loopback listener; it does not authenticate other local processes.
+- Scene summaries and captures go to your AI client. Local transport does not mean local-only
+  model processing. Share project data only when appropriate for that client.
+- Tools support bounded, documented subsets of Blender. Mode, selection, ownership and
+  dependency restrictions can refuse an edit. A successful response still needs verification.
+- Checkpoints use Blender's finite global undo history. They can include interleaved manual
+  work and do not replace backups. A failed batch can leave earlier edits applied.
+- Stop/cancel controls act at safe boundaries. An active native Blender operation may finish
+  first; inspect current state before retrying. Save only when intended.
+- Arbitrary Python is disabled by default, needs four broad permissions together and is
+  **not a security sandbox**. Use structured tools for normal work.
 
-Python can reach beyond structured tools only when all four permissions are enabled:
-`EXECUTE_PYTHON`, `DELETE_OBJECTS`, `ACCESS_EXTERNAL_FILES`, and `SAVE_PROJECT`.
-Once armed, raw `bpy` can bypass narrower editing gates; its import policy is an accident
-guard, **not a security sandbox**. Keep it disabled for normal workflows.
+Read the [security model](docs/security.md) and [recovery limits](docs/native-recovery.md).
 
-### Unreleased: structured UV seams
+## Features
 
-`mesh.mark_seams` marks or clears UV seams on selected edges, or on the edge scope of a
-fresh `selection_id`. It requires `EDIT_MESH` and an explicitly named, active, single-user
-mesh in single-object Edit Mode. Linked/override data, shared meshes, hidden targets,
-empty selections and stale references fail explicitly. It preserves topology, UV coordinates,
-materials and live selection; unwrapping remains a separate `uv.unwrap` operation.
+The **published 0.3.0 alpha** includes inspection and viewport evidence, object lifecycle and
+transforms, selection-scoped mesh editing, materials and shader nodes, UV unwrap/packing,
+reviewed modifiers and constraints, rigging/keyframes, scene/camera/light/world/render tools,
+and explicit saving. Its 20 additions provide selection/mode control, filtered queries,
+bulk origin-based layout, ordered batches and allowlisted Geometry Nodes editing.
+See [release notes](docs/releases/0.3.0.md) and [workflow examples](docs/agent-workflows.md).
 
-Inspect indexed edges with `mesh.components_inspect` (each edge now includes `seam`),
-select the intended edges, mark with `seam=true` or clear with `seam=false`, then reinspect.
-The tool is batch-compatible and uses normal checkpoints/history. It returns bounded edge
-indices, changed counts and total seam counts, and attempts to restore flags on failure.
-Existing inspection bounds apply: at most 200,000 total mesh components and 100,000 targeted
-edges, with at most 256 edge indices in a mutation response.
+### Faster agent workflows in 0.3.0
 
-For exact unwrap evidence, call `uv.inspect` with `include_coordinates=true`.
-`coordinate_offset` and `max_coordinates` (1–256, default 100) page over face corners
-in the requested face scope. Each item identifies its face, corner and mesh vertex,
-with UV coordinates and pin state; UV selection is reported when available in Edit Mode.
-Object Mode and Edit Mode are supported without switching modes or active UV layers.
-Follow `coordinates.next_offset` until null. `analysis_truncated` indicates the scoped
-50,000-face/200,000-loop safety limit, not a complete result. Offsets are not persistent:
-restart inspection after UV, selection, topology, mode, scene or layer changes. Default
-inspection remains compact and omits coordinate pages; meshes without UV layers return null.
+Use precise queries, compact inspection and small batches to reduce round trips. A batch plan
+checks availability and permissions, not simulated scene results. Blender executes serially;
+inspect partial failures before retrying. See [batch and Geometry Nodes limits](docs/agent-workflows.md).
 
-Unreleased UV inspection also corrects island counting: seam flags alone no longer split
-an existing UV island. Connectivity uses matching UV coordinates at both endpoints of a
-shared mesh edge (tolerance 1e-6); coincident but disconnected geometry stays separate.
-Non-manifold edges with other than two scoped faces are not joined. Marking seams and
-unwrapping are separate steps; this inspection describes current UVs, not a proposed unwrap.
-Disconnected-island traversal now sorts seeds once instead of repeatedly scanning the
-remaining faces, avoiding quadratic seed selection on highly fragmented UV layouts.
+<a id="unreleased-structured-uv-seams"></a>
 
-UV analysis now includes near-zero signed face-area diagnostics. Unwrap/project/pack results
-include `verification.status` (`needs_review` or `basic_checks_passed`) and warnings; they never
-set `user_goal_verified` to true. Non-finite coordinates/area yield incomplete-analysis evidence
-instead of invalid JSON. These are basic numeric checks, not overlap, distortion or texel-density
-certification. A collapsed unwrap can return from Blender without raising an exception, so
-always inspect these fields and compare the result with the requested layout.
+Unreleased mesh/UV, painting, shader, character, procedural, simulation and delivery work is
+tracked in [development status](docs/development-status.md), including the
+[structured UV-seam contract](docs/development-status.md#unreleased-structured-uv-seams).
+These features are absent from the published downloads unless their release notes say otherwise.
 
 ### Complete tool inventory — main branch
 
-Expand a domain for every registered MCP tool. This inventory is generated from the code
-and checked in CI. The current inventory includes unreleased development beyond the 108-tool
-0.3.0 release; the feature table describes the published release.
-Blender's local recovery UI also has an add-on-only restore action, not an extra MCP tool.
+This generated inventory describes the **development branch**, including unreleased tools.
+It is checked against the registry in CI. It does not describe the 108-tool 0.3.0 download.
+The local recovery UI also has an add-on-only action, not an extra MCP tool.
 
 <!-- BEGIN GENERATED MCP TOOLS -->
 Current registry: **218 MCP tools**.
@@ -811,82 +518,22 @@ Current registry: **218 MCP tools**.
 
 ## Upgrading
 
-Upgrade the **Blender add-on and MCP server together**, from the same release.
-For 0.1.0 or 0.2.0 → 0.3.0:
-
-1. Save and back up your scene. Stop the bridge and finish active tool calls.
-2. Download the new ZIP and matching wheel from [Releases](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases).
-3. Disable/remove the old add-on, install the new ZIP, and restart Blender to unload old modules.
-4. Upgrade the **same virtual environment** registered with Codex:
-
-   ```powershell
-   & "$env:LOCALAPPDATA\BlenderCodexBridge\.venv\Scripts\python.exe" -m pip install --upgrade "$env:USERPROFILE\Downloads\blender_codex_bridge-0.3.0-py3-none-any.whl"
-   ```
-
-   Remove any old `mcp==2.0.0` constraint from your install command or requirements file;
-   keeping SDK 2.0.0 installed also works. Do not mix a 0.3.0 server with
-   the 0.2.0 add-on. If using an editable source install, update that
-   environment or re-register the new executable path; do not accidentally update another Python.
-
-5. Update the optional plugin if you use it. Restart Codex/start a new task.
-6. Start the bridge, review permissions, and ask for `bridge.status` to check the add-on version.
-   Run `python -m pip show blender-codex-bridge` in the registered environment to check the MCP version.
-7. Begin with inspection. Old selection IDs and undo checkpoints do not carry across sessions.
-
-No bridge scene-file migration is required. Updating does not intentionally rewrite your
-`.blend`. To roll back, reinstall **both** older packages and restart both sides; restore a
-project backup if needed. Downgrading software does not undo scene edits.
+Replace the add-on and MCP server together from the same release, then restart Blender and
+Codex. Check both versions and begin with inspection. See the
+[upgrade and rollback guide](docs/installation.md#upgrading).
+Downgrading packages does not undo scene edits.
 
 ## Common problems
 
-- **Connection refused:** open Blender, enable the add-on, and press **Start Bridge**.
-- **Toolset disabled:** enable the domain needed; toolsets and permissions are separate.
-- **Permission denied:** review the named Blender switch. Do not enable Python to bypass it.
-- **Executable not found:** register an absolute path from the environment containing the wheel.
-- **Old/duplicate tools:** remove duplicate registration and start a new task after upgrading.
-- **Download 404:** sign in with repository access while the repository is private; also check that the requested release has actually been published.
-
-More: [troubleshooting](docs/troubleshooting.md), [security](docs/security.md),
-[tool contracts](docs/tool-design.md), [release notes](docs/releases/0.3.0.md).
+For connection, missing tool and permission errors, start with
+[troubleshooting](docs/troubleshooting.md). For a reproducible bug or feature request, see
+[Support](SUPPORT.md). Report security issues through [SECURITY.md](SECURITY.md).
 
 ## Development
 
-Source builds are for contributors and unreleased features—not required for installation:
-
-```powershell
-git clone https://github.com/Yoruiopz/Codex-Blender-Bridge.git
-cd Codex-Blender-Bridge
-py -3 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
-.\.venv\Scripts\python.exe -m pytest
-.\.venv\Scripts\python.exe -m ruff check addon mcp_server scripts tests
-.\.venv\Scripts\python.exe -m mypy mcp_server
-.\.venv\Scripts\python.exe scripts/build_release.py
-```
-
-The release builder produces the add-on ZIP, MCP wheel, plugin ZIP, and checksums in
-`dist/release`. Read [AGENTS.md](AGENTS.md) and [protocol](docs/protocol.md) before changes.
-After changing registered tools, run `python scripts/readme_tools.py` to refresh the inventory.
-CI checks inventory consistency and builds downloadable development packages; these artifacts
-are test builds, not published releases. Tagged release assets remain the recommended install.
-Run the native matrix with explicit Blender paths and `--include-interactive`, for example:
-
-```powershell
-.\.venv\Scripts\python.exe scripts/run_blender_checks.py --blender "C:\Program Files\Blender Foundation\Blender 4.5\blender.exe" --blender "C:\Program Files\Blender Foundation\Blender 5.1\blender.exe" --include-interactive --output build/blender-checks
-```
-
-The runner isolates each factory-startup scene, temporary recovery folder and Blender
-config/scripts/datafiles profile, records source/version evidence and keeps logs under the
-output folder. Undo-dependent fixtures need a real UI context, so running every script with
-`--background` is not equivalent. On Windows, these fixtures run on a separate, non-visible
-desktop: Blender can create and draw its test windows without showing them on your desktop
-or taking keyboard focus. The runner never switches desktops or touches your open Blender
-session, and refuses the test if isolation fails (no visible fallback). Background tests also
-suppress console windows. On other platforms, opt-in UI tests still require a display and
-may show windows; private-desktop isolation is Windows-only. See [native test execution](docs/native-testing.md).
-Passing development checks does not by itself accept the 1.0 release gates.
-
-For optional code/document navigation, see the [local Graphify architecture map workflow](docs/architecture-map.md).
-It stays outside the bridge runtime and is separate from Graphify cloud account access.
+Read [CONTRIBUTING.md](CONTRIBUTING.md) for setup, checks and safe native fixtures.
+[Architecture](docs/architecture.md), [tool design](docs/tool-design.md) and the
+[protocol](docs/protocol.md) explain the implementation. Development packages are test builds;
+passing CI or smoke tests alone does not accept a 1.0 release.
 
 Licensed under [GPL-3.0-or-later](LICENSE).

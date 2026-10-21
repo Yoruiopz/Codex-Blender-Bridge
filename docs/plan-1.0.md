@@ -26,8 +26,11 @@ full artist-workflow 1.0 with Windows 11 x64 qualification first, Blender 4.5 LT
 compatible stable 5.x at candidate freeze. Portable `.blend`, GLB and FBX delivery are mandatory.
 Other desktop platforms remain unqualified for 1.0; the current development manifest is not
 yet a newly qualified support claim. Prefer reliable bounded jobs with measured native stalls,
-visible progress and truthful cancellation/recovery. Keep repository visibility unchanged and
-distribute matched packages through GitHub releases. Preserve the current 0.3.0 release until
+visible progress and truthful cancellation/recovery. The user's later direction is to make
+the repository public-facing, using GitHub as needed; this supersedes the earlier visibility
+constraint. Prepare public documentation and contributor/support entry points and make the
+GitHub repository public. This is separate from qualifying or publishing 1.0. Distribute
+matched packages through GitHub releases. Preserve the current 0.3.0 release until
 all acceptance gates pass; no release date has been set.
 
 The machine-readable [requirement ledger](release-1.0-ledger.json) deliberately starts open.
@@ -43,8 +46,8 @@ acceptance evidence; native smoke reports themselves remain `NOT_ASSESSED`.
   They do not prove interactive UI installation, real undo interleaving or artistic quality.
 - The manifest's 4.2 minimum is not verified by the local matrix. Test it or explicitly resolve
   supported versions before RC. Do not infer Linux/macOS Blender support from Python CI.
-- Published 0.3.0 remains alpha. Do not replace its artifacts, publish 1.0 early, or change
-  repository visibility; the user's latest instruction is to keep visibility unchanged.
+- Published 0.3.0 remains alpha. Do not replace its artifacts or publish 1.0 early.
+  Public-facing repository work is now authorized; it does not close any release gate.
 
 ## Milestones and dependencies
 
@@ -167,7 +170,8 @@ Before RC, run the entire claimed matrix from a clean checkout and retain eviden
 ephemeral CI storage. Build add-on/wheel/plugin from that exact revision, test the packaged
 files, verify checksums, and match all component versions. Run a requirement-by-requirement
 completion audit against this plan and the readiness gates. Any missing or indirect evidence
-keeps 1.0 unready. Privacy stays unchanged. Publication is the final step, not the definition
+keeps 1.0 unready. Follow the latest public-facing repository decision above. Release
+publication is the final step, not the definition
 of success.
 
 ## Decisions to resolve before RC (not blockers to current work)

@@ -1,0 +1,34 @@
+name: Feature or workflow request
+description: Describe a Blender task the structured tools do not yet support.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check the [development status](https://github.com/Yoruiopz/Codex-Blender-Bridge/blob/main/docs/development-status.md), [roadmap](https://github.com/Yoruiopz/Codex-Blender-Bridge/blob/main/docs/roadmap.md) and existing issues first.
+        The published 0.3.0 alpha differs from current development source. Please describe the desired workflow rather than using arbitrary Python as a workaround.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Blender task and current limitation
+      description: What are you trying to make or inspect? Which existing tools or release did you try?
+    validations:
+      required: true
+  - type: textarea
+    id: workflow
+    attributes:
+      label: Proposed workflow
+      description: Give a small concrete example, affected objects/data and what must remain unchanged.
+    validations:
+      required: true
+  - type: textarea
+    id: verification
+    attributes:
+      label: Successful result
+      description: How could the result be verified structurally and visually? Mention required modes, shared data, file effects or recovery needs if relevant.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives and context
+      description: Optional workarounds, links or synthetic examples. Do not attach private scenes or personal information.

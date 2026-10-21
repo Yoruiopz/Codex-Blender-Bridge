@@ -4,7 +4,7 @@ Blender Codex Bridge is a local automation boundary around a powerful desktop ap
 
 ## Supported deployment
 
-The supported 0.2.0 deployment is:
+The supported local deployment is:
 
 - Blender and the MCP server run on the same trusted workstation and normally as the same user.
 - Blender listens on the literal IPv4 loopback address `127.0.0.1`.
@@ -216,4 +216,7 @@ Blender undo state is global, in-memory/session-sensitive, and can be changed by
 
 ## Reporting a vulnerability
 
-Do not include sensitive `.blend` files, tokens, private paths, or exploit details in a public issue. Contact the repository maintainers privately through the security-reporting mechanism configured for the GitHub repository. If no private channel is configured, open a minimal issue asking for a private contact without publishing exploitation steps.
+Follow [SECURITY.md](../SECURITY.md) for private-reporting guidance. Do not include sensitive
+`.blend` files, tokens, private paths or exploit details in a public issue. If no private
+channel is configured, open a minimal issue asking for a private contact without publishing
+exploitation steps.
