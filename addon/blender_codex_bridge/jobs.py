@@ -182,9 +182,39 @@ class PaintJobs:
         return {"accepted": True, **job.summary(), "export_completed": False,
                 "source_frozen_at_acceptance": True, "native_commit_interruptible": False}
 
+    def start_surface_paint(self, context: Any, params: dict, time_limit: float) -> dict:
+        """Freeze bounded inputs; defer overlap/raster/visibility/paint work until delivery."""
+        self._main()
+        if self.active is not None:
+            raise BridgeError(ErrorCode.OPERATION_FAILED, "One image job is already active; inspect/cancel it first.",
+                              {"active_job_id": self.active.job_id})
+        time_limit = pixel_brush.number(time_limit, "time_limit_seconds", 1., 300.)
+        from .tools.image_surface_paint import REQUIRED, SurfacePaintDriver, prepare_surface
+
+        started = time.monotonic()
+        prepared = prepare_surface(context, params)
+        mask = prepared["mask"]
+        job = PaintJob("job_" + uuid.uuid4().hex, getattr(context, "request_id", ""), prepared["source_name"], prepared["name"],
+                       getattr(context, "request_lifecycle", None) or RequestLifetime.local(), started+time_limit,
+                       prepared, _identity(prepared["source"]), _metadata(prepared["source"]),
+                       prepared["source"].source == "FILE" or bool(mask and mask["requires_external_files"]), started=started,
+                       method="image.paint_surface_job_start", kind="image.paint_surface_version", required_permissions=REQUIRED,
+                       driver=SurfacePaintDriver(prepared))
+        pixels = prepared["width"]*prepared["height"]
+        job.workload = {"image_size": [prepared["width"], prepared["height"]],
+                        "frozen_source_pixel_bytes": pixels*16,
+                        "private_pixel_buffers_peak_estimate_bytes": pixels*52 + (len(mask["kernel"]["values"])*4 if mask else 0),
+                        "estimate_excludes": "Geometry/plan Python objects, input readbacks, Blender/native/GPU/undo/file buffers and allocator overhead",
+                        "frozen_geometry_objects": len(prepared["records"]), "frozen_triangles": len(prepared["triangles"]),
+                        "projection_work_started": False, "maximum_visibility_triangle_tests": 2_000_000}
+        self._accept(job, context)
+        return {"accepted": True, **job.summary(), "painting_completed": False,
+                "source_and_geometry_frozen_at_acceptance": True, "projection_work_started": False,
+                "native_commit_interruptible": False}
+
     def _native_commit(self, job: PaintJob, context: Any, callback):
         """A driver's one synchronous native publication, never across timer yields."""
-        label = f"Image delivery {job.job_id}: {job.new_name}"
+        label = f"Image job {job.job_id}: {job.new_name}"
         job.in_commit = True
         job.state = "COMMITTING"
         job.revision += 1
@@ -192,7 +222,7 @@ class PaintJobs:
             job.boundary_created = bool(context.checkpoints.before_modification(label))
             try:
                 if not job.boundary_created:
-                    raise BridgeError(ErrorCode.OPERATION_FAILED, "A recoverable native undo boundary is required before image reimport.")
+                    raise BridgeError(ErrorCode.OPERATION_FAILED, "A recoverable native undo boundary is required before image publication.")
                 self._check(job, context)
                 context.registry.prepare(job.method, context)
                 result = callback()
@@ -201,7 +231,7 @@ class PaintJobs:
                 if job.boundary_created:
                     job.boundary_finalized = bool(context.checkpoints.after_modification(label))
             if not job.boundary_finalized:
-                raise BridgeError(ErrorCode.OPERATION_FAILED, "Image delivery native undo finalization failed; inspect retained effects.", {"possible_mutation": job.execution_started})
+                raise BridgeError(ErrorCode.OPERATION_FAILED, "Image job native undo finalization failed; inspect retained effects.", {"possible_mutation": job.execution_started})
             return result
         finally:
             job.in_commit = False

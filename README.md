@@ -10,7 +10,7 @@ status, permissions and recovery controls inside Blender.
 
 This is **alpha software**. Try it on a disposable scene or a copy of your project.
 The published **0.3.0** packages provide **108 MCP tools**. The current development branch
-has **218 registered tools**, including unreleased features and safety changes.
+has **229 registered tools**, including unreleased features and safety changes.
 Development builds still use 0.3.0 metadata; they are not the published release and must
 be installed as matching add-on/server builds from one checkout.
 
@@ -118,7 +118,7 @@ It is checked against the registry in CI. It does not describe the 108-tool 0.3.
 The local recovery UI also has an add-on-only action, not an extra MCP tool.
 
 <!-- BEGIN GENERATED MCP TOOLS -->
-Current registry: **218 MCP tools**.
+Current registry: **229 MCP tools**.
 
 <details>
 <summary>core — 29 tools</summary>
@@ -232,7 +232,7 @@ Current registry: **218 MCP tools**.
 </details>
 
 <details>
-<summary>geometry_nodes — 22 tools</summary>
+<summary>geometry_nodes — 25 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
@@ -246,6 +246,7 @@ Current registry: **218 MCP tools**.
 | `geometry_nodes.group_set_input` | Set an unlinked constant by exact socket identifier in a reviewed GN graph. |
 | `geometry_nodes.inspect` | Inspect a bounded geometry graph, interface, and direct users. |
 | `geometry_nodes.interface_add` | Add a typed interface socket to an explicit geometry node group. |
+| `geometry_nodes.interface_edit` | Rename/reorder/set one nested interface socket default while preserving existing consumer values. |
 | `geometry_nodes.link` | Link exact compatible geometry-node sockets without graph cycles. |
 | `geometry_nodes.modifier_inspect` | Inspect stored GN modifier inputs by stable interface identifiers. |
 | `geometry_nodes.modifier_set_input` | Set an object-owned GN modifier constant without changing the shared graph. |
@@ -255,7 +256,9 @@ Current registry: **218 MCP tools**.
 | `geometry_nodes.node_set_properties` | Configure allowlisted direct scalar/enum properties of a geometry node. |
 | `geometry_nodes.unlink` | Remove links between exact geometry-node sockets. |
 | `geometry_nodes.zone_create` | Create a paired repeat/simulation zone with bounded constant iterations. |
+| `geometry_nodes.zone_inspect` | Inspect paired zone item identifiers/types within 32 items; no cache-state assertion. |
 | `geometry_nodes.zone_item_add` | Add a reviewed state/repeat item to an exact zone output. |
+| `geometry_nodes.zone_item_convert` | Convert one unlinked paired numeric zone item preserving identifiers with explicit replacement defaults. |
 | `geometry_nodes.zone_item_edit` | Rename/reorder an exact zone item or remove an unlinked non-geometry item. |
 | `geometry_nodes.zone_remove` | Remove both boundaries of an exact zone and incident links. |
 
@@ -286,7 +289,7 @@ Current registry: **218 MCP tools**.
 </details>
 
 <details>
-<summary>materials — 19 tools</summary>
+<summary>materials — 21 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
@@ -297,6 +300,8 @@ Current registry: **218 MCP tools**.
 | `image.load` | Load a new bounded PNG/JPEG/plain FLOAT RGBA EXR from Blender's approved texture folder; no implicit reuse or file writes. |
 | `image.pack_version` | Create a distinct packed FILE_BYTES version or exact raw CURRENT_PIXELS snapshot, <=1M pixels; no save/binding. |
 | `image.paint_job_start` | Accept one source/mask-frozen tiled paint job up to 16,777,216 pixels; poll evidence, keep owner connected, native commit is not preemptible. |
+| `image.paint_surface_job_start` | Accept one frozen-input surface paint job; private overlap/projection/visibility/painting yields after delivery, poll final pixel/recovery evidence. |
+| `image.paint_surface_version` | Project bounded orthographic world strokes/raw stencils through explicit opaque geometry into a NEW UV image; preserve inputs and verify pixels/appearance. |
 | `image.paint_version` | Paint bounded UV-image strokes with optional raw RGBA-channel mask/inversion/resampling into a new version; preserve both inputs, FILE reads need external-file consent. |
 | `image.remove` | Remove one explicitly confirmed unused image datablock, never its source file. |
 | `image.restore_pixels` | Restore a retained raw snapshot to its exact loaded float original image ID, preserving consumers; <=1M pixels. |
@@ -313,7 +318,7 @@ Current registry: **218 MCP tools**.
 </details>
 
 <details>
-<summary>mesh — 26 tools</summary>
+<summary>mesh — 28 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
@@ -337,11 +342,13 @@ Current registry: **218 MCP tools**.
 | `mesh.loop_cut` | Cut the entire connected quad ring with evenly spaced cuts, including unselected faces. |
 | `mesh.mark_seams` | Mark or clear UV seams on selected edges of one local single-user Edit Mode mesh. |
 | `mesh.merge_by_distance` | Weld only selected vertices within an explicit local-space distance. |
+| `mesh.project_to_surface` | Apply an exact current bounded base-surface projection preview, preserving supported custom data. |
 | `mesh.recalculate_normals` | Recalculate normals for the selected mesh region. |
 | `mesh.sculpt_brush` | Apply explicit-mask base-mesh PUSH/SMOOTH strokes with protected topology/UV/material evidence. |
 | `mesh.set_face_attributes` | Set smooth shading and/or an existing material-slot index on bounded referenced faces; material changes additionally require EDIT_MATERIALS. |
 | `mesh.slide_preview` | Preview bounded selected vertex/edge slides along explicit topology rails. |
 | `mesh.subdivide_selected` | Subdivide selected edges without smoothing under a conservative growth budget. |
+| `mesh.surface_projection_preview` | Preview fresh selected vertices fitted to explicit base reference polygons with measured correspondence. |
 | `mesh.vertex_slide` | Apply fingerprinted vertex slides on explicit neighboring rails, preserving topology and UVs. |
 
 </details>
@@ -425,7 +432,7 @@ Current registry: **218 MCP tools**.
 </details>
 
 <details>
-<summary>rigging — 14 tools</summary>
+<summary>rigging — 18 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
@@ -436,9 +443,13 @@ Current registry: **218 MCP tools**.
 | `rig.constraint_add` | Add a supported named pose-bone constraint. |
 | `rig.constraint_remove` | Remove one named pose-bone constraint. |
 | `rig.create` | Create an armature object with one explicit root bone. |
+| `rig.deformation_inspect` | Measure current-frame evaluated pose/skin, deform weights, edge strain and stored IK limits; no quality verdict. |
 | `rig.driver_add` | Add a non-scripted pose-bone driver from reviewed numeric controls or transforms. |
 | `rig.driver_inspect` | Inspect a driver on an exact pose-bone transform component. |
 | `rig.driver_remove` | Remove one exact reviewed pose-bone transform driver. |
+| `rig.ik_configure` | Create/configure explicit two-bone IK with independent Empty controls and enumerated skin scope. |
+| `rig.ik_inspect` | Inspect one exact stored pose-bone IK constraint; no evaluated-quality verdict. |
+| `rig.ik_remove` | Confirm removal of one exact scoped IK constraint; native checkpoint recovery remains explicit. |
 | `rig.inspect` | Inspect a bounded armature hierarchy, pose transforms, and constraints. |
 | `rig.pose_transform` | Set finite pose-bone transform channels explicitly. |
 | `rig.property_inspect` | Inspect one exact numeric object or pose-bone control property. |

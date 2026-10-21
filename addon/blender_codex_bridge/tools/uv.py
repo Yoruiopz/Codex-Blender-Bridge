@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import math
 from collections import defaultdict, deque
-from collections.abc import Iterator, Mapping, Sequence
-from contextlib import contextmanager, suppress
+from collections.abc import Mapping, Sequence
+from contextlib import suppress
 from typing import Any
 
 from ..errors import BridgeError, ErrorCode, invalid_argument
@@ -16,6 +16,8 @@ from ..utils import bool_param, float_param, get_object, int_param, require_blen
 from ._mesh_safety import require_local_single_user_mesh
 from ._mesh_safety import uses_edit_data as _uses_edit_data
 from ._rna import bounded_name
+from ._uv_selection import corner_selection
+from ._uv_selection import scoped_uv_selection as _scoped_uv_selection
 
 try:
     import bmesh  # type: ignore
@@ -277,8 +279,8 @@ def _inspect_edit_uv(
             next_uv_data = loop.link_loop_next[layer]
             next_uv = (float(next_uv_data.uv[0]), float(next_uv_data.uv[1]))
             face_uvs.append(uv)
-            if hasattr(uv_data, "select"):
-                selected_uv_loops += int(bool(uv_data.select))
+            if corner_selection(loop, layer) is not None:
+                selected_uv_loops += int(bool(corner_selection(loop, layer)))
             else:
                 uv_selection_available = False
             pinned_uv_loops += int(bool(uv_data.pin_uv))
@@ -309,8 +311,10 @@ def _inspect_edit_uv(
         "layer": layer.name,
         "scoped_face_count": len(faces),
         "scoped_loop_count": loop_count,
-        "selected_uv_loop_count": selected_uv_loops if uv_selection_available else None,
+        "selected_uv_loop_count": selected_uv_loops if uv_selection_available and getattr(_bm, "uv_select_sync_valid", True) else None,
         "uv_selection_available": uv_selection_available,
+        "uv_selection_valid": bool(getattr(_bm, "uv_select_sync_valid", True)) if uv_selection_available else False,
+        "uv_selection_storage": "MESH_GLOBAL" if hasattr(_bm, "uv_select_sync_valid") else "PER_LAYER",
         "pinned_uv_loop_count": pinned_uv_loops,
         "quality": quality,
         "bounds": bounds,
@@ -451,7 +455,7 @@ def _coordinate_page(
                     "face_index": face.index, "corner_index": corner,
                     "vertex_index": vertex_index, "uv": uv if finite else None, "finite": finite,
                     "pinned": bool(uv_data.pin_uv),
-                    "selected": bool(uv_data.select) if edit_mode and hasattr(uv_data, "select") else None,
+                    "selected": corner_selection(loop, layer) if edit_mode and getattr(bm, "uv_select_sync_valid", True) else None,
                 })
             position += 1
             if len(items) >= maximum:
@@ -622,58 +626,6 @@ def _operation_context(
     return bm, layer, faces, selection_id if isinstance(selection_id, str) else None, created
 
 
-@contextmanager
-def _scoped_uv_selection(bm: Any, layer: Any, faces: Sequence[Any]) -> Iterator[None]:
-    vertex_state = [(item, bool(item.select)) for item in bm.verts]
-    edge_state = [(item, bool(item.select)) for item in bm.edges]
-    face_state = [(item, bool(item.select)) for item in bm.faces]
-    uv_state = [
-        (
-            loop,
-            bool(loop[layer].select) if hasattr(loop[layer], "select") else None,
-            (
-                bool(loop[layer].select_edge)
-                if hasattr(loop[layer], "select_edge")
-                else None
-            ),
-        )
-        for face in bm.faces
-        for loop in face.loops
-    ]
-    try:
-        for item, _ in vertex_state:
-            item.select = False
-        for item, _ in edge_state:
-            item.select = False
-        for item, _ in face_state:
-            item.select = False
-        for loop, _, _ in uv_state:
-            if hasattr(loop[layer], "select"):
-                loop[layer].select = False
-            if hasattr(loop[layer], "select_edge"):
-                loop[layer].select_edge = False
-        for face in faces:
-            face.select_set(True)
-            for loop in face.loops:
-                if hasattr(loop[layer], "select"):
-                    loop[layer].select = True
-                if hasattr(loop[layer], "select_edge"):
-                    loop[layer].select_edge = True
-        yield
-    finally:
-        for item, selected in vertex_state:
-            item.select = selected
-        for item, selected in edge_state:
-            item.select = selected
-        for item, selected in face_state:
-            item.select = selected
-        for loop, selected, edge_selected in uv_state:
-            if selected is not None and hasattr(loop[layer], "select"):
-                loop[layer].select = selected
-            if edge_selected is not None and hasattr(loop[layer], "select_edge"):
-                loop[layer].select_edge = edge_selected
-
-
 def _run_uv_operator(
     obj: Any,
     bm: Any,
@@ -684,6 +636,8 @@ def _run_uv_operator(
     *,
     created_layer: bool,
 ) -> None:
+    layer_name = layer.name
+    primary: BridgeError | None = None
     try:
         with _scoped_uv_selection(bm, layer, faces):
             bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
@@ -692,21 +646,33 @@ def _run_uv_operator(
                 raise BridgeError(
                     ErrorCode.OPERATION_FAILED,
                     "Blender canceled the requested UV operation.",
-                    {"object": obj.name, "uv_layer": layer.name},
+                    {"object": obj.name, "uv_layer": layer_name},
                 )
-    except (BridgeError, RuntimeError) as exc:
+    except Exception as exc:
         if created_layer:
             with suppress(ReferenceError, RuntimeError, TypeError, ValueError):
                 bm.loops.layers.uv.remove(layer)
         if isinstance(exc, BridgeError):
+            primary = exc
             raise
-        raise BridgeError(
+        primary = BridgeError(
             ErrorCode.OPERATION_FAILED,
             "Blender could not complete the requested UV operation.",
-            {"object": obj.name, "uv_layer": layer.name},
-        ) from exc
+            {"object": obj.name, "uv_layer": layer_name, "primary_error_type": type(exc).__name__},
+        )
+        raise primary from exc
     finally:
-        bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
+        try:
+            bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
+        except Exception as update_error:
+            detail = {"possible_mutation": True, "verification_required": True,
+                      "final_mesh_update_failed": True, "update_error_type": type(update_error).__name__}
+            if primary is not None:
+                primary.context.update(detail)
+            else:
+                raise BridgeError(ErrorCode.OPERATION_FAILED,
+                                  "Final UV mesh update failed; reinspect the mesh.",
+                                  {"object": obj.name, "uv_layer": layer_name, **detail}) from update_error
 
 
 def _activate_layer(obj: Any, layer_name: str) -> None:

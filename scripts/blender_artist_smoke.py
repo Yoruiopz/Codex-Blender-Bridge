@@ -462,14 +462,65 @@ def main():
     cp = {"object_name": cloth.name, "modifier_name": "Cloth"}
     call(simulation.cloth_add, **cp)
     call(simulation.configure, **cp, settings={"mass": 0.4, "quality": 2})
-    scene.frame_set(7)
+    scene.frame_set(7, subframe=.25)
     baked = call(simulation.cache, **cp, operation="BAKE", frame_start=1, frame_end=3)
-    assert baked["cache"]["baked"] and scene.frame_current == 7
+    assert baked["cache"]["baked"] and (scene.frame_current, scene.frame_subframe) == (7, .25)
     scene.frame_set(3)
     evaluated = cloth.evaluated_get(bpy.context.evaluated_depsgraph_get())
+    print("CLOTH_FRACTIONAL_LAST_FRAME_FIRST " + json.dumps({
+        "blender": bpy.app.version_string, "min_z": min(v.co.z for v in evaluated.data.vertices),
+        "cache_result": baked}), flush=True)
+    fractional_coordinates = [tuple(vertex.co) for vertex in evaluated.data.vertices]
     assert min(v.co.z for v in evaluated.data.vertices) < 1.999
     call(simulation.cache, **cp, operation="FREE")
     assert not cloth.modifiers["Cloth"].point_cache.is_baked
+    control = bpy.data.objects.new("Cloth Integer Control", mesh.copy())
+    scene.collection.objects.link(control)
+    control_params = {"object_name": control.name, "modifier_name": "Cloth"}
+    call(simulation.cloth_add, **control_params)
+    call(simulation.configure, **control_params, settings={"mass": 0.4, "quality": 2})
+    scene.frame_set(7, subframe=0.)
+    call(simulation.cache, **control_params, operation="BAKE", frame_start=1, frame_end=3)
+    scene.frame_set(3)
+    evaluated_control = control.evaluated_get(bpy.context.evaluated_depsgraph_get())
+    control_coordinates = [tuple(vertex.co) for vertex in evaluated_control.data.vertices]
+    print("CLOTH_MATCHED_TIME_PROBE " + json.dumps({
+        "blender": bpy.app.version_string,
+        "fractional_min_z": min(co[2] for co in fractional_coordinates),
+        "integer_min_z": min(co[2] for co in control_coordinates),
+        "max_coordinate_delta": max(abs(a-b) for first, second in zip(fractional_coordinates, control_coordinates, strict=True)
+                                    for a, b in zip(first, second, strict=True))}), flush=True)
+    assert fractional_coordinates == control_coordinates
+    call(simulation.cache, **control_params, operation="FREE")
+    cache_callbacks = []
+
+    def revoke_during_bake(current_scene, *args):
+        if cloth.modifiers["Cloth"].point_cache.is_baking:
+            cache_callbacks.append(current_scene.frame_current)
+            allowed["EDIT_SCENE"] = False
+
+    scene.frame_set(7, subframe=.25)
+    bpy.app.handlers.frame_change_pre.append(revoke_during_bake)
+    try:
+        try:
+            call(simulation.cache, **cp, operation="BAKE", frame_start=1, frame_end=3)
+        except BridgeError as error:
+            assert error.code == "PERMISSION_DENIED", error
+            assert error.context["cache_operation_started"] and error.context["possible_mutation"]
+            assert not error.context["frame_recovery"]["attempted"]
+            assert cloth.modifiers["Cloth"].point_cache.is_baked
+        else:
+            raise AssertionError("Live frame-handler permission revocation was ignored")
+    finally:
+        bpy.app.handlers.frame_change_pre.remove(revoke_during_bake)
+        allowed["EDIT_SCENE"] = True
+    assert cache_callbacks
+    call(simulation.cache, **cp, operation="FREE")
+    scene.frame_set(7, subframe=.25)
+    print("CLOTH_LIVE_CALLBACK_GUARD_OK " + json.dumps({
+        "blender": bpy.app.version_string, "revoked_at_frames": cache_callbacks,
+        "late_bake_retained_for_explicit_free": True,
+        "denied_compensation_started": False}), flush=True)
     cloth.modifiers["Cloth"].point_cache.use_disk_cache = True
     # Blender can refuse to enable disk caching for an unsaved fixture.
     if cloth.modifiers["Cloth"].point_cache.use_disk_cache:
@@ -528,6 +579,8 @@ def main():
                 "blender": bpy.app.version_string,
                 "domains": ["weights", "drivers", "NLA", "zones", "cloth_cache", "compositor"],
                 "compositor_pixel": pixel,
+                "cloth_fractional_control_equal": True,
+                "cloth_late_permission_revocation_verified": True,
                 "render": str(path),
             }
         )

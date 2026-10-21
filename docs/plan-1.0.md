@@ -29,7 +29,8 @@ yet a newly qualified support claim. Prefer reliable bounded jobs with measured 
 visible progress and truthful cancellation/recovery. The user's later direction is to make
 the repository public-facing, using GitHub as needed; this supersedes the earlier visibility
 constraint. Prepare public documentation and contributor/support entry points and make the
-GitHub repository public. This is separate from qualifying or publishing 1.0. Distribute
+GitHub repository public. The user subsequently made it public; anonymous repository,
+documentation and existing release downloads were verified. This is separate from qualifying or publishing 1.0. Distribute
 matched packages through GitHub releases. Preserve the current 0.3.0 release until
 all acceptance gates pass; no release date has been set.
 

@@ -1,7 +1,7 @@
 # Development status
 
 **Unreleased development; 1.0 is NOT_READY.** The published [0.3.0 alpha](releases/0.3.0.md)
-contains 108 tools. The development registry currently contains **218 MCP tools**;
+contains 108 tools. The development registry currently contains **229 MCP tools**;
 its packages retain 0.3.0 metadata until a qualified release is accepted. Always pair the
 add-on and MCP server from one checkout. A matching version string alone does not identify
 an unpublished build.
@@ -14,7 +14,8 @@ failure/recovery behavior. Tool count and isolated fixture results do not prove 
 artist workflows. The [execution plan](plan-1.0.md), [readiness gates](release-1.0-readiness.md)
 and [evidence rules](release-evidence.md) define the work needed for 1.0.
 
-Current-source Linux Blender 4.3.2 development checks are separate from historical Windows
+Current-source Linux development checks on Blender 4.3.2, 4.5.14 LTS and 5.2.2 LTS
+are separate from historical Windows
 reports for earlier increments. Windows 11 qualification on Blender 4.5 LTS and stable 5.x,
 installed-package acceptance and scenarios A–F remain required. There is currently no
 available Windows 11 test machine; those gates remain open.
@@ -22,8 +23,13 @@ available Windows 11 test machine; those gates remain open.
 Recent bounded additions include [mesh slides and UV refinement](mesh-uv-refinement.md),
 [sculpt and vertex-color brushes](surface-brushes.md), [weight brushes and surface transfer](weight-brushes.md),
 [rig properties and non-scripted drivers](rig-drivers.md), [nested Geometry Nodes](geometry-node-groups.md),
-and [object/layout scope and recovery hardening](object-lifecycle-safety.md).
-Broader retopology, texture projection/stencils, character animation, procedural baking,
+[object/layout scope and recovery hardening](object-lifecycle-safety.md),
+[curved reference surface projection](mesh-surface-projection.md),
+[orthographic surface paint and stencils](image-surface-paint.md),
+[IK and measured deformation](rig-ik-deformation.md), and
+[zone/interface lifecycle](geometry-zone-lifecycle.md).
+See the [source-matched checkpoint](artist-workflow-checkpoint-20261022.md) for retained evidence.
+Broader retopology/painting, character animation, procedural baking,
 simulation and production delivery still have open acceptance work.
 
 ## Incremental workflow notes

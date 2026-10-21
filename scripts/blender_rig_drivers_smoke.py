@@ -64,8 +64,46 @@ def main():
     assert original_x == 0
     call("property_set", object_name=rig_name, bone_name=control_name, property_name=control_property, value=0.0, create=True)
     source = {"kind": "PROPERTY", "object_name": rig_name, "bone_name": control_name, "property_name": control_property}
-    added = call("driver_add", object_name=rig_name, bone_name="Deform", channel="location", index=0, variables=[source])
+    original_normalize = rig_drivers._normalize_new_driver_mapping
+    native_mappings = []
+
+    def record_native_mapping(curve):
+        record = {"type": curve.driver.type, "use_self": curve.driver.use_self, "expression": curve.driver.expression,
+                  "keyframes": [{"co": list(point.co), "interpolation": point.interpolation,
+                                 "handle_left": list(point.handle_left), "handle_right": list(point.handle_right),
+                                 "handle_left_type": point.handle_left_type, "handle_right_type": point.handle_right_type} for point in list(curve.keyframe_points)[:16]],
+                  "sample_count": len(curve.sampled_points), "extrapolation": curve.extrapolation,
+                  "modifiers": [modifier.type for modifier in curve.modifiers],
+                  "variables": [{"name": variable.name, "type": variable.type, "target_count": len(variable.targets)} for variable in curve.driver.variables]}
+        count = original_normalize(curve)
+        assert len(curve.keyframe_points) == 0
+        record["removed_mapping_keys"] = count
+        native_mappings.append(record)
+        return count
+
+    rig_drivers._normalize_new_driver_mapping = record_native_mapping
+    try:
+        added = call("driver_add", object_name=rig_name, bone_name="Deform", channel="location", index=0, variables=[source])
+    finally:
+        rig_drivers._normalize_new_driver_mapping = original_normalize
     assert added["driver"]["driver_type"] == "AVERAGE" and mesh.name in added["affected_objects"]
+    curve = rig_drivers._curve(rig, rig_drivers._bone_path("Deform") + ".location", 0)
+    assert len(curve.keyframe_points) == len(curve.sampled_points) == len(curve.modifiers) == 0
+    assert added["native_mapping_keyframes_removed"] == native_mappings[0]["removed_mapping_keys"]
+    # Existing identity mappings remain unsupported and are never normalized by a
+    # property edit. This raw setup belongs only to the disposable native fixture.
+    curve.keyframe_points.insert(0., 0.)
+    curve.keyframe_points.insert(1., 1.)
+    mapped_keys = [list(point.co) for point in curve.keyframe_points]
+    try:
+        call("property_set", object_name=rig_name, bone_name=control_name, property_name=control_property, value=2.)
+    except BridgeError as error:
+        assert error.code == "NOT_IMPLEMENTED"
+    else:
+        raise AssertionError("Existing mapped driver was silently normalized")
+    assert [list(point.co) for point in curve.keyframe_points] == mapped_keys
+    assert rig.pose.bones[control_name][control_property] == 0
+    curve.keyframe_points.clear()
     call("property_set", object_name=rig_name, bone_name=control_name, property_name=control_property, value=2.0)
     moved_points, moved_x = evaluated()
     assert math.isclose(moved_x, 2.0, abs_tol=1e-6), moved_x
@@ -137,6 +175,8 @@ def main():
         "quoted_bone_and_property_paths_verified": True, "transform_source_and_cycle_rejection_verified": True,
         "permission_revocation_retained_driver_and_explicit_cleanup_verified": True,
         "shared_armature_data_protected_pose_and_context_preserved": True,
+        "fresh_native_driver_configurations": native_mappings,
+        "fresh_native_identity_mapping_removed_only": True, "existing_keyframed_driver_preserved_and_rejected": True,
         "native_undo_verified": False, "project_saved": False, "visual_quality_verified": False,
     }))
 

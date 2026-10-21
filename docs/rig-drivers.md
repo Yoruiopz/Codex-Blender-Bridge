@@ -74,6 +74,16 @@ Readback verifies driver type, variable kind/count/name, source identity, source
 bone/transform settings. Default modifiers/variables on the newly allocated curve are
 removed so the requested non-scripted operation has no implicit mapping layer.
 
+Blender 4.5.14 creates a fresh SCRIPTED `0.0` driver with no variables/keys/samples and a
+Generator modifier. Blender 5.2.2 instead supplies two BEZIER keys `(0,0)` and `(1,1)`,
+AUTO_CLAMPED diagonal handles, LINEAR extrapolation and no modifiers. Before configuring
+the explicitly requested non-scripted driver, the tool removes this reviewed diagonal
+identity mapping **only from its new curve**. Recognition requires exactly those keys,
+BEZIER/AUTO_CLAMPED settings, finite diagonal handles within +/-2 and LINEAR extrapolation.
+Unexpected mappings or samples are retained with explicit failure evidence. Existing keyed
+drivers, including an identical native identity mapping, remain unsupported and unchanged.
+This does not add general F-curve mapping support or execute a supplied expression.
+
 If permission is revoked after allocation, cleanup also respects that revocation. The
 error reports `possible_mutation`, `rollback_verified` and any retained driver path/index.
 Compensation also rechecks the exact owned write/configuration: a property changed by an
@@ -94,10 +104,14 @@ numeric control and an independent object transform. It independently verifies a
 pose translation and complete displacement of three skinned vertices, then restores the
 control and original geometry. A shared-armature-data object's pose remains unchanged.
 It also checks quoted paths, descendant-cycle rejection and permission revocation with a
-retained driver followed by explicit typed cleanup.
+retained driver followed by explicit typed cleanup. It records the fresh native defaults,
+verifies that normalization leaves no keys/samples/modifiers, and separately verifies
+that a pre-existing keyed driver is rejected without changing its mapping or control.
 
 Run through `scripts/run_blender_checks.py --case rig_drivers` with an explicit Blender
-executable and unused evidence directory. Linux Blender 4.3.2 development evidence is at
-`build/rig-drivers-native-20261022-d/report.json`, with `release_readiness=NOT_ASSESSED`.
-Windows 4.5/5.x, actual native undo, action/constraint interleaving, production control rigs,
+executable and unused evidence directory. Linux Blender 4.5.14 LTS and 5.2.2 development
+evidence is at `build/rig-driver-normalization-20261022-2/report.json`; earlier 4.3.2 evidence
+is at `build/rig-drivers-native-20261022-d/report.json`. Reports retain
+`release_readiness=NOT_ASSESSED`. Windows 4.5/5.x, actual native undo,
+action/constraint interleaving, production control rigs,
 visual/deformation quality review and full character acceptance remain open.

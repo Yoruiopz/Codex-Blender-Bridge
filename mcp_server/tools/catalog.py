@@ -25,14 +25,21 @@ from .constraints import (
 from .constraints import TOOL_DATA as CONSTRAINT_TOOL_DATA
 from .constraints import TOOL_NAMES as CONSTRAINT_TOOL_NAMES
 from .constraints import load_definitions as load_constraint_definitions
+from .deformation import TOOL_DATA as DEFORMATION_TOOL_DATA
+from .deformation import load_definitions as _load_deformation_definitions
 from .geometry_node_groups import DESTRUCTIVE_TOOL_NAMES as GEOMETRY_GROUP_DESTRUCTIVE_TOOL_NAMES
 from .geometry_node_groups import TOOL_DATA as GEOMETRY_GROUP_TOOL_DATA
 from .geometry_node_groups import load_definitions as _load_geometry_group_definitions
 from .geometry_nodes import DESTRUCTIVE_TOOL_NAMES as GEOMETRY_DESTRUCTIVE_TOOL_NAMES
 from .geometry_nodes import TOOL_DATA as GEOMETRY_TOOL_DATA
 from .geometry_nodes import load_definitions as _load_base_geometry_definitions
+from .geometry_zone_lifecycle import DESTRUCTIVE_TOOL_NAMES as GEOMETRY_ZONE_DESTRUCTIVE_TOOL_NAMES
+from .geometry_zone_lifecycle import TOOL_DATA as GEOMETRY_ZONE_TOOL_DATA
+from .geometry_zone_lifecycle import load_definitions as _load_geometry_zone_definitions
 from .image_portability import TOOL_DATA as IMAGE_PORTABILITY_TOOL_DATA
 from .image_portability import load_definitions as _load_image_portability_definitions
+from .image_surface_paint import TOOL_DATA as IMAGE_SURFACE_PAINT_TOOL_DATA
+from .image_surface_paint import load_definitions as _load_image_surface_paint_definitions
 from .interaction import TOOL_DATA as INTERACTION_TOOL_DATA
 from .interaction import TOOL_NAMES as INTERACTION_TOOL_NAMES
 from .interaction import load_definitions as load_interaction_definitions
@@ -46,6 +53,8 @@ from .materials import (
 )
 from .mesh_slide import TOOL_DATA as MESH_SLIDE_TOOL_DATA
 from .mesh_slide import load_definitions as _load_mesh_slide_definitions
+from .mesh_surface import TOOL_DATA as MESH_SURFACE_TOOL_DATA
+from .mesh_surface import load_definitions as _load_mesh_surface_definitions
 from .modifiers import DESTRUCTIVE_TOOL_NAMES as MODIFIER_DESTRUCTIVE_TOOL_NAMES
 from .modifiers import TOOL_DATA as MODIFIER_TOOL_DATA
 from .modifiers import TOOL_NAMES as MODIFIER_TOOL_NAMES
@@ -58,6 +67,9 @@ from .render import load_definitions as load_render_definitions
 from .rig_drivers import DESTRUCTIVE_TOOL_NAMES as RIG_DRIVER_DESTRUCTIVE_TOOL_NAMES
 from .rig_drivers import TOOL_DATA as RIG_DRIVER_TOOL_DATA
 from .rig_drivers import load_definitions as _load_rig_driver_definitions
+from .rig_ik import DESTRUCTIVE_TOOL_NAMES as RIG_IK_DESTRUCTIVE_TOOL_NAMES
+from .rig_ik import TOOL_DATA as RIG_IK_TOOL_DATA
+from .rig_ik import load_definitions as _load_rig_ik_definitions
 from .rigging import RIGGING_TOOL_DATA
 from .rigging import load_rigging_definitions as _load_base_rigging_definitions
 from .scene_edit import SCENE_EDIT_TOOL_DATA, SCENE_EDIT_TOOL_NAMES
@@ -84,11 +96,11 @@ def load_artist_definitions() -> tuple[ToolDefinition, ...]:
 ANIMATION_TOOL_DATA = (*ANIMATION_TOOL_DATA, *((name, description, True, ("EDIT_ANIMATION",))
                                            for name, description in ANIMATION_CURVE_TOOL_DATA))
 ANIMATION_TOOL_NAMES = tuple(item[0] for item in ANIMATION_TOOL_DATA)
-GEOMETRY_TOOL_DATA = (*GEOMETRY_TOOL_DATA, *GEOMETRY_GROUP_TOOL_DATA)
+GEOMETRY_TOOL_DATA = (*GEOMETRY_TOOL_DATA, *GEOMETRY_GROUP_TOOL_DATA, *GEOMETRY_ZONE_TOOL_DATA)
 GEOMETRY_TOOL_NAMES = tuple(item[0] for item in GEOMETRY_TOOL_DATA)
-MATERIAL_TOOL_DATA = (*MATERIAL_TOOL_DATA, *IMAGE_PORTABILITY_TOOL_DATA)
+MATERIAL_TOOL_DATA = (*MATERIAL_TOOL_DATA, *IMAGE_PORTABILITY_TOOL_DATA, *IMAGE_SURFACE_PAINT_TOOL_DATA)
 MATERIAL_TOOL_NAMES = tuple(item[0] for item in MATERIAL_TOOL_DATA)
-RIGGING_TOOL_DATA = (*RIGGING_TOOL_DATA, *RIG_DRIVER_TOOL_DATA)
+RIGGING_TOOL_DATA = (*RIGGING_TOOL_DATA, *RIG_DRIVER_TOOL_DATA, *RIG_IK_TOOL_DATA, *DEFORMATION_TOOL_DATA)
 RIGGING_TOOL_NAMES = tuple(item[0] for item in RIGGING_TOOL_DATA)
 UV_TOOL_DATA = (*UV_TOOL_DATA, *((name, description, modifies)
                                for name, description, modifies, _ in UV_REFINE_TOOL_DATA))
@@ -96,7 +108,7 @@ UV_TOOL_NAMES = tuple(item[0] for item in UV_TOOL_DATA)
 
 
 def load_rigging_definitions() -> tuple[ToolDefinition, ...]:
-    return (*_load_base_rigging_definitions(), *_load_rig_driver_definitions())
+    return (*_load_base_rigging_definitions(), *_load_rig_driver_definitions(), *_load_rig_ik_definitions(), *_load_deformation_definitions())
 
 
 def load_uv_definitions() -> tuple[ToolDefinition, ...]:
@@ -108,11 +120,11 @@ def load_animation_definitions() -> tuple[ToolDefinition, ...]:
 
 
 def load_geometry_definitions() -> tuple[ToolDefinition, ...]:
-    return (*_load_base_geometry_definitions(), *_load_geometry_group_definitions())
+    return (*_load_base_geometry_definitions(), *_load_geometry_group_definitions(), *_load_geometry_zone_definitions())
 
 
 def load_material_definitions() -> tuple[ToolDefinition, ...]:
-    return (*_load_base_material_definitions(), *_load_image_portability_definitions())
+    return (*_load_base_material_definitions(), *_load_image_portability_definitions(), *_load_image_surface_paint_definitions())
 
 CORE_REMOTE_TOOLS: tuple[tuple[str, str, bool, tuple[str, ...]], ...] = (
     ("jobs.inspect", "Inspect session-local image-job progress, result/error and file/recovery evidence.", False, ("INSPECT_SCENE",)),
@@ -199,7 +211,7 @@ MESH_TOOL_DATA: tuple[tuple[str, str, bool], ...] = (
     ("mesh.bevel_selected", "Bevel selected mesh elements with explicit width and segments.", True),
 )
 MESH_TOOL_DATA = (*MESH_TOOL_DATA, *((name, description, modifies)
-    for name, description, modifies, _ in (*MESH_SLIDE_TOOL_DATA, *SURFACE_BRUSH_TOOL_DATA)))
+    for name, description, modifies, _ in (*MESH_SLIDE_TOOL_DATA, *SURFACE_BRUSH_TOOL_DATA, *MESH_SURFACE_TOOL_DATA)))
 MESH_TOOL_NAMES = tuple(item[0] for item in MESH_TOOL_DATA)
 
 
@@ -253,6 +265,7 @@ DESTRUCTIVE_TOOL_NAMES = frozenset(
         "mesh.vertex_slide",
         "mesh.edge_slide",
         "mesh.sculpt_brush",
+        "mesh.project_to_surface",
         "color_attribute.paint",
         "color_attribute.rename",
         "color_attribute.remove",
@@ -279,6 +292,8 @@ DESTRUCTIVE_TOOL_NAMES = frozenset(
     | set(GEOMETRY_DESTRUCTIVE_TOOL_NAMES)
     | set(GEOMETRY_GROUP_DESTRUCTIVE_TOOL_NAMES)
     | set(RIG_DRIVER_DESTRUCTIVE_TOOL_NAMES)
+    | set(RIG_IK_DESTRUCTIVE_TOOL_NAMES)
+    | set(GEOMETRY_ZONE_DESTRUCTIVE_TOOL_NAMES)
     | {name for name, _, modifies, _ in UV_REFINE_TOOL_DATA if modifies}
 )
 
@@ -310,8 +325,8 @@ def load_mesh_definitions() -> tuple[ToolDefinition, ...]:
             ),
         )
         for name, description, modifying in MESH_TOOL_DATA
-        if name not in {item[0] for item in (*MESH_SLIDE_TOOL_DATA, *SURFACE_BRUSH_TOOL_DATA)}
-    ) + _load_mesh_slide_definitions() + _load_surface_brush_definitions()
+        if name not in {item[0] for item in (*MESH_SLIDE_TOOL_DATA, *SURFACE_BRUSH_TOOL_DATA, *MESH_SURFACE_TOOL_DATA)}
+    ) + _load_mesh_slide_definitions() + _load_surface_brush_definitions() + _load_mesh_surface_definitions()
 
 
 __all__ = [

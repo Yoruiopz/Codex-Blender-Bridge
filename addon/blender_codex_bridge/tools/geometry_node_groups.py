@@ -10,7 +10,7 @@ import hashlib
 import logging
 import math
 from collections import deque
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping, MutableMapping
 from itertools import islice
 from types import SimpleNamespace
 from typing import Any
@@ -242,6 +242,16 @@ def _validation_context(context: ToolContext) -> Any:
     return SimpleNamespace(check_cancelled=None, state=context.state, require=context.require)
 
 
+def _zone_guard(node: Any) -> Any:
+    """Freeze paired boundaries and complete reviewed item schemas, not just counts."""
+    items = getattr(node, "repeat_items", getattr(node, "state_items", None))
+    if items is not None and len(items) > 32:
+        raise invalid_argument("GN zone item evidence exceeds 32 items.")
+    paired = getattr(node, "paired_output", None)
+    return [None if paired is None else _key(paired),
+            None if items is None else [(item.name, item.socket_type, getattr(item, "attribute_domain", None)) for item in items]]
+
+
 def _graph_guard(tree: Any) -> dict[str, Any]:
     """Bounded semantic state plus node identity, without callbacks or evaluation."""
     if len(tree.nodes) > MAX_NODES or len(tree.links) > MAX_LINKS or len(tree.interface.items_tree) > 128:
@@ -253,15 +263,17 @@ def _graph_guard(tree: Any) -> dict[str, Any]:
         records.append([_key(node), node.name, node.bl_idname,
                         None if getattr(node, "node_tree", None) is None else _key(node.node_tree),
                         {key: _read(value) for key, value in serialize_properties(node, gn._NODE_PROPERTIES).items()},
-                        [[socket.identifier, _read(socket.default_value) if hasattr(socket, "default_value") else None]
+                        [[socket.identifier, socket.name, getattr(socket, "type", None), _read(socket.default_value) if hasattr(socket, "default_value") else None]
                          for socket in node.inputs],
-                        [[socket.identifier, _read(socket.default_value) if hasattr(socket, "default_value") else None]
-                         for socket in node.outputs]])
+                        [[socket.identifier, socket.name, getattr(socket, "type", None), _read(socket.default_value) if hasattr(socket, "default_value") else None]
+                         for socket in node.outputs], _zone_guard(node)])
     return {"name": tree.name, "identity": _key(tree), "nodes": records,
             "links": [(link.from_node.name, link.from_socket.identifier, link.to_node.name, link.to_socket.identifier) for link in tree.links],
             "interface": [(item.name, getattr(item, "identifier", None), item.item_type,
                            getattr(item, "in_out", None), getattr(item, "socket_type", None),
-                           _read(item.default_value) if hasattr(item, "default_value") else None) for item in tree.interface.items_tree]}
+                           _read(item.default_value) if hasattr(item, "default_value") else None,
+                           getattr(item, "persistent_uid", None),
+                           None if getattr(item, "parent", None) is None else _key(item.parent)) for item in tree.interface.items_tree]}
 
 
 def _current_group(bpy: Any, group_name: str, expected_key: int) -> Any:
@@ -587,19 +599,103 @@ def _modifier(bpy: Any, params: Mapping[str, Any], *, modify: bool) -> tuple[Any
 def _input_summary(modifier: Any, socket: Any) -> dict[str, Any]:
     identifier = socket.identifier
     supported = socket.socket_type in SCALAR_TYPES
+    values = _modifier_values(modifier)
     return {"identifier": identifier, "name": socket.name, "socket_type": socket.socket_type,
             "supported_constant": supported,
-            "value": _read(modifier.get(identifier, socket.default_value)) if supported else None,
-            "use_attribute": bool(modifier.get(identifier + "_use_attribute", False)),
-            "attribute_name": str(modifier.get(identifier + "_attribute_name", ""))[:1024],
-            "attribute_name_truncated": len(str(modifier.get(identifier + "_attribute_name", ""))) > 1024}
+            "value": _read(values.get(identifier, socket.default_value)) if supported else None,
+            "use_attribute": bool(values.get(identifier + "_use_attribute", False)),
+            "attribute_name": str(values.get(identifier + "_attribute_name", ""))[:1024],
+            "attribute_name_truncated": len(str(values.get(identifier + "_attribute_name", ""))) > 1024}
+
+
+class _NativeModifierValues(MutableMapping[str, Any]):
+    """5.2 typed storage mapped only through reviewed exact interface identifiers.
+
+    There is no caller-controlled RNA path, reflection fallback or IDProp allocation.
+    Unknown native fields/modes fail closed rather than masquerading as empty state.
+    """
+
+    def __init__(self, modifier: Any, properties: Any):
+        self.entries: dict[str, tuple[Any, str]] = {}
+        tree = modifier.node_group
+        if tree is None:
+            if properties is not None:
+                raise invalid_argument("Unbound GN modifier unexpectedly retains typed properties.")
+            return
+        if properties is None or len(tree.interface.items_tree) > 128:
+            raise invalid_argument("Typed GN modifier interface is missing or exceeds its bound.")
+        if any(item.item_type != "SOCKET" for item in tree.interface.items_tree):
+            raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Typed GN modifier panels need a separately reviewed storage contract.")
+        if set(properties.bl_rna.properties.keys()) != {"rna_type", "inputs", "outputs", "panels"}:
+            raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Unreviewed typed GN modifier property containers.")
+        if set(properties.panels.bl_rna.properties.keys()) - {"rna_type", "name"}:
+            raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Typed GN modifier panel state is unsupported.")
+        for direction, container in (("INPUT", properties.inputs), ("OUTPUT", properties.outputs)):
+            sockets = [item for item in tree.interface.items_tree if item.in_out == direction
+                       and not (direction == "OUTPUT" and item.socket_type == "NodeSocketGeometry")]
+            expected = {"rna_type", "name", *[item.identifier for item in sockets]}
+            if len(container.bl_rna.properties) > 130 or set(container.bl_rna.properties.keys()) != expected:
+                raise invalid_argument("Typed GN modifier inputs/outputs disagree with their exact interface identifiers.")
+            for socket in sockets:
+                field = getattr(container, socket.identifier)
+                fields = set(field.bl_rna.properties.keys())
+                if fields - {"rna_type", "name", "value", "type", "attribute_name", "layer_name"}:
+                    raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Unreviewed typed GN socket fields.")
+                if socket.socket_type == "NodeSocketGeometry":
+                    allowed = {"rna_type", "name", "type"} if direction == "INPUT" else {"rna_type", "name"}
+                    if fields != allowed or (direction == "INPUT" and field.type != "FALLBACK"):
+                        raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Geometry modifier sockets unexpectedly expose editable values.")
+                    if direction == "INPUT":
+                        self.entries[socket.identifier + "_input_type"] = field, "type"
+                    continue
+                if socket.socket_type not in SCALAR_TYPES:
+                    raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Typed GN modifier socket type is outside the reviewed constant subset.")
+                if direction == "INPUT":
+                    if "value" not in fields or "type" not in fields or field.type not in {"VALUE", "ATTRIBUTE"}:
+                        raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Typed GN input mode/value is outside the reviewed subset.")
+                    self.entries[socket.identifier] = field, "value"
+                    self.entries[socket.identifier + "_input_type"] = field, "type"
+                    self.entries[socket.identifier + "_use_attribute"] = field, "use_attribute"
+                if "attribute_name" in fields:
+                    self.entries[socket.identifier + "_attribute_name"] = field, "attribute_name"
+                if "layer_name" in fields:
+                    self.entries[socket.identifier + "_layer_name"] = field, "layer_name"
+
+    def __getitem__(self, key: str) -> Any:
+        field, attribute = self.entries[key]
+        return field.type == "ATTRIBUTE" if attribute == "use_attribute" else getattr(field, attribute)
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        field, attribute = self.entries[key]
+        if attribute == "use_attribute":
+            if type(value) is not bool:
+                raise invalid_argument("Typed GN attribute mode requires an exact boolean.")
+            field.type = "ATTRIBUTE" if value else "VALUE"
+        else:
+            setattr(field, attribute, value)
+
+    def __delitem__(self, key: str) -> None:
+        raise invalid_argument("Typed GN interface properties cannot be deleted independently of the interface.")
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self.entries)
+
+    def __len__(self) -> int:
+        return len(self.entries)
+
+
+def _modifier_values(modifier: Any) -> Any:
+    if hasattr(modifier, "properties"):
+        return _NativeModifierValues(modifier, modifier.properties)
+    return modifier
 
 
 def _modifier_properties(modifier: Any) -> dict[str, Any]:
-    if len(modifier.keys()) > 512:
+    values = _modifier_values(modifier)
+    if len(values.keys()) > 512:
         raise invalid_argument("Modifier property evidence exceeds 512 keys.")
-    keys = list(modifier.keys())
-    return {key: _read(modifier[key]) for key in keys}
+    keys = list(values.keys())
+    return {key: _read(values[key]) for key in keys}
 
 
 def modifier_inspect(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
@@ -622,12 +718,13 @@ def modifier_set_input(context: ToolContext, params: Mapping[str, Any]) -> dict[
         raise invalid_argument("Modifier input must identify an input interface socket.")
     identifier = socket.identifier
     value = _value(socket, params.get("value"))
-    if modifier.get(identifier + "_use_attribute", False):
+    values = _modifier_values(modifier)
+    if values.get(identifier + "_use_attribute", False):
         raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Attribute-driven modifier inputs require a separate explicit workflow; constant editing will not disable them silently.")
     if getattr(obj, "animation_data", None) is not None:
         raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "GN modifier constant editing currently requires an unanimated object for verified recovery.")
-    existed = identifier in modifier
-    previous = _read(modifier.get(identifier, socket.default_value))
+    existed = identifier in values
+    previous = _read(values.get(identifier, socket.default_value))
     object_token, modifier_key, group_key = _object_token(obj), _key(modifier), _key(tree)
     before_properties, published_properties = _modifier_properties(modifier), None
     definition = _graph_guard(tree)
@@ -641,14 +738,14 @@ def modifier_set_input(context: ToolContext, params: Mapping[str, Any]) -> dict[
         raise invalid_argument("GN modifier input state changed after inspection; no stale write is performed.")
     value = _value(socket, params.get("value"))
     try:
-        modifier[identifier] = value
+        _modifier_values(modifier)[identifier] = value
         obj.update_tag()
         published_properties = _modifier_properties(modifier)
         _gate(context, Permission.EDIT_MESH, Permission.TRANSFORM_OBJECTS)
         obj, modifier, tree = _current_modifier(bpy, params, object_token, modifier_key, group_key)
         if _modifier_properties(modifier) != published_properties or _graph_guard(tree) != definition:
             raise invalid_argument("GN modifier properties changed after publication; reinspect before recovery.")
-        observed = _read(modifier[identifier])
+        observed = _read(_modifier_values(modifier)[identifier])
         if not _same(observed, value) or modifier.node_group != tree:
             raise RuntimeError("GN modifier input readback mismatch")
         return {"object": obj.name, "modifier_name": modifier.name, "group_name": tree.name,
@@ -664,9 +761,9 @@ def modifier_set_input(context: ToolContext, params: Mapping[str, Any]) -> dict[
             if published_properties is not None and _modifier_properties(modifier) != published_properties:
                 raise invalid_argument("GN modifier properties changed; automatic compensation skipped.")
             if existed:
-                modifier[identifier] = previous
-            elif identifier in modifier:
-                del modifier[identifier]
+                _modifier_values(modifier)[identifier] = previous
+            elif identifier in _modifier_values(modifier):
+                del _modifier_values(modifier)[identifier]
             obj.update_tag()
             restored = _modifier_properties(modifier) == before_properties
         except Exception:
@@ -741,11 +838,14 @@ def group_attach(context: ToolContext, params: Mapping[str, Any]) -> dict[str, A
                 restored = obj.modifiers.get(requested) is None
             elif modifier is not None:
                 modifier.node_group = previous
-                for key in list(modifier.keys()):
+                values = _modifier_values(modifier)
+                current_keys = list(values.keys())
+                for key in current_keys:
                     if key not in old_properties:
-                        del modifier[key]
+                        del values[key]
                 for key, value in old_properties.items():
-                    modifier[key] = value
+                    if key not in values or not _same(_read(values[key]), value):
+                        values[key] = value
                 restored = modifier.node_group == previous and old_properties == _modifier_properties(modifier)
         except Exception:
             LOGGER.exception("GN modifier attachment recovery failed")

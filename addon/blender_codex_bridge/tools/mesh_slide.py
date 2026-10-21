@@ -96,6 +96,25 @@ def _cross(first, second):
             first[2]*second[0] - first[0]*second[2], first[0]*second[1] - first[1]*second[0])
 
 
+def _global_uv_selection(bm):
+    """Capture actual mesh-global selection independently of UV CustomData."""
+    has_sync = hasattr(bm, "uv_select_sync_valid")
+    has_faces = [hasattr(face, "uv_select") for face in bm.faces]
+    loops: list[Any] = []
+    for face in bm.faces:
+        if len(loops)+len(face.loops) > MAX_UV_CORNERS:
+            raise invalid_argument("Global UV selection evidence exceeds 500000 corners.")
+        loops.extend(face.loops)
+    has_corners = [hasattr(loop, "uv_select_vert") and hasattr(loop, "uv_select_edge") for loop in loops]
+    any_corners = any(hasattr(loop, name) for loop in loops for name in ("uv_select_vert", "uv_select_edge"))
+    if not has_sync and not any(has_faces) and not any_corners:
+        return None
+    if not has_sync or not all(has_faces) or not all(has_corners):
+        raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Native mesh-global UV selection API is incomplete; preservation cannot be proved.")
+    return {"sync_valid": bool(bm.uv_select_sync_valid), "faces": [bool(face.uv_select) for face in bm.faces],
+        "corners": [[(bool(loop.uv_select_vert), bool(loop.uv_select_edge)) for loop in face.loops] for face in bm.faces]}
+
+
 def _snapshot(obj, bm) -> dict:
     layers = list(bm.loops.layers.uv.values())
     if sum(len(face.loops) for face in bm.faces) * len(layers) > MAX_UV_CORNERS:
@@ -111,6 +130,7 @@ def _snapshot(obj, bm) -> dict:
         "uv": [(layer.name, [(tuple(loop[layer].uv), bool(loop[layer].pin_uv),
             getattr(loop[layer], "select", None), getattr(loop[layer], "select_edge", None))
             for face in bm.faces for loop in face.loops]) for layer in layers],
+        "uv_global_selection": _global_uv_selection(bm),
         "materials": [(material.name, _identity(material)) if material else None for material in obj.data.materials]}
 
 

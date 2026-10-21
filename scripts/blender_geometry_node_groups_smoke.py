@@ -125,8 +125,56 @@ def main():
         assert error.code == "PERMISSION_DENIED"
     else:
         raise AssertionError("Modifier edit bypassed live permission")
-    assert target.modifiers["Procedural"][identifier] == 6.0
+    native_modifier = target.modifiers["Procedural"]
+    native_value = (getattr(native_modifier.properties.inputs, identifier).value
+                    if hasattr(native_modifier, "properties") else native_modifier[identifier])
+    assert native_value == 6.0
     grants[Permission.TRANSFORM_OBJECTS.value] = True
+
+    # Explicit fixture-only attribute setup; typed constant editing must preserve it.
+    if hasattr(native_modifier, "properties"):
+        native_field = getattr(native_modifier.properties.inputs, identifier)
+        native_field.type, native_field.attribute_name = "ATTRIBUTE", "owned_test_attribute"
+    else:
+        native_modifier[identifier + "_use_attribute"] = True
+        native_modifier[identifier + "_attribute_name"] = "owned_test_attribute"
+    try:
+        call("modifier_set_input", object_name=target.name, modifier_name="Procedural", socket_identifier=identifier, value=9.0)
+    except BridgeError as error:
+        assert error.code == "NOT_IMPLEMENTED"
+    else:
+        raise AssertionError("Attribute input was silently converted to a constant")
+    observed = call("modifier_inspect", object_name=target.name, modifier_name="Procedural")
+    width = next(item for item in observed["inputs"] if item["identifier"] == identifier)
+    assert width["use_attribute"] and width["attribute_name"] == "owned_test_attribute" and width["value"] == 6.0
+    if hasattr(native_modifier, "properties"):
+        native_field.type = "VALUE"
+    else:
+        native_modifier[identifier + "_use_attribute"] = False
+
+    # Replacing a binding must restore all stored constants after an owned fault,
+    # including native 5.2 typed input storage rather than legacy IDProperties.
+    call("create", group_name="Replacement Geometry Only")
+    original_properties = groups._modifier_properties(native_modifier)
+    original_gate = groups._gate
+
+    def fail_after_attachment(context, *required):
+        original_gate(context, *required)
+        if native_modifier.node_group.name == "Replacement Geometry Only":
+            raise BridgeError(ErrorCode.OPERATION_FAILED, "Owned attachment readback fault")
+
+    groups._gate = fail_after_attachment
+    try:
+        call("group_attach", group_name="Replacement Geometry Only", object_name=target.name,
+             modifier_name="Procedural", replace_existing_group=True)
+    except BridgeError as error:
+        assert error.context["rollback_verified"] and not error.context["possible_mutation"]
+    else:
+        raise AssertionError("Injected binding replacement fault was not reported")
+    finally:
+        groups._gate = original_gate
+    assert native_modifier.node_group == root and groups._modifier_properties(native_modifier) == original_properties
+    assert bounds(target) == [[-3.0, 3.0], [-2.0, 2.0], [0.0, 0.0]]
 
     # A post-allocation fault restores binding but respects denied datablock deletion.
     grants[Permission.DELETE_OBJECTS.value] = False
