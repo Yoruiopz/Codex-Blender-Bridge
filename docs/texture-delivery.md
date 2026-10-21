@@ -1,8 +1,9 @@
 # Durable texture delivery — implementation in progress
 
 This is the DELIVER-01 / LOOK-01 / REC-01 execution contract, **not an available export API**.
-There is currently no registered image-export tool and public `image.load` still accepts only
-its reviewed PNG/JPEG inputs. Export/public EXR import capability status is `NOT_IMPLEMENTED`.
+There is currently no registered image-export tool. Public `image.load` now supports
+[reviewed PNG/JPEG/plain FLOAT RGBA EXR](image-assets.md) through shared bounded preflight,
+including large textures and explicit EXR interpretation. Export/job status is still `NOT_IMPLEMENTED`.
 Do not route agents through raw Python to pretend this workflow is complete.
 
 ## Required end-to-end outcome
@@ -132,8 +133,9 @@ are explicitly disposable and removed by the fixture's temporary-directory owner
    finish platform/race acceptance, rather than treating Windows path tests as all-OS proof.
 2. Integrate owned staging/no-clobber publication and complete file proofs into job
    terminal-history/error evidence; keep truthful retained paths on late failure.
-3. Streaming preflight for reviewed large PNG/EXR before native decoding; no unbounded
-   metadata, compressed/deep/tiled/multipart payload or accidental decoder allocation.
+3. Shared streaming preflight and reviewed public EXR/large-PNG import are implemented.
+   Integrate their IO/CPU safe points into delivery jobs; complete broader-format, race,
+   native-stall and memory-pressure acceptance rather than claiming general decoder safety.
 4. Typed export/reimport tools with Blender-authoritative edit/external-file/save grants;
    no delete grant invented for failed image cleanup and no automatic node binding.
 5. Cooperative export lifecycle for 4K, disconnect/deadline/pause/stop and source changes,

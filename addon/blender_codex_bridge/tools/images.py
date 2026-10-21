@@ -8,7 +8,7 @@ from itertools import islice
 from typing import Any
 
 from ..errors import BridgeError, ErrorCode, invalid_argument
-from ..image_files import MAX_DIMENSION, MAX_FILE_BYTES, MAX_PIXELS, preflight_file
+from ..image_files import MAX_DIMENSION, MAX_FILE_BYTES, MAX_PIXELS, file_limits, preflight_file
 from ..permissions import Permission
 from ..preferences import get_preferences
 from ..tool_registry import ToolContext, ToolRegistry
@@ -68,6 +68,45 @@ def _root() -> str:
     return getattr(get_preferences(), "texture_directory", "")
 
 
+def _source_file(context: ToolContext, raw: str):
+    context.require(Permission.ACCESS_EXTERNAL_FILES)
+    _check(context)
+    root = _root()
+    def check():
+        context.require(Permission.ACCESS_EXTERNAL_FILES)
+        _check(context)
+        if _root() != root:
+            raise BridgeError(ErrorCode.PERMISSION_DENIED, "Approved texture folder changed during preflight; reinspect before retrying.")
+        context.require(Permission.ACCESS_EXTERNAL_FILES)  # A cancellation callback can also revoke consent.
+    path, proof = preflight_file(raw, root, check)
+    return path, {**proof, "_approved_root": root}
+
+
+def _load_gate(context: ToolContext, approved_root: str | None = None) -> None:
+    context.require(Permission.EDIT_MATERIALS, Permission.ACCESS_EXTERNAL_FILES)
+    _check(context)
+    # The caller owns its registry/toolset gate: nodes.refresh_image also uses
+    # this loader and must not acquire an undocumented materials-toolset gate.
+    state = getattr(context, "state", None)
+    flags = state.snapshot() if state else {}
+    if flags.get("emergency_stopped"):
+        raise BridgeError(ErrorCode.EMERGENCY_STOPPED, "Image loading emergency-stopped.")
+    if flags.get("paused"):
+        raise BridgeError(ErrorCode.AGENT_PAUSED, "Image loading is paused.")
+    if approved_root is not None and _root() != approved_root:
+        raise BridgeError(ErrorCode.PERMISSION_DENIED, "Approved texture folder changed before native loading/mutation; reinspect before retrying.")
+    context.require(Permission.EDIT_MATERIALS, Permission.ACCESS_EXTERNAL_FILES)
+
+
+def _exr_interpretation(header: dict, color: str, alpha: str | None) -> None:
+    if header.get("format") != "EXR":
+        return
+    if color not in {"Linear Rec.709", "Non-Color"} or alpha not in {"PREMUL", "CHANNEL_PACKED"}:
+        raise invalid_argument("Reviewed EXR needs explicit Linear Rec.709/Non-Color and PREMUL/CHANNEL_PACKED interpretation; file hints do not choose it.")
+    if color == "Non-Color" and alpha != "CHANNEL_PACKED":
+        raise invalid_argument("Non-Color EXR requires CHANNEL_PACKED to keep independent data channels.")
+
+
 def _summary(image: Any) -> dict:
     loaded = bool(image.has_data)
     simple = loaded and image.source in {"FILE", "GENERATED"} and not getattr(image, "is_multiview", False)
@@ -95,7 +134,8 @@ def binding_source(context: ToolContext, image: Any) -> dict | None:
     source = None
     if image.source == "FILE":
         context.require(Permission.ACCESS_EXTERNAL_FILES)
-        _path, header = preflight_file(str(image.filepath), _root())
+        _path, header = _source_file(context, str(image.filepath))
+        _exr_interpretation(header, image.colorspace_settings.name, image.alpha_mode)
         source = {k: v for k, v in header.items() if not k.startswith("_")}
     size = tuple(int(v) for v in image.size)
     if len(size) != 2 or min(size) < 1 or max(size) > MAX_DIMENSION or size[0] * size[1] > MAX_PIXELS:
@@ -128,8 +168,9 @@ def inspect_images(context: ToolContext, params: Mapping[str, Any]) -> dict:
             "truncated": name is None and offset + len(images) < total,
             "next_offset": offset + len(images) if name is None and offset + len(images) < total else None,
             "policy": {"approved_texture_directory": root[:4096], "directory_truncated": len(root) > 4096,
-                       "max_file_bytes": MAX_FILE_BYTES, "max_dimension": MAX_DIMENSION, "max_pixels": MAX_PIXELS,
-                       "formats": ["PNG", "8-bit JPEG"], "remote_policy_changes_supported": False},
+                       "max_file_bytes": MAX_FILE_BYTES, "format_file_byte_limits": file_limits(),
+                       "max_dimension": MAX_DIMENSION, "max_pixels": MAX_PIXELS,
+                       "formats": ["PNG", "8-bit JPEG", "uncompressed RGBA FLOAT32 EXR"], "remote_policy_changes_supported": False},
             "inspection_scope": "Existing datablock metadata/direct users, not file contents, transitive consumers or pixel arrays; unloaded image sizes are not probed."}
 
 
@@ -145,7 +186,7 @@ def load_image(context: ToolContext, params: Mapping[str, Any]) -> dict:
         raise invalid_argument("'alpha_mode' must be a reviewed native alpha identifier.")
     if not isinstance(color, str) or not color.strip() or len(color) > 128:
         raise invalid_argument("'colorspace' must be an explicit bounded color-space name.")
-    context.require(Permission.EDIT_MATERIALS, Permission.ACCESS_EXTERNAL_FILES)
+    _load_gate(context)
     bpy = require_blender()
     _object_mode(bpy)
     if bpy.data.images.get(name) is not None:
@@ -154,32 +195,43 @@ def load_image(context: ToolContext, params: Mapping[str, Any]) -> dict:
     if color not in available:
         raise invalid_argument("The requested color space is unavailable in this Blender OCIO configuration.", colorspace=color)
     _check(context)
-    path, preflight = preflight_file(raw, _root())
+    path, preflight = _source_file(context, raw)
+    _exr_interpretation(preflight, color, alpha)
     _check(context)
-    context.require(Permission.EDIT_MATERIALS, Permission.ACCESS_EXTERNAL_FILES)
+    _load_gate(context, preflight["_approved_root"])
     image = None
+    created_image_name = None
     before = len(bpy.data.images)
     try:
+        _object_mode(bpy)
         image = bpy.data.images.load(str(path), check_existing=False)
+        created_image_name = image.name
+        _load_gate(context, preflight["_approved_root"])
         image.name = name
+        created_image_name = image.name
         image.use_fake_user = False
         image.colorspace_settings.name = color
         if alpha is not None and image.alpha_mode != alpha:
             apply_assignments(image, prepare_assignments(image, {"alpha_mode": alpha},
                 allowed=frozenset({"alpha_mode"}), object_pointers=frozenset(), bpy=bpy))
         _check(context)
-        context.require(Permission.EDIT_MATERIALS, Permission.ACCESS_EXTERNAL_FILES)
+        _load_gate(context, preflight["_approved_root"])
         actual = tuple(int(v) for v in image.size)  # Explicit authorized decode, never a read-only probe.
+        allowed_sizes = {(preflight["width"], preflight["height"])}
+        if preflight["format"] == "JPEG":
+            allowed_sizes.add((preflight["height"], preflight["width"]))  # Native EXIF orientation.
         if (not image.has_data or image.source != "FILE" or image.name != name or not local_editable(image)
-                or actual not in {(preflight["width"], preflight["height"]), (preflight["height"], preflight["width"])}
+                or actual not in allowed_sizes
                 or image.colorspace_settings.name != color):
             raise RuntimeError("Loaded image did not match verified source metadata")
         if alpha is not None and image.alpha_mode != alpha:
             raise RuntimeError("Loaded image alpha mode did not match the requested role")
-        checked_path, after = preflight_file(str(image.filepath), _root())
+        if preflight["format"] == "EXR" and (image.channels != 4 or not image.is_float):
+            raise RuntimeError("Reviewed EXR did not produce a four-channel native float buffer")
+        checked_path, after = _source_file(context, str(image.filepath))
         if checked_path != path or after != preflight:
             raise RuntimeError("Texture source changed during native decoding")
-        _check(context)
+        _load_gate(context, preflight["_approved_root"])
         return {"loaded": True, "reused_existing": False, "image": _summary(image),
                 "source_file": {k: v for k, v in preflight.items() if not k.startswith("_")},
                 "native_decode_interruptible": False, "file_written": False,
@@ -200,7 +252,9 @@ def load_image(context: ToolContext, params: Mapping[str, Any]) -> dict:
                           "Image loading did not complete; inspect image state before continuing.",
                           {"execution_started": True, "requested_image": name,
                            "rollback_verified": recovered, "possible_mutation": not recovered,
-                           "cleanup_permission_denied": cleanup_denied}) from exc
+                           "cleanup_permission_denied": cleanup_denied,
+                           "created_image_name": created_image_name,
+                           "retained_image_name": created_image_name if image is not None else None}) from exc
 
 
 def remove_image(context: ToolContext, params: Mapping[str, Any]) -> dict:
@@ -226,7 +280,7 @@ def register_tools(registry: ToolRegistry) -> None:
                       description="Inspect bounded existing image metadata/direct users without loading unloaded buffers.")
     registry.register("image.load", load_image, toolset="materials", modifies=True,
                       permissions=(Permission.EDIT_MATERIALS, Permission.ACCESS_EXTERNAL_FILES),
-                      description="Load a new bounded PNG/JPEG texture from Blender's user-approved folder; no implicit reuse or file writes.")
+                      description="Load a new bounded PNG/JPEG/plain FLOAT RGBA EXR texture from Blender's approved folder; no implicit reuse or file writes.")
     registry.register("image.remove", remove_image, toolset="materials", modifies=True,
                       permissions=(Permission.EDIT_MATERIALS, Permission.DELETE_OBJECTS),
                       description="Remove one explicitly confirmed unused local image datablock, never its source file.")

@@ -139,7 +139,7 @@ def run():
             "scope": "Internal approved staging/no-clobber publication and native raw-channel round trip, not a public export/job/memory-pressure or production throughput verdict"}
     print("BLENDER_PIXEL_CODECS_OK " + json.dumps({"blender": bpy.app.version_string,
         "observations": reports, "export_tool_registered": False,
-        "public_exr_import_implemented": False, "source_arrays_unchanged": True,
+        "public_exr_import_verified_here": False, "source_arrays_unchanged": True,
         "large": large,
         "project_saved": False, "user_preferences_saved": False}), flush=True)
 

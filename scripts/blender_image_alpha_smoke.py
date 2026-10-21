@@ -32,6 +32,7 @@ def run():
             "color": [.25,.5,.75,.25]})
         source = array("f", [.25,.5,.75,.25])*32
         folder = tempfile.TemporaryDirectory(prefix="bridge-alpha-appearance-")
+        prefs.texture_directory, prefs.allow_external_files = folder.name, True
         paths, inputs = {}, [bpy.data.images["Bridge Float"]]
         for format in ("PNG8", "PNG16", "EXR32"):
             layout = codecs.interpretation(format, "COLOR")
@@ -39,9 +40,9 @@ def run():
             with path.open("xb") as stream:
                 for step in codecs.encode_steps(source, 8, 4, format, "COLOR"):
                     stream.write(step.data)
-            image = bpy.data.images.load(str(path), check_existing=False)
-            image.name, image.colorspace_settings.name = format, layout["colorspace"]
-            image.alpha_mode = layout["alpha_mode"]
+            runtime.dispatch("image.load", {"filepath": str(path), "new_name": format,
+                "colorspace": layout["colorspace"], "alpha_mode": layout["alpha_mode"]})
+            image = bpy.data.images[format]
             inputs.append(image)
         # A reviewed float PNG FILE in declared linear space exposes associated
         # ImBuf values. Verify actual typed painting normalizes that native source
@@ -120,6 +121,7 @@ def run():
         print("BLENDER_IMAGE_ALPHA_OK " + json.dumps({"blender": bpy.app.version_string,
             "observed": observed, "captures": paths, "expected_display": expected_display,
             "associated_linear_file_normalization_verified": True,
+            "registered_png_and_exr_color_loads_render_verified": True,
             "project_saved": False, "user_preferences_saved": False}), flush=True)
         folder.cleanup()
     except Exception:

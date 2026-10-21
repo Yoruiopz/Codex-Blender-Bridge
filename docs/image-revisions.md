@@ -45,7 +45,7 @@ as described in [image assets](image-assets.md). MCP cannot grant permissions or
   This is not a complete transitive/evaluated animation analysis.
 
 Normal graph bounds apply: 256 nodes, 1,024 links and 128 interface items. Source reads reuse
-the approved-path PNG/JPEG preflight, byte/dimension/pixel limits, live authorization and
+the shared [approved PNG/JPEG/reviewed EXR preflight](image-assets.md), format/dimension/pixel limits, live authorization and
 before/after source checks. A changed file between decoding and binding rejects the revision.
 An explicit relocation reads **only the new source**, not a missing or disallowed old path.
 Decoding is native and not interruptible; no responsive-job guarantee is implied.

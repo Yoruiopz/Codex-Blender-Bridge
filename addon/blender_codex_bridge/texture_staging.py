@@ -172,6 +172,9 @@ class TextureStaging:
                 raise BridgeError(ErrorCode.EMERGENCY_STOPPED, "Texture staging emergency-stopped.")
             if flags.get("paused"):
                 raise BridgeError(ErrorCode.AGENT_PAUSED, "Texture staging is paused.")
+        # Trusted lifecycle callbacks can change live consent. The final gate
+        # belongs after those callbacks, immediately before the IO action.
+        self.context.require(*REQUIRED)
 
     def _location(self) -> None:
         folder, path = approved_output(self.raw, self.root(), self.layout["extension"])

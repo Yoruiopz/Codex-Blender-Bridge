@@ -1,19 +1,26 @@
-"""Standard-library preflight for explicitly approved, bounded PNG/JPEG texture files."""
+"""Approved local texture paths and bounded complete streaming file preflight."""
 
 from __future__ import annotations
 
-import hashlib
 import os
 import stat
 import struct
 import zlib
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 from .errors import BridgeError, ErrorCode, invalid_argument
 
-MAX_FILE_BYTES = 32 * 1024 * 1024
 MAX_DIMENSION = 8192
 MAX_PIXELS = 16_777_216
+MAX_FILE_BYTES = MAX_PIXELS * 16 + 1048576
+MAX_PNG_FILE_BYTES = MAX_PIXELS * 8 + 1048576
+MAX_JPEG_FILE_BYTES = 32 * 1024 * 1024
+
+
+def file_limits() -> dict[str, int]:
+    return {".png": min(MAX_FILE_BYTES, MAX_PNG_FILE_BYTES), ".jpg": min(MAX_FILE_BYTES, MAX_JPEG_FILE_BYTES),
+            ".jpeg": min(MAX_FILE_BYTES, MAX_JPEG_FILE_BYTES), ".exr": MAX_FILE_BYTES}
 
 
 def _local_drive(path: Path) -> bool:
@@ -59,8 +66,8 @@ def approved_file(raw: str, root_raw: str) -> Path:
             raise invalid_argument("Texture source must be a regular local file.")
     except (OSError, RuntimeError) as exc:
         raise invalid_argument("Texture source or approved folder could not be resolved.") from exc
-    if target.suffix.lower() not in {".png", ".jpg", ".jpeg"}:
-        raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Reviewed texture loading supports PNG and 8-bit JPEG only.")
+    if target.suffix.lower() not in file_limits():
+        raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Reviewed texture loading supports PNG, 8-bit JPEG and plain FLOAT RGBA EXR.")
     return target
 
 
@@ -71,6 +78,11 @@ def _dimensions(width: int, height: int) -> None:
 
 
 def bitmap_header(data: bytes, suffix: str) -> dict:
+    """Legacy in-memory PNG/JPEG header helper, not the file-admission path.
+
+    preflight_steps/file use image_streams for complete bounded PNG/JPEG/EXR
+    reads. This helper remains for callers needing only the historical header contract.
+    """
     if suffix.lower() not in {".png", ".jpg", ".jpeg"}:
         raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "This bitmap format is not reviewed.")
     if suffix.lower() == ".png":
@@ -150,21 +162,51 @@ def bitmap_header(data: bytes, suffix: str) -> dict:
     raise invalid_argument("A reviewed JPEG frame header was not found.")
 
 
-def preflight_file(raw: str, root: str) -> tuple[Path, dict]:
+def _identity(value: os.stat_result) -> tuple:
+    return value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns
+
+
+def preflight_steps(raw: str, root: str, *, check: Callable[[], None] = lambda: None) -> Iterator[dict]:
+    """Yield bounded IO/CPU safe points; return a complete file proof, not pixels.
+
+    Callers must authorize external-file access BEFORE entry. The callback must
+    recheck their live grants/folder/lifetime before each read; no bpy here.
+    """
+    from .image_streams import preflight_stream
+
+    check()
     path = approved_file(raw, root)
     try:
+        check()
         before = path.stat()
-        if not 0 < before.st_size <= MAX_FILE_BYTES:
-            raise invalid_argument("Texture file exceeds the 32 MiB limit or is empty.")
+        maximum = file_limits()[path.suffix.lower()]
+        if not 0 < before.st_size <= maximum:
+            raise invalid_argument("Texture file exceeds its format byte budget or is empty.", maximum_file_bytes=maximum)
+        check()
         with path.open("rb") as stream:
-            data = stream.read(MAX_FILE_BYTES + 1)
+            if _identity(os.fstat(stream.fileno())) != _identity(before):
+                raise invalid_argument("Texture source changed before opening preflight.")
+            header = yield from preflight_stream(stream, path.suffix, before.st_size, check=check)
+            check()
+            after_handle = os.fstat(stream.fileno())
+        check()
+        checked_path = approved_file(raw, root)
         after = path.stat()
     except OSError as exc:
         raise invalid_argument("Texture file could not be read.") from exc
-    def identity(value):
-        return value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns
-    if len(data) != before.st_size or identity(before) != identity(after):
+    if checked_path != path or _identity(before) != _identity(after_handle) or _identity(before) != _identity(after):
         raise invalid_argument("Texture file changed during preflight; retry only after inspecting its source.")
-    header = bitmap_header(data, path.suffix)
-    return path, {**header, "file_bytes": len(data), "file_sha256": hashlib.sha256(data).hexdigest(),
-                  "_identity": identity(after)}
+    check()
+    return path, {**header, "_identity": _identity(after)}
+
+
+def preflight_file(raw: str, root: str, check: Callable[[], None] = lambda: None) -> tuple[Path, dict]:
+    """Synchronous compatibility adapter; jobs can drain preflight_steps over ticks."""
+    work = preflight_steps(raw, root, check=check)
+    try:
+        while True:
+            next(work)
+    except StopIteration as done:
+        return done.value
+    finally:
+        work.close()

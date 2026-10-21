@@ -97,7 +97,7 @@ not alter UVs or selection. See [measurements, thresholds and limitations](docs/
 
 Unreleased [texture-image tools](docs/image-assets.md) inspect/load/remove image datablocks
 and bind loaded images to material Image Texture nodes. Choose an **Approved Texture Folder**
-in Blender and grant external-file access for supported PNG/JPEG reads; MCP cannot change the
+in Blender and grant external-file access for reviewed PNG/JPEG/float-EXR reads; MCP cannot change the
 folder. The workflow checks color/data roles, material isolation, texture revisions and undo.
 Loading/binding never edits pixels; image writes, packing and baking remain open. For bounded
 copy-on-write brush edits, use the separate [texture-painting workflow](docs/texture-painting.md).
@@ -124,8 +124,10 @@ associated linear float inputs normalize explicitly before painting; inspection/
 [Texture-delivery work](docs/texture-delivery.md) adds internal PNG/float-EXR encoders, approved-folder
 staging, no-overwrite publication and complete file-hash checks, including a 4K native round trip.
 It requires live edit, external-file and save consent; cleanup never deletes the published file.
-These are internal foundations: **no export tool or public EXR import is available yet**.
-Typed reimport/job lifecycle, durable pixel recovery and production delivery remain in progress.
+Reviewed plain RGBA FLOAT32 EXR and large PNG imports now use the shared bounded reader,
+with explicit EXR color/alpha interpretation and complete file checks. **No export tool is
+available yet**. Typed export/reimport jobs, durable pixel recovery and production delivery
+remain in progress; see the [format limits and import contract](docs/image-assets.md).
 
 Unreleased [cooperative painting jobs](docs/painting-jobs.md) add `image.paint_job_start` and
 `jobs.inspect/list/cancel`, with polled progress, sidebar CPU-budget/control/history, frozen
@@ -528,7 +530,7 @@ Current registry: **175 MCP tools**.
 | `image.create` | Create a new float linear-color/data canvas up to 4096/axis and 16,777,216 pixels; native transfer is not preemptible, no overwrite/file writes. |
 | `image.inspect` | Inspect bounded image metadata/direct users without loading unloaded buffers. |
 | `image.inspect_pixels` | Inspect complete RGBA digests/samples; default statistics <=1M pixels, explicit include_statistics=false for <=16M (no ranges/nonfinite scan); FILE reads need external-file consent. |
-| `image.load` | Load a new bounded PNG/JPEG image from Blender's user-approved texture folder; no implicit reuse or file writes. |
+| `image.load` | Load a new bounded PNG/JPEG/plain FLOAT RGBA EXR from Blender's approved texture folder; no implicit reuse or file writes. |
 | `image.paint_job_start` | Accept one source/mask-frozen tiled paint job up to 16,777,216 pixels; poll evidence, keep owner connected, native commit is not preemptible. |
 | `image.paint_version` | Paint bounded UV-image strokes with optional raw RGBA-channel mask/inversion/resampling into a new version; preserve both inputs, FILE reads need external-file consent. |
 | `image.remove` | Remove one explicitly confirmed unused image datablock, never its source file. |

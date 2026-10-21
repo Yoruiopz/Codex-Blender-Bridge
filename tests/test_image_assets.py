@@ -21,8 +21,11 @@ def chunk(kind, payload):
 
 
 def png(width=2, height=2, *, extra=b"", data=True):
+    # Positive fixtures contain complete scanlines, not merely a plausible
+    # header. Oversized-dimension negative fixtures do not allocate huge arrays.
+    rows = (b"\0" + b"\xff" * (width*4)) * height if width*height <= 4096 else b"\0" + b"\xff" * 8
     return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)) + extra + (
-        chunk(b"IDAT", zlib.compress(b"\0" + b"\xff" * 8)) if data else b"") + chunk(b"IEND", b"")
+        chunk(b"IDAT", zlib.compress(rows)) if data else b"") + chunk(b"IEND", b"")
 
 
 def jpeg(marker=0xc0, *, depth=8, width=3, height=2):
@@ -92,7 +95,7 @@ def test_traversal_root_regular_file_and_file_size_guards(files, tmp_path, monke
         with pytest.raises(files.BridgeError):
             files.approved_file(path, root)
     monkeypatch.setattr(files, "MAX_FILE_BYTES", 10)
-    with pytest.raises(files.BridgeError, match="32 MiB"):
+    with pytest.raises(files.BridgeError, match="byte budget"):
         files.preflight_file(str(target), str(tmp_path))
 
 
@@ -126,6 +129,7 @@ class Image:
         self.has_data, self.users, self.use_fake_user = True, 0, False
         self.packed_file, self.library, self.override_library = None, None, None
         self.is_editable, self.is_multiview = True, False
+        self.alpha_mode = "STRAIGHT"
         self._size = (2, 2)
         self.__dict__.update(values)
 
@@ -261,12 +265,8 @@ def test_cancel_after_native_decode_removes_only_new_image(tools):
     module, _, images, _, context, path = tools
     original = Image("Original")
     images.append(original)
-    calls = 0
-
     def cancelled():
-        nonlocal calls
-        calls += 1
-        if calls == 3:
+        if any(image is not original for image in images):
             raise module.BridgeError("TIMEOUT", "Canceled after decode")
 
     context.check_cancelled = cancelled
@@ -304,7 +304,8 @@ def test_failed_load_does_not_delete_owned_image_without_live_deletion_consent(t
         module.load_image(context, {"filepath": str(path), "new_name": "Retained"})
     assert caught.value.code == "TIMEOUT" and caught.value.context["cleanup_permission_denied"]
     assert caught.value.context["possible_mutation"] and not caught.value.context["rollback_verified"]
-    assert images.get("Retained") is not None
+    assert images.get(caught.value.context["retained_image_name"]) is not None
+    assert images.get("Retained") is None  # The new post-allocation gate stops before renaming.
 
 
 def test_unused_removal_rechecks_deletion_grant_after_cancellation_checkpoint(tools):
@@ -512,12 +513,8 @@ def test_unsupported_or_invalid_bindings_do_not_mutate(binding, change, code):
 def test_binding_failure_restores_exact_previous_state(binding, failed):
     module, _, _, node, _, _, context, params = binding
     if failed == "cancel":
-        calls = 0
-
         def cancelled():
-            nonlocal calls
-            calls += 1
-            if calls == 2:
+            if node.image is not None and node.image.name == params["image_name"]:
                 raise module.BridgeError("TIMEOUT", "Canceled")
 
         context.check_cancelled = cancelled

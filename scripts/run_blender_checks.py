@@ -52,6 +52,7 @@ CASES = {
     "image_masks": ("blender_image_masks_smoke.py", "BLENDER_IMAGE_MASKS_OK "),
     "pixel_codecs": ("blender_pixel_codecs_smoke.py", "BLENDER_PIXEL_CODECS_OK "),
     "image_alpha": ("blender_image_alpha_smoke.py", "BLENDER_IMAGE_ALPHA_OK "),
+    "image_streams": ("blender_image_streams_smoke.py", "BLENDER_IMAGE_STREAMS_OK "),
 }
 INTERACTIVE_CASES = {"undo_lifecycle", "mesh_edit_recovery", "mesh_repair", "uv_authoring", "prop_workflow", "uv_analysis", "mesh_analysis", "image_assets", "shader_groups", "undo_capacity", "shader_settings", "image_revisions", "field_scanner", "texture_paint"}
 
@@ -60,6 +61,7 @@ INTERACTIVE_CASES.add("paint_jobs")
 INTERACTIVE_CASES.add("large_paint")
 INTERACTIVE_CASES.add("image_masks")
 INTERACTIVE_CASES.add("image_alpha")
+INTERACTIVE_CASES.add("image_streams")
 
 
 def success_payload(output: str, marker: str) -> dict | None:

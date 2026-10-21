@@ -95,7 +95,8 @@ DELIVER-01 now has internal streaming PNG/float-EXR codecs and native alpha/4K r
 fixtures, plus an explicit [delivery execution contract](texture-delivery.md). Internal approved-folder
 staging now seals complete stream hashes and publishes without overwrite, with live edit/file/save
 grants, Windows directory pins and scoped cleanup. This is not a registered export API;
-public EXR import and typed cooperative publication/reimport are not implemented yet. The
+reviewed public plain FLOAT RGBA EXR/large PNG import now uses the shared streaming reader.
+Typed cooperative publication/reimport jobs are not implemented yet. The
 probes exposed a 4.5 generated-float transparency error that numeric readback missed; new
 independent CHANNEL_PACKED buffers preserve requested RGBA and render consistently on the
 tested versions. Existing images are never silently relabeled; masks/inspection remain raw.
@@ -1370,3 +1371,73 @@ numeric/visual/fresh-process/packing/save/upgrade acceptance. Keep durable input
 source/native tail latency, memory pressure/8K/UDIM, surface/sculpt/vertex/weight painting and
 all character/procedural/simulation/UX/install/RC gates open. This does not complete DELIVER-01,
 REC-01, JOB-01 or the full 1.0 artist objective.
+
+### 2026-10-21 — shared streaming texture preflight and registered EXR import
+
+DELIVER-01 / LOOK-01 now share complete bounded file reads across loading, binding,
+revision, pixel inspection and painting. The standard-library reader hashes every byte
+with at most **64 KiB/read**, without a file-sized encoded copy. PNG additionally validates
+CRC, bounded inflation and exact scanline/filter framing, including Adam7; JPEG retains
+reviewed 8-bit frame-header checks, not independent entropy certification. Format budgets
+are **129 MiB PNG / 32 MiB JPEG / 257 MiB EXR**, with the existing 8,192-axis and
+16,777,216-pixel limits. Tests reject malformed, truncated, inflated, misordered, oversized
+and unsupported layouts rather than passing them to native decode unchecked.
+
+Registered `image.load` now admits a reviewed plain FLOAT32 RGBA EXR subset: version-2,
+single-part uncompressed contiguous increasing scanlines, unit-sampled A/B/G/R channels,
+equal zero-origin windows and bounded known metadata. Explicit Linear Rec.709/PREMUL or
+Linear Rec.709/CHANNEL_PACKED color, or Non-Color/CHANNEL_PACKED data, is required; file hints
+do not choose interpretation. Half/compressed/tiled/deep/multilayer/non-Rec.709 variants remain
+unsupported. The same source policy now applies to downstream FILE-image workflows.
+Live file consent/folder checks occur before reads; edit/pause/stop/root checks guard native
+allocation and later mutation. Post-callback grant checks also protect staging IO. File
+identity and full hashes are rechecked across native loading. Cleanup remains limited to
+owned zero-user/no-fake-user images with live deletion consent, reporting retained names
+and possible mutation on denial. These are point-in-time guards, not hostile filesystem-race
+exclusion or a native-decoder security sandbox.
+
+Validation: **300 focused tests**, then **1,508 tests on each** MCP SDK 2.0.0/2.2.0 passed;
+the sole Windows skip is the POSIX symlink fixture. Lint, mypy (35 files), compilation and
+the generated 175-tool inventory pass. Development ZIP CRC/layout and all **77** packaged
+Python modules match source at
+`build/image-stream-preflight-package-20261021-1/blender_codex_bridge-development.zip`.
+The full Blender 4.5.1 LTS / 5.1.2 matrix passes **68/68** at
+`build/image-stream-preflight-final-matrix-20261021-1/report.json`: 30 background and 38
+private-desktop UI cases, never a visible fallback. Baseline `fc9d3e3` plus this increment;
+all **152** current Python source paths/bytes independently match fingerprint
+`b7cebd00cf457b0d62b5ef9791e390c5b45fbeaac1b23f8bc0286cc960e9a725`.
+
+The registered load/inspect/bind/native-undo path verifies an independent high-entropy
+2048² PNG16 DATA file (**33,591,359 bytes**, above the former 32 MiB cap) and a 4096² raw
+DATA EXR (**268,501,384 bytes**). Every native PNG channel is compared with an independent
+U16-to-float reference using the predeclared **2^-23** absolute allowance; measured maximum
+error is **2^-24** on both versions, not a claim of exact reference float bits. Complete
+EXR source/native float32 digests match:
+`6dc7792b679699077adadaf4c6aa88a921909d390e605fb1ebbc5e555cb8dbfb`.
+Both loaded buffers retain their complete native digests through binding undo, and load undo
+removes the new datablock while leaving external source bytes unchanged. Existing scene,
+mode, selection and active object are independently preserved. Typed PNG/EXR COLOR loading
+also passes the existing transparent/emission render comparison. This does not prove
+durable recovery of an edited pre-existing input buffer.
+
+Of **210** prior PNG-path pairs, **186** are byte-identical and **12** pixel-identical with
+different PNG bytes. The 12 changed scanner captures were reviewed: UV layout differs at
+4,531 pixels (max 215/255) on each version; calibration/front/recovered views differ at
+17,755 / 17,698 pixels (max 6/255), isometric at 16,849 / 16,854 (max 6/255), and wire at
+4 / 7 (max 3/255). Shape/material presentation remains consistent; packing/render
+reproducibility and full artistic acceptance remain open. Protected/recovered mask pairs
+are byte-identical on both versions. Earlier intermediate runs remain diagnostic artifacts,
+not substitutes for the final source-matched report.
+
+Primary Graphify queries used `dino-s-workspace`, cloud `fc9d3e3` indexed
+2026-10-21T12:23:54.443264Z; clipped retrieval was narrowed to exact file outlines and current
+source. The new reader is unindexed, not an invented graph relationship. No graph rebuild,
+delegation, dependency install, release/version or repository-visibility change occurred.
+
+Next: source-frozen typed cooperative export/reimport jobs, connecting existing codecs,
+staging and the shared reader to external-effect terminal history and guarded image
+publication. Current public loading is still synchronous and native decode is non-preemptible;
+internal yielded preflight steps do not establish responsive jobs. Keep fresh-process,
+packing/save/reopen, memory-pressure/scale, durable input-pixel recovery, mixed-editor
+interleaving and all remaining M1–M6/full-artist gates open. No registered export API or
+1.0 release readiness is claimed.

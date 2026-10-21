@@ -35,6 +35,10 @@ independent datablocks/color roles without changing an existing image.
 Optional `alpha_mode` selects STRAIGHT, PREMUL, CHANNEL_PACKED or NONE before the new buffer is
 verified; omission preserves the native default. Inspection also reports alpha mode, dirty
 and floating-point status for loaded buffers (otherwise null), without loading an unloaded buffer.
+EXR is the explicit exception to omission/defaults: choose `Linear Rec.709` with `PREMUL` for
+ordinary associated color, `Linear Rec.709` with `CHANNEL_PACKED` for independently stored raw
+color channels, or `Non-Color` with `CHANNEL_PACKED` for data. EXR file hints never select the
+role for you. Missing/unsupported interpretation is rejected before native image allocation.
 
 Binding admits local, loaded, single-view FILE/GENERATED images only and checks material users.
 Nested paths also check [transitive group ownership](shader-groups.md); explicitly isolate shared
@@ -50,16 +54,47 @@ drives, Blender `//` paths, traversal, alternate streams and resolved symlink es
 Environment variables and `~` are not expanded. The folder cannot be a volume root. This scope
 is specific to these tools, not a sandbox for other file-capable tools or armed raw Python.
 
-The initial subset is PNG and **8-bit baseline/progressive JPEG**, limited to **32 MiB** per
-file, **8,192 pixels** per dimension and **16,777,216 pixels** total. Header/chunk scanning is
-bounded; PNG checksums, image-data and final-chunk checks precede decoding. Animated PNG and
-`iCCP`, `zTXt` or **any `iTXt`** chunks (even uncompressed text) are not supported. HDR/EXR,
-UDIMs, sequences, movies, multiview and unreviewed JPEG frame encodings remain unsupported.
+Every format is limited to **8,192/axis** and **16,777,216 pixels**. File limits include a bounded
+header/encoding allowance, not permission to decode extra pixels:
+
+| Format | File budget | Reviewed subset |
+| --- | --- | --- |
+| PNG | 129 MiB | Standard grayscale/palette/RGB/alpha depths and Adam7; CRC and complete bounded zlib/scanline/filter framing |
+| JPEG | 32 MiB | 8-bit baseline/progressive frame headers; full file hash, not independent entropy validation |
+| EXR | 257 MiB | Version 2, single-part uncompressed increasing/contiguous scanlines, exactly alphabetic A/B/G/R FLOAT32 unit-sampled channels, equal zero-origin data/display windows |
+
+The shared reader hashes complete files with at most **64 KiB per read**. PNG inflation is also
+output-capped to 64 KiB blocks and its exact declared scanline budget, including empty Adam7
+passes; a small compressed file cannot silently expand beyond that budget. Metadata is limited
+to 64 KiB/chunk and 256 KiB cumulatively, with 16,384 total PNG chunks (enough for row-streamed
+4K output). Animated PNG and `iCCP`, `zTXt`, **any `iTXt`**, and `eXIf` remain unreviewed.
+JPEG keeps a 4,096-header-marker budget and bounded marker padding; its entropy/pixels are
+still checked by the native decoder, not certified by the header reader.
+
+EXR metadata uses short ASCII names, at most 64 KiB of header, 64 attributes and 4 KiB/attribute.
+Only required fields, bridge role/alpha hints, Rec.709 chromaticities and bounded
+`comments`/`owner`/`capDate` strings are reviewed. Offsets, row coordinates/counts and exact
+file length must agree before native decoding. Half/compressed/tiled/deep/multipart/layered,
+cropped/overscan, long-name and non-Rec.709 EXR are not silently interpreted. No pixel arrays
+or file-sized byte copies are constructed by preflight. Format details follow the
+[PNG specification](https://www.w3.org/TR/png-3/) and
+[OpenEXR layout](https://openexr.com/en/latest/OpenEXRFileLayout.html); this is intentionally
+a reviewed subset, not a general decoder or security sandbox.
+
+The image loader, binding, revision, painting and pixel-inspection paths all use this reader.
+Live external-file permission and the approved-folder setting are rechecked before reads;
+file identity/hash is checked across preflight and before/after native loading. Pause/stop and
+edit permission are rechecked before further native mutation, including immediately after
+allocation. Cleanup requires live deletion permission and exact owned zero-user/no-fake-user
+data; a denied cleanup reports its last observed name and possible-mutation evidence.
+UDIMs, sequences, movies, multiview and unreviewed encodings remain unsupported, not fabricated.
 
 Unsupported formats/contexts return `NOT_IMPLEMENTED`; malformed/over-budget inputs return
 `INVALID_ARGUMENT`; denied permissions/folder scope return `PERMISSION_DENIED`. Header checks
 are not full pixel/entropy validation. Blender's native decoder is **not interruptible** or a
-security sandbox. These bounds reduce accidental workloads; responsive jobs remain a 1.0 gap.
+security sandbox. `preflight_steps` yields internal IO/CPU safe points for future jobs; current
+`image.load` still drains it synchronously and is not a responsive import/export job. These
+bounds reduce accidental workloads; responsive delivery jobs remain a 1.0 gap.
 
 ## Inspect, edit, verify and recover
 

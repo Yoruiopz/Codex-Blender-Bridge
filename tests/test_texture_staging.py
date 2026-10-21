@@ -450,3 +450,16 @@ def test_cleanup_permission_does_not_imply_arbitrary_scene_deletion(staging):
     encode(item)
     assert item.cleanup()["staging_cleanup"] == "removed"
     assert not item.path.exists()
+
+
+@pytest.mark.parametrize("phase", ["create", "publish"])
+def test_lifecycle_callback_cannot_revoke_grant_then_allow_external_io(staging, phase):
+    item = staging.make()
+    if phase == "publish":
+        encode(item)
+    staging.context.check_cancelled = lambda: staging.grants.update(SAVE_PROJECT=False)
+    with pytest.raises(staging.module.BridgeError) as error:
+        item.publish() if phase == "publish" else encode(item)
+    assert error.value.code == "PERMISSION_DENIED" and not item.published
+    assert not item.publication_attempted
+    assert item.stage is None if phase == "create" else not item.path.exists()
