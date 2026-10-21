@@ -4,7 +4,9 @@ Run native checks through `scripts/run_blender_checks.py`, not by launching the 
 scripts directly. The default selection is background-only; `--include-interactive` adds
 the fixtures that need real windows, viewport drawing and native undo. An explicit
 `--case` can select any fixture, including a UI fixture. Phased cases are opt-in by default;
-`--include-interactive` selects the complete registry, including those cases.
+`--include-interactive` selects those cases too. The installed add-on probe additionally
+requires explicit package inputs; without them it is excluded and `all_cases_selected`
+remains false. A complete registry run supplies `--package-probe-config` as described below.
 
 ```powershell
 .\.venv\Scripts\python.exe scripts/run_blender_checks.py --blender "C:\Program Files\Blender Foundation\Blender 5.1\blender.exe" --include-interactive --output build/blender-checks
@@ -40,6 +42,37 @@ explicit scene persistence/load without baseline reuse. `asset_delivery` verifie
 animated GLB/FBX files by hashes and sampled evaluated geometry in a fresh process, within
 the [reviewed export subset](asset-delivery.md). These are separate development checks, not
 installed-package, Windows-version or full 1.0 acceptance.
+
+## Installed add-on development probe
+
+`installed_addon_probe` installs actual pinned ZIP bytes into the runner's disposable
+user-scripts profile, enables the add-on, verifies every installed member and imported
+module path, checks disabled dangerous permissions, reconnects through literal loopback,
+and performs bounded creation/transform checks. It then tests clean-directory replacement
+with the previous package, upgrade and rollback. Staged ZIP paths contain spaces. It saves
+neither the user preferences nor a project. The standalone installed wheel and plugin
+acceptance remain separate.
+
+Prepare explicit inputs using the documented tool counts for those exact packages:
+
+```text
+python scripts/package_probe_config.py --candidate path/to/candidate.zip --candidate-tools COUNT --previous path/to/previous.zip --previous-tools 108 --allow-previous-undiscoverable --output build/package-probe.json
+python scripts/run_blender_checks.py --blender path/to/blender --case installed_addon_probe --package-probe-config build/package-probe.json --output build/installed-probe
+```
+
+The configuration pins complete ZIP hashes, member hashes, versions and expected tool
+counts. It refuses an existing output configuration. The runner freezes that configuration;
+the fixture freezes and independently verifies both ZIPs before installation. Complete
+native runs pass the same configuration together with `--include-interactive`.
+
+Native research found two real installation issues: nonliteral `bl_info` prevented Blender's
+add-on browser from discovering the published alpha, and overwrite installation retained
+obsolete files. Development source now uses literal, version-checked discovery metadata.
+The explicit `--allow-previous-undiscoverable` option records known-name enablement for
+that historical package; it does not certify its browser installation. The tested replacement
+path removes only the old add-on directory inside the owned disposable profile. It does not
+certify preferences migration, UI uninstall, the installed artist scenarios A–F, or Windows.
+Never replace the immutable published alpha assets with development ZIPs carrying 0.3.0 metadata.
 
 ## Windows: private desktop, not just a hidden-window hint
 

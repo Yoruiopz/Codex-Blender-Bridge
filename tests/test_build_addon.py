@@ -4,6 +4,8 @@ import importlib.util
 from pathlib import Path
 from zipfile import ZipFile
 
+import pytest
+
 
 def _build_module():
     script = Path(__file__).resolve().parents[1] / "scripts" / "build_addon.py"
@@ -26,3 +28,22 @@ def test_addon_build_is_reproducible_and_validated(tmp_path: Path) -> None:
     assert "blender_codex_bridge/__init__.py" in names
     assert "blender_codex_bridge/blender_manifest.toml" in names
     assert not any("__pycache__" in name or name.endswith(".pyc") for name in names)
+
+
+@pytest.mark.parametrize("replacement,message", [
+    (b'"version": ADDON_VERSION', "literal bl_info"),
+    (b'"version": (99, 0, 0)', "versions disagree"),
+])
+def test_archive_rejects_undiscoverable_or_mismatched_metadata(tmp_path, replacement, message):
+    module = _build_module()
+    original = module.build(tmp_path / "original.zip")
+    changed = tmp_path / "changed.zip"
+    with ZipFile(original) as source, ZipFile(changed, "w") as target:
+        for item in source.infolist():
+            payload = source.read(item)
+            if item.filename == "blender_codex_bridge/__init__.py":
+                assert b'"version": (0, 3, 0)' in payload
+                payload = payload.replace(b'"version": (0, 3, 0)', replacement)
+            target.writestr(item, payload)
+    with pytest.raises(ValueError, match=message):
+        module.validate_archive(changed)

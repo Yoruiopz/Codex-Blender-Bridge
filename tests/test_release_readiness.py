@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import importlib.util
+import os
+import subprocess
+import sys
 from pathlib import Path
 from zipfile import ZipFile
 
@@ -32,6 +35,18 @@ def test_readme_inventory_matches_registry() -> None:
 def test_inventory_rejects_missing_markers() -> None:
     with pytest.raises(ValueError, match="marker"):
         load_script("readme_tools").updated_readme("README without markers")
+
+
+@pytest.mark.parametrize("root_already_present", [False, True])
+def test_inventory_cli_uses_its_checkout_over_another_installed_package(tmp_path, root_already_present):
+    package = tmp_path / "shadow" / "mcp_server"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text('raise AssertionError("wrong MCP checkout")\n')
+    python_path = str(package.parent) + (os.pathsep + str(ROOT) if root_already_present else "")
+    environment = dict(os.environ, PYTHONPATH=python_path)
+    result = subprocess.run([sys.executable, str(ROOT / "scripts/readme_tools.py"), "--check"],
+                            cwd=tmp_path, env=environment, capture_output=True, text=True, timeout=20)
+    assert result.returncode == 0, result.stderr
 
 
 def test_release_components_match() -> None:
@@ -71,6 +86,7 @@ def test_wheel_requires_unambiguous_metadata(tmp_path: Path, metadata_count: int
 
 
 @pytest.mark.parametrize("component", [
+    "addon/blender_codex_bridge/__init__.py",
     "addon/blender_codex_bridge/constants.py",
     "addon/blender_codex_bridge/blender_manifest.toml",
     "mcp_server/__init__.py",
@@ -79,6 +95,7 @@ def test_wheel_requires_unambiguous_metadata(tmp_path: Path, metadata_count: int
 def test_mismatched_release_fails_before_build(tmp_path: Path, component: str) -> None:
     files = {
         "pyproject.toml": 'version = "0.3.0"',
+        "addon/blender_codex_bridge/__init__.py": 'bl_info = {"version": (0, 3, 0)}',
         "addon/blender_codex_bridge/constants.py": "ADDON_VERSION = (0, 3, 0)",
         "addon/blender_codex_bridge/blender_manifest.toml": 'version = "0.3.0"',
         "mcp_server/__init__.py": '__version__ = "0.3.0"',

@@ -5,12 +5,12 @@ from __future__ import annotations
 import logging
 from contextlib import suppress
 
-from .constants import ADDON_VERSION
-
+# Blender discovers legacy add-ons with ast.literal_eval, before importing them.
+# Keep this dictionary literal; packaging verifies it against every component.
 bl_info = {
     "name": "Blender Codex Bridge",
     "author": "Blender Codex Bridge contributors",
-    "version": ADDON_VERSION,
+    "version": (0, 3, 0),
     "blender": (4, 2, 0),
     "location": "View3D > Sidebar > Codex Bridge",
     "description": "Local, permissioned structured bridge between Codex and Blender",

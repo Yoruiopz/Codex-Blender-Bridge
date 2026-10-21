@@ -32,9 +32,11 @@ def release_version(source: Path) -> str:
 
     version = numeric_version(source / "pyproject.toml")
     addon_version = assignment(source / "addon/blender_codex_bridge/constants.py", "ADDON_VERSION")
+    addon_metadata = assignment(source / "addon/blender_codex_bridge/__init__.py", "bl_info")
     expected_tuple = tuple(int(part) for part in version.split("."))
     manifest = json.loads((source / "plugins/blender-codex-bridge/.codex-plugin/plugin.json").read_text(encoding="utf-8"))
     if (addon_version != expected_tuple
+            or not isinstance(addon_metadata, dict) or addon_metadata.get("version") != expected_tuple
             or numeric_version(source / "addon/blender_codex_bridge/blender_manifest.toml") != version
             or assignment(source / "mcp_server/__init__.py", "__version__") != version
             or manifest.get("name") != "blender-codex-bridge"
