@@ -91,6 +91,12 @@ masks/brushes, weight brushes and complete paint acceptance remain open.
 JOB-01 now has source-frozen [cooperative painting jobs](painting-jobs.md): progress/cancel,
 live source/consent revalidation, guarded publication and tile-bounded coverage for 4K canvases.
 Full source/output arrays remain; measured native tail stalls prevent real-time/production acceptance.
+DELIVER-01 now has internal streaming PNG/float-EXR codecs and native alpha/4K raw round-trip
+fixtures, plus an explicit [delivery execution contract](texture-delivery.md). Approved-path
+export/public EXR import and cooperative publication/reimport are not implemented yet. The
+probes exposed a 4.5 generated-float transparency error that numeric readback missed; new
+independent CHANNEL_PACKED buffers preserve requested RGBA and render consistently on the
+tested versions. Existing images are never silently relabeled; masks/inspection remain raw.
 Next extend acceptance under memory pressure, broader scale and mixed-editor interleaving before general native bake jobs; extend
 surface painting and dependency/durable-pixel lifecycle while retaining
 the remaining memory-pressure, mixed-editor/domain and durable recovery acceptance work.
@@ -1203,3 +1209,82 @@ Surface/viewport projection and stencils, sculpt/vertex masks/brushes, pressure/
 weight painting, broader roles/blends, memory-pressure/native tail latency, 8K/UDIM, durable pixel
 delivery and the complete character/procedural/simulation/UX/install/upgrade/RC gates remain open.
 This increment does not close PAINT-01, JOB-01, scenario B or the full 1.0 artist target.
+
+### 2026-10-21 — Texture codec foundations and cross-version alpha correctness
+
+DELIVER-01/LOOK-01/REC-01 continue under the full artist target. The
+[delivery contract](texture-delivery.md) sequences bounded codecs → approved path/staging →
+atomic no-clobber publication → typed source-frozen export/reimport jobs → numeric/visual
+reopen proof → packing/save/reopen/delivery acceptance. This increment implements the codec/
+interpretation foundation and a discovered rendering fix, **not** the export API. Public
+`image.load` remains PNG/JPEG only; export and public EXR import are `NOT_IMPLEMENTED`.
+
+New standard-library `pixel_codecs.py` borrows immutable float32 RGBA and yields bounded
+PNG8/PNG16 or uncompressed float EXR blocks, plus CPU safe points every 256 pixels. COLOR
+uses explicit linear/sRGB interpretation, PNG refuses HDR/signed data without clipping, EXR
+supports finite HDR/signed data, and raw EXR retains hidden zero-alpha RGB only with explicit
+channel-packed reopening. Conventional COLOR EXR premultiplies, so it is not raw-channel
+recovery. These encoders perform no path access/publication or permission changes; staging,
+large-file preflight, lifecycle, consent and durable recovery remain required work.
+
+Native probes found that PNG16 COLOR exposes linear associated floats, unlike PNG8's encoded
+channels, and straight-alpha float EXR loading can discard hidden zero-alpha RGB. Exact file-
+byte/parser tests are separate from native decoder checks; the latter explicitly bound native
+PNG16 color/OCIO variation against an independent standard-sRGB reference. A 4096² raw DATA
+EXR, with signed/HDR values and distinct corner markers, reopens with a complete matching
+float32 digest on both installed versions; no file-sized encoded bytes duplicate is required.
+
+The actual transparent/emission camera fixture then exposed **Blender 4.5 generated float
+COLOR rendering too bright despite correct raw RGBA readback**. New bridge canvases and paint
+versions now retain independent straight RGBA under native CHANNEL_PACKED. Existing image
+datablocks are never relabeled. COLOR remains scene-linear color, not Non-Color data, and hidden
+RGB survives. Typed paint normalization supports explicit associated linear float sources,
+including generated PREMUL and reviewed linear float FILE buffers, before straight source-over.
+The conversion is reported separately and excluded from brush-change counts. Inspector/mask
+reads remain raw; additive associated zero-alpha RGB is not fabricated as straight color.
+The new normalized FILE render/complete source-digest check exercises the real typed path.
+
+Validation: **263 focused tests**, then **1,356 tests on each** MCP SDK 2.0.0/2.2.0; lint, mypy
+(35 files), compilation, generated README inventory (175 tools), development ZIP layout/CRC and
+all **75** packaged Python modules against source passed. The full Windows Blender 4.5.1 LTS /
+5.1.2 matrix passed **66/66** (30 background, 36 private-desktop UI cases) at
+`build/pixel-codecs-final-matrix-20261021-1/report.json`. Baseline `5788548` plus this then-dirty
+increment; all **149** Python source paths/bytes independently match fingerprint
+`5b6c3d0310bdc015923e8cd112bff45558afc0ef602f121ff962b9d9bd514651`.
+The earlier failing interop/render probes are retained locally, not hidden or substituted for
+the final source-matched run. All test windows stay off the user's input desktop.
+
+The 4K raw float file is **268,501,384 bytes**, full native decoded/source digest
+`6dc7792b679699077adadaf4c6aa88a921909d390e605fb1ebbc5e555cb8dbfb` on both versions.
+There are 90,113 emitted byte/CPU steps, maximum block **33,160 bytes**, and encoding here took
+about **13.45 / 13.12 s**. These are codec/native readback measurements, not a publication/job,
+process-memory cap, memory-pressure or production throughput verdict. The native fixture requires
+8 GiB available Windows RAM before its 4K allocation and induces no global memory pressure.
+
+Ten new Cycles CPU camera images were retained/reviewed. Center samples match for generated,
+PNG8, PNG16, conventional EXR and the typed normalized FILE. Full-image conventional EXR and
+generated pixels match; PNG8 differs at 911 of 1,024 pixels by at most 1/255, PNG16 at ten pixels,
+and normalized FILE at three, also at most 1/255, on each version. PNG-byte identity is not claimed
+because render metadata differs. The existing material-preview byte-to-float conversion differs
+only at 31/30 edge pixels (max 5/4 per channel), re-reviewed on both versions; Alpha is explicitly
+connected, not assumed in an alpha-unused graph. Of **200** prior PNG-path pairs, **192** are
+byte-identical, two render outputs pixel-identical with different PNG bytes, and six 4.5 scanner
+captures retain known rerun variation: 4,538 UV pixels (max 215/255), previews up to 18,204 pixels
+(max 6/255), wire two pixels (max 1/255). UV/front/calibration/isometric/wire variants were reviewed;
+packing/render nondeterminism and production artistic acceptance remain unresolved. Protected/
+recovered mask pairs remain byte-identical. These are bounded evidence, not full artist approval.
+
+Primary-agent Graphify in `dino-s-workspace` identified `preflight_file` / `approved_file` and
+Save-As path helpers in cloud `9e69ddd`. The broad query was clipped, so exact `image_files.py`
+symbols/current source governed follow-up. Native evidence, not stale graph assumptions, changed
+the next action to alpha correctness before public delivery. Feedback is saved locally; no graph
+rebuild, extra agent, new dependency, version bump or published-release change was performed.
+
+Next implement approved-path owned staging/no-clobber publication, streamed reviewed-file
+preflight and source-frozen export/reimport jobs, then complete durable delivery/recovery tests.
+Full approved
+export/reimport, fresh-process delivery, durable input-pixel recovery, source-copy/native tail
+latency, memory pressure/8K/UDIM, surface/sculpt/vertex/weight paint and all character/procedural/
+simulation/UX/install/upgrade/RC gates remain open. No full artist, DELIVER-01, REC-01, JOB-01,
+PAINT-01 or scenario acceptance is inferred from these foundations. Published 0.3.0 assets,
+versions and repository visibility remain unchanged.

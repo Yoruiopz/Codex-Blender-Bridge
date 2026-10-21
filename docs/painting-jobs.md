@@ -32,6 +32,10 @@ with normalized UV pixel-centre bilinear sampling, including different mask/canv
 See the [complete mask contract](texture-painting.md#uv-image-channel-masks). Inspect both input
 digests after success. FILE masks need live external-file/path consent independently of the
 canvas. No color transform/luminance/unpremultiply is applied to the mask channel.
+Paint source normalization is separate: reviewed associated linear float input normalizes to
+straight color, while new buffers use native CHANNEL_PACKED for independent requested RGBA.
+This fixes measured transparent shading across the tested versions; mask and inspector values
+remain raw. `source_associated_converted_to_straight` reports source normalization explicitly.
 
 | Tool | Blender permission | Contract |
 | --- | --- | --- |

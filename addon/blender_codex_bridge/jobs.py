@@ -245,6 +245,7 @@ class PaintJobs:
                 prepared = job.prepared
                 job.work = pixel_brush.paint_steps(prepared.pop("values"), prepared["width"], prepared["height"], prepared["strokes"],
                     prepared["role"], srgb=prepared["srgb"], mask=prepared["mask"]["kernel"] if prepared["mask"] else None,
+                    associated=prepared["associated"],
                     check=lambda: self._check(job, context))
             budget = self.budget_ms()
             budget = min(8., max(1., float(budget))) if isinstance(budget, (int, float)) and math.isfinite(budget) else 4.

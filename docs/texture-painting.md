@@ -27,10 +27,16 @@ No policy changes, implicit image loading, file writing, packing, saving or forc
 Painting/inspection accept already-loaded local single-view FILE or GENERATED RGBA images.
 Blender labels generated image datablocks `UV_TEST` even for a blank generated canvas; that
 native type is supported. Render Result, movies, sequences, UDIMs, multiview and other buffer
-types are not guessed. Painting rejects actual image animation and non-STRAIGHT alpha roles.
-New textures are generated floating-point, straight-alpha images with no fake user or node
-binding. Bind the intended new version explicitly through `nodes.set_image`, isolating shared
+types are not guessed. Painting rejects actual image animation and unsupported alpha/OCIO roles.
+New textures keep requested independent straight RGBA in floating-point buffers with native
+**CHANNEL_PACKED** alpha, no fake user or node binding. This avoids implicit alpha/color coupling
+and a measured Blender 4.5 transparent-render difference without changing requested raw values.
+It does not make COLOR into Non-Color data. Bind the intended new version explicitly through `nodes.set_image`, isolating shared
 materials/groups first. Reading a shared source does not change any of its consumers.
+Connect the image's Alpha output explicitly when material opacity is intended. A Color-only
+connection uses independent RGB, without silently multiplying it by alpha; do not assume it
+matches every alpha-unused file-texture graph. Inspect links and compare appearance before
+claiming that rebinding preserved the look. Creating a new version never changes those links.
 
 ## Color and data interpretation
 
@@ -43,13 +49,22 @@ with the standard sRGB transfer function; Linear Rec.709 and Non-Color values ar
 without that transform. Float-sRGB and other OCIO input spaces are unsupported. Native probes
 on 4.5/5.1 confirmed `Image.pixels` returns encoded sRGB values, not automatically linearized
 values. Treating those floats as scene-linear would produce an incorrect new texture.
-Alpha is never gamma-transformed. HDR beyond the stated bound, negative/nonfinite painting
-values, PREMUL/CHANNEL_PACKED/NONE input and broader color pipelines remain open requirements.
+Alpha is never gamma-transformed. Explicit linear float PREMUL sources and native associated
+linear float FILE buffers normalize to straight color before painting; generated/channel-packed
+buffers remain independent raw RGBA. This is distinct from a FILE's alpha-mode label. Current
+approved FILE inputs remain PNG/JPEG (including explicitly declared linear float PNG16), not
+public EXR import. Additive nonzero RGB at zero associated alpha is not guessed as straight RGB.
+HDR beyond the stated bound, negative/nonfinite painting values, NONE alpha and broader color
+pipelines remain open requirements. Mask/inspector reads remain raw, never unassociated implicitly.
 
 Conversion applies to the **whole new image**, including unpainted areas; it changes storage
 encoding/identity, not the intended displayed color. Original stored pixels remain untouched.
 `painted_pixels` counts changes relative to the converted baseline, not that encoding change.
 Inspect role, new/original digests, untouched sample values and matched appearance separately.
+`source_associated_converted_to_straight` similarly identifies normalization of native associated
+float input, excluded from brush-change counts. Existing datablocks are never relabeled or
+reloaded to obtain a preferred interpretation. See [texture delivery](texture-delivery.md) for
+the measured distinction between file encoding, decoded float buffers and rendered appearance.
 
 ## Brush contract
 

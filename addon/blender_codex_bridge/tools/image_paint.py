@@ -69,13 +69,16 @@ def _new(context: Any, bpy: Any, name: str, width: int, height: int, role: str, 
         _require(context, modifying=True)
         image.use_fake_user = False
         image.colorspace_settings.name = SPACES[role]
-        image.alpha_mode = "STRAIGHT"
+        # Pixels are our explicit unassociated RGBA contract, not a native file
+        # decoder's associated float ImBuf. CHANNEL_PACKED prevents implicit
+        # alpha/color coupling in both 4.5 and 5.1 renderers and keeps hidden RGB.
+        image.alpha_mode = "CHANNEL_PACKED"
         _require(context, modifying=True)
         image.pixels.foreach_set(values)
         image.update()
         _require(context, modifying=True)
         actual, w, h, _ = _read(context, image, modifying=True)
-        if (image.name != name or image.source != "GENERATED" or not image.is_float or image.alpha_mode != "STRAIGHT"
+        if (image.name != name or image.source != "GENERATED" or not image.is_float or image.alpha_mode != "CHANNEL_PACKED"
                 or image.colorspace_settings.name != SPACES[role] or (w, h) != (width, height)
                 or brush.digest(actual) != brush.digest(values)):
             raise RuntimeError("Generated image metadata or complete float32 pixels did not match readback")
@@ -110,6 +113,7 @@ def create_image(context: Any, params: Mapping[str, Any]) -> dict:
     image = _new(context, bpy, name, width, height, role, values)
     return {"created": True, "image": images._summary(image), "role": role,
             "pixels_sha256_float32_le": brush.digest(values), "pixels_verified": True,
+            "buffer_alpha_interpretation": "Independent straight RGBA; native CHANNEL_PACKED prevents implicit float alpha coupling",
             "file_written": False, "bound_to_nodes": False, "verification_required": True}
 
 
@@ -117,12 +121,18 @@ def source_role(source: Any) -> tuple[str, bool]:
     animation = getattr(source, "animation_data", None)
     animated = animation is not None and (getattr(animation, "action", None) is not None
                or len(getattr(animation, "drivers", ())) or len(getattr(animation, "nla_tracks", ())))
-    if source.alpha_mode != "STRAIGHT" or animated:
-        raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Painting requires unanimated STRAIGHT-alpha source data.")
+    native_associated = source.is_float and source.colorspace_settings.name == "Linear Rec.709"
+    alpha_supported = source.alpha_mode in {"STRAIGHT", "CHANNEL_PACKED"} or (native_associated and source.alpha_mode == "PREMUL")
+    if not alpha_supported or animated:
+        raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Painting requires an unanimated reviewed straight/channel-packed source or explicitly premultiplied linear float source.")
     space = source.colorspace_settings.name
     if space not in {"sRGB", "Linear Rec.709", "Non-Color"} or (space == "sRGB" and source.is_float):
         raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Reviewed sources are byte-buffer sRGB or Linear Rec.709/Non-Color; other OCIO/float-sRGB semantics are not guessed.")
     return ("DATA" if space == "Non-Color" else "COLOR"), space == "sRGB"
+
+
+def source_associated(source: Any) -> bool:
+    return source.is_float and source.colorspace_settings.name != "Non-Color" and (source.alpha_mode == "PREMUL" or (source.source == "FILE" and source.alpha_mode != "CHANNEL_PACKED"))
 
 
 def prepare_paint(context: Any, params: Mapping[str, Any], *, allow_large=False) -> dict:
@@ -153,7 +163,8 @@ def prepare_paint(context: Any, params: Mapping[str, Any], *, allow_large=False)
     return {"source": source, "source_name": source_name, "name": name, "width": width, "height": height,
             "role": role, "values": values, "strokes": strokes, "tests": tests, "srgb": srgb,
             "source_file": source_file, "source_digest": before, "mask": mask,
-            "source_identity": image_masks.identity(source), "source_metadata": image_masks.metadata(source)}
+            "source_identity": image_masks.identity(source), "source_metadata": image_masks.metadata(source),
+            "associated": source_associated(source)}
 
 
 def validate_source_reference(prepared: dict) -> None:
@@ -212,6 +223,7 @@ def finish_paint(context: Any, prepared: dict, result: array, evidence: dict) ->
             "source_pixels_sha256_float32_le": before, "pixels_sha256_float32_le": brush.digest(result),
             "source_pixels_unchanged": True, "candidate_pixel_tests": prepared["tests"], **evidence,
             **masked_memory_estimate(prepared), "mask": image_masks.evidence(prepared.get("mask")),
+            "buffer_alpha_interpretation": "Independent straight RGBA; native CHANNEL_PACKED prevents implicit float alpha coupling",
             "file_written": False, "bound_to_nodes": False, "source_file_at_read": prepared["source_file"],
             "stroke_coordinates": "UV [0,1], bottom-left origin; radius in image pixels, clipped at edges, no wrapping",
             "verification_required": True, "full_texture_paint_workflow_verified": False}
@@ -221,6 +233,7 @@ def paint_version(context: Any, params: Mapping[str, Any]) -> dict:
     prepared = prepare_paint(context, params)
     result, evidence = brush.paint(prepared["values"], prepared["width"], prepared["height"], prepared["strokes"],
                                    prepared["role"], srgb=prepared["srgb"],
+                                   associated=prepared["associated"],
                                    mask=prepared["mask"]["kernel"] if prepared["mask"] else None,
                                    check=lambda: require_paint(context, prepared))
     return finish_paint(context, prepared, result, evidence)
@@ -256,6 +269,7 @@ def inspect_pixels(context: Any, params: Mapping[str, Any]) -> dict:
             "channel_max": [v if math.isfinite(v) else None for v in maxima] if statistics else None,
             "samples": [{"pixel": p, "rgba": [v if math.isfinite(v) else None for v in values[(p[1] * width + p[0]) * 4:(p[1] * width + p[0]) * 4 + 4]]} for p in points],
             "value_space": "Raw stored-buffer floats, not display values or an implicit color transform",
+            "alpha_interpretation_warning": "File alpha_mode describes file representation, not necessarily stored float ImBuf association; native float COLOR files may already be linear/associated",
             "source_file_at_read": file, "analysis_complete": statistics, "appearance_verified": False,
             "statistics_included": statistics, "pixel_digest_complete": True,
             "analysis_scope": "Complete pixel digest/samples and channel statistics" if statistics else "Complete pixel digest/samples only; channel ranges/nonfinite scan omitted"}

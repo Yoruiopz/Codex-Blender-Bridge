@@ -118,6 +118,13 @@ support inversion and bilinear sampling across different image sizes, and preser
 both input images. FILE-mask reads require live approved-path consent. Viewport-projected
 strokes/stencils, sculpt/vertex painting, baking and durable delivery still need implementation.
 
+Generated paint canvases now use independent raw RGBA with native CHANNEL_PACKED alpha, fixing
+a Blender 4.5 Cycles transparency discrepancy while preserving requested channel values. Reviewed
+associated linear float inputs normalize explicitly before painting; inspection/masks remain raw.
+[Texture-delivery work](docs/texture-delivery.md) adds internal PNG/float-EXR encoders and native
+round-trip/render tests, but **no export tool or public EXR import is available yet**. Approved
+publication, reimport/job lifecycle and durable pixel recovery remain in progress, not release claims.
+
 Unreleased [cooperative painting jobs](docs/painting-jobs.md) add `image.paint_job_start` and
 `jobs.inspect/list/cancel`, with polled progress, sidebar CPU-budget/control/history, frozen
 inputs and a single guarded publication boundary. Cancel/disconnect/pause/deadline behavior is

@@ -100,9 +100,11 @@ def srgb_to_linear(value: float) -> float:
     return value / 12.92 if value <= .04045 else ((value + .055) / 1.055) ** 2.4
 
 
-def paint_steps(source: array, width: int, height: int, strokes: list[dict], role: str, *, srgb=False, mask=None, check=lambda: None):
+def paint_steps(source: array, width: int, height: int, strokes: list[dict], role: str, *, srgb=False, associated=False, mask=None, check=lambda: None):
     """Yield bounded CPU work progress; no Blender calls or mutation between yields."""
     result = array("f", source)
+    if type(associated) is not bool or (associated and (role != "COLOR" or srgb)):
+        raise invalid_argument("Associated source normalization requires linear COLOR, not encoded sRGB or DATA.")
     if mask is not None:
         mw, mh = size(mask["width"], mask["height"])
         if len(mask["values"]) != mw * mh or type(mask["invert"]) is not bool:
@@ -117,8 +119,17 @@ def paint_steps(source: array, width: int, height: int, strokes: list[dict], rol
         if offset % 1024 == 0:
             check()
             yield {"phase": "normalizing", "completed": offset // 4, "total": width * height}
+        alpha = source[offset+3]
         if any(not math.isfinite(source[offset + channel]) or not 0 <= source[offset + channel] <= (1. if srgb or role == "DATA" or channel == 3 else 16.) for channel in range(4)):
             raise invalid_argument("Painting requires finite nonnegative RGB within its role bound and alpha within [0,1].")
+        if associated:
+            if alpha == 0 and any(source[offset+channel] != 0 for channel in range(3)):
+                raise invalid_argument("Associated zero-alpha RGB cannot be inferred as straight color; use an explicit raw/channel-packed source.")
+            for channel in range(3):
+                value = source[offset+channel] / alpha if alpha else 0.
+                if not math.isfinite(value) or not 0 <= value <= 16:
+                    raise invalid_argument("Unassociated COLOR RGB exceeds the reviewed [0,16] brush range.")
+                result[offset+channel] = value
         if srgb:
             for channel in range(3):
                 result[offset + channel] = srgb_to_linear(source[offset + channel])
@@ -192,9 +203,9 @@ def paint_steps(source: array, width: int, height: int, strokes: list[dict], rol
         if compared % 256 == 0:
             check()
             yield {"phase": "comparing", "completed": compared, "total": total_compare}
-        if srgb:
+        if srgb or associated:
             for channel in range(3):
-                baseline_rgb[channel] = srgb_to_linear(source[offset + channel])
+                baseline_rgb[channel] = srgb_to_linear(source[offset + channel]) if srgb else source[offset+channel] / source[offset+3] if source[offset+3] else 0.
             differs = any(result[offset + channel] != baseline_rgb[channel] for channel in range(3)) or result[offset + 3] != source[offset + 3]
         else:
             differs = any(result[offset + channel] != source[offset + channel] for channel in range(4))
@@ -205,6 +216,7 @@ def paint_steps(source: array, width: int, height: int, strokes: list[dict], rol
     check()
     return result, {"painted_pixels": count, "changed_pixel_examples": changed,
                     "examples_truncated": count > len(changed), "source_srgb_converted_to_linear": srgb,
+                    "source_associated_converted_to_straight": associated,
                     "coverage_tile_size": TILE_SIZE, "coverage_scratch_max_bytes": max_coverage_bytes,
                     "baseline_copy_bytes": 0, "comparison_pixels": total_compare,
                     "pixel_array_bytes": len(result) * result.itemsize,
@@ -213,8 +225,8 @@ def paint_steps(source: array, width: int, height: int, strokes: list[dict], rol
                     "memory_estimate_scope": "Source/output pixel arrays and bounded coverage/comparison scratch only; excludes plan metadata, Blender/native/GPU/undo/file buffers and allocator overhead."}
 
 
-def paint(source: array, width: int, height: int, strokes: list[dict], role: str, *, srgb=False, mask=None, check=lambda: None) -> tuple[array, dict]:
-    work = paint_steps(source, width, height, strokes, role, srgb=srgb, mask=mask, check=check)
+def paint(source: array, width: int, height: int, strokes: list[dict], role: str, *, srgb=False, associated=False, mask=None, check=lambda: None) -> tuple[array, dict]:
+    work = paint_steps(source, width, height, strokes, role, srgb=srgb, associated=associated, mask=mask, check=check)
     while True:
         try:
             next(work)

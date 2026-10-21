@@ -277,7 +277,7 @@ def test_unsupported_source_or_scope_never_creates_version(paint_tools, kind):
     elif kind == "animated":
         image.animation_data = NS(action=object())
     elif kind == "alpha":
-        image.alpha_mode = "PREMUL"
+        image.alpha_mode = "NONE"
     elif kind == "float_srgb":
         image.colorspace_settings.name = "sRGB"
     elif kind == "ocio":

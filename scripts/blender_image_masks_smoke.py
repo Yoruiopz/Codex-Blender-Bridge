@@ -183,6 +183,7 @@ def setup():
             return call("image.inspect_pixels", image_name=name, samples=samples or [])
         source = call("image.create", new_name="Source", width=128, height=64, color=[.05, .1, .3, 1.])
         job_source = call("image.create", new_name="Job Canvas", width=512, height=512, color=[.05, .1, .3, 1.])
+        canvas_alpha_before = bpy.data.images["Job Canvas"].alpha_mode
         call("image.create", new_name="Mask Base", width=16, height=8, role="DATA", color=[0., 0., 0., 1.])
         patterned = call("image.paint_version", image_name="Mask Base", new_name="Mask Pattern",
             strokes=[{"points": [[.25, .5]], "radius_pixels": 2.5, "hardness": 1., "color": [1., 1., 1., 1.]}])
@@ -276,7 +277,7 @@ def setup():
                 image_paint._read = original_read
             elif action == "verify_canvas_output_recovered":
                 assert bpy.data.images.get("Late Canvas") is None
-                assert bpy.data.images["Job Canvas"].alpha_mode == "STRAIGHT"
+                assert bpy.data.images["Job Canvas"].alpha_mode == canvas_alpha_before
                 RESULT["canvas_buffer_loaded_after_external_metadata_undo"] = bool(bpy.data.images["Job Canvas"].has_data)
                 RESULT["late_canvas_input_pixel_recovery_verified"] = False  # No independent full digest if buffer invalidated.
             elif action in {"verify_recovery", "verify_final"}:
