@@ -1615,3 +1615,11 @@ rerun passed at `build/release-implementation-20261022/artist-legacy-render-chec
 The earlier failed runs remain separate diagnostic evidence. Repeat the whole selected-case
 matrix after this fixture change; do not combine the old 20 passes and focused pass as a
 single current-commit matrix. Packaged-install acceptance remains separate from source smokes.
+
+Final clean-source verification at `90997f5` completed **21/21 selected Linux Blender 4.3.2
+native cases**, including all four fresh-process workflows, with the complete 175-file Python
+inventory matched to the committed source. All development package bytes/checksums match
+that checkout, and an isolated installed wheel exposes 198 tools over stdio. See the
+[retained checkpoint summary](release-implementation-20261022.md) for fingerprints, exact
+evidence paths and limitations. These are 21 of 41 registered cases, not Windows or installed
+full-artist acceptance. All release ledger requirements remain open.
