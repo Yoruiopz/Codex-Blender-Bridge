@@ -5,7 +5,7 @@ from __future__ import annotations
 import threading
 import uuid
 from collections import deque
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -13,6 +13,45 @@ from typing import Any
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def bounded_external_effects(value: Any) -> dict[str, Any] | None:
+    """Copy only bounded flat file-effect facts, never an arbitrary tool result.
+
+    Invalid fields are omitted rather than coercing them into misleading proof.
+    Reading known keys directly also avoids traversing unbounded nested values.
+    """
+    if not isinstance(value, Mapping):
+        return None
+    result: dict[str, Any] = {}
+    for key in (
+        "publication_attempted", "file_published", "publication_outcome_unknown",
+        "published_bytes_verified", "native_undo_removes_external_file", "crash_durability_verified",
+    ):
+        field = value.get(key)
+        if type(field) is bool:
+            result[key] = field
+    for key, maximum in (("filepath", 4096), ("retained_staging_path", 4096),
+                         ("staging_cleanup", 64), ("windows_directory_pin_acceptance", 64)):
+        if key not in value:
+            continue
+        field = value[key]
+        if field is None:
+            result[key] = None
+        elif isinstance(field, str) and len(field) <= maximum and not any(ord(c) < 32 for c in field):
+            try:
+                if len(field.encode("utf-8")) <= maximum:
+                    result[key] = field
+            except UnicodeError:
+                pass
+    digest = value.get("file_sha256")
+    if "file_sha256" in value and (digest is None or (isinstance(digest, str)
+            and len(digest) == 64 and all(c in "0123456789abcdef" for c in digest))):
+        result["file_sha256"] = digest
+    size = value.get("file_bytes")
+    if "file_bytes" in value and (size is None or (type(size) is int and 0 <= size <= 2**53 - 1)):
+        result["file_bytes"] = size
+    return result or None
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,6 +65,7 @@ class OperationRecord:
     affected_objects: tuple[str, ...] = ()
     error_code: str | None = None
     job_evidence: dict[str, Any] | None = None
+    external_effects: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
@@ -107,6 +147,7 @@ class BridgeState:
         affected_objects: Iterable[str] = (),
         error_code: str | None = None,
         job_evidence: dict[str, Any] | None = None,
+        external_effects: Mapping[str, Any] | None = None,
     ) -> OperationRecord:
         record = OperationRecord(
             operation_id=f"op_{uuid.uuid4().hex[:10]}",
@@ -118,6 +159,7 @@ class BridgeState:
             affected_objects=tuple(dict.fromkeys(str(name) for name in affected_objects if name)),
             error_code=error_code,
             job_evidence=job_evidence,
+            external_effects=bounded_external_effects(external_effects),
         )
         with self._lock:
             self._history.appendleft(record)
@@ -158,6 +200,8 @@ class BridgeState:
             }
 
     def reset(self) -> None:
+        from .task_plans import clear_task_plans
+
         with self._lock:
             self.server_running = False
             self.connected_clients = 0
@@ -168,6 +212,7 @@ class BridgeState:
             self.is_executing = False
             self.last_error = ""
             self._history.clear()
+            clear_task_plans(self)
 
 
 _STATE = BridgeState()

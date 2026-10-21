@@ -47,7 +47,14 @@ SERVER_INSTRUCTIONS = (
     "for short sequences with known explicit names. Enable every child toolset first. "
     "Batch preflight checks gates, not scene dependencies; partial failures are not rolled back. "
     "Reinspect partial work, truncated results, and topology changes before continuing. "
-    "Use geometry_nodes tools for procedural graphs and acknowledge shared users explicitly."
+    "Use geometry_nodes tools for procedural graphs and acknowledge shared users explicitly. "
+    "For multi-step artist work, track task.plan steps and explicit protected objects; "
+    "task.plan.capture/compare provide bounded advisory evidence, not universal edit enforcement. "
+    "Persist plan data only explicitly; persistence does not save a project. "
+    "Distinguish image.pack_version FILE_BYTES from CURRENT_PIXELS snapshots; only the latter "
+    "preserves current raw edited channels, and recovery has documented identity/size limits. "
+    "Preview asset.export scope and format losses before export. Published external files "
+    "survive Blender undo and cancellation; inspect retained external effects."
 )
 
 

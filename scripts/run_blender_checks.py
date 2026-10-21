@@ -6,9 +6,11 @@ import argparse
 import hashlib
 import json
 import os
+import platform
 import subprocess
 import sys
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -54,7 +56,21 @@ CASES = {
     "image_alpha": ("blender_image_alpha_smoke.py", "BLENDER_IMAGE_ALPHA_OK "),
     "image_streams": ("blender_image_streams_smoke.py", "BLENDER_IMAGE_STREAMS_OK "),
     "image_delivery": ("blender_image_delivery_smoke.py", "BLENDER_IMAGE_DELIVERY_OK "),
+    "image_reopen": ("blender_image_reopen_smoke.py", "BLENDER_IMAGE_REOPEN_READER_OK "),
+    "image_portability_probe": ("blender_image_portability_smoke.py", "BLENDER_IMAGE_PORTABILITY_PROBE_READER_OK "),
+    "animation_curves": ("blender_animation_curves_smoke.py", "BLENDER_CODEX_ANIMATION_CURVES_SMOKE_OK "),
+    "geometry_node_groups": ("blender_geometry_node_groups_smoke.py", "BLENDER_GEOMETRY_NODE_GROUPS_OK "),
+    "task_plans": ("blender_task_plans_smoke.py", "BLENDER_TASK_PLANS_READER_OK "),
+    "asset_delivery": ("blender_asset_delivery_smoke.py", "BLENDER_ASSET_DELIVERY_READER_OK "),
 }
+# Each phase must exit successfully before a new process can consume its artifacts.
+PHASED_CASES = {
+    "image_reopen": ("BLENDER_IMAGE_REOPEN_WRITER_OK ", "BLENDER_IMAGE_REOPEN_READER_OK "),
+    "image_portability_probe": ("BLENDER_IMAGE_PORTABILITY_PROBE_WRITER_OK ", "BLENDER_IMAGE_PORTABILITY_PROBE_READER_OK "),
+    "task_plans": ("BLENDER_TASK_PLANS_WRITER_OK ", "BLENDER_TASK_PLANS_READER_OK "),
+    "asset_delivery": ("BLENDER_ASSET_DELIVERY_WRITER_OK ", "BLENDER_ASSET_DELIVERY_READER_OK "),
+}
+OPT_IN_CASES = set(PHASED_CASES)
 INTERACTIVE_CASES = {"undo_lifecycle", "mesh_edit_recovery", "mesh_repair", "uv_authoring", "prop_workflow", "uv_analysis", "mesh_analysis", "image_assets", "shader_groups", "undo_capacity", "shader_settings", "image_revisions", "field_scanner", "texture_paint"}
 
 
@@ -83,7 +99,9 @@ def success_payload(output: str, marker: str) -> dict | None:
     return None
 
 
-def run_case(blender: Path, case: str, output: Path, timeout: int) -> dict:
+def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
+                 phase: str | None = None, bundle: Path | None = None,
+                 phase_marker: str | None = None) -> dict:
     filename, marker = CASES[case]
     script = ROOT / "scripts" / filename
     command = [
@@ -98,19 +116,30 @@ def run_case(blender: Path, case: str, output: Path, timeout: int) -> dict:
     interactive = case in INTERACTIVE_CASES
     if interactive:
         command.remove("--background")
+    label = case if phase is None else f"{case}-{phase}"
+    if phase is not None:
+        if bundle is None or phase_marker is None:
+            raise ValueError("Phased cases require an owned bundle and success marker")
+        command.extend(["--", "--bridge-phase", phase, "--bridge-bundle", str(bundle)])
+        marker = phase_marker
     # Blender writes quit.blend on normal UI exit. Keep it outside the user's temp recovery.
-    temporary = output / f"{case}-temp"
+    temporary = output / f"{label}-temp"
     temporary.mkdir()
     environment = dict(os.environ, TEMP=str(temporary), TMP=str(temporary), TMPDIR=str(temporary))
+    process_instance = uuid.uuid4().hex
+    environment["BRIDGE_TEST_PROCESS_TOKEN"] = process_instance
     for key, folder in (("BLENDER_USER_CONFIG", "config"), ("BLENDER_USER_SCRIPTS", "scripts"),
                         ("BLENDER_USER_DATAFILES", "datafiles")):
         directory = temporary / folder
         directory.mkdir()
         environment[key] = str(directory)
-    log = output / f"{case}.log"
+    log = output / f"{label}.log"
     start = time.monotonic()
     result = {
         "case": case,
+        "phase": phase,
+        "process_instance": process_instance,
+        "started_at": datetime.now(timezone.utc).isoformat(),
         "script": filename,
         "script_sha256": hashlib.sha256(script.read_bytes()).hexdigest(),
         "command": command,
@@ -157,10 +186,43 @@ def run_case(blender: Path, case: str, output: Path, timeout: int) -> dict:
         else None
     )
     result["blender_version"] = version
-    if result["exit_code"] == 0 and payload is not None and version:
+    phase_evidence = phase is None or (payload is not None
+        and payload.get("phase") == phase
+        and payload.get("process_instance") == process_instance
+        and type(payload.get("process_id")) is int and payload["process_id"] > 0)
+    if result["exit_code"] == 0 and payload is not None and version and phase_evidence:
         result["status"] = "passed"
+    result["completed_at"] = datetime.now(timezone.utc).isoformat()
     result["duration_seconds"] = round(time.monotonic() - start, 3)
     return result
+
+
+def run_case(blender: Path, case: str, output: Path, timeout: int) -> dict:
+    if case not in PHASED_CASES:
+        return _run_process(blender, case, output, timeout)
+    started = time.monotonic()
+    bundle = output / f"{case}-bundle"
+    bundle.mkdir()
+    phases = []
+    for phase, marker in zip(("writer", "reader"), PHASED_CASES[case], strict=True):
+        result = _run_process(blender, case, output, timeout, phase=phase,
+                              bundle=bundle, phase_marker=marker)
+        phases.append(result)
+        if result["status"] != "passed":
+            break
+    passed = len(phases) == 2 and all(p["status"] == "passed" for p in phases)
+    same_version = passed and phases[0]["blender_version"] == phases[1]["blender_version"]
+    return {
+        "case": case, "script": CASES[case][0],
+        "script_sha256": phases[0]["script_sha256"],
+        "status": "passed" if same_version else phases[-1]["status"] if not passed else "failed",
+        "blender_version": phases[-1]["blender_version"],
+        "execution_mode": phases[0]["execution_mode"],
+        "phase_sequence": [p["phase"] for p in phases], "phases": phases,
+        "reader_started": len(phases) == 2, "shared_bundle": str(bundle),
+        "fresh_process_verified": bool(same_version and phases[0]["process_instance"] != phases[1]["process_instance"]),
+        "duration_seconds": round(time.monotonic() - started, 3),
+    }
 
 
 def git_value(*args: str) -> str | None:
@@ -204,7 +266,7 @@ def main() -> int:
         parser.error("Each Blender path must be an existing executable file")
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
-    defaults = [case for case in CASES if args.include_interactive or case not in INTERACTIVE_CASES]
+    defaults = [case for case in CASES if args.include_interactive or case not in INTERACTIVE_CASES | OPT_IN_CASES]
     cases = list(dict.fromkeys(args.cases or defaults))
     dirty = git_value("status", "--porcelain")
     report = {
@@ -213,6 +275,8 @@ def main() -> int:
         "commit": git_value("rev-parse", "HEAD"),
         "worktree_dirty": None if dirty is None else bool(dirty),
         "release_readiness": "NOT_ASSESSED",
+        "platform": {"system": platform.system(), "release": platform.release(),
+                     "version": platform.version(), "machine": platform.machine()},
         "selected_cases": cases,
         "all_cases_selected": set(cases) == set(CASES),
         "results": [],

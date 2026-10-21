@@ -10,15 +10,19 @@ def register_all(registry: ToolRegistry) -> None:
 
     from . import (
         animation,
+        animation_curves,
         animation_layers,
+        asset_delivery,
         batch,
         compositor,
         constraints,
         core,
         face_attributes,
+        geometry_node_groups,
         geometry_nodes,
         image_delivery,
         image_paint,
+        image_portability,
         image_revisions,
         images,
         interaction,
@@ -39,6 +43,7 @@ def register_all(registry: ToolRegistry) -> None:
         shader_groups,
         shader_settings,
         simulation,
+        task_plan,
         transforms,
         uv,
         uv_analysis,
@@ -49,12 +54,16 @@ def register_all(registry: ToolRegistry) -> None:
     )
 
     core.register_tools(registry)
+    task_plan.register_tools(registry)
+    animation_curves.register_tools(registry)
+    asset_delivery.register_tools(registry)
     for module in (animation_layers, compositor, simulation, weights):
         module.register_tools(registry)
     batch.register_tools(registry)
     interaction.register_tools(registry)
     layout.register_tools(registry)
     geometry_nodes.register_tools(registry)
+    geometry_node_groups.register_tools(registry)
     objects.register_tools(registry)
     transforms.register_tools(registry)
     mesh.register_tools(registry)
@@ -65,6 +74,7 @@ def register_all(registry: ToolRegistry) -> None:
     materials.register_tools(registry)
     images.register_tools(registry)
     image_paint.register_tools(registry)
+    image_portability.register_tools(registry)
     paint_jobs.register_tools(registry)
     image_delivery.register_tools(registry)
     image_revisions.register_tools(registry)

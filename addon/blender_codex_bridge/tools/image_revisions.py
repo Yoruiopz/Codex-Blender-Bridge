@@ -47,10 +47,12 @@ def refresh_image(context: ToolContext, params: Mapping[str, Any]) -> dict:
     if bpy.data.images.get(new_name) is not None:
         raise invalid_argument("The new image name already exists; no implicit reuse or overwrite is allowed.")
     source_path = params.get("filepath")
+    source = None
     if source_path is None:
         if old.source != "FILE":
             raise invalid_argument("A generated image requires an explicit approved filepath for a new FILE version.")
-        source_path = str(old.filepath)
+        source = images.source_reference(context, old)
+        source_path = str(source.path)
     previous = _retained(old)
     if previous["filepath_truncated"]:
         raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Retained source path exceeds its bounded verification window.")
@@ -61,7 +63,8 @@ def refresh_image(context: ToolContext, params: Mapping[str, Any]) -> dict:
     # This loader owns cleanup if decoding fails, including cancellation and
     # unexpected new users. Do not reinterpret its measured failure verdict.
     loaded = images.load_image(context, {"filepath": source_path, "new_name": new_name,
-                                        "colorspace": old.colorspace_settings.name, "alpha_mode": alpha})
+                                        "colorspace": old.colorspace_settings.name, "alpha_mode": alpha},
+                               source=source)
     new = None
     try:
         new = images.image_exact(bpy, new_name)
@@ -75,6 +78,9 @@ def refresh_image(context: ToolContext, params: Mapping[str, Any]) -> dict:
             raise RuntimeError("Texture revision changed source bytes, retained metadata or graph invariants")
         images._check(context)
         context.require(Permission.EDIT_MATERIALS, Permission.ACCESS_EXTERNAL_FILES)
+        if source is not None:
+            source.check(context)
+            context.require(Permission.EDIT_MATERIALS, Permission.ACCESS_EXTERNAL_FILES)
         return {"revision_mode": "new_image_for_node", "material": material.name, "node": node.name,
                 "node_tree": tree.name, "group_path": path(params), "ownership": scope,
                 "group_ownership": group_scope, "previous_image": images._summary(old),

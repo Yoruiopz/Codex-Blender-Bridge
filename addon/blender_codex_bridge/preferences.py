@@ -71,6 +71,12 @@ if bpy is not None:
             subtype="DIR_PATH",
             default="",
         )
+        asset_directory: StringProperty(
+            name="Approved Asset Folder",
+            description="User-approved absolute local folder for structured GLB/FBX output; empty blocks asset export. Not configurable through MCP",
+            subtype="DIR_PATH",
+            default="",
+        )
         ui_history_rows: IntProperty(
             name="History Rows",
             description="Recent bridge operations shown in the sidebar",
@@ -118,6 +124,10 @@ if bpy is not None:
             textures.label(text="Texture File Access", icon="IMAGE_DATA")
             textures.prop(self, "texture_directory")
             textures.label(text="Image reads also require Access External Files.")
+            assets = layout.box()
+            assets.label(text="Asset Delivery", icon="PACKAGE")
+            assets.prop(self, "asset_directory")
+            assets.label(text="Asset exports require file and save permission.")
             interface = layout.box()
             interface.label(text="Interface", icon="WINDOW")
             interface.prop(self, "ui_history_rows")

@@ -12,8 +12,10 @@ change modes, create undo entries, set scene properties or save a project.
 
 ## Fields
 
-All eight fields are selected by default. Pass a smaller list when the task only
-needs particular invariants or a large object exceeds the evidence budget.
+The original eight fields are selected by default. Pass a smaller list when the task only
+needs particular invariants or a large object exceeds the evidence budget. The new
+`rig`, `animation` and `shader_dependencies` fields are opt-in so existing callers keep
+their previous scope and work budget.
 
 | Field | Measured state |
 | --- | --- |
@@ -25,26 +27,42 @@ needs particular invariants or a large object exceeds the evidence budget.
 | `weights` | Vertex-group definitions/locks and per-vertex group memberships/weights |
 | `material_slots` | Ordered object material-slot bindings and DATA/OBJECT link mode |
 | `shader_inputs` | Referenced material identities, node usage, root node names/types/mute state, root input/output defaults, referenced group/image identities and exact socket links; [reviewed root properties and Color Ramp modes/stops](shader-settings.md); root Image Texture interpolation/projection/extension and bound-image source/path/color space/alpha mode/packed state |
+| `rig` (opt-in) | Armature identity/pose position; ordered rest-bone names/parents, head/tail/local matrices and reviewed deformation/inheritance settings; current pose transforms/matrices, transform locks and reviewed IK limits/weights |
+| `animation` (opt-in) | Animation definitions on the object, its data and shape-key datablock: active legacy/layered action identity and routing, layer/strip/channel-bag order, slots, curves, keyframe values/handles/interpolation/easing, sampled points, driver definitions/targets, NLA track order/flags and strip settings/action bindings |
+| `shader_dependencies` (opt-in) | Root plus reachable nested shader-tree state covered by `shader_inputs`, group-interface socket/panel order and reviewed defaults/settings, complete group reference edges and shared-tree identities |
 
 Mesh geometry, UVs and weights apply to mesh objects. Other object types receive
-an explicit `not_applicable` digest for those fields; their curve, armature, camera
-or light data is outside this comparison. Mesh fields become incomplete while
+an explicit `not_applicable` digest for those fields. `rig` similarly reports
+`applicable=false` for non-armature objects. Curve, camera and light data remain outside
+this comparison; armature data requires the explicit `rig` field. Mesh fields become incomplete while
 that mesh's data is in Edit Mode, including shared data edited through another object.
+Armature rest/pose evidence becomes incomplete in Armature Edit Mode.
 
 The response always lists unmeasured state. It includes evaluated geometry,
-modifiers/constraints, animation/drivers, simulation caches, rig poses/shape keys,
-other mesh attributes/custom normals, material/node settings beyond the listed root state,
-nested node-group contents, image pixels/file contents and unlisted image settings, scene/world/render settings,
+modifiers/constraint definitions, simulation caches, shape-key geometry and unlisted rig/B-Bone settings,
+other mesh attributes/custom normals, material/node settings beyond the reviewed state,
+image pixels/file contents and unlisted image settings, scene/world/render settings,
 custom properties, selection, viewport settings, transitive dependencies and visual appearance. For example,
 `material_slots` alone does not cover polygon material indices; include `mesh_geometry`
 to check those. These are specific field comparisons, not a whole-object guarantee.
-Reviewed properties and complete root ramps detect same-count edits; they do not cover
-arbitrary node RNA, animation, image pixels or nested group contents. A ramp beyond the
+Reviewed properties and complete ramps detect same-count edits; they do not cover
+arbitrary node RNA, material/node-tree animation or image pixels. A ramp beyond the
 32-stop evidence budget makes the field incomplete rather than returning a partial checksum.
 
 For [nested shader edits](shader-groups.md), root group identities may match even when a child
-changed. Separately inspect and compare each relevant group's nodes/interface/links; these snapshot
-tools do not yet hash nested contents. The native shader-group recipe uses both forms of evidence.
+changed. Include `shader_dependencies` to measure those contents, or separately inspect each relevant
+group. Each material is limited to 32 distinct trees including its root, depth 8, 128 interface
+items per tree and the same per-tree node/link limits. Shared groups are hashed once per material;
+recursive dependencies or exhausted budgets make evidence incomplete rather than silently skipping
+a child. The inspector does not access image dimensions/pixels, decode buffers or follow file paths.
+
+`animation` reads definitions without evaluating driver expressions or resolving arbitrary data paths.
+It follows referenced active/NLA actions, including Blender 4.4+ layered actions, but does not follow
+driver target state or collect arbitrary material/node-tree animation. Future motion/deformation still
+needs independent sampled-frame verification. F-Curve modifiers currently make animation evidence
+incomplete because their type-specific settings/control points are not covered. Arbitrary action
+custom properties and unlisted NLA/action settings remain outside the measured contract. Rig evidence
+is a current rest/pose comparison, not a skinning/deformation or complete constraint certificate.
 
 ## Results and limits
 
@@ -111,3 +129,9 @@ material isolation, texture revision and recovery without reading pixels through
 The [shader-settings recipe](shader-settings.md) independently detects same-count root
 property/ramp edits and checks recovery, while separately comparing nested group content.
 They do not establish full protected-character or production-scene acceptance.
+
+The extended `scene_evidence` fixture additionally detects nested shader changes, keyframe edits,
+NLA scaling, driver target changes and current rig poses with the opt-in fields. A focused Linux
+Blender 4.3.2 background run passed at
+`build/scene-evidence-rig-animation-20261022-b/report.json`; this is dirty-source development
+evidence with `release_readiness=NOT_ASSESSED`, not Windows 4.5/5.x or release qualification.

@@ -7,6 +7,13 @@ No version bump or publication happens merely because the tool count increases.
 Follow the [1.0 execution plan](plan-1.0.md) for milestone dependencies, prioritized work,
 end-to-end scenarios and evidence requirements. This document defines the acceptance gates.
 
+The [machine-readable ledger](release-1.0-ledger.json) records all fourteen mandatory
+requirements as open. Use the [evidence qualification gate](release-evidence.md) to check
+exact-commit/package provenance, complete Windows 11 native matrices on Blender 4.5 LTS
+and stable 5.x, and installed-package scenarios A–F on both selected versions. The current
+ledger deliberately fails qualification; no historical smoke count or runner verdict
+can promote it to release-ready.
+
 ## 1.0 product direction: a full 3D-artist workflow
 
 The intended target is an agent that can carry a brief through a complete Blender art
@@ -56,9 +63,13 @@ inspect, resolve targets, checkpoint, edit, structurally verify, visually verify
 and save only with permission. Arbitrary Python stays a disabled-by-default super-permission,
 not evidence that every Blender feature has a dependable structured implementation.
 
-The exact supported Blender versions and operating systems must be decided from release
-evidence. The present declared minimum (4.2) is broader than the locally exercised matrix
-(4.5.1 LTS and 5.1.2 on Windows). Do not call all platforms/versions verified by inference.
+The confirmed 1.0 qualification target is Windows 11 x64 on Blender 4.5 LTS and the newest
+compatible stable 5.x at candidate freeze, with exact patch versions recorded. The current
+development manifest still declares 4.2; this is not a newly qualified 1.0 support claim.
+Historical Windows checks exercised 4.5.1 LTS and 5.1.2, while this implementation session
+has only Linux Blender 4.3.2. The user confirmed that no Windows test machine is available.
+Native Windows and installed-package acceptance remain blocked; other platforms remain
+unqualified for 1.0. Align the manifest and support claims only at candidate qualification.
 
 ## Release gates
 

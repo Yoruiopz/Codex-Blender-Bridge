@@ -192,10 +192,14 @@ def test_canvas_metadata_change_after_publication_is_not_false_input_preservatio
     assert error.value.context["possible_mutation"] and images.get("Output") is not None
 
 
-def test_file_mask_requires_live_external_grant_even_when_canvas_is_generated(jobs, monkeypatch):
+def test_file_mask_requires_live_external_grant_even_when_canvas_is_generated(jobs, monkeypatch, tmp_path):
     env = jobs
     mask = add_mask(env.images)
     mask.source, mask.type = "FILE", "IMAGE"
+    path = tmp_path / "mask.png"
+    path.write_bytes(b"fixture mask")
+    mask.filepath = str(path)
+    monkeypatch.setattr(env.paint.images, "get_preferences", lambda: NS(texture_directory=str(tmp_path)))
     monkeypatch.setattr(env.paint.images, "preflight_file", lambda *_args: ("approved", {"size": 1}))
     env.manager.start(env.context(), {"image_name": "Original", "new_name": "Output", "strokes": [stroke()],
         "mask": {"image_name": "Mask"}}, 60.)

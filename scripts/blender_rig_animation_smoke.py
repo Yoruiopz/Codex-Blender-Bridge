@@ -12,6 +12,7 @@ import bpy  # type: ignore
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPOSITORY_ROOT / "addon"))
 
+from blender_codex_bridge.errors import BridgeError, ErrorCode  # noqa: E402
 from blender_codex_bridge.tools import animation, rigging  # noqa: E402
 
 
@@ -45,6 +46,26 @@ def main() -> None:
         created_objects.append(armature_name)
         assert bpy.context.view_layer.objects.active == mesh
         assert mesh.select_get()
+
+        armature = bpy.data.objects.get(armature_name)
+        protected_alias = armature.copy()
+        protected_alias.name = "RigSmokeProtectedAlias"
+        bpy.context.scene.collection.objects.link(protected_alias)
+        created_objects.append(protected_alias.name)
+        active_before = bpy.context.view_layer.objects.active
+        try:
+            rigging.add_bone(object(), {
+                "object_name": armature_name, "bone_name": "ForbiddenSharedBone",
+                "head": [0, 0, 1], "tail": [0, 0, 2],
+            })
+        except BridgeError as error:
+            assert error.code == ErrorCode.NOT_IMPLEMENTED
+        else:
+            raise AssertionError("Shared armature was accepted for bone editing")
+        assert len(armature.data.bones) == len(protected_alias.data.bones) == 1
+        assert bpy.context.view_layer.objects.active == active_before
+        assert mesh.select_get()
+        bpy.data.objects.remove(protected_alias, do_unlink=True)
 
         rigging.add_bone(
             object(),
@@ -177,6 +198,27 @@ def main() -> None:
         )
         assert animation_state["action"] is not None
         assert animation_state["action"]["fcurve_count"] >= 1
+        protected_alias = armature.copy()
+        protected_alias.name = "RigSmokeProtectedAnimation"
+        bpy.context.scene.collection.objects.link(protected_alias)
+        created_objects.append(protected_alias.name)
+        shared_action = armature.animation_data.action
+        assert protected_alias.animation_data.action == shared_action
+        assert shared_action.users >= 2
+        protected_animation = animation.inspect_animation(object(), {"object_name": protected_alias.name})
+        for handler in (animation.insert_keyframe, animation.delete_keyframe):
+            try:
+                handler(object(), {
+                    "object_name": armature_name, "data_path": data_path,
+                    "frame": 12.5, "index": 1, "group": "Forearm.L",
+                })
+            except BridgeError as error:
+                assert error.code == ErrorCode.NOT_IMPLEMENTED
+            else:
+                raise AssertionError("Shared Action was accepted for keyframe editing")
+            assert animation.inspect_animation(object(), {"object_name": protected_alias.name}) == protected_animation
+        bpy.data.objects.remove(protected_alias, do_unlink=True)
+
         deleted = animation.delete_keyframe(
             object(),
             {

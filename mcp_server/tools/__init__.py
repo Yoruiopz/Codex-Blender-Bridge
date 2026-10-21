@@ -7,11 +7,15 @@ from collections.abc import Iterable
 from ..tool_registry import ToolRegistry
 from ._common import MCPToolBinding
 from .animation import AnimationTools
+from .animation_curves import AnimationCurveTools
 from .artist import ArtistTools
+from .asset_delivery import AssetDeliveryTools
 from .batch import BatchTools
 from .constraints import ConstraintTools
 from .core import CoreTools
+from .geometry_node_groups import GeometryNodeGroupTools
 from .geometry_nodes import GeometryNodeTools
+from .image_portability import ImagePortabilityTools
 from .interaction import InteractionTools
 from .layout import LayoutTools
 from .materials import MaterialTools
@@ -25,6 +29,7 @@ from .render import RenderTools
 from .rigging import RiggingTools
 from .scene import SceneTools
 from .scene_edit import SceneEditTools
+from .task_plan import TaskPlanTools
 from .transforms import TransformTools
 from .uv import UVTools
 from .viewport import ViewportTools
@@ -35,11 +40,14 @@ def iter_bindings(registry: ToolRegistry) -> Iterable[MCPToolBinding]:
 
     bundles = (
         ArtistTools(registry),
+        AssetDeliveryTools(registry),
         CoreTools(registry),
+        TaskPlanTools(registry),
         BatchTools(registry),
         InteractionTools(registry),
         LayoutTools(registry),
         GeometryNodeTools(registry),
+        GeometryNodeGroupTools(registry),
         ProjectTools(registry),
         SceneTools(registry),
         ViewportTools(registry),
@@ -51,9 +59,11 @@ def iter_bindings(registry: ToolRegistry) -> Iterable[MCPToolBinding]:
         ModifierTools(registry),
         ConstraintTools(registry),
         MaterialTools(registry),
+        ImagePortabilityTools(registry),
         NodeTools(registry),
         RiggingTools(registry),
         AnimationTools(registry),
+        AnimationCurveTools(registry),
         RenderTools(registry),
         PythonTools(registry),
     )

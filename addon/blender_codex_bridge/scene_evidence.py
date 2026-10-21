@@ -15,7 +15,7 @@ from .errors import invalid_argument
 from .utils import int_param
 
 LOGGER = logging.getLogger(__name__)
-FIELDS = (
+DEFAULT_FIELDS = (
     "transforms",
     "hierarchy",
     "visibility",
@@ -25,17 +25,27 @@ FIELDS = (
     "material_slots",
     "shader_inputs",
 )
+FIELDS = (*DEFAULT_FIELDS, "rig", "animation", "shader_dependencies")
 UNMEASURED = [
     "evaluated geometry, modifiers and constraints",
-    "animation, drivers and simulation caches",
-    "non-mesh object data, rig poses and shape keys",
+    "animation outside selected object/data/shape-key actions, drivers and NLA; dependency target state, action custom properties and simulation caches",
+    "non-mesh object data outside selected armature rest bones/pose transforms; unlisted rig/B-Bone settings and shape-key geometry",
     "mesh attributes, custom normals and sculpt data",
-    "material/shader settings outside reviewed per-node properties, root color ramps, root socket defaults, mute, links and listed Image Texture metadata",
-    "nested node-group contents, image pixels/file contents and unlisted image settings",
+    "material/shader settings outside reviewed per-node properties, color ramps, socket defaults, mute, links and listed Image Texture metadata; material/node-tree animation",
+    "nested node-group contents unless shader_dependencies is selected; image pixels/file contents and unlisted image settings",
     "scene, world and render settings",
     "custom properties, selection and viewport state",
     "transitive dependencies and visual appearance",
 ]
+
+
+def _properties(owner: Any, names: Iterable[str]) -> dict[str, Any]:
+    """Read only enumerated values; never traverse arbitrary RNA or evaluate data paths."""
+    return {name: _small(getattr(owner, name)) for name in names if hasattr(owner, name)}
+
+
+def _pointer(owner: Any) -> int:
+    return int(owner.as_pointer()) if hasattr(owner, "as_pointer") else id(owner)
 
 
 class EvidenceLimit(Exception):
@@ -148,14 +158,18 @@ def _mesh_records(obj: Any, field: str) -> Iterable[Any]:
 
 
 def _shader_records(material: Any) -> Iterable[Any]:
-    from .tools.shader_state import node_state
-
     yield ["material", _identity(material), bool(material.use_nodes)]
     tree = material.node_tree
     if tree is None:
         return
+    yield from _tree_records(tree)
+
+
+def _tree_records(tree: Any) -> Iterable[Any]:
+    from .tools.shader_state import node_state
+
     if len(tree.nodes) > 256 or len(tree.links) > 1024:
-        raise EvidenceLimit("Shader root exceeds 256 nodes or 1024 links.")
+        raise EvidenceLimit("Shader tree exceeds 256 nodes or 1024 links.")
     indices = {}
     for node in tree.nodes:
         state = node_state(node)
@@ -172,7 +186,7 @@ def _shader_records(material: Any) -> Iterable[Any]:
         ramp = state.get("color_ramp")
         if ramp is not None:
             if ramp["truncated"]:
-                raise EvidenceLimit("Root color ramp exceeds its 32-stop evidence budget.")
+                raise EvidenceLimit("Color ramp exceeds its 32-stop evidence budget.")
             yield ["color_ramp", node.name, ramp["interpolation"], ramp["color_mode"], ramp["hue_interpolation"]]
             for stop in ramp["elements"]:
                 yield ["color_ramp_stop", node.name, stop["index"], stop["position"], stop["color"]]
@@ -205,6 +219,172 @@ def _shader_records(material: Any) -> Iterable[Any]:
             indices[link.to_socket.as_pointer()],
             link.is_muted,
         ]
+
+
+def _shader_dependency_records(material: Any) -> Iterable[Any]:
+    """Read a bounded reachable shader graph without decoding images or following paths."""
+    yield ["material", _identity(material), bool(material.use_nodes)]
+    root = material.node_tree
+    if root is None:
+        return
+    seen: set[int] = set()
+
+    def tree_records(tree: Any, path: tuple[str, ...], ancestors: tuple[int, ...]):
+        key = _pointer(tree)
+        if key in ancestors:
+            raise EvidenceLimit("Recursive shader-group dependency cannot be captured faithfully.")
+        if len(path) > 8:
+            raise EvidenceLimit("Shader dependencies exceed depth 8.")
+        yield ["tree_reference", list(path), _identity(tree)]
+        if key in seen:
+            return
+        if len(seen) >= 32:
+            raise EvidenceLimit("Shader dependencies exceed 32 distinct trees per material.")
+        seen.add(key)
+        yield from _tree_records(tree)
+        interface = getattr(getattr(tree, "interface", None), "items_tree", ())
+        if len(interface) > 128:
+            raise EvidenceLimit("Shader interface exceeds 128 items.")
+        for index, item in enumerate(interface):
+            yield ["interface", index, _properties(item, (
+                "name", "identifier", "item_type", "in_out", "socket_type", "default_value",
+                "min_value", "max_value", "hide_value", "hide_in_modifier", "attribute_domain",
+                "default_attribute_name", "description", "force_non_field", "structure_type",
+            )), getattr(getattr(item, "parent", None), "identifier", None)]
+        for node in tree.nodes:
+            child = getattr(node, "node_tree", None)
+            if child is not None:
+                yield from tree_records(child, (*path, node.name), (*ancestors, key))
+
+    yield from tree_records(root, (), ())
+
+
+def _curve_records(curve: Any) -> Iterable[Any]:
+    yield ["curve", _properties(curve, (
+        "data_path", "array_index", "mute", "lock", "extrapolation", "auto_smoothing",
+    )), _properties(curve.group, ("name", "mute", "lock")) if getattr(curve, "group", None) is not None else None]
+    # Modifier-specific RNA and envelope/control points require a separate reviewed contract.
+    # Refuse a matching digest rather than silently omitting their effect on an animation.
+    if len(getattr(curve, "modifiers", ())):
+        raise EvidenceLimit("Animation F-Curve modifiers are outside the reviewed evidence scope.")
+    for point in getattr(curve, "keyframe_points", ()):
+        yield ["keyframe", _properties(point, (
+            "co", "handle_left", "handle_right", "handle_left_type", "handle_right_type",
+            "interpolation", "easing", "amplitude", "back", "period", "type",
+        ))]
+    for point in getattr(curve, "sampled_points", ()):
+        yield ["sample", _properties(point, ("co",))]
+    driver = getattr(curve, "driver", None)
+    if driver is not None:
+        yield ["driver", _properties(driver, ("type", "expression", "use_self", "is_valid"))]
+        for variable in driver.variables:
+            yield ["variable", _properties(variable, ("name", "type"))]
+            for target in variable.targets:
+                yield ["target", _properties(target, (
+                    "id", "id_type", "data_path", "bone_target", "transform_type",
+                    "transform_space", "rotation_mode", "context_property",
+                    "use_fallback_value", "fallback_value",
+                ))]
+
+
+def _action_records(action: Any) -> Iterable[Any]:
+    yield ["action", _identity(action), _properties(action, (
+        "use_frame_range", "frame_start", "frame_end", "use_cyclic", "is_action_layered",
+    ))]
+    for slot in getattr(action, "slots", ()):
+        yield ["slot", _properties(slot, ("identifier", "target_id_type", "handle"))]
+    # Layer and channel-bag metadata carry routing/order; duplicate compatibility views
+    # of layered curves are deliberately not traversed through Action.fcurves.
+    if getattr(action, "is_action_layered", False):
+        for layer in getattr(action, "layers", ()):
+            yield ["layer", _properties(layer, ("name", "influence", "mix_mode"))]
+            for strip in layer.strips:
+                yield ["action_strip", _properties(strip, ("type", "frame_start", "frame_end", "frame_offset"))]
+                for bag in getattr(strip, "channelbags", ()):
+                    yield ["channelbag", _properties(bag, ("slot_handle",))]
+                    for curve in bag.fcurves:
+                        yield from _curve_records(curve)
+    else:
+        for curve in getattr(action, "fcurves", ()):
+            yield from _curve_records(curve)
+
+
+def _animation_records(obj: Any) -> Iterable[Any]:
+    """Object/data/shape-key animation definitions, not sampled future motion or targets."""
+    owners = [("object", obj), ("data", getattr(obj, "data", None))]
+    owners.append(("shape_keys", getattr(getattr(obj, "data", None), "shape_keys", None)))
+    actions: set[int] = set()
+
+    def action_records(action: Any):
+        yield ["action_reference", _identity(action)]
+        if action is not None and _pointer(action) not in actions:
+            actions.add(_pointer(action))
+            yield from _action_records(action)
+
+    def strip_records(strip: Any, depth: int = 0):
+        if depth > 8:
+            raise EvidenceLimit("NLA meta-strip evidence exceeds depth 8.")
+        yield ["nla_strip", _properties(strip, (
+            "name", "type", "frame_start", "frame_end", "action_frame_start", "action_frame_end",
+            "scale", "repeat", "influence", "blend_type", "extrapolation", "mute", "blend_in",
+            "blend_out", "use_auto_blend", "use_animated_influence", "use_animated_time",
+            "use_animated_time_cyclic", "strip_time", "use_reverse", "use_sync_length",
+            "action_slot_handle",
+        ))]
+        yield from action_records(getattr(strip, "action", None))
+        for curve in getattr(strip, "fcurves", ()):
+            yield from _curve_records(curve)
+        for child in getattr(strip, "strips", ()):
+            yield from strip_records(child, depth + 1)
+
+    for role, owner in owners:
+        if owner is None:
+            yield [role, None]
+            continue
+        yield [role, _identity(owner)]
+        data = getattr(owner, "animation_data", None)
+        if data is None:
+            yield ["animation_data", None]
+            continue
+        yield ["animation_data", _properties(data, (
+            "action_blend_type", "action_extrapolation", "action_influence", "action_slot_handle",
+            "use_nla", "use_tweak_mode",
+        ))]
+        yield from action_records(getattr(data, "action", None))
+        for curve in getattr(data, "drivers", ()):
+            yield from _curve_records(curve)
+        for track in getattr(data, "nla_tracks", ()):
+            yield ["track", _properties(track, ("name", "mute", "lock", "is_solo"))]
+            for strip in track.strips:
+                yield from strip_records(strip)
+
+
+def _rig_records(obj: Any) -> Iterable[Any]:
+    if obj.type != "ARMATURE":
+        yield ["not_applicable", obj.type]
+        return
+    armature = obj.data
+    if getattr(armature, "is_editmode", False):
+        raise EvidenceLimit("Rest-bone evidence is unavailable in Armature Edit Mode.")
+    yield ["armature", _identity(armature), _properties(armature, ("pose_position",))]
+    for bone in armature.bones:
+        yield ["rest_bone", bone.name, getattr(bone.parent, "name", None), _properties(bone, (
+            "head_local", "tail_local", "matrix_local", "use_deform", "use_connect",
+            "inherit_scale", "use_inherit_rotation", "use_local_location", "use_relative_parent",
+            "envelope_distance", "envelope_weight", "head_radius", "tail_radius",
+        ))]
+    for bone in getattr(getattr(obj, "pose", None), "bones", ()):
+        yield ["pose_bone", bone.name, getattr(getattr(bone, "parent", None), "name", None),
+               _properties(bone, (
+                   "location", "rotation_mode", "rotation_euler", "rotation_quaternion",
+                   "rotation_axis_angle", "scale", "matrix_basis", "matrix", "lock_location",
+                   "lock_rotation", "lock_rotation_w", "lock_rotations_4d", "lock_scale",
+                   "ik_stretch", "ik_rotation_weight", "ik_linear_weight", "use_ik_rotation_control",
+                   "use_ik_linear_control", "lock_ik_x", "lock_ik_y", "lock_ik_z",
+                   "use_ik_limit_x", "use_ik_limit_y", "use_ik_limit_z", "ik_min_x", "ik_max_x",
+                   "ik_min_y", "ik_max_y", "ik_min_z", "ik_max_z", "ik_stiffness_x",
+                   "ik_stiffness_y", "ik_stiffness_z",
+               ))]
 
 
 def _records(obj: Any, field: str) -> Iterable[Any]:
@@ -240,6 +420,10 @@ def _records(obj: Any, field: str) -> Iterable[Any]:
         yield [obj.hide_viewport, obj.hide_render, obj.hide_get(), obj.visible_get()]
     elif field in {"mesh_geometry", "uv", "weights"}:
         yield from _mesh_records(obj, field)
+    elif field == "rig":
+        yield from _rig_records(obj)
+    elif field == "animation":
+        yield from _animation_records(obj)
     elif field == "material_slots":
         if len(obj.material_slots) > 256:
             raise EvidenceLimit("Material slot evidence exceeds 256 slots.")
@@ -256,7 +440,7 @@ def _capture_field(obj: Any, field: str, budget: Budget, cache: dict) -> dict[st
         )
         if shared_key is not None and shared_key in cache:
             return cache[shared_key]
-        if field == "shader_inputs":
+        if field in {"shader_inputs", "shader_dependencies"}:
             if len(obj.material_slots) > 256:
                 raise EvidenceLimit("Material slot evidence exceeds 256 slots.")
             materials = []
@@ -266,9 +450,11 @@ def _capture_field(obj: Any, field: str, budget: Budget, cache: dict) -> dict[st
                 if material is None or material in seen:
                     continue
                 seen.add(material)
-                if material not in cache:
-                    cache[material] = _digest(_shader_records(material), budget)
-                materials.append([_identity(material), cache[material]])
+                key = (field, _pointer(material))
+                if key not in cache:
+                    records = _shader_records(material) if field == "shader_inputs" else _shader_dependency_records(material)
+                    cache[key] = _digest(records, budget)
+                materials.append([_identity(material), cache[key]])
             return _digest(materials, budget)
         if field == "transforms":
             records = list(_records(obj, field))
@@ -279,6 +465,8 @@ def _capture_field(obj: Any, field: str, budget: Budget, cache: dict) -> dict[st
             result.update(
                 {"applicable": False, "reason": "This field measures base mesh data only."}
             )
+        if field == "rig" and obj.type != "ARMATURE":
+            result.update({"applicable": False, "reason": "This field measures armature rest bones and current pose only."})
         if obj.type == "MESH" and field == "mesh_geometry":
             result["counts"] = {
                 "vertices": len(obj.data.vertices),
@@ -301,7 +489,7 @@ def _collect(
 ) -> dict[str, Any]:
     if check:
         check()
-    if {"transforms", "visibility", "shader_inputs"}.intersection(fields):
+    if {"transforms", "visibility", "shader_inputs", "shader_dependencies", "rig"}.intersection(fields):
         bpy.context.view_layer.update()
     budget = Budget(maximum, check)
     cache: dict[Any, Any] = {}
@@ -356,7 +544,7 @@ class SceneEvidenceStore:
             raise invalid_argument(
                 "'object_names' requires 1-32 unique exact names, each at most 63 UTF-8 bytes."
             )
-        fields = params.get("fields", list(FIELDS))
+        fields = params.get("fields", list(DEFAULT_FIELDS))
         if (
             not isinstance(fields, list)
             or not fields

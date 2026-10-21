@@ -5,11 +5,17 @@ from __future__ import annotations
 from ..tool_registry import ToolDefinition, remote_tool
 from .animation import (
     ANIMATION_TOOL_DATA,
-    ANIMATION_TOOL_NAMES,
-    load_animation_definitions,
 )
+from .animation import (
+    load_animation_definitions as _load_base_animation_definitions,
+)
+from .animation_curves import TOOL_DATA as ANIMATION_CURVE_TOOL_DATA
+from .animation_curves import load_definitions as _load_animation_curve_definitions
 from .artist import TOOL_DATA as ARTIST_TOOL_DATA
 from .artist import load_definitions as load_artist_definitions
+from .asset_delivery import TOOL_DATA as ASSET_DELIVERY_TOOL_DATA
+from .asset_delivery import TOOL_NAMES as ASSET_DELIVERY_TOOL_NAMES
+from .asset_delivery import load_definitions as load_asset_delivery_definitions
 from .batch import TOOL_DATA as BATCH_TOOL_DATA
 from .batch import TOOL_NAMES as BATCH_TOOL_NAMES
 from .batch import load_definitions as load_batch_definitions
@@ -19,10 +25,14 @@ from .constraints import (
 from .constraints import TOOL_DATA as CONSTRAINT_TOOL_DATA
 from .constraints import TOOL_NAMES as CONSTRAINT_TOOL_NAMES
 from .constraints import load_definitions as load_constraint_definitions
+from .geometry_node_groups import DESTRUCTIVE_TOOL_NAMES as GEOMETRY_GROUP_DESTRUCTIVE_TOOL_NAMES
+from .geometry_node_groups import TOOL_DATA as GEOMETRY_GROUP_TOOL_DATA
+from .geometry_node_groups import load_definitions as _load_geometry_group_definitions
 from .geometry_nodes import DESTRUCTIVE_TOOL_NAMES as GEOMETRY_DESTRUCTIVE_TOOL_NAMES
 from .geometry_nodes import TOOL_DATA as GEOMETRY_TOOL_DATA
-from .geometry_nodes import TOOL_NAMES as GEOMETRY_TOOL_NAMES
-from .geometry_nodes import load_definitions as load_geometry_definitions
+from .geometry_nodes import load_definitions as _load_base_geometry_definitions
+from .image_portability import TOOL_DATA as IMAGE_PORTABILITY_TOOL_DATA
+from .image_portability import load_definitions as _load_image_portability_definitions
 from .interaction import TOOL_DATA as INTERACTION_TOOL_DATA
 from .interaction import TOOL_NAMES as INTERACTION_TOOL_NAMES
 from .interaction import load_definitions as load_interaction_definitions
@@ -30,8 +40,9 @@ from .layout import LAYOUT_TOOL_DATA, LAYOUT_TOOL_NAMES
 from .layout import load_definitions as load_layout_definitions
 from .materials import (
     MATERIAL_TOOL_DATA,
-    MATERIAL_TOOL_NAMES,
-    load_material_definitions,
+)
+from .materials import (
+    load_material_definitions as _load_base_material_definitions,
 )
 from .modifiers import DESTRUCTIVE_TOOL_NAMES as MODIFIER_DESTRUCTIVE_TOOL_NAMES
 from .modifiers import TOOL_DATA as MODIFIER_TOOL_DATA
@@ -45,10 +56,32 @@ from .render import load_definitions as load_render_definitions
 from .rigging import RIGGING_TOOL_DATA, RIGGING_TOOL_NAMES, load_rigging_definitions
 from .scene_edit import SCENE_EDIT_TOOL_DATA, SCENE_EDIT_TOOL_NAMES
 from .scene_edit import load_definitions as load_scene_edit_definitions
+from .task_plan import TOOL_DATA as TASK_PLAN_TOOL_DATA
+from .task_plan import load_definitions as _load_task_plan_definitions
 from .uv import DESTRUCTIVE_TOOL_NAMES as UV_DESTRUCTIVE_TOOL_NAMES
 from .uv import TOOL_DATA as UV_TOOL_DATA
 from .uv import TOOL_NAMES as UV_TOOL_NAMES
 from .uv import load_definitions as load_uv_definitions
+
+ANIMATION_TOOL_DATA = (*ANIMATION_TOOL_DATA, *((name, description, True, ("EDIT_ANIMATION",))
+                                           for name, description in ANIMATION_CURVE_TOOL_DATA))
+ANIMATION_TOOL_NAMES = tuple(item[0] for item in ANIMATION_TOOL_DATA)
+GEOMETRY_TOOL_DATA = (*GEOMETRY_TOOL_DATA, *GEOMETRY_GROUP_TOOL_DATA)
+GEOMETRY_TOOL_NAMES = tuple(item[0] for item in GEOMETRY_TOOL_DATA)
+MATERIAL_TOOL_DATA = (*MATERIAL_TOOL_DATA, *IMAGE_PORTABILITY_TOOL_DATA)
+MATERIAL_TOOL_NAMES = tuple(item[0] for item in MATERIAL_TOOL_DATA)
+
+
+def load_animation_definitions() -> tuple[ToolDefinition, ...]:
+    return (*_load_base_animation_definitions(), *_load_animation_curve_definitions())
+
+
+def load_geometry_definitions() -> tuple[ToolDefinition, ...]:
+    return (*_load_base_geometry_definitions(), *_load_geometry_group_definitions())
+
+
+def load_material_definitions() -> tuple[ToolDefinition, ...]:
+    return (*_load_base_material_definitions(), *_load_image_portability_definitions())
 
 CORE_REMOTE_TOOLS: tuple[tuple[str, str, bool, tuple[str, ...]], ...] = (
     ("jobs.inspect", "Inspect session-local image-job progress, result/error and file/recovery evidence.", False, ("INSPECT_SCENE",)),
@@ -98,7 +131,7 @@ CORE_DEFINITIONS: tuple[ToolDefinition, ...] = tuple(
 ) + tuple(
     remote_tool(name, description=description, modifying=modifying)
     for name, description, modifying in LOCAL_TOOLSET_TOOLS
-)
+) + _load_task_plan_definitions()
 
 OBJECT_TOOL_DATA: tuple[tuple[str, str, bool, tuple[str, ...]], ...] = (
     ("object.create", "Create a structured Blender object primitive.", True, ("TRANSFORM_OBJECTS",)),
@@ -165,6 +198,8 @@ MODIFYING_TOOL_NAMES = frozenset(
     | _modifying_four(INTERACTION_TOOL_DATA)
     | _modifying_four(LAYOUT_TOOL_DATA)
     | _modifying_four(GEOMETRY_TOOL_DATA)
+    | _modifying_four(ASSET_DELIVERY_TOOL_DATA)
+    | {name for name, modifying, _permissions, _description in TASK_PLAN_TOOL_DATA if modifying}
 )
 
 # MCP annotations are advisory; Blender permissions remain authoritative.  Err
@@ -175,6 +210,7 @@ DESTRUCTIVE_TOOL_NAMES = frozenset(
     | {
         "checkpoint.undo_last",
         "project.save",
+        "asset.export",
         "viewport.capture",
         "object.delete",
         "transform.apply",
@@ -183,6 +219,7 @@ DESTRUCTIVE_TOOL_NAMES = frozenset(
         "mesh.merge_by_distance",
         "material.delete",
         "image.remove",
+        "image.restore_pixels",
         "shader_group.remove",
         "material.slot_remove",
         "nodes.remove",
@@ -201,6 +238,7 @@ DESTRUCTIVE_TOOL_NAMES = frozenset(
     | set(MODIFIER_DESTRUCTIVE_TOOL_NAMES)
     | set(CONSTRAINT_DESTRUCTIVE_TOOL_NAMES)
     | set(GEOMETRY_DESTRUCTIVE_TOOL_NAMES)
+    | set(GEOMETRY_GROUP_DESTRUCTIVE_TOOL_NAMES)
 )
 
 
@@ -236,6 +274,7 @@ def load_mesh_definitions() -> tuple[ToolDefinition, ...]:
 
 __all__ = [
     "ANIMATION_TOOL_NAMES",
+    "ASSET_DELIVERY_TOOL_NAMES",
     "BATCH_TOOL_NAMES",
     "CONSTRAINT_TOOL_NAMES",
     "CORE_DEFINITIONS",
@@ -256,6 +295,7 @@ __all__ = [
     "UV_TOOL_NAMES",
     "load_animation_definitions",
     "load_artist_definitions",
+    "load_asset_delivery_definitions",
     "load_batch_definitions",
     "load_constraint_definitions",
     "load_geometry_definitions",

@@ -1,0 +1,117 @@
+name: Qualify and publish 1.0
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_commit:
+        description: Full 40-character commit with completed 1.0 acceptance
+        required: true
+        type: string
+      evidence_run_id:
+        description: Successful same-commit Actions run retaining the reviewed evidence bundle
+        required: true
+        type: string
+      evidence_artifact:
+        description: Artifact containing ledger.json and all its relative evidence references
+        required: true
+        default: release-candidate-evidence
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: publish-blender-codex-bridge-1.0.0
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_COMMIT: ${{ inputs.release_commit }}
+      EVIDENCE_RUN_ID: ${{ inputs.evidence_run_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_commit }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Verify exact-commit evidence producer
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import re
+          import subprocess
+
+          commit = os.environ["RELEASE_COMMIT"]
+          run_id = os.environ["EVIDENCE_RUN_ID"]
+          if not re.fullmatch(r"[0-9a-f]{40}", commit) or not re.fullmatch(r"[0-9]+", run_id):
+              raise SystemExit("Exact commit and numeric evidence run ID required")
+          head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          endpoint = f"repos/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{run_id}"
+          run = json.loads(subprocess.check_output(["gh", "api", endpoint], text=True))
+          if head != commit or run.get("head_sha") != commit or run.get("conclusion") != "success":
+              raise SystemExit("Evidence must come from a successful run of this exact commit")
+          PY
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.evidence_artifact }}
+          run-id: ${{ inputs.evidence_run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/release-evidence
+      - name: Qualify and stage exact accepted bytes
+        shell: bash
+        run: |
+          python scripts/qualify_release.py --ledger "$RUNNER_TEMP/release-evidence/ledger.json" --stage "$RUNNER_TEMP/qualified-release"
+          test -f docs/releases/1.0.0.md
+      - name: Require existing tag at the accepted commit
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import subprocess
+
+          prefix = f"repos/{os.environ['GITHUB_REPOSITORY']}/git"
+          obj = json.loads(subprocess.check_output(["gh", "api", f"{prefix}/ref/tags/v1.0.0"], text=True))["object"]
+          for _ in range(8):
+              if obj["type"] == "commit":
+                  break
+              if obj["type"] != "tag":
+                  raise SystemExit("Release tag does not point to a commit")
+              obj = json.loads(subprocess.check_output(["gh", "api", f"{prefix}/tags/{obj['sha']}"], text=True))["object"]
+          if obj["type"] != "commit" or obj["sha"] != os.environ["RELEASE_COMMIT"]:
+              raise SystemExit("Existing v1.0.0 tag belongs to another commit")
+          PY
+      - name: Upload draft release
+        shell: bash
+        run: |
+          gh release create v1.0.0 "$RUNNER_TEMP/qualified-release/"* --draft --verify-tag --target "$RELEASE_COMMIT" --title "Blender Codex Bridge 1.0.0" --notes-file docs/releases/1.0.0.md
+      - name: Verify uploaded assets before publication
+        shell: bash
+        run: |
+          gh release download v1.0.0 --dir "$RUNNER_TEMP/downloaded-release"
+          python - <<'PY'
+          import hashlib
+          import os
+          from pathlib import Path
+
+          temporary = Path(os.environ["RUNNER_TEMP"])
+          expected = temporary / "qualified-release"
+          actual = temporary / "downloaded-release"
+          def hashes(directory):
+              return {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in directory.iterdir() if p.is_file()}
+          if hashes(actual) != hashes(expected):
+              raise SystemExit("Uploaded release asset bytes differ from qualification")
+          PY
+      - name: Publish verified release
+        run: gh release edit v1.0.0 --draft=false

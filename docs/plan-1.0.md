@@ -17,8 +17,22 @@ Preserve the user's scope, permissions, recoverability, interactive control and 
 No finite tool list alone proves “everything”. Maintain a coverage ledger of editor/data
 families and uncovered properties/workflows. Do not silently move difficult features past 1.0.
 Any proposed scope reduction requires an explicit user decision, not a roadmap wording change.
-The agent remains external to Blender; embedded model hosting is an unresolved product decision,
-not an assumed requirement or a claim about the current bridge.
+The agent remains external to Blender; embedded model hosting is outside the agreed 1.0 release.
+
+## Confirmed release decisions — 2026-10-22
+
+The user authorized implementation of the full ten-step release plan. The target remains
+full artist-workflow 1.0 with Windows 11 x64 qualification first, Blender 4.5 LTS and the newest
+compatible stable 5.x at candidate freeze. Portable `.blend`, GLB and FBX delivery are mandatory.
+Other desktop platforms remain unqualified for 1.0; the current development manifest is not
+yet a newly qualified support claim. Prefer reliable bounded jobs with measured native stalls,
+visible progress and truthful cancellation/recovery. Keep repository visibility unchanged and
+distribute matched packages through GitHub releases. Preserve the current 0.3.0 release until
+all acceptance gates pass; no release date has been set.
+
+The machine-readable [requirement ledger](release-1.0-ledger.json) deliberately starts open.
+The [qualification checker](release-evidence.md) validates source/package provenance and retained
+acceptance evidence; native smoke reports themselves remain `NOT_ASSESSED`.
 
 ## Evidence baseline
 
@@ -46,7 +60,8 @@ not an assumed requirement or a claim about the current bridge.
 
 These are dependency gates, not calendar promises. M2–M5 may advance by independent domain
 once their safety prerequisites pass; do not wait for every unrelated M1 audit to finish.
-No parallel-agent work is assumed or authorized by this plan.
+Independent domain implementation and review may proceed in parallel after their safety
+prerequisites, with explicit file ownership and integration checks.
 
 ## Prioritized execution backlog
 
@@ -1537,3 +1552,56 @@ acceptance. Keep all remaining ownership, sculpt/surface/vertex/weight painting,
 animation, compositor/procedural/simulation, interactive UX, compatibility/install/upgrade and
 RC gates within the full 1.0 artist objective. This is implemented bounded texture delivery,
 not completed DELIVER-01/REC-01/JOB-01 or a human-equivalent 1.0 release.
+
+### 2026-10-22 — Release implementation resumed; bounded foundations integrated
+
+The user explicitly authorized the full release plan. Current checkout `041aceb` lacked
+the handoff's 17-path saved-relative-source increment and its Windows reports; only three
+pre-existing guidance/documentation edits were present. The missing source behavior was
+reimplemented and independently tested, rather than treating the handoff's 1,656-test result
+or Windows runs as current-checkout evidence. Existing user edits are preserved separately.
+
+Implemented increments:
+
+- Stored FILE `//` dependencies resolve against saved local projects with canonical alias,
+  project-anchor, approved-folder and live-consent revalidation. Explicit caller paths remain
+  absolute. Default texture refresh, binding, painting/masks and export share that contract.
+- Native runner writer/reader phases use separate profiles/logs/process instances and only
+  owned artifact bundles. Failed writers never start readers; timeout applies per phase.
+  Fresh-profile Save As/reopen checks include eight encoding/role variants, complete 4K raw
+  DATA channels and matched RGBA8 camera evidence. This does not certify edited generated
+  input buffers, crash durability, artistic quality or UI undo.
+- Object/data/Action ownership guards cover concrete transform/modifier apply, constraints,
+  armature/keyframe and scene camera/light/World gaps. Ordinary per-object changes still
+  permit shared mesh data. Collection lifecycle, parenting restoration, broad dependencies,
+  mixed-editor/memory-pressure recovery and Windows acceptance remain open.
+- Optional scene evidence measures rig rest/pose, active/layered animation/driver/NLA state
+  and nested shader/interface dependencies. Bounds and unsupported coverage remain explicit.
+- Explicit FILE_BYTES packing differs from CURRENT_PIXELS raw snapshots. Matching loaded
+  float originals can recover exact pixels without changing their ID or consumers, within
+  1M-pixel/20MiB limits. Byte/unloaded/4K/UI-undo and broad durable recovery remain open.
+- Named active-Action copies and bounded existing curve interpolation/handles; reviewed
+  nested GN instances/copies and stable modifier inputs; revisioned artist plans with explicit
+  persistence and advisory protected comparisons; sidebar plan progress.
+- Previewed, approved-path, no-clobber GLB/FBX export for reviewed material-free static/skinned
+  assets. Explicit format-loss acknowledgement, fresh-process geometry/deformation fixtures,
+  bounded external-effects history and inspection-based redaction. Materials, general imports
+  and production exchange remain open.
+- Machine-readable open requirement ledger, exact committed-source/package qualification,
+  retained hashed evidence and an explicitly dispatched publication workflow. The workflow
+  cannot publish without accepted Windows/installed A–F evidence and a matching existing tag.
+
+Validation before integration commit: both complete non-Blender suites passed **2,056 tests**
+on MCP SDK **2.0.0** and **2.2.0**, with **three Windows-only skips** each. Ruff, mypy (40
+standalone files), compilation, generated **198-tool** inventory, dependency and diff checks
+passed. Per-increment Linux Blender 4.3.2 reports are dirty-source development evidence;
+they are not combined into a Windows or full-release verdict. Final source/package evidence
+is retained under `build/release-implementation-20261022/` with separate logs and hashes.
+
+The user confirmed **no Windows 11 test machine is available**. All fourteen requirement
+acceptance entries stay open. Full modeling/retopology, sculpt/surface/vertex/weight painting,
+character/driver/NLA, simulation/cache/bake, production materials/import/delivery, full artist
+interaction, constrained-memory, installed upgrade/rollback and Windows version acceptance
+remain mandatory. This increment is substantial implementation progress, not completion of
+the full ten-step plan. No 1.0 version bump, tag, workflow dispatch, publication or repository
+visibility change is justified by these results.

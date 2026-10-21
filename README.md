@@ -99,8 +99,12 @@ Unreleased [texture-image tools](docs/image-assets.md) inspect/load/remove image
 and bind loaded images to material Image Texture nodes. Choose an **Approved Texture Folder**
 in Blender and grant external-file access for reviewed PNG/JPEG/float-EXR reads; MCP cannot change the
 folder. The workflow checks color/data roles, material isolation, texture revisions and undo.
-Loading/binding never edits pixels; image writes, packing and baking remain open. For bounded
+Loading/binding never edits pixels; reviewed export/reimport is implemented, while broader
+dependency lifecycle, packing and baking acceptance remain open. For bounded
 copy-on-write brush edits, use the separate [texture-painting workflow](docs/texture-painting.md).
+Bounded [packed versions and raw snapshots](docs/image-portability.md) distinguish original
+FILE bytes from CURRENT_PIXELS and restore a matching loaded float original without changing
+its ID or consumers. Their <=1M-pixel contract is separate from larger export jobs.
 
 Unreleased [versioned texture refresh](docs/image-revisions.md) adds `nodes.refresh_image`:
 reread a changed texture or repair its source path through a newly named image version,
@@ -129,7 +133,10 @@ with explicit EXR color/alpha interpretation and complete file checks.
 `image.export_job_start` adds frozen-source PNG8/PNG16/float-EXR export and verified reimport,
 including the full 4K path. Poll image-job progress and terminal file/image evidence; publication
 never overwrites a target, and **cancel or Blender undo does not delete a published file**.
-Durable edited-input recovery, packing/save/reopen and production delivery remain in progress;
+Stored `//` image dependencies now resolve against saved local projects with live source and
+approved-folder revalidation. A separate-process save/reopen fixture verifies eight small
+format/role variants and a complete 4K raw DATA texture; this remains development evidence.
+Durable edited-input recovery, broader packing and production delivery remain in progress;
 see the [delivery contract](docs/texture-delivery.md) and [import limits](docs/image-assets.md).
 
 Unreleased [cooperative painting jobs](docs/painting-jobs.md) add `image.paint_job_start` and
@@ -171,6 +178,22 @@ objects: transforms, hierarchy, visibility, base mesh geometry, UVs, weights, ma
 and root shader socket values/links, reviewed properties and color ramps. They can detect edits that leave object or vertex counts
 unchanged. Results identify changed fields, complete matching scope, or incomplete evidence
 that needs further inspection. See [fields, limits and the protected-material workflow](docs/scene-evidence.md).
+
+Optional snapshot fields now include rig rest/current pose, active/layered animation,
+drivers/NLA and nested shader dependencies. New [artist plans](docs/task-plans.md) track bounded
+steps and advisory protected objects across client reconnects; explicit scene persistence does
+not save the project. The sidebar shows plan progress, and protected comparisons remain explicit.
+
+Unreleased [Action/curve authoring](docs/animation-curves.md) adds independent active-Action
+copies and bounded interpolation/handle edits. [Nested Geometry Nodes](docs/geometry-node-groups.md)
+adds explicit group-instance isolation and stable-identifier modifier inputs. Their native
+development fixtures do not close full character, procedural or simulation acceptance.
+
+Unreleased [GLB/FBX delivery](docs/asset-delivery.md) previews explicit static/skinned asset
+scope, requires format-loss acknowledgement and publishes to a separate Approved Asset Folder
+without overwrite. The current subset rejects materials/textures and other unsupported data;
+full production exchange remains open. Published files survive undo/cancellation, and bounded
+file effects remain in operation history with inspection-based redaction.
 
 ## Install — no source build needed
 
@@ -386,10 +409,10 @@ is identified above, and the feature table describes the published release.
 Blender's local recovery UI also has an add-on-only restore action, not an extra MCP tool.
 
 <!-- BEGIN GENERATED MCP TOOLS -->
-Current registry: **176 MCP tools**.
+Current registry: **198 MCP tools**.
 
 <details>
-<summary>core — 21 tools</summary>
+<summary>core — 29 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
@@ -410,6 +433,14 @@ Current registry: **176 MCP tools**.
 | `scene.snapshot` | Capture bounded structural evidence for explicitly named objects and fields. |
 | `scene.summary` | Return an LLM-oriented structural and textual scene summary. |
 | `selection.inspect` | Inspect active and selected objects or mesh elements. |
+| `task.plan.capture` | Capture bounded structural evidence for exact protected scope; no mutator enforcement. |
+| `task.plan.clear` | Clear runtime plan only; scene-stored JSON remains until explicitly replaced. |
+| `task.plan.compare` | Explicitly compare protected scope with its transient baseline; incomplete coverage is not preservation proof. |
+| `task.plan.inspect` | Inspect runtime plan steps, revision and advisory protected scope. |
+| `task.plan.load` | Explicitly validate/load saved scene JSON as plan data; never executes text or restores session baselines. |
+| `task.plan.persist` | Explicitly store validated plan JSON in a scene property; never saves the project. |
+| `task.plan.set` | Create/correct a bounded artist plan with advisory protected objects; replacement requires current revision. |
+| `task.plan.update` | Correct an exact step's status/note at the expected plan revision. |
 | `toolsets.disable` | Disable a local MCP domain toolset. |
 | `toolsets.enable` | Enable a lazy local MCP domain toolset. |
 | `toolsets.list` | List local MCP toolsets and their enablement state. |
@@ -418,10 +449,12 @@ Current registry: **176 MCP tools**.
 </details>
 
 <details>
-<summary>animation — 5 tools</summary>
+<summary>animation — 7 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
+| `animation.action_copy` | Copy and bind an explicit independent active Action; source remains in this session, unused source retention across saves is not guaranteed. |
+| `animation.curve_edit` | Edit interpolation/easing/handles on at most 256 existing keyframes of one local unshared active-Action curve; at most 1024 curve points, no insertion or arbitrary RNA. |
 | `animation.inspect` | Inspect one object's bounded action, F-curves, keyframes, slots, and drivers. |
 | `animation.keyframe_delete` | Delete a keyframe from an explicit object RNA data path. |
 | `animation.keyframe_insert` | Insert a keyframe on an explicit object RNA data path. |
@@ -443,6 +476,16 @@ Current registry: **176 MCP tools**.
 | `nla.edit_track` | Rename, mute or lock an exact NLA track, or remove an unlocked empty track without deleting actions. |
 | `nla.push_down` | Push a standard active action into a new top NLA track, preserving its action/slot and frame range; rollback on failure. |
 | `nla.solo_track` | Set an exact track's solo state; replacing another solo requires explicit acknowledgement and unlocked tracks. |
+
+</details>
+
+<details>
+<summary>asset_delivery — 2 tools</summary>
+
+| Tool | What it does |
+| --- | --- |
+| `asset.export` | Export a current previewed asset to an approved unused GLB/FBX path. |
+| `asset.export_preview` | Preview exact static/skinned asset scope and GLB/FBX format limits. |
 
 </details>
 
@@ -480,15 +523,23 @@ Current registry: **176 MCP tools**.
 </details>
 
 <details>
-<summary>geometry_nodes — 14 tools</summary>
+<summary>geometry_nodes — 22 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
 | `geometry_nodes.attach` | Attach an explicit geometry node group to an exact named object modifier. |
 | `geometry_nodes.create` | Create a geometry node group with geometry IO and optional passthrough. |
+| `geometry_nodes.group_attach` | Attach a recursively reviewed nested GN graph to one mesh object. |
+| `geometry_nodes.group_bind` | Bind a reviewed nested GN group through a uniquely named instance. |
+| `geometry_nodes.group_copy_for_node` | Copy one nested GN instance root while retaining referenced descendants. |
+| `geometry_nodes.group_link` | Link exact socket identifiers in a reviewed nested GN graph. |
+| `geometry_nodes.group_remove` | Remove only an explicitly confirmed unused GN group. |
+| `geometry_nodes.group_set_input` | Set an unlinked constant by exact socket identifier in a reviewed GN graph. |
 | `geometry_nodes.inspect` | Inspect a bounded geometry graph, interface, and direct users. |
 | `geometry_nodes.interface_add` | Add a typed interface socket to an explicit geometry node group. |
 | `geometry_nodes.link` | Link exact compatible geometry-node sockets without graph cycles. |
+| `geometry_nodes.modifier_inspect` | Inspect stored GN modifier inputs by stable interface identifiers. |
+| `geometry_nodes.modifier_set_input` | Set an object-owned GN modifier constant without changing the shared graph. |
 | `geometry_nodes.node_add` | Add a compatible geometry node with validated settings. |
 | `geometry_nodes.node_remove` | Remove an exact geometry node and its incident links. |
 | `geometry_nodes.node_set_input` | Set an exact geometry node input's scalar or vector default. |
@@ -526,7 +577,7 @@ Current registry: **176 MCP tools**.
 </details>
 
 <details>
-<summary>materials — 17 tools</summary>
+<summary>materials — 19 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
@@ -535,9 +586,11 @@ Current registry: **176 MCP tools**.
 | `image.inspect` | Inspect bounded image metadata/direct users without loading unloaded buffers. |
 | `image.inspect_pixels` | Inspect complete RGBA digests/samples; default statistics <=1M pixels, explicit include_statistics=false for <=16M (no ranges/nonfinite scan); FILE reads need external-file consent. |
 | `image.load` | Load a new bounded PNG/JPEG/plain FLOAT RGBA EXR from Blender's approved texture folder; no implicit reuse or file writes. |
+| `image.pack_version` | Create a distinct packed FILE_BYTES version or exact raw CURRENT_PIXELS snapshot, <=1M pixels; no save/binding. |
 | `image.paint_job_start` | Accept one source/mask-frozen tiled paint job up to 16,777,216 pixels; poll evidence, keep owner connected, native commit is not preemptible. |
 | `image.paint_version` | Paint bounded UV-image strokes with optional raw RGBA-channel mask/inversion/resampling into a new version; preserve both inputs, FILE reads need external-file consent. |
 | `image.remove` | Remove one explicitly confirmed unused image datablock, never its source file. |
+| `image.restore_pixels` | Restore a retained raw snapshot to its exact loaded float original image ID, preserving consumers; <=1M pixels. |
 | `material.assign` | Assign a material to an exact object slot or append it. |
 | `material.copy_for_object` | Copy a material for one object slot without changing shared mesh data. |
 | `material.create` | Create a named material with optional nodes and viewport color. |

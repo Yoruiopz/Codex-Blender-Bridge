@@ -302,3 +302,177 @@ def test_unsupported_mapping_socket_values_cannot_hash_only_their_keys(evidence)
     module = evidence[0]
     with pytest.raises(module.EvidenceLimit, match="Mapping socket defaults"):
         module._small({"color": 1.0})
+
+
+def curve(*, path="location", index=0):
+    return NS(data_path=path, array_index=index, mute=False, lock=False, extrapolation="CONSTANT",
+              group=None, modifiers=[], sampled_points=[],
+              keyframe_points=[NS(co=[1.0, 0.0], handle_left=[0.75, 0.0], handle_right=[1.25, 0.0],
+                                  handle_left_type="AUTO", handle_right_type="AUTO", interpolation="BEZIER")])
+
+
+def action_with_curve(evidence, *, layered=False, data_owner=False):
+    obj = evidence[3].data if data_owner else evidence[3]
+    channel = curve()
+    action = ID("Action", 300, is_action_layered=layered, slots=[], fcurves=[channel])
+    if layered:
+        action.layers = [NS(name="Layer", influence=1.0, strips=[NS(type="KEYFRAME", channelbags=[NS(slot_handle=3, fcurves=[channel])])])]
+        action.slots = [NS(identifier="OBCube", target_id_type="OBJECT", handle=3)]
+    obj.animation_data = NS(action=action, drivers=[], nla_tracks=[], use_nla=True, action_slot_handle=3)
+    return channel, action
+
+
+@pytest.mark.parametrize("changed", ["value", "handle", "interpolation", "mute"])
+@pytest.mark.parametrize("layered", [False, True])
+def test_same_count_legacy_and_layered_animation_changes_are_detected(evidence, changed, layered):
+    channel, _ = action_with_curve(evidence, layered=layered)
+    before = snapshot(evidence, fields=["animation"])
+    assert before["coverage_complete"] and compare(evidence, before)["status"] == "unchanged_within_scope"
+    if changed == "value":
+        channel.keyframe_points[0].co[1] = 0.125
+    elif changed == "handle":
+        channel.keyframe_points[0].handle_left[1] = 0.25
+    elif changed == "interpolation":
+        channel.keyframe_points[0].interpolation = "LINEAR"
+    else:
+        channel.mute = True
+    result = compare(evidence, before)
+    assert result["status"] == "changed" and result["coverage_complete"]
+    assert [entry["field"] for entry in result["changes"]] == ["animation"]
+
+
+def test_data_and_shape_key_actions_are_included(evidence):
+    _, action = action_with_curve(evidence, data_owner=True)
+    shape_curve = curve(path='key_blocks["Key"].value')
+    action.fcurves = [shape_curve]
+    evidence[3].data.shape_keys = ID("Shape Keys", 301, animation_data=NS(action=action))
+    before = snapshot(evidence, fields=["animation"])
+    shape_curve.keyframe_points[0].co[1] = 1.0
+    result = compare(evidence, before)
+    assert result["status"] == "changed" and result["coverage_complete"]
+
+
+@pytest.mark.parametrize("changed", ["routing", "nla_scale", "nla_order", "driver_target", "driver_expression"])
+def test_animation_routing_nla_and_driver_changes_are_detected(evidence, changed):
+    _, action = action_with_curve(evidence, layered=True)
+    driver_curve = curve()
+    target = NS(id=evidence[3], data_path="location", transform_type="LOC_X", transform_space="WORLD_SPACE")
+    driver_curve.driver = NS(type="AVERAGE", expression="var", variables=[NS(name="var", type="TRANSFORMS", targets=[target])])
+    strip = NS(name="Clip", type="CLIP", scale=1.0, action=action, fcurves=[])
+    data = evidence[3].animation_data
+    data.drivers = [driver_curve]
+    data.nla_tracks = [NS(name="A", strips=[strip]), NS(name="B", strips=[])]
+    before = snapshot(evidence, fields=["animation"])
+    assert before["coverage_complete"]
+    if changed == "routing":
+        data.action_slot_handle = 4
+    elif changed == "nla_scale":
+        strip.scale = 1.5
+    elif changed == "nla_order":
+        data.nla_tracks.reverse()
+    elif changed == "driver_target":
+        target.transform_type = "LOC_Y"
+    else:
+        driver_curve.driver.expression = "var * 2"
+    assert compare(evidence, before)["status"] == "changed"
+
+
+def test_animation_modifier_or_budget_gaps_never_return_a_matching_digest(evidence):
+    channel, _ = action_with_curve(evidence)
+    limited = snapshot(evidence, fields=["animation"], max_elements=1)
+    assert not limited["coverage_complete"] and compare(evidence, limited)["status"] == "unknown"
+    channel.modifiers = [NS(type="NOISE")]
+    incomplete = snapshot(evidence, fields=["animation"])
+    field = incomplete["state"]["objects"]["Cube"]["fields"]["animation"]
+    assert not field["complete"] and "F-Curve modifiers" in field["reason"]
+    assert "sha256" not in field and compare(evidence, incomplete)["status"] == "unknown"
+
+
+def make_rig(evidence):
+    obj = evidence[3]
+    obj.type = "ARMATURE"
+    rest = NS(name="Bone", parent=None, head_local=[0.0] * 3, tail_local=[0.0, 0.0, 1.0], use_deform=True)
+    obj.data = ID("Armature", 400, is_editmode=False, pose_position="POSE", bones=[rest])
+    pose = NS(name="Bone", parent=None, location=[0.0] * 3, rotation_mode="XYZ", rotation_euler=[0.0] * 3,
+              scale=[1.0] * 3, ik_stretch=0.0)
+    obj.pose = NS(bones=[pose])
+    return rest, pose
+
+
+@pytest.mark.parametrize("changed", ["rest", "pose", "ik"])
+def test_rig_same_count_rest_pose_and_ik_changes_are_detected(evidence, changed):
+    rest, pose = make_rig(evidence)
+    before = snapshot(evidence, fields=["rig"])
+    assert before["coverage_complete"] and compare(evidence, before)["status"] == "unchanged_within_scope"
+    if changed == "rest":
+        rest.tail_local[2] = 1.25
+    elif changed == "pose":
+        pose.rotation_euler[0] = 0.125
+    else:
+        pose.ik_stretch = 0.5
+    assert compare(evidence, before)["status"] == "changed"
+
+
+def test_armature_edit_mode_is_incomplete_and_nonrig_is_explicitly_inapplicable(evidence):
+    before = snapshot(evidence, fields=["rig"])
+    assert before["state"]["objects"]["Cube"]["fields"]["rig"]["applicable"] is False
+    make_rig(evidence)
+    evidence[3].data.is_editmode = True
+    incomplete = snapshot(evidence, fields=["rig"])
+    assert not incomplete["coverage_complete"] and compare(evidence, incomplete)["status"] == "unknown"
+
+
+def nested_material(evidence):
+    socket = NS(identifier="Value", default_value=0.25, as_pointer=lambda: 900)
+    leaf = ID("Leaf", 502, nodes=[NS(name="Value", bl_idname="ShaderNodeValue", mute=False, inputs=[], outputs=[socket])], links=[], interface=NS(items_tree=[]))
+    root = ID("Root", 501, nodes=[NS(name="Group", bl_idname="ShaderNodeGroup", mute=False, node_tree=leaf, inputs=[], outputs=[])], links=[], interface=NS(items_tree=[]))
+    material = ID("Material", 500, use_nodes=True, node_tree=root)
+    evidence[3].material_slots = [NS(material=material)]
+    return root, leaf, socket
+
+
+def test_nested_shader_changes_are_detected_without_broadening_root_field(evidence):
+    _, _, socket = nested_material(evidence)
+    before = snapshot(evidence, fields=["shader_inputs", "shader_dependencies"])
+    assert before["coverage_complete"]
+    socket.default_value = 0.75
+    result = compare(evidence, before)
+    assert result["status"] == "changed" and result["coverage_complete"]
+    assert [entry["field"] for entry in result["changes"]] == ["shader_dependencies"]
+
+
+def test_shader_dependency_interface_changes_and_shared_groups_are_measured(evidence):
+    root, leaf, _ = nested_material(evidence)
+    root.nodes.append(NS(name="Other Instance", bl_idname="ShaderNodeGroup", mute=False, node_tree=leaf, inputs=[], outputs=[]))
+    leaf.interface.items_tree = [NS(name="Strength", identifier="Socket_0", item_type="SOCKET", in_out="INPUT", socket_type="NodeSocketFloat", default_value=1.0)]
+    before = snapshot(evidence, fields=["shader_dependencies"])
+    assert before["coverage_complete"]
+    leaf.interface.items_tree[0].default_value = 2.0
+    assert compare(evidence, before)["status"] == "changed"
+
+
+@pytest.mark.parametrize("gap", ["recursive", "depth", "tree_count", "interface", "budget"])
+def test_shader_dependency_gaps_are_honestly_incomplete(evidence, gap):
+    root, leaf, _ = nested_material(evidence)
+    if gap == "recursive":
+        leaf.nodes.append(NS(name="Cycle", bl_idname="ShaderNodeGroup", mute=False, node_tree=root, inputs=[], outputs=[]))
+    elif gap == "depth":
+        for i in range(9):
+            child = ID(f"Depth{i}", 600+i, nodes=[], links=[], interface=NS(items_tree=[]))
+            leaf.nodes = [NS(name=f"Group{i}", bl_idname="ShaderNodeGroup", mute=False, node_tree=child, inputs=[], outputs=[])]
+            leaf = child
+    elif gap == "tree_count":
+        root.nodes = [NS(name=f"Group{i}", bl_idname="ShaderNodeGroup", mute=False,
+                         node_tree=ID(f"Tree{i}", 600+i, nodes=[], links=[], interface=NS(items_tree=[])), inputs=[], outputs=[]) for i in range(32)]
+    elif gap == "interface":
+        leaf.interface.items_tree = [NS()] * 129
+    before = snapshot(evidence, fields=["shader_dependencies"], **({"max_elements": 1} if gap == "budget" else {}))
+    assert not before["coverage_complete"] and compare(evidence, before)["status"] == "unknown"
+    assert "sha256" not in before["state"]["objects"]["Cube"]["fields"]["shader_dependencies"]
+
+
+def test_new_fields_are_optional_and_do_not_change_default_evidence(evidence):
+    module = evidence[0]
+    before = snapshot(evidence)
+    assert before["fields"] == list(module.DEFAULT_FIELDS)
+    assert not {"rig", "animation", "shader_dependencies"}.intersection(before["fields"])
