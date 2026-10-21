@@ -25,15 +25,15 @@ class CoreTools:
         return await self.registry.call("bridge.task.set", {"description": description})
 
     async def jobs_inspect(self, job_id: Annotated[StrictStr, Field(pattern=r"^job_[0-9a-f]{32}$")]) -> Any:
-        """Inspect session-local paint job state/revision, phase-local progress, final result/error and recovery flags. INSPECT_SCENE required. SUCCEEDED is completion, start acceptance is not. CANCELLED/FAILED may include possible mutation; reinspect scene. Terminal history retains 32 summaries, no pixel buffers. Polling does not crowd out operation history."""
+        """Inspect session-local image paint/export-reimport state/revision, phase-local progress, elapsed duration, final result/error, external file effects and native recovery flags. INSPECT_SCENE required. SUCCEEDED is completion, start acceptance is not. CANCELLED/FAILED may include scene effects and published/retained files; inspect both, never assume native undo removed disk output. Terminal history retains32 summaries without pixel buffers. Polling does not crowd out operation history."""
         return await self.registry.call("jobs.inspect", {"job_id": job_id})
 
     async def jobs_list(self, limit: Annotated[StrictInt, Field(ge=1, le=32)] = 10) -> Any:
-        """List bounded session-local painting jobs, newest first (active then terminal). INSPECT_SCENE required; explicit truncation, one-active limit, 32 terminal summaries, no durable queue or general simulation/bake jobs."""
+        """List bounded session-local image paint/export-reimport jobs, newest first (active then terminal). INSPECT_SCENE required; explicit truncation, one-active limit, 32 terminal summaries, no durable queue or general simulation/bake jobs. Export files can survive cancellation and native undo; inspect external_effects."""
         return await self.registry.call("jobs.list", {"limit": limit})
 
     async def jobs_cancel(self, job_id: Annotated[StrictStr, Field(pattern=r"^job_[0-9a-f]{32}$")]) -> Any:
-        """Request cancellation of an exact painting job, even while paused. Does not authorize scene changes or deletion. Poll terminal status; cancellation takes effect at cooperative safe points, cannot preempt native transfers, and never promises rollback. Inspect possible-mutation/recovery evidence."""
+        """Request cancellation of an exact image job, even while paused. Does not authorize scene changes or deletion. Poll terminal status; cancellation takes effect at cooperative safe points, cannot preempt native transfers, and never promises rollback. Inspect possible-mutation/recovery and external-file evidence: published files survive cancel/native undo."""
         return await self.registry.call("jobs.cancel", {"job_id": job_id})
 
     async def bridge_task_clear(self) -> Any:
@@ -61,7 +61,7 @@ class CoreTools:
         )
 
     async def checkpoint_list(self, limit: int = 50) -> Any:
-        """List checkpoint labels, history and unverified/expired native recovery availability."""
+        """List checkpoint labels, history and unverified/expired native recovery availability. Recovery controls remain available without INSPECT_SCENE, but detailed asynchronous-job file/image evidence is redacted unless that Blender permission is enabled; local audit records are retained unchanged."""
 
         return await self.registry.call("checkpoint.list", {"limit": limit})
 

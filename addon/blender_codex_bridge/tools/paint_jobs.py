@@ -50,8 +50,8 @@ def register_tools(registry: Any) -> None:
                       automatic_checkpoint=False, batchable=False, permissions=(Permission.EDIT_MATERIALS,),
                       description="Accept one source-frozen bounded paint job; poll for final result, keep owner connection alive, verify pixels/recovery afterward.")
     registry.register("jobs.inspect", inspect, permissions=(Permission.INSPECT_SCENE,), batchable=False,
-                      record_history=False, description="Inspect session-local paint progress, final result or cancellation/failure/recovery evidence.")
+                      record_history=False, description="Inspect session-local image-job progress, final result and cancellation/failure/file/recovery evidence.")
     registry.register("jobs.list", list_jobs, permissions=(Permission.INSPECT_SCENE,), batchable=False,
-                      record_history=False, description="List at most 32 retained session-local painting jobs; one active job, no durable queue.")
+                      record_history=False, description="List at most 32 retained session-local image jobs; one active job, no durable queue.")
     registry.register("jobs.cancel", cancel, batchable=False,
                       description="Request cancellation of one exact paint job, including while paused; inspect terminal evidence, never assume rollback.")

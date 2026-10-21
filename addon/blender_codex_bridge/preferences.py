@@ -79,7 +79,7 @@ if bpy is not None:
             max=20,
         )
         paint_job_budget_ms: IntProperty(
-            name="Paint Job CPU Budget (ms)",
+            name="Image Job CPU Budget (ms)",
             description="Cooperative CPU work per timer tick, not a bound on native image transfers; not configurable through MCP",
             default=4, min=1, max=8,
         )

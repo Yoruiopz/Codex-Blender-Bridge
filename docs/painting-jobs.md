@@ -44,7 +44,8 @@ remain raw. `source_associated_converted_to_straight` reports source normalizati
 | `jobs.list` | `INSPECT_SCENE` | 1–32 summaries, newest active then terminal; explicit truncation |
 | `jobs.cancel` | No scene-edit grant | Requests internal cancellation, including while paused; does not authorize deletion or promise rollback |
 
-One job may be active globally. The manager retains at most 32 terminal summaries, releasing
+One image job may be active globally, shared with [export/reimport](texture-delivery.md).
+The manager retains at most 32 terminal summaries, releasing
 all private pixel buffers, generators and Blender handles at termination. IDs/history are
 runtime-session-local, not durable storage, ownership locks or proof of current scene state.
 Historical results may precede undo/file changes: inspect the current `.blend` again.
@@ -61,7 +62,7 @@ to the owning socket. This is a transport handoff, not an application-level rece
 that a remote process is still alive. Disconnect is observed asynchronously.
 
 The normal request queue is serviced before each CPU slice. Blender's sidebar/preferences
-provide a **Paint Job CPU Budget (ms)** setting: 1–8 ms, default 4; MCP cannot change it.
+provide an **Image Job CPU Budget (ms)** setting: 1–8 ms, default 4; MCP cannot change it.
 This budget is cooperative, not a hard latency ceiling. Work yields approximately every 256
 pixels/candidates in mask validation, normalization, coverage, application and comparison. `revision` orders
 observations; `completed/total` is local to its phase/stroke, not a global percentage.

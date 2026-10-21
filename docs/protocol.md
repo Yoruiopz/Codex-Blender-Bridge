@@ -203,7 +203,8 @@ Only a failure known to occur before a frame was sent carries `executed:false` a
 
 ## Concurrency and ordering
 
-Unreleased `image.paint_job_start` returns a bounded accepted job descriptor, not completed paint.
+Unreleased `image.paint_job_start` and `image.export_job_start` return bounded accepted job
+descriptors, not completed painting or delivery. Both share the same single-active scheduler.
 Trusted in-process lifetime flags are never accepted from wire fields. CPU work waits until its
 success response is flushed; failed delivery, observed disconnect or expired handoff cancels it.
 After handoff, a separate 1–300 second job deadline applies while the owning connection remains
@@ -213,6 +214,16 @@ cancellation, not rollback. Native publication has its own final checkpoint/hist
 No events, new envelopes or duplicate terminal responses are introduced. A connection reader
 preserves bounded partial frames across idle timeouts while active requests/jobs remain; inactive
 connections still expire. See [painting jobs](painting-jobs.md) for limits and recovery semantics.
+
+Export/reimport descriptors additionally expose `duration_ms` and bounded `external_effects`.
+Published or uncertain disk effects survive cancellation/native undo and are retained in
+terminal operation history's optional `job_evidence`, separately from scene undo flags.
+Detailed history evidence is redacted from `checkpoint.list` without live `INSPECT_SCENE`;
+recovery controls remain callable and locally retained audit records are not changed.
+Acceptance history explicitly says delivery is incomplete. A native reimport checkpoint is
+finalized synchronously, never held across subsequent cooperative verification ticks. Late
+verification failures retain the image for explicit recovery. These are additive method/result
+fields, not new envelopes, unsolicited events or terminal responses for the start request.
 
 - Multiple requests may be in flight at the transport/client layer.
 - Writes on each socket are serialized so NDJSON frames never interleave.

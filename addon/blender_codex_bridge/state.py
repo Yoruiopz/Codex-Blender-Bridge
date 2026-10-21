@@ -25,6 +25,7 @@ class OperationRecord:
     duration_ms: float
     affected_objects: tuple[str, ...] = ()
     error_code: str | None = None
+    job_evidence: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
@@ -105,6 +106,7 @@ class BridgeState:
         duration_ms: float,
         affected_objects: Iterable[str] = (),
         error_code: str | None = None,
+        job_evidence: dict[str, Any] | None = None,
     ) -> OperationRecord:
         record = OperationRecord(
             operation_id=f"op_{uuid.uuid4().hex[:10]}",
@@ -115,6 +117,7 @@ class BridgeState:
             duration_ms=round(duration_ms, 3),
             affected_objects=tuple(dict.fromkeys(str(name) for name in affected_objects if name)),
             error_code=error_code,
+            job_evidence=job_evidence,
         )
         with self._lock:
             self._history.appendleft(record)

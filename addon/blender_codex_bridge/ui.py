@@ -75,7 +75,7 @@ if bpy is not None:
 
     class BCB_OT_cancel_job(bpy.types.Operator):
         bl_idname = "blender_codex_bridge.cancel_job"
-        bl_label = "Cancel Paint Job"
+        bl_label = "Cancel Image Job"
         bl_description = "Cancel private paint work at its next safe point; native commits cannot be preempted"
 
         def execute(self, context):
@@ -370,7 +370,7 @@ if bpy is not None:
                     )
 
             jobs = layout.box()
-            jobs.label(text="Painting Jobs", icon="BRUSH_DATA")
+            jobs.label(text="Image Jobs", icon="BRUSH_DATA")
             if preferences:
                 jobs.prop(preferences, "paint_job_budget_ms")
             for job in runtime.jobs.list(limit=3)["jobs"]:
@@ -378,7 +378,11 @@ if bpy is not None:
                 workload = job["workload"]
                 if workload:
                     size = workload["image_size"]
-                    jobs.label(text=f"{size[0]} x {size[1]} pixels; {workload['candidate_pixel_tests']} candidates")
+                    jobs.label(text=f"{size[0]} x {size[1]} pixels")
+                    if "candidate_pixel_tests" in workload:
+                        jobs.label(text=f"{workload['candidate_pixel_tests']} brush candidates")
+                    if "format" in workload:
+                        jobs.label(text=f"Export/reimport: {workload['format']}")
                     jobs.label(text=f"Private pixel estimate: {workload['private_pixel_buffers_peak_estimate_bytes'] / 1048576:.1f} MiB")
                     jobs.label(text="Excludes native/GPU/undo buffers")
                 progress = job["progress"]
@@ -388,7 +392,12 @@ if bpy is not None:
                 if job["error"]:
                     jobs.label(text=job["error"]["code"], icon="ERROR")
                     if job["error"]["context"].get("possible_mutation"):
-                        jobs.label(text="Possible retained image; inspect/recover", icon="ERROR")
+                        jobs.label(text="Possible effects; inspect/recover", icon="ERROR")
+                effects = job.get("external_effects", {})
+                if effects.get("file_published") or effects.get("publication_outcome_unknown"):
+                    jobs.label(text="File may persist after cancel/undo; inspect", icon="INFO")
+                if effects.get("retained_staging_path"):
+                    jobs.label(text="Retained staging file; inspect job details", icon="ERROR")
             jobs.label(text="Session only; native transfers cannot be preempted")
             history = layout.box()
             history.label(text="History", icon="TIME")

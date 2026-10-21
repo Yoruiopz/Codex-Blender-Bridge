@@ -195,7 +195,8 @@ def test_public_list_includes_separate_availability_without_changing_label_contr
     _, _, manager = capacity
     checkpoint = manager.create()
     core = importlib.import_module(f"{addon_package}.tools.core")
-    result = core.checkpoint_list(NS(checkpoints=manager, state=NS(history=lambda limit: [])), {})
+    result = core.checkpoint_list(NS(checkpoints=manager, state=NS(history=lambda limit: []),
+                                     permissions=NS(snapshot=lambda: {})), {})
     assert result["checkpoints"] == [checkpoint]
     assert result["recovery"]["checkpoints"][0]["availability"] == "unverified"
     assert result["recovery"]["checkpoints"][0]["checkpoint_id"] == checkpoint["checkpoint_id"]

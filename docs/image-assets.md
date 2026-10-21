@@ -2,7 +2,8 @@
 
 Unreleased on `main`; not in the published 0.3.0 packages. These structured tools add image
 assets and shader binding. Separate [pixel/brush tools](texture-painting.md) create generated
-textures and paint independent versions. Baking, packing and unrestricted file access remain unsupported.
+textures and paint independent versions. [Cooperative export/reimport](texture-delivery.md)
+writes reviewed textures to exact approved paths; baking, packing and unrestricted file access remain unsupported.
 
 ## Set up in Blender
 

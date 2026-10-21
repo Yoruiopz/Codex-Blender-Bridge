@@ -174,6 +174,13 @@ def checkpoint_list(context: ToolContext, params: Mapping[str, Any]) -> dict[str
     limit = int_param(params, "limit", 20, minimum=1, maximum=100)
     checkpoints = context.checkpoints.list(limit)
     history = context.state.history(limit)
+    # Recovery controls remain available without scene inspection. Detailed
+    # asynchronous-job file/image evidence must not become an inspection bypass.
+    if not context.permissions.snapshot().get(Permission.INSPECT_SCENE.value, False):
+        for record in history:
+            if record.get("job_evidence") is not None:
+                record["job_evidence"] = None
+                record["job_evidence_redacted"] = True
     return {
         "checkpoints": checkpoints,
         "checkpoint_count": len(checkpoints),

@@ -96,7 +96,10 @@ fixtures, plus an explicit [delivery execution contract](texture-delivery.md). I
 staging now seals complete stream hashes and publishes without overwrite, with live edit/file/save
 grants, Windows directory pins and scoped cleanup. This is not a registered export API;
 reviewed public plain FLOAT RGBA EXR/large PNG import now uses the shared streaming reader.
-Typed cooperative publication/reimport jobs are not implemented yet. The
+Typed cooperative export/reimport now joins the codecs, staging and shared reader, with
+complete decoded-channel checks and explicit external effects in terminal jobs/history.
+It shares the paint scheduler and preserves the no-overwrite and file/native-undo distinction;
+fresh-process, packing/save, scale/latency and broader delivery acceptance remain open. The
 probes exposed a 4.5 generated-float transparency error that numeric readback missed; new
 independent CHANNEL_PACKED buffers preserve requested RGBA and render consistently on the
 tested versions. Existing images are never silently relabeled; masks/inspection remain raw.
@@ -1441,3 +1444,96 @@ internal yielded preflight steps do not establish responsive jobs. Keep fresh-pr
 packing/save/reopen, memory-pressure/scale, durable input-pixel recovery, mixed-editor
 interleaving and all remaining M1–M6/full-artist gates open. No registered export API or
 1.0 release readiness is claimed.
+
+### 2026-10-21 — cooperative texture export/reimport and explicit file effects
+
+DELIVER-01 / LOOK-01 / JOB-01 now have registered `image.export_job_start`: one explicit
+loaded image version, PNG8/PNG16/EXR32/EXR32_RAW, exact unused approved file path and unique
+reimport name. Live `EDIT_MATERIALS`, `ACCESS_EXTERNAL_FILES` and `SAVE_PROJECT` are required;
+there is no implicit overwrite, rename, directory creation, node binding, packing or project
+save. The existing paint scheduler now shares its single-active limit, transport handoff,
+owner/deadline/cancel controls, bounded retention and CPU slices with delivery. The sidebar
+shows image-job progress/configuration and published-file/retained-staging warnings.
+
+The driver freezes source identity, complete metadata/pixels and permitted FILE evidence;
+revalidates before publication, after checkpoint setup and before success; encodes/seals
+owned staging; publishes without clobber; cooperatively rehashes/parses the file; performs
+one synchronous native checkpoint-guarded reimport; compares **every decoded channel** with
+independently computed encoding/native references; then revalidates source/file/output.
+Associated linear color normalization changes only the private copy. Original and encoder-input
+digests are distinguished; normalized/byte-sRGB conversion is not advertised as raw input-bit
+recovery. Raw float references include signed zero; PNG/native color allowances are declared
+in the [delivery contract](texture-delivery.md), not relaxed after a failing sample.
+
+Cancellation before publication cleans only unchanged owned staging with live grants.
+Published or uncertain file effects survive all terminal paths, cleanup failures and native
+undo. They remain in bounded jobs and operation history, separate from native image recovery.
+Failed allocation cleanup still needs deletion consent. Once the native checkpoint is finalized,
+later verification yields to other work: late failures retain the image for explicitly confirmed
+recovery, never delete a potentially interleaved edit outside that checkpoint. Generator/resource
+failures retain evidence and release owned handles. Acceptance history explicitly says delivery
+is incomplete. Detailed history evidence is redacted without `INSPECT_SCENE`, while recovery
+controls remain available and the local audit is unchanged. No transport events/version change,
+arbitrary Python shortcut or network-thread Blender execution was added.
+
+Validation: **165 focused tests**, then **1,562 tests on each** MCP SDK 2.0.0/2.2.0 passed;
+the sole Windows skip is the POSIX symlink fixture. Lint, mypy (35 files), compilation and
+the generated **176-tool** inventory pass. Development ZIP CRC/layout and all **79** packaged
+Python modules match current source:
+`build/texture-delivery-package-20261021-2/blender_codex_bridge-development.zip`.
+
+The full Windows Blender 4.5.1 LTS / 5.1.2 matrix passes **70/70** (30 background,
+40 private-desktop UI) at `build/texture-delivery-final-matrix-20261021-1/report.json`.
+Baseline `63c8690` plus this increment; all **155** Python paths/bytes independently matched
+`6eede6af2d7836e066bbf0c89dfa6c6100cb38afc05bf3bede8a09951e0b004b` before final review.
+The review found that unguarded recovery history could expose new detailed job evidence.
+After that frozen run completed, the history handler, its MCP documentation and the delivery
+fixture were updated. Only `addon/blender_codex_bridge/tools/core.py`,
+`mcp_server/tools/core.py` and `scripts/blender_image_delivery_smoke.py` differ; the other
+**152** paths/bytes are unchanged. Both affected native cases (`core`, `image_delivery`) pass
+again on both versions at `build/texture-delivery-history-guard-native-20261021-1/report.json`,
+matching all current 155 sources at
+`c3fbc9e369dc64d4ef9962e4fc3f7697a196a45193e2cda69e7b28ec0d0ef025`.
+That run explicitly verifies inspection-denied history redaction, preserved local audit and
+minimal status on real sockets. These are **70 broad checks plus four current-source affected
+reruns**, not one full current-fingerprint 70-case run. All Blender windows remain off the input
+desktop, without a visible fallback; user projects/preferences remain untouched.
+
+Each delivery fixture exercises all eight small format/role combinations and a complete
+4096² raw DATA path with independent source markers: **67,108,864 channels**, file size
+**268,501,384 bytes**, file SHA-256
+`276b6e3f57d5cf8e6c4c282290ca116e8f8cff9546313178e65b30d7cdd34ab2` and exact native/source
+float32 digest `6dc7792b679699077adadaf4c6aa88a921909d390e605fb1ebbc5e555cb8dbfb`.
+Native undo removes reimport/binding while preserving the earlier interleaved transform and
+source pixels; full external bytes persist unchanged. Cancel/disconnect, paused expiry,
+permission loss, post-file and post-native cancellation are exercised on real sockets/timers.
+The final 4K jobs took **118.19 / 123.00 seconds** at an 8 ms CPU setting, with maximum observed
+inspection-call stalls **9.00 / 10.07 seconds**. This is measured synchronous source/reimport/
+preflight/native latency, not a hard CPU-slice/cancellation ceiling or production throughput
+acceptance. Full 4K acceptance here is the raw DATA encoding, not universal format/scale,
+memory-pressure or 8K/UDIM acceptance. The fixture requires 8 GiB host headroom, not a process
+cap or a global pressure test.
+
+Ten controlled 32px color/alpha camera outputs are retained. PNG8 differs from the generated
+reference at 295 pixels, PNG16 at five, at most 1/255 per channel; both EXR variants have
+identical pixels on both versions. Quantization/appearance measurements are separate from
+native channel references; representative captures were viewed. This is not full artistic
+acceptance. Of **212** prior PNG-path pairs in the broad run, **188** are byte-identical,
+**12** pixel-identical with different PNG bytes, and **12** scanner captures retain reviewed
+packing/render rerun variation. UV differences are 4,531 / 4,538 pixels (max215/255),
+calibration/front/recovered 17,757 / 18,237 (max6), isometric16,859 /17,536 (max6), wire7 /6
+(max3). Shape/material presentation remains consistent, not a reproducibility fix. Protected/
+recovered mask pairs remain byte-identical. Earlier fixture Path/str and oversized success-line
+failures remain diagnostic evidence; compact final markers passed the unchanged runner gates.
+
+Primary Graphify used `dino-s-workspace`, cloud `fc9d3e3` indexed2026-10-21T12:23:54.443264Z;
+capped retrieval was narrowed to the exact jobs outline and current code/tests. New delivery
+symbols are unindexed, not invented graph edges. No graph rebuild, agents, dependency install,
+release/version or visibility changes occurred.
+
+Next: fresh-process delivery reopening, packing/approved save/reopen and durable edited-input
+pixel recovery; measure/shorten synchronous tails and broaden format/scale/memory-pressure
+acceptance. Keep all remaining ownership, sculpt/surface/vertex/weight painting, character/
+animation, compositor/procedural/simulation, interactive UX, compatibility/install/upgrade and
+RC gates within the full 1.0 artist objective. This is implemented bounded texture delivery,
+not completed DELIVER-01/REC-01/JOB-01 or a human-equivalent 1.0 release.

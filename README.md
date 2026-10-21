@@ -125,9 +125,12 @@ associated linear float inputs normalize explicitly before painting; inspection/
 staging, no-overwrite publication and complete file-hash checks, including a 4K native round trip.
 It requires live edit, external-file and save consent; cleanup never deletes the published file.
 Reviewed plain RGBA FLOAT32 EXR and large PNG imports now use the shared bounded reader,
-with explicit EXR color/alpha interpretation and complete file checks. **No export tool is
-available yet**. Typed export/reimport jobs, durable pixel recovery and production delivery
-remain in progress; see the [format limits and import contract](docs/image-assets.md).
+with explicit EXR color/alpha interpretation and complete file checks.
+`image.export_job_start` adds frozen-source PNG8/PNG16/float-EXR export and verified reimport,
+including the full 4K path. Poll image-job progress and terminal file/image evidence; publication
+never overwrites a target, and **cancel or Blender undo does not delete a published file**.
+Durable edited-input recovery, packing/save/reopen and production delivery remain in progress;
+see the [delivery contract](docs/texture-delivery.md) and [import limits](docs/image-assets.md).
 
 Unreleased [cooperative painting jobs](docs/painting-jobs.md) add `image.paint_job_start` and
 `jobs.inspect/list/cancel`, with polled progress, sidebar CPU-budget/control/history, frozen
@@ -383,7 +386,7 @@ is identified above, and the feature table describes the published release.
 Blender's local recovery UI also has an add-on-only restore action, not an extra MCP tool.
 
 <!-- BEGIN GENERATED MCP TOOLS -->
-Current registry: **175 MCP tools**.
+Current registry: **176 MCP tools**.
 
 <details>
 <summary>core — 21 tools</summary>
@@ -397,8 +400,8 @@ Current registry: **175 MCP tools**.
 | `checkpoint.list` | List checkpoint labels, operation history and conservative recovery availability. |
 | `checkpoint.undo_last` | Use Blender global undo only with explicit acknowledgement of user-interleaving risk. |
 | `jobs.cancel` | Request safe-point painting cancellation, not rollback; available while paused. |
-| `jobs.inspect` | Inspect session-local painting progress, result/error and recovery evidence. |
-| `jobs.list` | List bounded session-local painting jobs; no durable queue. |
+| `jobs.inspect` | Inspect session-local image-job progress, result/error and file/recovery evidence. |
+| `jobs.list` | List bounded session-local image jobs; no durable queue. |
 | `object.inspect` | Inspect one object without dumping raw vertex coordinates. |
 | `project.info` | Inspect project metadata and render settings. |
 | `project.save` | Save the current project when Blender-side permission allows it. |
@@ -523,11 +526,12 @@ Current registry: **175 MCP tools**.
 </details>
 
 <details>
-<summary>materials — 16 tools</summary>
+<summary>materials — 17 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
 | `image.create` | Create a new float linear-color/data canvas up to 4096/axis and 16,777,216 pixels; native transfer is not preemptible, no overwrite/file writes. |
+| `image.export_job_start` | Accept a frozen-source PNG/EXR no-overwrite export and verified reimport job; poll terminal file/image effects, undo never removes files. |
 | `image.inspect` | Inspect bounded image metadata/direct users without loading unloaded buffers. |
 | `image.inspect_pixels` | Inspect complete RGBA digests/samples; default statistics <=1M pixels, explicit include_statistics=false for <=16M (no ranges/nonfinite scan); FILE reads need external-file consent. |
 | `image.load` | Load a new bounded PNG/JPEG/plain FLOAT RGBA EXR from Blender's approved texture folder; no implicit reuse or file writes. |

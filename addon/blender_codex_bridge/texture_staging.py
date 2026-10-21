@@ -371,3 +371,19 @@ class TextureStaging:
                 self.pins.close()
             self.closed = True
         return self.evidence()
+
+    def release_handles(self) -> None:
+        """Last-resort owned-handle release, never file deletion or publication.
+
+        Does not turn uncertain cleanup into success or require renewed IO consent.
+        Keep evidence/retained paths when a caller encounters an unexpected failure.
+        """
+        self._main()
+        try:
+            if self.stream is not None:
+                self.stream.close()
+        finally:
+            self.stream = None
+            if self.pins:
+                self.pins.close()
+            self.closed = True

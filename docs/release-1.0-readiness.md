@@ -35,7 +35,7 @@ No current release should be described as a complete human-equivalent artist.
 | Simulate | Scoped cloth setup/configuration and bounded in-memory bake/free | Fluid/rigid-body/other solvers, dependencies, disk caches, asynchronous progress/cancellation and production-scale validation |
 | Stage and light | Collections, world, camera/light settings, layout | Camera composition/navigation, iterative lighting comparisons, asset-scale and placement constraints |
 | Render and composite | Render settings/execution, captures; reviewed compositor graph editing | Broader nodes/image assets, passes, color/output workflows, render diagnostics and job/progress management |
-| Deliver production assets | Permission-controlled project save | Reviewed import/export, dependencies/packing, formats and asset validation, explicit deliverable paths |
+| Deliver production assets | Permission-controlled project save; [reviewed cooperative texture export/reimport](texture-delivery.md), no-clobber files and complete decoded-channel checks | General asset import/export, dependencies/packing, fresh-process/save/reopen, broader formats and production validation |
 | Operate interactively | Status/task/history, permissions, stop/pause; [bounded source-frozen painting jobs with polled progress/cancel](painting-jobs.md) | Persistent plan, visual target resolution, preview/change summaries, user corrections, larger/tiled painting and general long-operation/bake jobs |
 | Work safely and improve results | Checkpoints, bounded inspection, batch partial-failure evidence | Consistent preservation contracts, recoverability audits, structural diffs, aesthetic iteration and whole-project benchmarks |
 
@@ -103,10 +103,12 @@ covered by this guard and still require the audit above.
 
 [Texture-delivery foundations](texture-delivery.md) now distinguish PNG storage, native float
 association and raw recovery. Internal stream encoders, approved-folder owned staging,
-no-clobber publication and complete file-hash proofs are not an export API. Reviewed uncompressed
+no-clobber publication and complete file-hash proofs are integrated into a typed job. Reviewed uncompressed
 RGBA FLOAT32 EXR and large PNG now use shared streaming preflight in the registered import/
-binding/pixel-inspection paths, with explicit EXR interpretation. Typed cooperative delivery
-and durable pixel recovery remain unimplemented. Windows directory
+binding/pixel-inspection paths, with explicit EXR interpretation. Cooperative export/reimport now
+retains file effects in terminal jobs/history and uses guarded native image publication with
+complete pixel comparison. Fresh-process/durable edited-input recovery, packing/save/reopen
+and broader production delivery remain open. Windows directory
 pinning and adversarial cleanup/consent tests advance the path contract, not general filesystem
 security, crash durability or release acceptance. Generated-buffer alpha handling is render-verified against file references on
 the tested versions; correctness of readback alone had missed a Blender 4.5 transparency issue.

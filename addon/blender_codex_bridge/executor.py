@@ -31,6 +31,8 @@ def _history_description(
 ) -> str:
     if request.method == "image.paint_job_start" and outcome == "completed" and metadata:
         return f"Accepted paint job {metadata.get('job_id', '')}; image not yet committed"
+    if request.method == "image.export_job_start" and outcome == "completed" and metadata:
+        return f"Accepted texture delivery job {metadata.get('job_id', '')}; export/reimport not yet completed"
     if request.method != "python.execute":
         return fallback
     effect = request.params.get("expected_effect")

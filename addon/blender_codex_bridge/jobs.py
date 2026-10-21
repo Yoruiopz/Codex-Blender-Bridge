@@ -1,4 +1,4 @@
-"""Main-thread cooperative painting jobs; private CPU work, guarded single commit."""
+"""Main-thread image jobs; one shared owner, cooperative work and guarded commits."""
 
 from __future__ import annotations
 
@@ -63,19 +63,31 @@ class PaintJob:
     in_commit: bool = False
     in_tick: bool = False
     workload: dict = field(default_factory=dict)
+    method: str = START_METHOD
+    kind: str = "image.paint_version"
+    required_permissions: tuple = (Permission.EDIT_MATERIALS,)
+    driver: Any = None
+    external_effects: dict = field(default_factory=dict)
+    finished: float | None = None
 
     def summary(self) -> dict:
-        return {"job_id": self.job_id, "kind": "image.paint_version", "request_id": self.request_id,
+        effects = self.driver.evidence() if self.driver is not None else self.external_effects
+        return {"job_id": self.job_id, "kind": self.kind, "request_id": self.request_id,
                 "source_image": self.source_name, "new_image": self.new_name, "state": self.state,
                 "terminal": self.state in TERMINAL, "revision": self.revision, "progress": dict(self.progress),
                 "created_at": self.created_at, "result": self.result, "error": self.error,
                 "execution_started": self.execution_started, "undo_boundary_created": self.boundary_created,
                 "undo_boundary_finalized": self.boundary_finalized, "operation_id": self.operation_id,
-                "verification_required": True, "durable": False, "workload": dict(self.workload)}
+                "verification_required": True, "durable": False, "workload": dict(self.workload),
+                "external_effects": dict(effects), "duration_ms": round(((self.finished or time.monotonic())-self.started)*1000, 3)}
 
 
 class PaintJobs:
-    """One bounded active job; network threads touch only its lifetime Events."""
+    """Shared paint/delivery scheduler (legacy class name); no concurrent mutators.
+
+    Domain drivers own their typed workflow, not networking or a second scheduler.
+    Network threads touch only the existing lifetime Events.
+    """
 
     def __init__(self, context_factory, budget_ms=lambda: 4.):
         self.context_factory, self.budget_ms = context_factory, budget_ms
@@ -90,17 +102,17 @@ class PaintJobs:
     def _check(self, job: PaintJob, context: Any):
         job.lifetime.check()
         if job.cancel_reason or time.monotonic() >= job.deadline:
-            raise BridgeError(ErrorCode.TIMEOUT, "Painting job stopped before its next safe action.",
+            raise BridgeError(ErrorCode.TIMEOUT, "Image job stopped before its next safe action.",
                               {"job_cancel_requested": bool(job.cancel_reason), "reason": job.cancel_reason,
                                "job_deadline_expired": time.monotonic() >= job.deadline})
-        required = [Permission.EDIT_MATERIALS]
-        if job.requires_external_files:
+        required = list(job.required_permissions)
+        if job.requires_external_files and Permission.ACCESS_EXTERNAL_FILES not in required:
             required.append(Permission.ACCESS_EXTERNAL_FILES)
         context.require(*required)
         if job.in_commit:
             # A pause during an already-started native call cannot hold half a
             # publication. Stop at the next safe point and retain recovery evidence.
-            context.registry.prepare(START_METHOD, context)
+            context.registry.prepare(job.method, context)
 
     def start(self, context: Any, params: dict, time_limit: float) -> dict:
         self._main()
@@ -128,18 +140,71 @@ class PaintJobs:
                 "channel": mask["channel"], "invert": mask["kernel"]["invert"],
                 "frozen_channel_bytes": len(mask["kernel"]["values"]) * mask["kernel"]["values"].itemsize}
             job.workload["large_image_requires_job"] |= mask["kernel"]["width"] * mask["kernel"]["height"] > pixel_brush.MAX_SYNC_PIXELS
+        self._accept(job, context)
+        return {"accepted": True, **job.summary(), "native_commit_interruptible": False,
+                "source_frozen_at_acceptance": True, "painting_completed": False}
+
+    def _accept(self, job: PaintJob, context: Any):
         self._check(job, context)
         images._check(context)
         self.active = job
-        if lifetime.connection is not None:
-            lifetime.connection.background_active.set()
+        if job.lifetime.connection is not None:
+            job.lifetime.connection.background_active.set()
         try:
-            images._check(context)  # A canceled start must not leave an orphan accepted job.
+            images._check(context)
         except Exception:
             self.cancel_all("start request cancelled")
             raise
-        return {"accepted": True, **job.summary(), "native_commit_interruptible": False,
-                "source_frozen_at_acceptance": True, "painting_completed": False}
+
+    def start_export(self, context: Any, params: dict, time_limit: float) -> dict:
+        self._main()
+        if self.active is not None:
+            raise BridgeError(ErrorCode.OPERATION_FAILED, "One image job is already active; inspect/cancel it before starting another.",
+                              {"active_job_id": self.active.job_id})
+        time_limit = pixel_brush.number(time_limit, "time_limit_seconds", 1., 300.)
+        from .texture_staging import REQUIRED
+        from .tools.image_delivery import ExportDriver, prepare_export
+
+        started = time.monotonic()
+        prepared = prepare_export(context, params)
+        job = PaintJob("job_" + uuid.uuid4().hex, getattr(context, "request_id", ""), prepared["source_name"], prepared["name"],
+                       getattr(context, "request_lifecycle", None) or RequestLifetime.local(), started+time_limit,
+                       prepared, _identity(prepared["source"]), _metadata(prepared["source"]), True, started=started,
+                       method="image.export_job_start", kind="image.export_reimport", required_permissions=REQUIRED,
+                       driver=ExportDriver(prepared))
+        pixel_bytes = prepared["width"] * prepared["height"] * 16
+        job.workload = {"image_size": [prepared["width"], prepared["height"]],
+                        "frozen_source_pixel_bytes": pixel_bytes,
+                        "private_pixel_buffers_peak_estimate_bytes": 2*pixel_bytes+262144,
+                        "estimate_excludes": "Blender/native/GPU/undo buffers, source revalidation copies and allocator overhead",
+                        "format": prepared["format"]}
+        self._accept(job, context)
+        return {"accepted": True, **job.summary(), "export_completed": False,
+                "source_frozen_at_acceptance": True, "native_commit_interruptible": False}
+
+    def _native_commit(self, job: PaintJob, context: Any, callback):
+        """A driver's one synchronous native publication, never across timer yields."""
+        label = f"Image delivery {job.job_id}: {job.new_name}"
+        job.in_commit = True
+        job.state = "COMMITTING"
+        job.revision += 1
+        try:
+            job.boundary_created = bool(context.checkpoints.before_modification(label))
+            try:
+                if not job.boundary_created:
+                    raise BridgeError(ErrorCode.OPERATION_FAILED, "A recoverable native undo boundary is required before image reimport.")
+                self._check(job, context)
+                context.registry.prepare(job.method, context)
+                result = callback()
+                self._check(job, context)
+            finally:
+                if job.boundary_created:
+                    job.boundary_finalized = bool(context.checkpoints.after_modification(label))
+            if not job.boundary_finalized:
+                raise BridgeError(ErrorCode.OPERATION_FAILED, "Image delivery native undo finalization failed; inspect retained effects.", {"possible_mutation": job.execution_started})
+            return result
+        finally:
+            job.in_commit = False
 
     def _context(self, job: PaintJob):
         context = self.context_factory()
@@ -190,7 +255,39 @@ class PaintJobs:
     def _finish(self, job: PaintJob, state: str, error: BridgeError | None = None):
         if job.state in TERMINAL:
             return
+        if job.work is not None:
+            work = job.work
+            job.work = None
+            try:
+                work.close()
+            except Exception as failure:
+                LOGGER.exception("Image-job generator close failed")
+                state, error = "FAILED", BridgeError(ErrorCode.OPERATION_FAILED, "Image-job private work did not close cleanly; inspect retained effects.",
+                                                     {"exception_type": type(failure).__name__, "cleanup_outcome_unknown": True})
+        if job.driver is not None:
+            try:
+                job.external_effects = job.driver.cleanup(self._context(job), job, success=state == "SUCCEEDED")
+                if state == "SUCCEEDED":
+                    context = self._context(job)
+                    self._check(job, context)
+                    context.registry.prepare(job.method, context)
+            except BridgeError as failure:
+                error = failure
+                state = "CANCELLED" if failure.code in {ErrorCode.TIMEOUT.value, ErrorCode.EMERGENCY_STOPPED.value} else "FAILED"
+            except Exception as failure:
+                LOGGER.exception("Image-job terminal cleanup failed")
+                state, error = "FAILED", BridgeError(ErrorCode.OPERATION_FAILED, "Image-job cleanup could not be fully verified.",
+                                                     {"exception_type": type(failure).__name__, "cleanup_outcome_unknown": True})
+            finally:
+                # Cleanup failures cannot erase already observed file effects.
+                job.external_effects = job.driver.evidence()
+                job.driver = None
+            if job.result is not None:
+                job.result["external_effects"] = dict(job.external_effects)
+            if state != "SUCCEEDED":
+                job.result = None
         job.state = state
+        job.finished = time.monotonic()
         job.revision += 1
         if error is not None:
             error.context.update({"job_id": job.job_id, "requested_image": job.new_name,
@@ -198,7 +295,15 @@ class PaintJobs:
                                   "undo_boundary_created": job.boundary_created,
                                   "undo_boundary_finalized": job.boundary_finalized,
                                   "verification_required": True})
-            if not job.execution_started:
+            if job.external_effects:
+                error.context["external_effects"] = dict(job.external_effects)
+            external_possible = bool(job.external_effects.get("file_published") or job.external_effects.get("publication_outcome_unknown")
+                                     or job.external_effects.get("retained_staging_path"))
+            if external_possible:
+                error.context["native_image_rollback_verified"] = error.context.get("rollback_verified", False)
+                error.context["rollback_verified"] = False
+                error.context["possible_mutation"] = True
+            elif not job.execution_started:
                 error.context["possible_mutation"] = False
             elif "possible_mutation" not in error.context:
                 error.context["possible_mutation"] = True
@@ -206,16 +311,16 @@ class PaintJobs:
         job.progress = {**job.progress, "phase": state.lower()}
         if state == "SUCCEEDED":
             job.progress = {"phase": "succeeded", "completed": 1, "total": 1}
-        if job.work is not None:
-            job.work.close()
-            job.work = None
         job.prepared.clear()  # Release all source/output buffers and bpy handles.
         if job.lifetime.connection is not None:
             job.lifetime.connection.background_active.clear()
-        record = self.context_factory().state.record_operation(tool=START_METHOD,
-            description=f"Paint job {job.job_id} {state.lower()}: {job.new_name}; verify state",
-            success=state == "SUCCEEDED", duration_ms=(time.monotonic() - job.started) * 1000,
-            error_code=error.code if error else None)
+        record = self.context_factory().state.record_operation(tool=job.method,
+            description=f"Image job {job.job_id} {state.lower()}: {job.new_name}; verify state",
+            success=state == "SUCCEEDED", duration_ms=(job.finished - job.started) * 1000,
+            error_code=error.code if error else None,
+            **({"job_evidence": {"job_id": job.job_id, "state": state, "external_effects": dict(job.external_effects),
+                                 "execution_started": job.execution_started, "undo_boundary_finalized": job.boundary_finalized}}
+               if job.external_effects else {}))
         job.operation_id = record.operation_id
         self.history.appendleft(job)
         self.active = None
@@ -239,11 +344,11 @@ class PaintJobs:
                 return True
             if not job.lifetime.delivered.is_set():
                 return True
-            context.registry.prepare(START_METHOD, context)
+            context.registry.prepare(job.method, context)
             job.state = "RUNNING"
             if job.work is None:
                 prepared = job.prepared
-                job.work = pixel_brush.paint_steps(prepared.pop("values"), prepared["width"], prepared["height"], prepared["strokes"],
+                job.work = job.driver.steps(context, job, lambda callback: self._native_commit(job, context, callback)) if job.driver is not None else pixel_brush.paint_steps(prepared.pop("values"), prepared["width"], prepared["height"], prepared["strokes"],
                     prepared["role"], srgb=prepared["srgb"], mask=prepared["mask"]["kernel"] if prepared["mask"] else None,
                     associated=prepared["associated"],
                     check=lambda: self._check(job, context))
@@ -257,19 +362,23 @@ class PaintJobs:
                     job.state = "PAUSED"
                     job.revision += 1
                     return True
-                context.registry.prepare(START_METHOD, context)
+                context.registry.prepare(job.method, context)
                 try:
                     job.progress = next(job.work)
                     job.revision += 1
                 except StopIteration as completed:
-                    self._commit(job, context, completed.value)
+                    if job.driver is None:
+                        self._commit(job, context, completed.value)
+                    else:
+                        job.result = completed.value
+                        self._finish(job, "SUCCEEDED")
                     return False
         except BridgeError as error:
             cancelled = error.code in {ErrorCode.TIMEOUT.value, ErrorCode.EMERGENCY_STOPPED.value}
             self._finish(job, "CANCELLED" if cancelled else "FAILED", error)
         except Exception as error:
-            LOGGER.exception("Painting job failed outside its typed error path")
-            self._finish(job, "FAILED", BridgeError(ErrorCode.OPERATION_FAILED, "Painting job failed; inspect its recovery evidence.",
+            LOGGER.exception("Image job failed outside its typed error path")
+            self._finish(job, "FAILED", BridgeError(ErrorCode.OPERATION_FAILED, "Image job failed; inspect its recovery/file evidence.",
                                                     {"exception_type": type(error).__name__}))
         finally:
             job.in_tick = False
@@ -320,4 +429,4 @@ class PaintJobs:
                 # buffers underneath publication; unwind at the next safe point.
                 job.revision += 1
                 return
-            self._finish(job, "CANCELLED", BridgeError(ErrorCode.TIMEOUT, "Painting job cancelled by bridge lifecycle.", {"reason": reason}))
+            self._finish(job, "CANCELLED", BridgeError(ErrorCode.TIMEOUT, "Image job cancelled by bridge lifecycle.", {"reason": reason}))

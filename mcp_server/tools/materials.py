@@ -11,6 +11,7 @@ from ._common import MCPToolBinding, params
 from .image_paint import ImagePaintTools
 
 MATERIAL_TOOL_DATA: tuple[tuple[str, str, bool, tuple[str, ...]], ...] = (
+    ("image.export_job_start", "Accept a frozen-source PNG/EXR no-overwrite export and verified reimport job; poll terminal file/image effects, undo never removes files.", True, ("EDIT_MATERIALS", "ACCESS_EXTERNAL_FILES", "SAVE_PROJECT")),
     ("image.create", "Create a new float linear-color/data canvas up to 4096/axis and 16,777,216 pixels; native transfer is not preemptible, no overwrite/file writes.", True, ("EDIT_MATERIALS",)),
     ("image.paint_version", "Paint bounded UV-image strokes with optional raw RGBA-channel mask/inversion/resampling into a new version; preserve both inputs, FILE reads need external-file consent.", True, ("EDIT_MATERIALS",)),
     ("image.paint_job_start", "Accept one source/mask-frozen tiled paint job up to 16,777,216 pixels; poll evidence, keep owner connected, native commit is not preemptible.", True, ("EDIT_MATERIALS",)),

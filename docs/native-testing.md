@@ -40,6 +40,13 @@ failures, not bypassed by opening windows in front of the user.
 The earlier runner only set `SW_HIDE`. That startup hint could be overridden by Blender
 and was insufficient to prevent focus stealing.
 
+The `image_delivery` fixture exercises actual socket/timer export/reimport, all four encodings
+for COLOR/DATA, controlled color/alpha camera comparisons, a complete 4096² raw EXR, cancellation,
+retained-file audit and native undo. Use `--case image_delivery --timeout 900` through the runner.
+On Windows it requires at least 8 GiB available host RAM before allocating; it does not induce
+global memory pressure or use a visible fallback. Its native decode/source-validation tails
+are measured, not assumed to meet the cooperative CPU-slice target.
+
 ## Other platforms
 
 Private-desktop execution is Windows-only. UI checks on Linux/macOS are reported as
