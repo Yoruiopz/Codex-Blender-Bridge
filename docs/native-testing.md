@@ -3,7 +3,8 @@
 Run native checks through `scripts/run_blender_checks.py`, not by launching the UI smoke
 scripts directly. The default selection is background-only; `--include-interactive` adds
 the fixtures that need real windows, viewport drawing and native undo. An explicit
-`--case` can select any fixture, including a UI fixture.
+`--case` can select any fixture, including a UI fixture. Phased cases are opt-in by default;
+`--include-interactive` selects the complete registry, including those cases.
 
 ```powershell
 .\.venv\Scripts\python.exe scripts/run_blender_checks.py --blender "C:\Program Files\Blender Foundation\Blender 5.1\blender.exe" --include-interactive --output build/blender-checks
@@ -13,6 +14,32 @@ Choose a new output directory each time. Reports retain source hashes, versions,
 per-case execution mode, timeout/failure and native success evidence. A clean process exit
 without a valid fixture marker is not a pass. Isolated scenes and config/scripts/datafiles/
 temporary recovery folders keep these tests separate from an existing user project.
+
+## Fresh-process phases
+
+`image_reopen`, `image_portability_probe`, `task_plans` and `asset_delivery` launch a writer
+then a fresh reader. Each phase has its own timeout, temporary profile, log, completion
+status and correlated process-instance evidence. The reader starts only after the writer
+has a valid marker and successful exit; a timeout or failed writer never starts a reader.
+Only the owned artifact bundle is shared. PID reuse is allowed; independent issued instance
+tokens are required. On Windows any UI phase retains the private-desktop isolation contract.
+
+`image_reopen` exports eight small COLOR/DATA encoding variants and a complete 4096² raw DATA
+texture, binds FILE versions and explicitly saves an owned project in a child folder. Its
+reader opens the saved project with new-profile consent, refreshes `//../textures/...` sources
+through typed tools, checks complete pixel digests, protected bindings and eight matched
+32px RGBA8 camera pairs. Missing-source relocation, revoked read consent and denied saving
+are exercised. It does not certify edited generated input durability, UI undo or artistic
+quality. UI file-load inspection is deferred to the next timer tick. The 4K case requires
+8 GiB available RAM on Windows; a 900-second per-phase timeout is appropriate.
+
+`image_portability_probe` contrasts FILE_BYTES and CURRENT_PIXELS with external sources
+unavailable in the reader, then exercises typed packed versions and exact original-ID
+loaded-float restoration. See [its proven limits](image-portability.md). `task_plans` verifies
+explicit scene persistence/load without baseline reuse. `asset_delivery` verifies static and
+animated GLB/FBX files by hashes and sampled evaluated geometry in a fresh process, within
+the [reviewed export subset](asset-delivery.md). These are separate development checks, not
+installed-package, Windows-version or full 1.0 acceptance.
 
 ## Windows: private desktop, not just a hidden-window hint
 
@@ -53,6 +80,13 @@ Private-desktop execution is Windows-only. UI checks on Linux/macOS are reported
 `interactive_display`, require a display, and may show windows. Use background-only runs
 or a separately managed test display/session where needed; the runner does not claim
 cross-platform hidden UI support.
+
+Large Linux fixtures measure `/proc/meminfo` availability together with the tightest
+visible cgroup-v2 ancestor headroom before requiring 8 GiB. An unmeasurable hierarchy
+fails before allocating the workload. Process RSS and its lifetime high-water mark are
+read from procfs. These are point-in-time/lifetime measurements, not a memory reservation,
+allocation cap or constrained-memory acceptance. Other-platform unsupported probes remain
+explicit; no Windows acceptance is inferred from a Linux test display.
 
 Win32 contracts: [desktop creation](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-createdesktopw),
 [startup desktop](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/ns-processthreadsapi-startupinfow),

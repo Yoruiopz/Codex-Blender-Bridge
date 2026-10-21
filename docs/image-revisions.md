@@ -109,9 +109,17 @@ pause/stop/unsupported-mode/animation rejections and deliberately incomplete cle
 No user project/preferences are saved. Run through the [non-visible test runner](native-testing.md).
 
 This is not a representative production prop or full LOOK-01 acceptance. In-place image editing,
-durable pixel recovery, packing/unpacking/saving, full painting/baking, compositor images, broader
+broader durable pixel recovery, packing/unpacking, full painting/baking, compositor images, broader
 formats and jobs remain mandatory in the [full 1.0 plan](plan-1.0.md).
 Separate [bounded UV-image brushes](texture-painting.md) now create generated paint versions;
 they do not solve these identity-preserving or durable image lifecycle requirements.
+
+Default refresh also accepts the existing image's stored `//` dependency after an explicit
+Save As. Resolution uses the saved local project and preserves canonical alias semantics;
+the original filepath, project anchor and approved root are revalidated during access.
+Caller-supplied relocation remains strictly absolute and can repair a missing old source.
+The separate-process `image_reopen` fixture exercises approved Save As, fresh-profile consent,
+typed refresh, complete pixel digests and matched camera evidence. It does not certify edited
+generated inputs, crash durability or whole-project production delivery.
 
 Native data semantics: [Blender Image API](https://docs.blender.org/api/4.5/bpy.types.Image.html).

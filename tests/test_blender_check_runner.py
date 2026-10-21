@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -128,3 +129,66 @@ def test_background_windows_case_cannot_create_console(runner, monkeypatch, tmp_
         return SimpleNamespace(returncode=0)
     monkeypatch.setattr(runner.subprocess, "run", run)
     assert runner.run_case(Path("blender.exe"), "core", tmp_path, 10)["status"] == "failed"
+
+
+def test_phased_case_has_independent_profiles_and_process_instances(runner, monkeypatch, tmp_path):
+    profiles = []
+    def run(command, **kwargs):
+        phase = command[command.index("--bridge-phase") + 1]
+        bundle = Path(command[command.index("--bridge-bundle") + 1])
+        assert bundle == tmp_path / "image_reopen-bundle"
+        if phase == "writer":
+            (bundle / "writer.finished").write_text("closed")
+        else:
+            assert (bundle / "writer.finished").is_file()
+        profiles.append({key: kwargs["env"][key] for key in
+                         ("TEMP", "BLENDER_USER_CONFIG", "BLENDER_USER_SCRIPTS", "BLENDER_USER_DATAFILES")})
+        marker = runner.PHASED_CASES["image_reopen"][0 if phase == "writer" else 1]
+        payload = {"blender_version": "5.1.2", "phase": phase, "process_id": 12,
+                   "process_instance": kwargs["env"]["BRIDGE_TEST_PROCESS_TOKEN"]}
+        kwargs["stdout"].write((marker + json.dumps(payload)).encode())
+        assert kwargs["timeout"] == 13
+        return SimpleNamespace(returncode=0)
+    monkeypatch.setattr(runner.subprocess, "run", run)
+    result = runner.run_case(Path("blender"), "image_reopen", tmp_path, 13)
+    assert result["status"] == "passed" and result["fresh_process_verified"]
+    assert result["phase_sequence"] == ["writer", "reader"]
+    # PID reuse is permitted; the runner's independently issued instances differ.
+    assert result["phases"][0]["process_instance"] != result["phases"][1]["process_instance"]
+    assert all(profiles[0][key] != profiles[1][key] for key in profiles[0])
+    assert {p["log"] for p in result["phases"]} == {
+        str(tmp_path / "image_reopen-writer.log"), str(tmp_path / "image_reopen-reader.log")}
+
+
+@pytest.mark.parametrize("failure", ["timeout", "exit", "marker", "identity"])
+def test_failed_writer_never_starts_reader(runner, monkeypatch, tmp_path, failure):
+    calls = []
+    def run(command, **kwargs):
+        phase = command[command.index("--bridge-phase") + 1]
+        calls.append(phase)
+        payload = {"blender_version": "5.1.2", "phase": phase, "process_id": 99,
+                   "process_instance": kwargs["env"]["BRIDGE_TEST_PROCESS_TOKEN"] if failure != "identity" else "wrong"}
+        if failure != "marker":
+            kwargs["stdout"].write((runner.PHASED_CASES["image_reopen"][0] + json.dumps(payload)).encode())
+        if failure == "timeout":
+            raise subprocess.TimeoutExpired(command, 1)
+        return SimpleNamespace(returncode=1 if failure == "exit" else 0)
+    monkeypatch.setattr(runner.subprocess, "run", run)
+    result = runner.run_case(Path("blender"), "image_reopen", tmp_path, 1)
+    assert calls == ["writer"] and not result["reader_started"]
+    assert result["status"] == ("timeout" if failure == "timeout" else "failed")
+    assert not result["fresh_process_verified"]
+
+
+def test_phased_version_mismatch_is_failure(runner, monkeypatch, tmp_path):
+    def run(command, **kwargs):
+        phase = command[command.index("--bridge-phase") + 1]
+        marker = runner.PHASED_CASES["image_reopen"][0 if phase == "writer" else 1]
+        payload = {"blender_version": "4.5.1" if phase == "writer" else "5.1.2",
+                   "phase": phase, "process_id": 99,
+                   "process_instance": kwargs["env"]["BRIDGE_TEST_PROCESS_TOKEN"]}
+        kwargs["stdout"].write((marker + json.dumps(payload)).encode())
+        return SimpleNamespace(returncode=0)
+    monkeypatch.setattr(runner.subprocess, "run", run)
+    result = runner.run_case(Path("blender"), "image_reopen", tmp_path, 1)
+    assert result["status"] == "failed" and not result["fresh_process_verified"]

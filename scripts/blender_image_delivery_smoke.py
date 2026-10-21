@@ -1,6 +1,6 @@
 """Real socket/timer export/reimport, full 4K raw data and native undo evidence.
 
-Only run through run_blender_checks.py on its private Windows desktop.
+Run through run_blender_checks.py: private Windows desktop or an isolated Linux test display.
 The worker owns sockets/JSON, never bpy. All fixture faults run on the main thread.
 """
 from __future__ import annotations
@@ -240,6 +240,7 @@ def setup():
         scene_data = bpy.context.scene
         scene_data.camera, scene_data.render.engine = camera, "CYCLES"
         scene_data.cycles.device, scene_data.cycles.samples = "CPU", 1
+        scene_data.cycles.use_denoising = False
         scene_data.render.resolution_x = scene_data.render.resolution_y = 32
         scene_data.render.resolution_percentage = 100
         scene_data.view_settings.view_transform = "Standard"

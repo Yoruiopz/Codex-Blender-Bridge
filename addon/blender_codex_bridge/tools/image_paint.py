@@ -31,6 +31,7 @@ def _require(context: Any, image: Any | None = None, *, modifying=False) -> None
         required.append(Permission.ACCESS_EXTERNAL_FILES)
     context.require(*required)
     images._check(context)
+    context.require(*required)
     state = getattr(context, "state", None)
     if modifying and state is not None:
         flags = state.snapshot()
@@ -42,16 +43,26 @@ def _require(context: Any, image: Any | None = None, *, modifying=False) -> None
 
 def _read(context: Any, image: Any, *, modifying=False, maximum_pixels=brush.MAX_PIXELS) -> tuple[array, int, int, dict | None]:
     _require(context, image, modifying=modifying)
-    file = images.binding_source(context, image)
+    source = images.source_reference(context, image) if image.source == "FILE" else None
+    file = images.binding_source(context, image, source=source)
     if (image.source, image.type) not in {("FILE", "IMAGE"), ("GENERATED", "UV_TEST")} or image.channels != 4:
         raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Pixel tools support loaded simple four-channel RGBA images only.")
     width, height = brush.size(*(int(value) for value in image.size), maximum_pixels=maximum_pixels)
     if len(image.pixels) != width * height * 4:
         raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Pixel buffer length does not match its complete RGBA dimensions.")
     _require(context, image, modifying=modifying)
+    if source is not None:
+        source.check(context)
+        context.require(Permission.EDIT_MATERIALS if modifying else Permission.INSPECT_SCENE,
+                        Permission.ACCESS_EXTERNAL_FILES)
     values = array("f", [0]) * (width * height * 4)
     image.pixels.foreach_get(values)
     _require(context, image, modifying=modifying)
+    if source is not None:
+        source.check(context)
+        context.require(Permission.EDIT_MATERIALS if modifying else Permission.INSPECT_SCENE,
+                        Permission.ACCESS_EXTERNAL_FILES)
+        file = {**file, "source_reference": source.evidence()}
     return values, width, height, file
 
 

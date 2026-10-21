@@ -9,6 +9,7 @@ from ..errors import BridgeError, ErrorCode, invalid_argument
 from ..permissions import Permission
 from ..tool_registry import ToolContext, ToolRegistry
 from ..utils import get_object, require_blender
+from ._object_safety import require_local_object
 from ._rna import (
     apply_assignments,
     bounded_name,
@@ -178,6 +179,7 @@ def add_constraint(context: ToolContext, params: Mapping[str, Any]) -> dict[str,
     del context
     bpy = require_blender()
     obj = _object(params)
+    require_local_object(obj, operation="Constraint editing")
     constraint_type = bounded_name(params.get("constraint_type"), "constraint_type", maximum=64).upper()
     allowed = _allowed(constraint_type)
     requested_name = params.get("constraint_name")
@@ -224,6 +226,7 @@ def set_constraint(context: ToolContext, params: Mapping[str, Any]) -> dict[str,
     del context
     bpy = require_blender()
     obj = _object(params)
+    require_local_object(obj, operation="Constraint editing")
     constraint = _named_constraint(obj, params.get("constraint_name"))
     assignments = prepare_assignments(
         constraint,
@@ -245,6 +248,7 @@ def set_constraint(context: ToolContext, params: Mapping[str, Any]) -> dict[str,
 def remove_constraint(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
     del context
     obj = _object(params)
+    require_local_object(obj, operation="Constraint editing")
     constraint = _named_constraint(obj, params.get("constraint_name"))
     removed = {"name": constraint.name, "type": constraint.type}
     try:

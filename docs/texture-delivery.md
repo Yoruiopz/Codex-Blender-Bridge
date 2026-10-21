@@ -74,7 +74,8 @@ revalidation, synchronous reimport preflight, fsync or undo. These tails are out
 and cancellation. A 4K job may need an explicit 300-second deadline; neither slice settings nor
 pixel-buffer estimates are real-time, process-memory or production-throughput guarantees.
 Full source/native arrays remain; 4K RGBA float arrays alone are 256 MiB each, excluding
-Blender/GPU/undo memory. Fresh-process reopening, crash durability, packing/save/reopen,
+Blender/GPU/undo memory. Bounded FILE-version fresh-process reopening has a dedicated fixture;
+crash durability, broader packing/dependency lifecycle,
 memory-pressure/8K/UDIM, broader OCIO/format and production artist acceptance remain open.
 
 ## Required end-to-end outcome
@@ -212,7 +213,8 @@ are explicitly disposable and removed by the fixture's temporary-directory owner
    preserve Blender-authoritative edit/file/save grants and independently consented deletion.
 5. Extend the implemented 4K cooperative lifecycle under memory pressure and broader workloads;
    preserve the guarded image publication and truthful external-file/native-undo distinction.
-6. Fresh-process/reopen, complete numeric verification and matched material/render evidence,
+6. Broaden the implemented separate-process FILE-version save/reopen fixture's complete
+   numeric verification and matched material/render evidence,
    including raw recovery, quantization, alpha-zero, HDR/data, cancellation, path races,
    preservation, invalid context and deletion-denied failures.
 7. Explicit packing/approved `.blend` save/reopen and production delivery/upgrade acceptance.

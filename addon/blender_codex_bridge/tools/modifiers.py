@@ -10,6 +10,7 @@ from ..permissions import Permission
 from ..selection import clear_selection_references
 from ..tool_registry import ToolContext, ToolRegistry
 from ..utils import get_object, preserved_object_context, require_blender
+from ._object_safety import require_local_object, require_unkeyed_object_data
 from ._rna import (
     apply_assignments,
     bounded_name,
@@ -242,6 +243,7 @@ def add_modifier(context: ToolContext, params: Mapping[str, Any]) -> dict[str, A
     del context
     bpy = require_blender()
     obj = _object(params)
+    require_local_object(obj, operation="Modifier editing")
     modifier_type = bounded_name(params.get("modifier_type"), "modifier_type", maximum=64).upper()
     allowed = _allowed(modifier_type)
     requested_name = params.get("modifier_name")
@@ -289,6 +291,7 @@ def set_modifier(context: ToolContext, params: Mapping[str, Any]) -> dict[str, A
     del context
     bpy = require_blender()
     obj = _object(params)
+    require_local_object(obj, operation="Modifier editing")
     modifier = _named_modifier(obj, params.get("modifier_name"))
     assignments = prepare_assignments(
         modifier,
@@ -309,6 +312,7 @@ def set_modifier(context: ToolContext, params: Mapping[str, Any]) -> dict[str, A
 def remove_modifier(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
     del context
     obj = _object(params)
+    require_local_object(obj, operation="Modifier editing")
     modifier = _named_modifier(obj, params.get("modifier_name"))
     removed = {"name": modifier.name, "type": modifier.type}
     try:
@@ -331,6 +335,7 @@ def apply_modifier(context: ToolContext, params: Mapping[str, Any]) -> dict[str,
     del context
     bpy = require_blender()
     obj = _object(params)
+    require_unkeyed_object_data(obj, operation="Modifier application")
     modifier = _named_modifier(obj, params.get("modifier_name"))
     if obj.mode != "OBJECT":
         raise BridgeError(

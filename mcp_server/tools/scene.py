@@ -16,6 +16,9 @@ EvidenceField = Literal[
     "weights",
     "material_slots",
     "shader_inputs",
+    "rig",
+    "animation",
+    "shader_dependencies",
 ]
 
 

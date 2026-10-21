@@ -12,7 +12,8 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPOSITORY_ROOT / "addon"))
 
 from blender_codex_bridge import selection  # noqa: E402
-from blender_codex_bridge.tools import constraints, modifiers, uv  # noqa: E402
+from blender_codex_bridge.errors import BridgeError, ErrorCode  # noqa: E402
+from blender_codex_bridge.tools import constraints, modifiers, transforms, uv  # noqa: E402
 
 
 def main() -> None:
@@ -50,6 +51,35 @@ def main() -> None:
             object(), {"object_name": mesh.name, "modifier_name": "Safe Bevel"}
         )["modifier"]["settings"]["width"]
         assert abs(inspected_width - 0.075) < 1e-6
+
+        # Object-owned transforms may change an alias, but applying transforms or
+        # a modifier must never write a protected alias's shared mesh implicitly.
+        alias = mesh.copy()
+        alias.name = "DomainSmokeProtectedAlias"
+        bpy.context.scene.collection.objects.link(alias)
+        created_objects.append(alias.name)
+        assert mesh.data.users == 2
+        protected_vertices = [tuple(vertex.co) for vertex in mesh.data.vertices]
+        selection_before = [item.name for item in bpy.context.selected_objects]
+        for handler, arguments in (
+            (transforms.apply_transform, {"object_name": mesh.name, "scale": True}),
+            (modifiers.apply_modifier, {"object_name": mesh.name, "modifier_name": "Safe Bevel"}),
+        ):
+            try:
+                handler(object(), arguments)
+            except BridgeError as error:
+                assert error.code == ErrorCode.NOT_IMPLEMENTED
+            else:
+                raise AssertionError("Shared mesh was accepted for destructive application")
+            assert mesh.data == alias.data
+            assert protected_vertices == [tuple(vertex.co) for vertex in alias.data.vertices]
+            assert [item.name for item in bpy.context.selected_objects] == selection_before
+            assert mesh.modifiers.get("Safe Bevel") is not None
+        transforms.set_transform(object(), {"object_name": alias.name, "location": [3, 0, 0]})
+        assert tuple(mesh.location) == (0, 0, 0)
+        assert tuple(alias.location) == (3, 0, 0)
+        bpy.data.objects.remove(alias, do_unlink=True)
+        assert mesh.data.users == 1
 
         added_constraint = constraints.add_constraint(
             object(),

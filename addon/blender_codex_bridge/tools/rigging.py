@@ -21,6 +21,7 @@ from ..utils import (
     require_blender,
     vector3,
 )
+from ._object_safety import require_local_object, require_single_user_object_data
 
 _MAX_COORDINATE = 1_000_000.0
 _MAX_BONES = 2_048
@@ -170,6 +171,7 @@ def _select_only(*objects: Any, active: Any) -> None:
 
 @contextmanager
 def _edit_armature(armature: Any) -> Iterator[Any]:
+    require_single_user_object_data(armature, operation="Armature bone editing")
     bpy = require_blender()
     with preserved_object_context():
         _ensure_object_mode()
@@ -496,6 +498,7 @@ def remove_bone(context: ToolContext, params: Mapping[str, Any]) -> dict[str, An
 def pose_transform(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
     del context
     armature = _armature_object(params)
+    require_local_object(armature, operation="Pose editing")
     if armature.mode == "EDIT":
         raise BridgeError(
             ErrorCode.INVALID_MODE,
@@ -570,6 +573,7 @@ def pose_transform(context: ToolContext, params: Mapping[str, Any]) -> dict[str,
 def add_constraint(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
     del context
     armature = _armature_object(params)
+    require_local_object(armature, operation="Pose editing")
     bone_name = _required_name(params, "bone_name", maximum=63)
     pose_bone = armature.pose.bones.get(bone_name)
     if pose_bone is None:
@@ -617,6 +621,7 @@ def add_constraint(context: ToolContext, params: Mapping[str, Any]) -> dict[str,
 def remove_constraint(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
     del context
     armature = _armature_object(params)
+    require_local_object(armature, operation="Pose editing")
     bone_name = _required_name(params, "bone_name", maximum=63)
     constraint_name = _required_name(params, "constraint_name", maximum=63)
     pose_bone = armature.pose.bones.get(bone_name)
@@ -740,6 +745,7 @@ def bind_mesh(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]
     mesh = get_object(params.get("mesh_object"), allow_active=False)
     if mesh.type != "MESH":
         raise invalid_argument("'mesh_object' must name a mesh object.", object_type=mesh.type)
+    require_single_user_object_data(mesh, operation="Armature binding")
     armature_name = params.get("armature_object")
     armature = get_object(armature_name, allow_active=False)
     if armature.type != "ARMATURE":

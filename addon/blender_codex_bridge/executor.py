@@ -15,7 +15,7 @@ from .errors import BridgeError, ErrorCode
 from .permissions import PermissionManager
 from .protocol import PROTOCOL_VERSION, Request, Response
 from .scene_evidence import SceneEvidenceStore
-from .state import BridgeState
+from .state import BridgeState, bounded_external_effects
 from .tool_registry import ToolContext, ToolRegistry
 from .utils import affected_objects_from_result, require_blender
 
@@ -208,6 +208,7 @@ class MainThreadExecutor:
                 success=True,
                 duration_ms=duration_ms,
                 affected_objects=affected_objects_from_result(result),
+                external_effects=bounded_external_effects(result.get("external_effects")) if isinstance(result, Mapping) else None,
             ) if spec.record_history else None
             if spec.modifies and isinstance(result, Mapping):
                 result = dict(result)
@@ -226,6 +227,14 @@ class MainThreadExecutor:
         except BridgeError as error:
             duration_ms = (time.perf_counter() - start) * 1000.0
             execution_started = bool(error.context.get("execution_started"))
+            effects = bounded_external_effects(error.context.get("external_effects"))
+            if effects is not None and (effects.get("file_published")
+                    or effects.get("publication_outcome_unknown") or effects.get("publication_attempted")
+                    or effects.get("retained_staging_path")):
+                # Scene preservation/native undo cannot reverse an external file
+                # or establish that a publication attempt had no filesystem effect.
+                execution_started = True
+                error.context.update(execution_started=True, possible_mutation=True, verification_required=True)
             if spec is not None and spec.modifies and undo_boundary:
                 # Handler errors may follow a partial edit, even if not explicitly annotated.
                 execution_started = True
@@ -254,6 +263,7 @@ class MainThreadExecutor:
                 duration_ms=duration_ms,
                 affected_objects=_affected_objects_from_error(error),
                 error_code=error.code,
+                external_effects=effects,
             )
             self.state.end_execution(error.message)
             if error.code == ErrorCode.PERMISSION_DENIED.value:

@@ -11,6 +11,7 @@ from ..errors import BridgeError, ErrorCode, invalid_argument
 from ..permissions import Permission
 from ..tool_registry import ToolContext, ToolRegistry
 from ..utils import bool_param, float_param, get_object, int_param, require_blender
+from ._object_safety import require_owned_action
 
 _MAX_ABS_FRAME = 1_000_000.0
 _MAX_DATA_PATH_LENGTH = 512
@@ -314,6 +315,7 @@ def set_range(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]
 def insert_keyframe(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
     del context
     obj = get_object(params.get("object_name"), allow_active=False)
+    require_owned_action(obj, operation="Keyframe editing")
     data_path = _data_path(params)
     _validate_resolvable_data_path(obj, data_path)
     bpy = require_blender()
@@ -368,6 +370,7 @@ def insert_keyframe(context: ToolContext, params: Mapping[str, Any]) -> dict[str
 def delete_keyframe(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
     del context
     obj = get_object(params.get("object_name"), allow_active=False)
+    require_owned_action(obj, operation="Keyframe editing")
     data_path = _data_path(params)
     _validate_resolvable_data_path(obj, data_path)
     bpy = require_blender()

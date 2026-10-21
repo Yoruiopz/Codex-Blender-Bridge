@@ -9,10 +9,11 @@ from dataclasses import dataclass
 from itertools import islice
 from typing import Any
 
-from ..errors import invalid_argument
+from ..errors import BridgeError, ErrorCode, invalid_argument
 from ..permissions import Permission
 from ..tool_registry import ToolContext, ToolRegistry
 from ..utils import bool_param, float_param, get_object, require_blender, similar_names, vector3
+from ._object_safety import require_local_editable_id, require_single_user_object_data
 
 _UNIT_SYSTEMS = {"NONE", "METRIC", "IMPERIAL"}
 _CAMERA_TYPES = {"PERSP", "ORTHO", "PANO"}
@@ -252,6 +253,10 @@ def configure_scene(context: ToolContext, params: Mapping[str, Any]) -> dict[str
     del context
     prepared = _prepare_scene(params)
     scene = prepared.scene
+    if prepared.set_camera or any(value is not None for value in (
+        prepared.unit_system, prepared.unit_scale_length, prepared.use_gravity, prepared.gravity,
+    )):
+        require_local_editable_id(scene, operation="Scene configuration")
     saved = {
         "camera": scene.camera,
         "unit_system": scene.unit_settings.system,
@@ -450,6 +455,13 @@ def configure_camera(context: ToolContext, params: Mapping[str, Any]) -> dict[st
     prepared = _prepare_camera(params)
     obj = prepared.obj
     camera = prepared.camera
+    if (
+        prepared.camera_type is not None or prepared.numeric or prepared.dof_enabled is not None
+        or prepared.set_focus or prepared.aperture_fstop is not None
+    ):
+        require_single_user_object_data(obj, operation="Camera configuration")
+    if prepared.set_active_for_scene and prepared.active_scene is not None:
+        require_local_editable_id(prepared.active_scene, operation="Active camera assignment")
     saved_numeric = {
         name: _copied_rna_value(getattr(camera, name)) for name, _value in prepared.numeric
     }
@@ -556,6 +568,11 @@ def configure_light(context: ToolContext, params: Mapping[str, Any]) -> dict[str
     prepared = _prepare_light(params)
     obj = prepared.obj
     light = prepared.light
+    if (
+        prepared.light_type is not None or prepared.energy is not None
+        or prepared.color is not None or prepared.numeric
+    ):
+        require_single_user_object_data(obj, operation="Light configuration")
     saved_numeric = {
         name: _copied_rna_value(getattr(light, name))
         for name, _value in prepared.numeric
@@ -661,6 +678,28 @@ def configure_world(context: ToolContext, params: Mapping[str, Any]) -> dict[str
     scene = prepared.scene
     world = prepared.world
     created = world is None
+    if created or scene.world is not world:
+        require_local_editable_id(scene, operation="World assignment")
+    changes_world = (
+        prepared.explicit_use_nodes is not None or prepared.color is not None
+        or prepared.strength is not None
+    )
+    if changes_world:
+        require_local_editable_id(scene, operation="World configuration")
+    if world is not None and changes_world:
+        require_local_editable_id(world, operation="World configuration")
+        tree = getattr(world, "node_tree", None)
+        if tree is not None:
+            require_local_editable_id(tree, operation="World node configuration")
+        users = int(getattr(world, "users", 1))
+        effective_users = users - int(bool(getattr(world, "use_fake_user", False)))
+        allowed_users = 1 if scene.world is world else 0
+        if effective_users > allowed_users:
+            raise BridgeError(
+                ErrorCode.NOT_IMPLEMENTED,
+                "World configuration requires a World owned only by the target scene; shared worlds are not changed implicitly.",
+                {"scene": scene.name, "world": world.name, "world_users": users},
+            )
     previous_scene_world = scene.world
     saved_use_nodes = bool(world.use_nodes) if world is not None else None
     saved_color = _copied_rna_value(world.color) if world is not None else None
@@ -674,7 +713,8 @@ def configure_world(context: ToolContext, params: Mapping[str, Any]) -> dict[str
                 raise RuntimeError("Prepared world creation has no data-block name.")
             world = prepared.bpy.data.worlds.new(prepared.new_world_name)
             created_world = world
-        scene.world = world
+        if scene.world is not world:
+            scene.world = world
         if prepared.explicit_use_nodes is not None:
             world.use_nodes = prepared.explicit_use_nodes
         if prepared.color is not None:

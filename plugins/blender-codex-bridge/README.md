@@ -19,7 +19,7 @@ workflow skill for Codex. Install the standalone MCP server separately.
 Restart Codex/start a new task after upgrading. Use plugin registration **or** manual MCP
 registration, not both. For an isolated virtual environment without changing PATH, use
 the [manual installation guide](https://github.com/Yoruiopz/Codex-Blender-Bridge/blob/v0.3.0/README.md#install--no-source-build-needed)
-instead. The repository is currently private, so downloads require repository access.
+instead.
 
 Run `scripts/doctor.py` with Python for a read-only check of the command installation and Blender listener.
 

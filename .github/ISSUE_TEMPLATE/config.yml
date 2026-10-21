@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Installation and usage help
+    url: https://github.com/Yoruiopz/Codex-Blender-Bridge/blob/main/SUPPORT.md
+    about: Check installation, troubleshooting and the details needed for a useful issue.
+  - name: Security reporting
+    url: https://github.com/Yoruiopz/Codex-Blender-Bridge/blob/main/SECURITY.md
+    about: Use the private-reporting guidance; do not post sensitive details in an issue.

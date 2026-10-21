@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "target_version": "1.0.0",
+  "commit": null,
+  "source_sha256": null,
+  "source_files": {},
+  "support": {
+    "os": "Windows 11",
+    "blender_lts": "4.5.1",
+    "blender_stable": "5.1.2"
+  },
+  "packages": {},
+  "requirements": {
+    "EVID-01": {"status": "open", "evidence": []},
+    "SAFE-01": {"status": "open", "evidence": []},
+    "SAFE-02": {"status": "open", "evidence": [], "progress": "Object/data/Action/camera/light/World guards implemented; full mutator/dependency audit and Windows recovery acceptance remain."},
+    "REC-01": {"status": "open", "evidence": [], "progress": "Bounded packed raw snapshots restore matching loaded float image IDs; byte/unloaded/4K/UI-undo/memory-pressure and full mixed-editor recovery remain."},
+    "JOB-01": {"status": "open", "evidence": []},
+    "EVID-02": {"status": "open", "evidence": [], "progress": "Optional bounded rig, animation and nested shader dependency snapshots implemented; full preservation acceptance remains."},
+    "ASSET-01": {"status": "open", "evidence": [], "progress": "Previewed explicit-rail vertex/edge slides and exact-corner UV align/stitch/island relax implemented; full reference-constrained modeling/retopology and reviewed production quality remain."},
+    "LOOK-01": {"status": "open", "evidence": []},
+    "PAINT-01": {"status": "open", "evidence": [], "progress": "Explicit-mask base-mesh PUSH/SMOOTH, POINT/CORNER color lifecycle/painting and weight brush strokes implemented; surface texture projection/stencils, broader sculpt/paint and production/native-undo acceptance remain."},
+    "CHAR-01": {"status": "open", "evidence": [], "progress": "Independent Action/curve revision, weight brushes/geometric mirror/barycentric surface transfer, numeric rig controls and non-scripted bone drivers implemented; full IK/control rigs, NLA/action lifecycle, deformation diagnostics and protected character benchmark remain."},
+    "SIM-01": {"status": "open", "evidence": [], "progress": "Reviewed nested GN instances/copies and modifier inputs implemented; broader zones, solver/cache/bake jobs and production simulation remain."},
+    "UX-01": {"status": "open", "evidence": [], "progress": "Revisioned task plans, explicit persistence and advisory protected comparisons implemented; references/variants/previews/full artist interaction remain."},
+    "DELIVER-01": {"status": "open", "evidence": [], "progress": "Stored relative textures, fresh-process 4K FILE delivery, bounded packed snapshots and material-free GLB/FBX export implemented; broad import/material/production acceptance remains."},
+    "RC-01": {"status": "open", "evidence": [], "progress": "Qualification checker and manual gated publication workflow implemented; Windows 11 machine unavailable, exact packaged A-F and upgrade/rollback acceptance absent."}
+  },
+  "quality_matrix": null,
+  "native_matrices": [],
+  "installed_scenarios": []
+}

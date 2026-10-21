@@ -3,7 +3,8 @@
 Unreleased on `main`; not in the published 0.3.0 packages. These structured tools add image
 assets and shader binding. Separate [pixel/brush tools](texture-painting.md) create generated
 textures and paint independent versions. [Cooperative export/reimport](texture-delivery.md)
-writes reviewed textures to exact approved paths; baking, packing and unrestricted file access remain unsupported.
+writes reviewed textures to exact approved paths. Separate [packed versions and raw snapshots](image-portability.md)
+provide bounded portability/recovery; broader packing acceptance, baking and unrestricted file access remain unsupported.
 
 ## Set up in Blender
 
@@ -140,7 +141,12 @@ with separate roughness, protected pixels/source files, structural comparisons a
 recovery. Matched captures require visual review. No user project or preferences are saved.
 
 [Versioned node refresh/relocation](image-revisions.md) now works at root/nested paths without
-reloading the original buffer. In-place reload/pixel editing and durable pixel recovery,
-packing/unpacking/saving, painting/baking, broader formats, compositor image workflows,
+reloading the original buffer. Stored Blender-relative `//` dependencies resolve canonically
+against a saved local project, including parent components; unsaved projects never use the
+working directory. Explicit caller load, relocation and output paths remain absolute. Live
+reads recheck the project anchor, original alias, approved folder and external-file consent.
+Bounded FILE-version saving/reopening and reviewed export/reimport have separate native
+fixtures. In-place reload/pixel editing, broader durable recovery, packing/unpacking,
+full painting/baking, broader formats, compositor image workflows,
 production-material reuse and responsive decoding remain open. This
 advances LOOK-01, not complete [repair-and-texture or 1.0 acceptance](plan-1.0.md).

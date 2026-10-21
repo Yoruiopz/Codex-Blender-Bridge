@@ -17,6 +17,7 @@ from ..utils import (
     serialize_transform,
     vector3,
 )
+from ._object_safety import require_local_object, require_unkeyed_object_data
 
 
 def _rotation_value(params: Mapping[str, Any]) -> tuple[float, float, float]:
@@ -29,6 +30,7 @@ def _rotation_value(params: Mapping[str, Any]) -> tuple[float, float, float]:
 def set_transform(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
     del context
     obj = get_object(params.get("object_name"), allow_active=False)
+    require_local_object(obj, operation="Object transform editing")
     if not any(name in params for name in ("location", "rotation", "rotation_euler", "scale")):
         raise invalid_argument("At least one transform component is required.")
     parsed_location = vector3(params["location"], "location") if "location" in params else None
@@ -65,6 +67,7 @@ def translate(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]
     del context
     bpy = require_blender()
     obj = get_object(params.get("object_name"), allow_active=False)
+    require_local_object(obj, operation="Object transform editing")
     raw = params.get(
         "offset",
         params.get("translation", params.get("delta", params.get("vector"))),
@@ -87,6 +90,7 @@ def translate(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]
 def rotate(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
     del context
     obj = get_object(params.get("object_name"), allow_active=False)
+    require_local_object(obj, operation="Object transform editing")
     rotation = _rotation_value(params)
     space = str(params.get("space", "LOCAL")).upper()
     if space not in {"WORLD", "LOCAL"}:
@@ -113,6 +117,7 @@ def rotate(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
 def scale(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
     del context
     obj = get_object(params.get("object_name"), allow_active=False)
+    require_local_object(obj, operation="Object transform editing")
     raw = params.get("factors", params.get("factor", params.get("scale")))
     if isinstance(raw, (int, float)) and not isinstance(raw, bool):
         factors = (float_param({"factor": raw}, "factor", 1.0),) * 3
@@ -143,6 +148,7 @@ def apply_transform(context: ToolContext, params: Mapping[str, Any]) -> dict[str
     del context
     bpy = require_blender()
     obj = get_object(params.get("object_name"), allow_active=False)
+    require_unkeyed_object_data(obj, operation="Transform application")
     location = bool_param(params, "location", False)
     rotation = bool_param(params, "rotation", False)
     scale_value = bool_param(params, "scale", True)

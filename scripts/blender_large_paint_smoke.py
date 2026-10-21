@@ -1,7 +1,7 @@
 """4K tiled job, complete digest-only evidence, cancellation and native recovery.
 
 Isolated UI fixture; use run_blender_checks.py, never a visible desktop fallback.
-Requires 8 GiB available host RAM on Windows before starting the owned workload.
+Requires measured 8 GiB available RAM on Windows/Linux before the owned workload.
 """
 from __future__ import annotations
 
@@ -28,6 +28,9 @@ RESULT = {}
 
 
 def process_memory():
+    if sys.platform == "linux":
+        from native_resources import linux_process_memory
+        return linux_process_memory()
     if sys.platform != "win32":
         return {"supported": False, "scope": "Windows process memory probe only; not zero memory"}
     from ctypes import wintypes as w
@@ -45,6 +48,11 @@ def process_memory():
 
 
 def check_memory_headroom():
+    if sys.platform == "linux":
+        from native_resources import linux_available_memory
+        available = linux_available_memory()
+        assert available >= 8 * 1024**3, "4K fixture needs 8 GiB available RAM within host/cgroup limits"
+        return available
     if sys.platform == "win32":
         from ctypes import wintypes as w
         class Memory(ctypes.Structure):

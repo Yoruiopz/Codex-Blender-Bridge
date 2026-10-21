@@ -3,12 +3,23 @@
 from __future__ import annotations
 
 import logging
+import stat
 from collections.abc import Mapping
+from dataclasses import dataclass
 from itertools import islice
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 from ..errors import BridgeError, ErrorCode, invalid_argument
-from ..image_files import MAX_DIMENSION, MAX_FILE_BYTES, MAX_PIXELS, file_limits, preflight_file
+from ..image_files import (
+    MAX_DIMENSION,
+    MAX_FILE_BYTES,
+    MAX_PIXELS,
+    _absolute,
+    approved_file,
+    file_limits,
+    preflight_file,
+)
 from ..permissions import Permission
 from ..preferences import get_preferences
 from ..tool_registry import ToolContext, ToolRegistry
@@ -68,7 +79,113 @@ def _root() -> str:
     return getattr(get_preferences(), "texture_directory", "")
 
 
-def _source_file(context: ToolContext, raw: str):
+def _project_anchor() -> tuple[str, Path]:
+    bpy = require_blender()
+    raw = str(getattr(bpy.data, "filepath", ""))
+    if not raw or not getattr(bpy.data, "is_saved", True):
+        raise invalid_argument("A stored Blender-relative texture requires a saved local project; the working directory is never an anchor.")
+    candidate = _absolute(raw, "Saved project")
+    try:
+        resolved = candidate.resolve(strict=True)
+        # Reapply the local-drive/device policy after resolving any aliases.
+        _absolute(str(resolved), "Saved project")
+        if not stat.S_ISREG(resolved.stat().st_mode):
+            raise invalid_argument("The saved project must be an existing regular local file.")
+    except (OSError, RuntimeError) as exc:
+        raise invalid_argument("The saved project anchor could not be resolved.") from exc
+    return raw, resolved
+
+
+def _stored_alias(raw: str, project: Path | None) -> Path:
+    if not raw.startswith("//"):
+        return _absolute(raw, "Texture file")
+    tail = raw[2:]
+    if (not tail or len(raw) > 4096 or any(ord(c) < 32 for c in raw)
+            or tail.startswith(("/", "\\")) or PureWindowsPath(tail).drive
+            or any(":" in part for part in PureWindowsPath(tail).parts)):
+        raise invalid_argument("Stored Blender-relative texture path is invalid or exceeds its bounded window.")
+    try:
+        raw.encode("utf-8")
+    except UnicodeError as exc:
+        raise invalid_argument("Stored Blender-relative texture path must be valid UTF-8 text.") from exc
+    if project is None:
+        raise invalid_argument("Stored Blender-relative texture has no saved project anchor.")
+    # Preserve parent components until canonical resolution: lexical removal of
+    # '..' changes meaning when a preceding component is an alias.
+    return project.parent / tail
+
+
+@dataclass(frozen=True)
+class ImageSourceReference:
+    """One stored FILE dependency and its live, consent-checked resolution guard."""
+
+    image: Any
+    filepath: str
+    approved_root: str
+    resolved_root: Path
+    path: Path
+    project_filepath: str | None
+    project_path: Path | None
+
+    def evidence(self) -> dict:
+        return {"filepath": self.filepath, "resolved_filepath": str(self.path),
+                "project_filepath": self.project_filepath,
+                "resolved_project_filepath": str(self.project_path) if self.project_path else None,
+                "approved_texture_directory": self.approved_root,
+                "resolved_approved_texture_directory": str(self.resolved_root)}
+
+    def check(self, context: ToolContext) -> None:
+        context.require(Permission.ACCESS_EXTERNAL_FILES)
+        _check(context)
+        context.require(Permission.ACCESS_EXTERNAL_FILES)
+        if (_root() != self.approved_root or str(self.image.filepath) != self.filepath
+                or self.image.source != "FILE" or not local_editable(self.image)
+                or getattr(self.image, "is_multiview", False)):
+            raise BridgeError(ErrorCode.PERMISSION_DENIED, "Stored texture source or approved folder changed; reinspect before reading.")
+        project = None
+        if self.project_filepath is not None:
+            raw, project = _project_anchor()
+            if raw != self.project_filepath or project != self.project_path:
+                raise invalid_argument("Saved project anchor changed during texture access; reinspect before retrying.")
+        try:
+            root = _absolute(self.approved_root, "Texture folder").resolve(strict=True)
+            anchor = Path(self.project_filepath) if self.project_filepath is not None else None
+            alias = _stored_alias(self.filepath, anchor).resolve(strict=True)
+        except (OSError, RuntimeError) as exc:
+            raise invalid_argument("Stored texture source or approved folder could not be resolved.") from exc
+        if root != self.resolved_root or alias != self.path:
+            raise invalid_argument("Stored texture alias or approved folder was retargeted; reinspect before retrying.")
+        # Keep the complete approved-path/regular-file policy authoritative,
+        # including for a relative alias that resolves beyond its project folder.
+        if approved_file(str(alias), self.approved_root) != self.path:
+            raise invalid_argument("Stored texture source changed during access.")
+        context.require(Permission.ACCESS_EXTERNAL_FILES)
+
+
+def source_reference(context: ToolContext, image: Any) -> ImageSourceReference:
+    """Resolve only an existing local FILE Image; explicit tool paths stay absolute."""
+    context.require(Permission.ACCESS_EXTERNAL_FILES)
+    _check(context)
+    context.require(Permission.ACCESS_EXTERNAL_FILES)
+    if not local_editable(image) or image.source != "FILE" or getattr(image, "is_multiview", False):
+        raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Stored texture resolution requires a local editable single-view FILE image.")
+    raw, root = str(image.filepath), _root()
+    if not root:
+        raise BridgeError(ErrorCode.PERMISSION_DENIED, "Choose an approved texture folder in Blender's bridge settings first.")
+    project_raw, project = _project_anchor() if raw.startswith("//") else (None, None)
+    try:
+        resolved_root = _absolute(root, "Texture folder").resolve(strict=True)
+        anchor = Path(project_raw) if project_raw is not None else None
+        resolved = _stored_alias(raw, anchor).resolve(strict=True)
+        path = approved_file(str(resolved), root)
+    except (OSError, RuntimeError) as exc:
+        raise invalid_argument("Stored texture source could not be resolved.") from exc
+    reference = ImageSourceReference(image, raw, root, resolved_root, path, project_raw, project)
+    reference.check(context)
+    return reference
+
+
+def _source_file(context: ToolContext, raw: str, *, source: ImageSourceReference | None = None):
     context.require(Permission.ACCESS_EXTERNAL_FILES)
     _check(context)
     root = _root()
@@ -78,13 +195,19 @@ def _source_file(context: ToolContext, raw: str):
         if _root() != root:
             raise BridgeError(ErrorCode.PERMISSION_DENIED, "Approved texture folder changed during preflight; reinspect before retrying.")
         context.require(Permission.ACCESS_EXTERNAL_FILES)  # A cancellation callback can also revoke consent.
+        if source is not None:
+            if raw != str(source.path):
+                raise invalid_argument("Stored source reference does not match the requested texture path.")
+            source.check(context)
     path, proof = preflight_file(raw, root, check)
     return path, {**proof, "_approved_root": root}
 
 
-def _load_gate(context: ToolContext, approved_root: str | None = None) -> None:
+def _load_gate(context: ToolContext, approved_root: str | None = None, source: ImageSourceReference | None = None) -> None:
     context.require(Permission.EDIT_MATERIALS, Permission.ACCESS_EXTERNAL_FILES)
     _check(context)
+    if source is not None:
+        source.check(context)
     # The caller owns its registry/toolset gate: nodes.refresh_image also uses
     # this loader and must not acquire an undocumented materials-toolset gate.
     state = getattr(context, "state", None)
@@ -125,22 +248,23 @@ def _summary(image: Any) -> dict:
             "pixel_contents_verified": False}
 
 
-def binding_source(context: ToolContext, image: Any) -> dict | None:
+def binding_source(context: ToolContext, image: Any, *, source: ImageSourceReference | None = None) -> dict | None:
     """Validate an existing loaded image without changing/reloading it; reusable by group binding."""
     if not local_editable(image) or image.source not in {"FILE", "GENERATED"} or getattr(image, "is_multiview", False):
         raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Binding supports local editable single-view FILE/GENERATED images only.")
     if not image.has_data:
         raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Load the image buffer explicitly before binding it; no implicit reload is performed.")
-    source = None
+    proof = None
     if image.source == "FILE":
         context.require(Permission.ACCESS_EXTERNAL_FILES)
-        _path, header = _source_file(context, str(image.filepath))
+        source = source or source_reference(context, image)
+        _path, header = _source_file(context, str(source.path), source=source)
         _exr_interpretation(header, image.colorspace_settings.name, image.alpha_mode)
-        source = {k: v for k, v in header.items() if not k.startswith("_")}
+        proof = {k: v for k, v in header.items() if not k.startswith("_")}
     size = tuple(int(v) for v in image.size)
     if len(size) != 2 or min(size) < 1 or max(size) > MAX_DIMENSION or size[0] * size[1] > MAX_PIXELS:
         raise invalid_argument("Loaded image exceeds texture binding limits.")
-    return source
+    return proof
 
 
 def inspect_images(context: ToolContext, params: Mapping[str, Any]) -> dict:
@@ -174,7 +298,7 @@ def inspect_images(context: ToolContext, params: Mapping[str, Any]) -> dict:
             "inspection_scope": "Existing datablock metadata/direct users, not file contents, transitive consumers or pixel arrays; unloaded image sizes are not probed."}
 
 
-def load_image(context: ToolContext, params: Mapping[str, Any]) -> dict:
+def load_image(context: ToolContext, params: Mapping[str, Any], *, source: ImageSourceReference | None = None) -> dict:
     from ._rna import apply_assignments, prepare_assignments
 
     reject_unknown_params(params, {"filepath", "new_name", "colorspace", "alpha_mode"})
@@ -186,7 +310,7 @@ def load_image(context: ToolContext, params: Mapping[str, Any]) -> dict:
         raise invalid_argument("'alpha_mode' must be a reviewed native alpha identifier.")
     if not isinstance(color, str) or not color.strip() or len(color) > 128:
         raise invalid_argument("'colorspace' must be an explicit bounded color-space name.")
-    _load_gate(context)
+    _load_gate(context, source=source)
     bpy = require_blender()
     _object_mode(bpy)
     if bpy.data.images.get(name) is not None:
@@ -195,10 +319,10 @@ def load_image(context: ToolContext, params: Mapping[str, Any]) -> dict:
     if color not in available:
         raise invalid_argument("The requested color space is unavailable in this Blender OCIO configuration.", colorspace=color)
     _check(context)
-    path, preflight = _source_file(context, raw)
+    path, preflight = _source_file(context, raw, source=source)
     _exr_interpretation(preflight, color, alpha)
     _check(context)
-    _load_gate(context, preflight["_approved_root"])
+    _load_gate(context, preflight["_approved_root"], source)
     image = None
     created_image_name = None
     before = len(bpy.data.images)
@@ -206,7 +330,7 @@ def load_image(context: ToolContext, params: Mapping[str, Any]) -> dict:
         _object_mode(bpy)
         image = bpy.data.images.load(str(path), check_existing=False)
         created_image_name = image.name
-        _load_gate(context, preflight["_approved_root"])
+        _load_gate(context, preflight["_approved_root"], source)
         image.name = name
         created_image_name = image.name
         image.use_fake_user = False
@@ -215,7 +339,7 @@ def load_image(context: ToolContext, params: Mapping[str, Any]) -> dict:
             apply_assignments(image, prepare_assignments(image, {"alpha_mode": alpha},
                 allowed=frozenset({"alpha_mode"}), object_pointers=frozenset(), bpy=bpy))
         _check(context)
-        _load_gate(context, preflight["_approved_root"])
+        _load_gate(context, preflight["_approved_root"], source)
         actual = tuple(int(v) for v in image.size)  # Explicit authorized decode, never a read-only probe.
         allowed_sizes = {(preflight["width"], preflight["height"])}
         if preflight["format"] == "JPEG":
@@ -231,7 +355,7 @@ def load_image(context: ToolContext, params: Mapping[str, Any]) -> dict:
         checked_path, after = _source_file(context, str(image.filepath))
         if checked_path != path or after != preflight:
             raise RuntimeError("Texture source changed during native decoding")
-        _load_gate(context, preflight["_approved_root"])
+        _load_gate(context, preflight["_approved_root"], source)
         return {"loaded": True, "reused_existing": False, "image": _summary(image),
                 "source_file": {k: v for k, v in preflight.items() if not k.startswith("_")},
                 "native_decode_interruptible": False, "file_written": False,
@@ -323,7 +447,8 @@ def set_node_image(context: ToolContext, params: Mapping[str, Any]) -> dict:
     settings = {key: params[key] for key in keys if key in params}
     assignments = prepare_assignments(node, settings, allowed=keys, object_pointers=frozenset(), bpy=bpy)
     image = image_exact(bpy, _name(params, "image_name")) if params["image_name"] is not None else None
-    source = binding_source(context, image) if image is not None else None
+    reference = source_reference(context, image) if image is not None and image.source == "FILE" else None
+    source = binding_source(context, image, source=reference) if image is not None else None
     previous_image = node.image
     previous_name = previous_image.name if previous_image else None
     previous_settings = {key: getattr(node, key) for key in settings}
@@ -332,6 +457,8 @@ def set_node_image(context: ToolContext, params: Mapping[str, Any]) -> dict:
     context.require(Permission.EDIT_MATERIALS)
     if image is not None and image.source == "FILE":
         context.require(Permission.ACCESS_EXTERNAL_FILES)
+        reference.check(context)
+        context.require(Permission.EDIT_MATERIALS, Permission.ACCESS_EXTERNAL_FILES)
     try:
         node.image = image
         for assignment in assignments:
@@ -341,6 +468,9 @@ def set_node_image(context: ToolContext, params: Mapping[str, Any]) -> dict:
             raise RuntimeError("Texture binding readback did not match")
         if tuple(link.as_pointer() for link in tree.links) != previous_links:
             raise RuntimeError("Texture assignment unexpectedly changed graph links")
+        if reference is not None:
+            reference.check(context)
+            context.require(Permission.EDIT_MATERIALS, Permission.ACCESS_EXTERNAL_FILES)
         return {"material": material.name, "node": node.name, "previous_image": previous_name,
                 "image": _summary(image) if image else None,
                 "sampling": {key: getattr(node, key) for key in sorted(keys)}, "ownership": scope,

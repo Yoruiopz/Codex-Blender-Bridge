@@ -207,7 +207,7 @@ def main():
     actor.location.x = 10
     actor.keyframe_insert(data_path="location", frame=11)
     action = actor.animation_data.action
-    slot = actor.animation_data.action_slot
+    slot = getattr(actor.animation_data, "action_slot", None)
     before_motion = []
     for frame in (1, 6, 11, 15):
         scene.frame_set(frame)
@@ -221,7 +221,8 @@ def main():
     assert actor.animation_data.action is None
     assert actor.animation_data.nla_tracks.active == below
     assert actor.animation_data.nla_tracks[-1].name == "Motion"
-    assert actor.animation_data.nla_tracks["Motion"].strips["Walk"].action_slot == slot
+    if slot is not None:
+        assert actor.animation_data.nla_tracks["Motion"].strips["Walk"].action_slot == slot
     assert pushed["pushed_action"] == action.name
     for frame, expected in zip((1, 6, 11, 15), before_motion, strict=True):
         scene.frame_set(frame)
@@ -508,6 +509,7 @@ def main():
     )
     scene.render.engine = "CYCLES"
     scene.cycles.samples = 1
+    scene.cycles.use_denoising = False
     scene.render.resolution_x = scene.render.resolution_y = 64
     scene.render.resolution_percentage = 100
     scene.view_settings.view_transform = "Standard"

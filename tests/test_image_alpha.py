@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from array import array
+from types import SimpleNamespace as NS
 
 import pytest
 from test_image_paint import Image, kernel, paint_tools, stroke  # noqa: F401
@@ -40,10 +41,14 @@ def test_ambiguous_or_out_of_contract_association_is_not_silently_inferred(kerne
         kernel.paint(array("f", values), 1, 1, prepared, role, srgb=srgb, associated=True)
 
 
-def test_float_file_color_uses_actual_associated_buffer_not_file_alpha_label(paint_tools, monkeypatch):
+def test_float_file_color_uses_actual_associated_buffer_not_file_alpha_label(paint_tools, monkeypatch, tmp_path):
     module, context, images, _, _ = paint_tools
     source = Image("Float File", 1, 1)
     source.source, source.type = "FILE", "IMAGE"
+    path = tmp_path / "source.png"
+    path.write_bytes(b"fixture source")
+    source.filepath = str(path)
+    monkeypatch.setattr(module.images, "get_preferences", lambda: NS(texture_directory=str(tmp_path)))
     source.pixels.values = array("f", [.0625,.125,.1875,.25])
     images.append(source)
     monkeypatch.setattr(module.images, "preflight_file", lambda *_args: ("approved", {"size": 1}))

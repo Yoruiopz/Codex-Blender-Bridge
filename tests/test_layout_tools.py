@@ -29,6 +29,8 @@ class FakeObject:
         self.selected = True
         self.visible = True
         self.type = "MESH"
+        self.mode = "OBJECT"
+        self.instance_collection = None
         self.reject_location = False
         self.origin_offset = 0.0
 
@@ -65,8 +67,12 @@ def layout_env(addon_package: str, monkeypatch: pytest.MonkeyPatch) -> Any:
         ("A", (0.0, 1.0, 2.0)), ("B", (2.0, 3.0, 4.0)), ("C", (10.0, 5.0, 6.0)),
     )})
     view_layer = SimpleNamespace(name="ViewLayer", objects=objects, update=lambda: None)
-    scene = SimpleNamespace(name="Scene", collection=SimpleNamespace(name="Scene Collection", all_objects=objects))
-    bpy = SimpleNamespace(context=SimpleNamespace(view_layer=view_layer, scene=scene, mode="OBJECT", evaluated_depsgraph_get=lambda: object()), data=SimpleNamespace(collections={}))
+    root = SimpleNamespace(name="Scene Collection", all_objects=objects, children=(), users=1, use_fake_user=False, user_of_id=lambda obj: 1)
+    scene = SimpleNamespace(name="Scene", collection=root)
+    for obj in objects:
+        obj.users_scene = (scene,)
+        obj.users_collection = (root,)
+    bpy = SimpleNamespace(context=SimpleNamespace(view_layer=view_layer, scene=scene, mode="OBJECT", evaluated_depsgraph_get=lambda: object()), data=SimpleNamespace(collections={}, user_map=lambda *, subset: {obj: (root,) for obj in subset}))
     monkeypatch.setattr(module, "require_blender", lambda: bpy)
 
     def get_object(name: str, *, allow_active: bool) -> FakeObject:
@@ -170,6 +176,98 @@ def test_batch_rejects_evaluated_mismatch_and_restores_channels(layout_env: Any)
         env.module.transform_batch(object(), {"edits": [{"object_name": "A", "location": [5, 5, 5]}]})
     assert caught.value.context["rollback_complete"] is True
     assert env.objects["A"].location == before
+
+
+def test_layout_rejects_incoming_dependencies_and_collection_instances(layout_env) -> None:
+    env = layout_env
+    before = env.objects["A"].location
+    env.bpy.data.user_map = lambda *, subset: {obj: (SimpleNamespace(name="Protected Driver Consumer"),) for obj in subset}
+    with pytest.raises(env.errors.BridgeError) as caught:
+        env.module.transform_batch(None, {"edits": [{"object_name": "A", "location": [5, 5, 5]}]})
+    assert caught.value.code == "NOT_IMPLEMENTED"
+    assert env.objects["A"].location == before
+    env.bpy.data.user_map = lambda *, subset: {obj: tuple(obj.users_collection) for obj in subset}
+    env.objects["A"].instance_collection = object()
+    with pytest.raises(env.errors.BridgeError, match="collection instances"):
+        env.module.transform_batch(None, {"edits": [{"object_name": "A", "location": [5, 5, 5]}]})
+
+
+def test_layout_rollback_does_not_claim_evaluated_recovery_from_raw_channels(layout_env) -> None:
+    env = layout_env
+    updates = 0
+    def update():
+        nonlocal updates
+        updates += 1
+        if updates == 2:
+            env.objects["A"].origin_offset = 1
+    env.bpy.context.view_layer.update = update
+    with pytest.raises(env.errors.BridgeError) as caught:
+        env.module.transform_batch(None, {"edits": [{"object_name": "A", "location": [5, 5, 5]}]})
+    assert env.objects["A"].location == (0.0, 1.0, 2.0)
+    assert caught.value.context["rollback_verified"] is False
+    assert caught.value.context["mutation_outcome_unknown"] is True
+
+
+def test_layout_rechecks_dependencies_after_preflight_update(layout_env):
+    env = layout_env
+    def update():
+        env.objects["A"].parent = object()
+    env.bpy.context.view_layer.update = update
+    with pytest.raises(env.errors.BridgeError, match="independent objects"):
+        env.module.transform_batch(None, {"edits": [{"object_name": "A", "location": [5, 5, 5]}]})
+    assert env.objects["A"].location == (0.0, 1.0, 2.0)
+    assert env.objects["A"].parent is not None
+
+
+def test_layout_preserves_external_untouched_channels_during_rollback(layout_env):
+    env = layout_env
+    updates = 0
+    def update():
+        nonlocal updates
+        updates += 1
+        if updates == 2:
+            env.objects["A"].rotation_euler = (.3, .2, .1)
+            env.objects["A"].origin_offset = 1
+    env.bpy.context.view_layer.update = update
+    with pytest.raises(env.errors.BridgeError):
+        env.module.transform_batch(None, {"edits": [{"object_name": "A", "location": [5, 5, 5]}]})
+    assert env.objects["A"].rotation_euler == (.3, .2, .1)
+    assert env.objects["A"].location == (0.0, 1.0, 2.0)
+
+
+@pytest.mark.parametrize("change,edit", [("lock", {"location": [5, 5, 5]}), ("mode", {"rotation": [.1, .2, .3]})])
+def test_layout_respects_locks_and_rotation_mode_changed_at_final_gate(layout_env, change, edit):
+    env = layout_env
+    calls = 0
+    def gate():
+        nonlocal calls
+        calls += 1
+        if calls == 4:
+            if change == "lock":
+                env.objects["A"].lock_location = (True, False, False)
+            else:
+                env.objects["A"].rotation_mode = "QUATERNION"
+    context = SimpleNamespace(check_cancelled=gate)
+    with pytest.raises(env.errors.BridgeError):
+        env.module.transform_batch(context, {"edits": [{"object_name": "A", **edit}]})
+    assert env.objects["A"].location == (0, 1, 2)
+    assert env.objects["A"].rotation_euler == (0, 0, 0)
+
+
+def test_layout_does_not_bypass_new_locks_during_compensation(layout_env):
+    env = layout_env
+    calls = 0
+    def update():
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            env.objects["A"].lock_location = (True, False, False)
+            env.objects["A"].origin_offset = 1
+    env.bpy.context.view_layer.update = update
+    with pytest.raises(env.errors.BridgeError) as caught:
+        env.module.transform_batch(None, {"edits": [{"object_name": "A", "location": [5, 5, 5]}]})
+    assert env.objects["A"].location == (5, 5, 5)
+    assert caught.value.context["rollback_verified"] is False
 
 
 @pytest.mark.parametrize(("attribute", "value"), [("parent", object()), ("children", [object()]), ("constraints", [object()]), ("rigid_body", object()), ("delta_location", (1, 0, 0)), ("animation_data", SimpleNamespace(action=object(), drivers=[], nla_tracks=[]))])

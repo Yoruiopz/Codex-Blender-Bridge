@@ -1,0 +1,57 @@
+name: Bug report or installation problem
+description: Report a reproducible problem with the bridge.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Start with [troubleshooting](https://github.com/Yoruiopz/Codex-Blender-Bridge/blob/main/docs/troubleshooting.md) and search existing issues.
+        For security concerns, follow [SECURITY.md](https://github.com/Yoruiopz/Codex-Blender-Bridge/blob/main/SECURITY.md); do not post exploitation details here.
+        Review logs and captures for secrets, personal paths and private scene content before sharing.
+  - type: dropdown
+    id: installation
+    attributes:
+      label: Package source
+      description: Main has unreleased tools while still using 0.3.0 metadata.
+      options:
+        - Published 0.3.0 release assets
+        - Source checkout or CI development build
+        - Older release
+        - Unsure
+    validations:
+      required: true
+  - type: textarea
+    id: versions
+    attributes:
+      label: Versions and installation
+      description: Include asset names or full commit/worktree state and install method for both components.
+      placeholder: |
+        Add-on and MCP source/release:
+        OS and version:
+        Blender version/build:
+        Standalone Python and MCP SDK:
+        Codex client/version and optional plugin:
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Use a disposable scene. Include the relevant mode, target scope, toolset and permissions.
+      placeholder: |
+        1. Start from...
+        2. Call tool... with small redacted arguments...
+        3. Observe...
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: Expected and observed result
+      description: Include the exact tool/error code, what changed, and any recovery or save effects.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Redacted evidence
+      description: Optional bounded logs, error context/request ID, screenshots or runner report. Share a synthetic reproduction rather than a private project.

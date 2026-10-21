@@ -310,6 +310,19 @@ if bpy is not None:
                 error_row.alert = True
                 error_row.label(text=f"Last error: {state['last_error'][:96]}", icon="ERROR")
 
+            plan_store = getattr(runtime.state, "_artist_task_plans", None)
+            plan = plan_store.inspect()["plan"] if plan_store is not None else None
+            if plan is not None:
+                completed = sum(step["status"] == "completed" for step in plan["steps"])
+                task_box.label(text=f"Plan: {completed}/{len(plan['steps'])} marked complete")
+                icons = {"pending": "DOT", "in_progress": "PLAY", "completed": "CHECKMARK", "blocked": "ERROR"}
+                for step in plan["steps"][:8]:
+                    task_box.label(text=step["description"][:80], icon=icons[step["status"]])
+                if len(plan["steps"]) > 8:
+                    task_box.label(text=f"{len(plan['steps']) - 8} more steps; inspect the plan")
+                task_box.label(text=f"Protected scope: {len(plan['protected_objects'])} objects (advisory)")
+                task_box.label(text="Compare evidence before marking work verified", icon="INFO")
+
             toolsets = layout.box()
             toolsets.label(text="Capability Toolsets", icon="MODIFIER")
             toolset_controls = toolsets.row(align=True)

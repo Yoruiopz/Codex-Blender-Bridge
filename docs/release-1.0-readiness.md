@@ -7,6 +7,13 @@ No version bump or publication happens merely because the tool count increases.
 Follow the [1.0 execution plan](plan-1.0.md) for milestone dependencies, prioritized work,
 end-to-end scenarios and evidence requirements. This document defines the acceptance gates.
 
+The [machine-readable ledger](release-1.0-ledger.json) records all fourteen mandatory
+requirements as open. Use the [evidence qualification gate](release-evidence.md) to check
+exact-commit/package provenance, complete Windows 11 native matrices on Blender 4.5 LTS
+and stable 5.x, and installed-package scenarios A–F on both selected versions. The current
+ledger deliberately fails qualification; no historical smoke count or runner verdict
+can promote it to release-ready.
+
 ## 1.0 product direction: a full 3D-artist workflow
 
 The intended target is an agent that can carry a brief through a complete Blender art
@@ -17,27 +24,27 @@ Ambiguous targets, destructive scope expansion and new permissions still require
 
 This is broader than the current implementation. The bridge supplies Blender tools and evidence
 to an AI client; it does not currently embed an independent model or run an unattended artist
-service inside Blender. Self-contained model hosting is a separate architectural decision.
+service inside Blender. Embedded model hosting is outside the agreed release scope.
 No current release should be described as a complete human-equivalent artist.
 
 ### Capability coverage required by that direction
 
 | Artist responsibility | Existing foundation | Remaining structured-workflow gaps |
 | --- | --- | --- |
-| Understand a brief and references | Scene/selection/object inspection, task display | Reference management, persistent constraints, scene units/scale checks, ambiguity resolution benchmarks |
-| Model and repair assets | Primitives, arbitrary meshes, selection-scoped edits, modifiers; [repair primitives](mesh-repair.md), [quad-ring preview/cuts and two-loop bridging](mesh-loops.md), [bounded topology/winding/contact diagnostics](mesh-analysis.md) | Edge slide, open/multi-loop bridging, explicit unequal correspondence, retopology, localized/cross-object/evaluated diagnostics, outward/custom normals, shape-key/shared-data workflows and protected-scope editing |
-| Sculpt and paint | Mode entry; [bounded copy-on-write UV-image brushes and raw-channel masks](texture-painting.md), inversion/bilinear sampling, canvas creation and pixel inspection | Viewport/surface-projected texture strokes/stencils, sculpt/vertex masks, broader blends/roles, sculpt/vertex painting, multires and full workflow feedback |
-| UV and textures | Seams, unwrap/project/pack, bounded coordinate/island evidence; [authoring](uv-authoring.md), [layout PNGs](mesh-loops.md#uv-coordinate-visual-evidence), [scoped overlap/pixel-stretch/density checks](uv-analysis.md); [approved PNG/JPEG/reviewed float-EXR loading/binding](image-assets.md), [versioned root/nested refresh and relocation](image-revisions.md), [bounded generated canvases/paint versions and complete pixel digests](texture-painting.md) | UV-editor selection, relax/stitch/alignment, cross-object/evaluated atlas checks, broader quality acceptance, full painting/baking, in-place reload/identity-preserving pixel recovery, packing and broader image formats |
-| Materials and look development | Principled controls, shader graphs, isolated copies, approved images, [nested paths/group lifecycle/instance isolation](shader-groups.md), [reviewed properties on 14 node types and complete Color Ramps](shader-settings.md), with matched fixture revisions and an [integrated reference-prop fixture](field-scanner-workflow.md) | Interface editing/conversion, properties beyond the reviewed subset, animated ramps/curve collections, deep asset lifecycle, nested snapshots, production materials and broader look-development acceptance |
-| Procedural modeling | Allowlisted Geometry Nodes graph authoring/attachment; paired simulation/repeat zones and scoped item rename/reorder/removal | Nested groups, modifier inputs, zone-item type conversion/disk baking, evaluated diagnostics and broader node types |
-| Rig and skin | Armatures, bones, pose transforms, constraints, binding; numeric weight inspection/editing/normalization, edge smoothing and explicit mapped transfer | Weight brushes, geometric mirroring/surface transfer, skinning diagnostics, robust IK/control-rig workflows |
-| Animate | Frames/ranges/keyframes, inspection; non-scripted transform drivers, action-backed NLA clips and track rename/mute/lock/solo/empty removal | Curve interpolation/handles, action lifecycle, bone/custom-property drivers, NLA reordering/transition workflows, multi-frame revisions |
+| Understand a brief and references | Scene/selection/object inspection, task display; [revisioned plans and explicit scene persistence](task-plans.md), advisory protected scope | Reference management, enforced persistent constraints, scene units/scale checks, ambiguity resolution benchmarks |
+| Model and repair assets | Primitives, arbitrary meshes, selection-scoped edits, modifiers; [repair](mesh-repair.md), [cuts/bridging](mesh-loops.md), [diagnostics](mesh-analysis.md), [previewed explicit-rail vertex/edge slides](mesh-uv-refinement.md) | Open/multi-loop bridging, explicit unequal correspondence, retopology, localized/cross-object/evaluated diagnostics, outward/custom normals, shape-key/shared-data workflows and broad protected editing |
+| Sculpt and paint | [UV-image brushes and raw masks](texture-painting.md), canvas/pixel inspection; [explicit-mask PUSH/SMOOTH and POINT/CORNER colors](surface-brushes.md), [weight brushes](weight-brushes.md) | Viewport/surface-projected texture strokes/stencils, painted/texture-derived sculpt masks, broader blends/roles, multires and full production sculpt/paint feedback |
+| UV and textures | [Authoring](uv-authoring.md), [UV evidence](uv-analysis.md), [align/stitch/island relax](mesh-uv-refinement.md), [approved loading/binding](image-assets.md), [refresh/relocation](image-revisions.md), [paint/digests](texture-painting.md), stored-relative FILE reopen and [bounded packed float recovery](image-portability.md) | UV-editor selection, cross-object/evaluated atlases, broader quality acceptance, full painting/baking, byte/unloaded/4K identity-preserving recovery, broader formats and durable-pixel acceptance |
+| Materials and look development | Principled controls, isolated copies, approved images, [nested paths/groups](shader-groups.md), [reviewed properties/ramps](shader-settings.md), bounded nested structural evidence and [reference-prop fixture](field-scanner-workflow.md) | Interface editing/conversion, broader properties, animated ramps/curves, deep asset lifecycle, complete nested dependency preservation, production materials/look development |
+| Procedural modeling | Reviewed GN graphs/zones; [nested instances/copies and modifier constants](geometry-node-groups.md) | Broader nested/interface lifecycle, zone-item conversion/disk baking, evaluated diagnostics and broader node types |
+| Rig and skin | Armatures/bones/poses/constraints/binding; numeric weights; [brushes, geometric mirror and barycentric surface transfer](weight-brushes.md) | Skinning/deformation diagnostics, robust IK/control-rig workflows and protected character benchmark |
+| Animate | Frames/keyframes, NLA clips/tracks; [Action copies and curve handles/interpolation](animation-curves.md), [numeric controls and non-scripted bone drivers](rig-drivers.md) | Broader Action lifecycle, NLA reordering/transitions, combined rig/constraint/action workflows and protected multi-frame revisions |
 | Simulate | Scoped cloth setup/configuration and bounded in-memory bake/free | Fluid/rigid-body/other solvers, dependencies, disk caches, asynchronous progress/cancellation and production-scale validation |
 | Stage and light | Collections, world, camera/light settings, layout | Camera composition/navigation, iterative lighting comparisons, asset-scale and placement constraints |
 | Render and composite | Render settings/execution, captures; reviewed compositor graph editing | Broader nodes/image assets, passes, color/output workflows, render diagnostics and job/progress management |
-| Deliver production assets | Permission-controlled project save; [reviewed cooperative texture export/reimport](texture-delivery.md), no-clobber files and complete decoded-channel checks | General asset import/export, dependencies/packing, fresh-process/save/reopen, broader formats and production validation |
-| Operate interactively | Status/task/history, permissions, stop/pause; [bounded source-frozen painting jobs with polled progress/cancel](painting-jobs.md) | Persistent plan, visual target resolution, preview/change summaries, user corrections, larger/tiled painting and general long-operation/bake jobs |
-| Work safely and improve results | Checkpoints, bounded inspection, batch partial-failure evidence | Consistent preservation contracts, recoverability audits, structural diffs, aesthetic iteration and whole-project benchmarks |
+| Deliver production assets | Authorized save, [cooperative texture export/reimport](texture-delivery.md), fresh texture/project reopen, [packed recovery](image-portability.md), [material-free static/skinned GLB/FBX export and fresh reimport](asset-delivery.md) | General asset import, textured/material exchange, complete dependency packaging, broader recovery/formats and production validation |
+| Operate interactively | Status/history/permissions/stop/pause; [4K painting jobs](painting-jobs.md); [persistent advisory plans](task-plans.md) | Visual/reference resolution, integrated previews/change summaries, corrections, durable variants and general long-operation/bake jobs |
+| Work safely and improve results | Checkpoints, batch failure evidence, bounded [structural comparisons](scene-evidence.md) including optional rigs/animation/nested shaders; per-domain ownership guards | Enforced complete preservation, remaining mutator/recovery audits, mixed-editor/pressure evidence, aesthetic iteration and whole-project benchmarks |
 
 Each row needs representative end-to-end tasks with observable success, failure and recovery
 before claiming full coverage. Capability names are not equivalent to complete editor/property
@@ -46,25 +53,30 @@ for the requested full-artist target. Raw Python is not a substitute for complet
 
 ## Reliability promise underneath that target
 
-The current [artist-tools increment](artist-tools.md) adds 25 structured tools across compositor,
+The original [artist-tools increment](artist-tools.md) added 25 structured tools across compositor,
 weights, drivers/NLA, cloth caches and Geometry Nodes zones. Factory-startup evidence on Blender
 4.5.1 and 5.1.2 includes evaluated motion/geometry, cloth deformation and a measured compositor
-render. These bounded foundations do not close the remaining capability or recovery gates.
+render. Later bounded foundations are linked in the coverage table. Historical Windows
+results do not qualify the current source; no capability or recovery gate is closed by tool count.
 
 A dependable, consent-first local bridge for the documented structured Blender workflows:
 inspect, resolve targets, checkpoint, edit, structurally verify, visually verify where relevant,
 and save only with permission. Arbitrary Python stays a disabled-by-default super-permission,
 not evidence that every Blender feature has a dependable structured implementation.
 
-The exact supported Blender versions and operating systems must be decided from release
-evidence. The present declared minimum (4.2) is broader than the locally exercised matrix
-(4.5.1 LTS and 5.1.2 on Windows). Do not call all platforms/versions verified by inference.
+The confirmed 1.0 qualification target is Windows 11 x64 on Blender 4.5 LTS and the newest
+compatible stable 5.x at candidate freeze, with exact patch versions recorded. The current
+development manifest still declares 4.2; this is not a newly qualified 1.0 support claim.
+Historical Windows checks exercised 4.5.1 LTS and 5.1.2, while this implementation session
+has only Linux Blender 4.3.2. The user confirmed that no Windows test machine is available.
+Native Windows and installed-package acceptance remain blocked; other platforms remain
+unqualified for 1.0. Align the manifest and support claims only at candidate qualification.
 
 ## Release gates
 
 | Gate | Required acceptance evidence | Current gap / next work |
 | --- | --- | --- |
-| Target and data ownership | Every modifying domain documents shared data, linked libraries, overrides, active/multi-object modes and hidden scope; rejects unsupported cases before mutation | Mesh/UV and material-slot ownership guards added on main; shader/material datablock editing, modifiers, rigs, nodes, transforms and other mutators still need auditing |
+| Target and data ownership | Every modifying domain documents shared data, linked libraries, overrides, active/multi-object modes and hidden scope; rejects unsupported cases before mutation | Mesh/UV/material, object/data/Action and collection/parenting guards exist with bounded regressions; complete per-tool/dependency audit, protected enforcement and recovery acceptance remain |
 | Recoverable edits | Deliberate mid-operation faults, canceled callers, operator failures and manual undo interleaving leave truthful history and verifiable recovery state | Checkpoints/batches are not transactions. [Conservative capacity reporting/pruning](native-recovery.md) and a long/manual-eviction fixture exist; memory-pressure, production-scale mixed-editor/domain, durable recovery and UI acceptance remain open. Never expand user preferences silently |
 | Preserved context | Each representative workflow proves unchanged mode, selection, active object, visibility, UV layer and unrelated data where promised | Selection preservation has coverage; UV layer activation and operator context need broader audit |
 | Bounded evidence | Explicit truncation, stable pagination rules, large-scene fixtures and measured time/memory reports | Hard limits exist; add performance baselines and inspect partial-result handling across domains |
@@ -91,6 +103,11 @@ features and exact editor/property coverage require explicit scope decisions and
 limitations; they must not be silently claimed through Python or omitted without agreement.
 
 ## Current increment: shared mesh ownership
+
+The progress sections below retain historical implementation and fixture results. Their
+test counts and Windows versions belong to those source increments. Current development
+verification is tracked in the execution log and its source-matched checkpoint reports;
+historical results do not establish current or full-release acceptance.
 
 Selection-scoped mesh edits (normals, delete, dissolve, extrude, inset, bevel, seam marking)
 and UV unwrap/Smart Project/packing now require local, non-override, single-user mesh data.
@@ -271,16 +288,18 @@ production scenes remain mandatory REC-01 gates. No full 1.0 acceptance is claim
 `scene.snapshot`/`scene.compare` now expose session-local, bounded field comparisons with
 Blender-side inspection permission, immutable cached baselines, exact target resolution,
 explicit incomplete coverage and cooperative cancellation. Their [contract](scene-evidence.md)
-defines all eight measured fields, record/byte limits, identity/lifecycle behavior and exclusions.
+defines the eight default measured fields, optional extensions, record/byte limits,
+identity/lifecycle behavior and exclusions.
 
 The protected-material fixture checks independent before/after hashes for a shared-mesh
 duplicate while another object's material is isolated and edited. It also detects shared
 shader, same-count coordinate, UV and weight changes and rejects permission bypass. Native
 recovery is followed by a complete baseline comparison in the interactive undo fixture.
 
-This implements the first EVID-02 evidence slice. It does not automatically enforce protected
-scope or cover modifier/constraint settings, rigs/animation, nested shader contents, image
-pixels, evaluated geometry or appearance. Those remain requirements for full preservation
+The default fields implement the first EVID-02 evidence slice. Optional bounded rig, animation
+and nested shader-dependency fields now extend coverage; unsupported/budget-limited evidence
+stays incomplete. Snapshots do not enforce protected scope or fully cover modifier/constraint
+settings, image pixels, evaluated geometry or appearance. Those remain requirements for full preservation
 and artist-workflow acceptance. `unchanged_within_scope` is never a whole-scene/user-goal verdict.
 
 The structured `context.set_mode` gap is now corrected for tracked single-mesh Edit Mode

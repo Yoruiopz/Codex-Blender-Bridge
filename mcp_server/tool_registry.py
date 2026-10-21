@@ -454,6 +454,7 @@ def create_default_registry(client: AsyncRequestClient) -> ToolRegistry:
 
     from .tools.catalog import (
         ANIMATION_TOOL_NAMES,
+        ASSET_DELIVERY_TOOL_NAMES,
         BATCH_TOOL_NAMES,
         CONSTRAINT_TOOL_NAMES,
         CORE_DEFINITIONS,
@@ -471,6 +472,7 @@ def create_default_registry(client: AsyncRequestClient) -> ToolRegistry:
         SCENE_EDIT_TOOL_NAMES,
         UV_TOOL_NAMES,
         load_animation_definitions,
+        load_asset_delivery_definitions,
         load_batch_definitions,
         load_constraint_definitions,
         load_geometry_definitions,
@@ -490,8 +492,12 @@ def create_default_registry(client: AsyncRequestClient) -> ToolRegistry:
 
     registry = ToolRegistry(client)
     registry.register_core(CORE_DEFINITIONS)
-    from .tools.artist import TOOL_DATA as artist_data
-    from .tools.artist import load_definitions as load_artist
+    registry.register_toolset(
+        "asset_delivery", load_asset_delivery_definitions, tools=ASSET_DELIVERY_TOOL_NAMES,
+        description="Preview and no-clobber GLB/FBX delivery of explicitly scoped reviewed assets.",
+    )
+    from .tools.catalog import ARTIST_TOOL_DATA as artist_data
+    from .tools.catalog import load_artist_definitions as load_artist
 
     def artist_loader(group: str) -> Callable[[], tuple[ToolDefinition, ...]]:
         return lambda: tuple(tool for tool in load_artist() if tool.toolset == group)
