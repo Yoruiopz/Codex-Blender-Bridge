@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import ast
+import re
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, BadZipFile, ZipFile, ZipInfo
 
@@ -11,9 +13,24 @@ SOURCE = ROOT / "addon" / "blender_codex_bridge"
 PACKAGE_NAME = "blender_codex_bridge"
 REQUIRED_MEMBERS = {
     f"{PACKAGE_NAME}/__init__.py",
+    f"{PACKAGE_NAME}/constants.py",
     f"{PACKAGE_NAME}/blender_manifest.toml",
 }
 REPRODUCIBLE_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
+
+
+def _literal_assignment(source: bytes, name: str) -> object:
+    try:
+        nodes = ast.parse(source).body
+    except SyntaxError as error:
+        raise ValueError(f"Invalid Python in add-on {name} metadata") from error
+    for node in nodes:
+        if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == name for target in node.targets):
+            try:
+                return ast.literal_eval(node.value)
+            except ValueError as error:
+                raise ValueError(f"Blender discovery requires literal {name} metadata") from error
+    raise ValueError(f"Missing {name} metadata")
 
 
 def _source_files() -> list[Path]:
@@ -31,6 +48,14 @@ def validate_archive(path: Path) -> None:
         with ZipFile(path) as archive:
             members = archive.namelist()
             corrupt_member = archive.testzip()
+            if set(members) >= REQUIRED_MEMBERS:
+                metadata = _literal_assignment(archive.read(f"{PACKAGE_NAME}/__init__.py"), "bl_info")
+                version = _literal_assignment(archive.read(f"{PACKAGE_NAME}/constants.py"), "ADDON_VERSION")
+                manifest = re.search(rb'^version = "([0-9]+)\.([0-9]+)\.([0-9]+)"$',
+                                     archive.read(f"{PACKAGE_NAME}/blender_manifest.toml"), re.M)
+                if (not isinstance(metadata, dict) or metadata.get("version") != version
+                        or manifest is None or tuple(map(int, manifest.groups())) != version):
+                    raise ValueError("Add-on discovery, runtime and manifest versions disagree")
     except (BadZipFile, OSError) as exc:
         raise ValueError(f"Add-on archive is not a readable ZIP: {path}") from exc
     missing = sorted(REQUIRED_MEMBERS - set(members))

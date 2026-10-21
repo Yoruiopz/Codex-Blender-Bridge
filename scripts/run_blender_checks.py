@@ -74,6 +74,7 @@ CASES = {
     "simulation_cache_probe": ("blender_simulation_cache_probe_smoke.py", "BLENDER_SIMULATION_CACHE_PROBE_OK "),
     "surface_paint": ("blender_surface_paint_smoke.py", "BLENDER_SURFACE_PAINT_OK "),
     "uv_selection_storage": ("blender_uv_selection_storage_smoke.py", "BLENDER_UV_SELECTION_STORAGE_OK "),
+    "installed_addon_probe": ("blender_installed_addon_probe_smoke.py", "BLENDER_INSTALLED_ADDON_PROBE_OK "),
 }
 # Each phase must exit successfully before a new process can consume its artifacts.
 PHASED_CASES = {
@@ -86,6 +87,7 @@ PHASED_CASES = {
 OPT_IN_CASES = set(PHASED_CASES)
 OPT_IN_CASES.add("surface_projection_probe")
 OPT_IN_CASES.add("simulation_cache_probe")
+OPT_IN_CASES.add("installed_addon_probe")
 INTERACTIVE_CASES = {"undo_lifecycle", "mesh_edit_recovery", "mesh_repair", "uv_authoring", "prop_workflow", "uv_analysis", "mesh_analysis", "image_assets", "shader_groups", "undo_capacity", "shader_settings", "image_revisions", "field_scanner", "texture_paint"}
 
 
@@ -269,6 +271,8 @@ def main() -> int:
         help="New evidence directory; existing paths are refused",
     )
     parser.add_argument("--case", action="append", choices=tuple(CASES), dest="cases")
+    parser.add_argument("--package-probe-config", type=Path,
+                        help="Pinned candidate/previous ZIP configuration for installed_addon_probe")
     parser.add_argument(
         "--include-interactive",
         action="store_true",
@@ -285,8 +289,25 @@ def main() -> int:
         parser.error("Each Blender path must be an existing executable file")
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
-    defaults = [case for case in CASES if args.include_interactive or case not in INTERACTIVE_CASES | OPT_IN_CASES]
+    defaults = [case for case in CASES if (args.include_interactive or case not in INTERACTIVE_CASES | OPT_IN_CASES)
+                and (case != "installed_addon_probe" or args.package_probe_config is not None)]
     cases = list(dict.fromkeys(args.cases or defaults))
+    if "installed_addon_probe" in cases and args.package_probe_config is None:
+        parser.error("installed_addon_probe requires --package-probe-config")
+    package_proof = None
+    # Pass a frozen configuration through only this runner's child environment.
+    # The fixture independently freezes and verifies both named ZIP payloads.
+    os.environ.pop("BRIDGE_TEST_PACKAGE_PROBE_CONFIG", None)
+    if args.package_probe_config is not None:
+        with args.package_probe_config.open("rb") as stream:
+            configuration = stream.read(512 * 1024 + 1)
+        if len(configuration) > 512 * 1024:
+            parser.error("Package-probe configuration exceeds 512 KiB")
+        frozen_configuration = output / "package-probe-config.json"
+        frozen_configuration.write_bytes(configuration)
+        os.environ["BRIDGE_TEST_PACKAGE_PROBE_CONFIG"] = str(frozen_configuration)
+        package_proof = {"configuration_sha256": hashlib.sha256(configuration).hexdigest(),
+                         "configuration": str(frozen_configuration)}
     dirty = git_value("status", "--porcelain")
     report = {
         "schema_version": 1,
@@ -298,6 +319,7 @@ def main() -> int:
                      "version": platform.version(), "machine": platform.machine()},
         "selected_cases": cases,
         "all_cases_selected": set(cases) == set(CASES),
+        "package_probe": package_proof,
         "results": [],
     }
     sources = {

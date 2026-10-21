@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
-from mcp_server.tools import catalog
-
 ROOT = Path(__file__).resolve().parents[1]
+sys.path[:] = [str(ROOT), *(entry for entry in sys.path if entry != str(ROOT))]
+
+from mcp_server.tools import catalog  # noqa: E402
+
 START = "<!-- BEGIN GENERATED MCP TOOLS -->"
 END = "<!-- END GENERATED MCP TOOLS -->"
 
