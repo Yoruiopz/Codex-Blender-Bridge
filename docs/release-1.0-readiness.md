@@ -102,9 +102,11 @@ covered by this guard and still require the audit above.
 ## Cooperative painting lifecycle progress
 
 [Texture-delivery foundations](texture-delivery.md) now distinguish PNG storage, native float
-association and raw recovery. Internal stream encoders/native probes are not an export API;
-approved publication, public EXR import, cooperative delivery and durable pixel recovery remain
-unimplemented. Generated-buffer alpha handling is render-verified against file references on
+association and raw recovery. Internal stream encoders, approved-folder owned staging,
+no-clobber publication and complete file-hash proofs are not an export API. Public EXR import,
+typed cooperative delivery and durable pixel recovery remain unimplemented. Windows directory
+pinning and adversarial cleanup/consent tests advance the path contract, not general filesystem
+security, crash durability or release acceptance. Generated-buffer alpha handling is render-verified against file references on
 the tested versions; correctness of readback alone had missed a Blender 4.5 transparency issue.
 
 The [tile-bounded 4K increment](plan-1.0.md#2026-10-21--tile-bounded-coverage-4k-paint-jobs-and-explicit-inspection-scope)

@@ -75,12 +75,63 @@ Rebinding into a different alpha-unused graph still needs inspection and appeara
 Reviewed associated linear COLOR FILE sources normalize before brush math; inspector and mask
 reads remain raw. Additive zero-alpha associated RGB is not guessed as straight color.
 
+## Internal approved-file staging
+
+`texture_staging.TextureStaging` is an internal resource for the existing codec, not a
+registered tool, arbitrary-file writer or image loader. Construction does not probe paths.
+Every subsequent IO step requires live `EDIT_MATERIALS`, `ACCESS_EXTERNAL_FILES` and
+`SAVE_PROJECT` before touching external paths. The eventual job must supply Blender's live
+approved-folder preference, cancellation, main-thread dispatch, audit/history and checkpoint
+boundaries; this class cannot supply those by itself.
+
+- Require the user's exact PNG/EXR output path under an existing approved subdirectory.
+  Reject traversal, UNC/network/mapped drives, alternate streams, reserved names, trailing
+  dots/spaces, volume roots, missing parents and symlink/reparse-point directory ancestry.
+  Never make directories, rename to avoid a collision or overwrite an existing target,
+  including a directory or dangling link.
+- Write only codec-emitted bounded blocks to a uniquely created owned staging file in that
+  parent. A full 4K float payload is not copied into a file-sized `bytes` object. Flush/fsync
+  the file and verify its entire SHA-256, size and identity in 64 KiB read steps before sealing.
+  Invalid pixels, IO failure, pause/stop or cancellation can leave private partial bytes,
+  never an automatically published final output.
+- Explicit publication uses a same-filesystem hard link: atomic create-if-absent, with no
+  replace, rename or copy fallback. An unsupported filesystem fails closed. A competing
+  actor creating the target wins without having its bytes overwritten. Revalidate live
+  permissions/location/owned identity and retain `file_published` immediately after linking,
+  before any late check that could fail. A separate streaming proof checks published bytes.
+  `publication_attempted` is recorded before the system call. If the call raises after a
+  possible filesystem effect, `publication_outcome_unknown=true` requires reinspection of
+  the exact target: `file_published=false` means unconfirmed, not proof that no file exists.
+- Cleanup only unlinks the exact unchanged owned staging entry. It does not delete images
+  or require a scene `DELETE_OBJECTS` grant, and never removes the published path. Revoked
+  edit/external/save consent, changed identity/location or IO failure retain staging and its
+  explicit path/status for recovery. Cleanup closes handles even on denial. The caller must
+  retain this evidence on every terminal path, including generator close/disconnect.
+  Streaming read proofs recheck the approved folder before every 64 KiB read, not only at
+  the beginning/end; changing that approval stops the next chunk.
+
+On Windows, ordinary-directory handles pin the entire output ancestry without delete sharing
+until cleanup, preventing tested rename redirection. Attribute-only handles were experimentally
+insufficient; native tests now verify exclusion and release with real directory read handles.
+This uses [CreateFile sharing contracts](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew),
+not window APIs or system-wide settings. Other platforms currently use resolution/identity
+checks; namespace-race exclusion against a hostile local process is **not** claimed. These
+are consent/accident guards, not a filesystem security sandbox or cross-platform RC acceptance.
+
+The hash proof certifies bytes emitted by this resource's reviewed bounded codec, not arbitrary
+PNG/EXR inputs. `native_decode_verified`, `pixel_roundtrip_verified` and
+`crash_durability_verified` remain false in resource evidence. Reopening/pixel comparison are
+separate native fixture stages; future export jobs must perform them too. Hard-link creation
+does not prove crash/power-loss durability, `.blend` packing, native undo of external files,
+fresh-process reopening or recoverability of an existing pixel buffer. Fixture output files
+are explicitly disposable and removed by the fixture's temporary-directory owner afterward.
+
 ## Remaining implementation before claiming export works
 
-1. Approved output-path policy: reject network/device/traversal/alternate streams, constrain
-   resolved parents, refuse volume roots and unexpected overwrite, recheck live consent.
-2. Owned staging and atomic no-clobber publication, file hash/identity/size checks, cleanup
-   limited to exact owned staging; retain published-file evidence on late failure.
+1. Integrate the implemented approved output-path policy into the typed export workflow;
+   finish platform/race acceptance, rather than treating Windows path tests as all-OS proof.
+2. Integrate owned staging/no-clobber publication and complete file proofs into job
+   terminal-history/error evidence; keep truthful retained paths on late failure.
 3. Streaming preflight for reviewed large PNG/EXR before native decoding; no unbounded
    metadata, compressed/deep/tiled/multipart payload or accidental decoder allocation.
 4. Typed export/reimport tools with Blender-authoritative edit/external-file/save grants;

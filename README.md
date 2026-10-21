@@ -121,9 +121,11 @@ strokes/stencils, sculpt/vertex painting, baking and durable delivery still need
 Generated paint canvases now use independent raw RGBA with native CHANNEL_PACKED alpha, fixing
 a Blender 4.5 Cycles transparency discrepancy while preserving requested channel values. Reviewed
 associated linear float inputs normalize explicitly before painting; inspection/masks remain raw.
-[Texture-delivery work](docs/texture-delivery.md) adds internal PNG/float-EXR encoders and native
-round-trip/render tests, but **no export tool or public EXR import is available yet**. Approved
-publication, reimport/job lifecycle and durable pixel recovery remain in progress, not release claims.
+[Texture-delivery work](docs/texture-delivery.md) adds internal PNG/float-EXR encoders, approved-folder
+staging, no-overwrite publication and complete file-hash checks, including a 4K native round trip.
+It requires live edit, external-file and save consent; cleanup never deletes the published file.
+These are internal foundations: **no export tool or public EXR import is available yet**.
+Typed reimport/job lifecycle, durable pixel recovery and production delivery remain in progress.
 
 Unreleased [cooperative painting jobs](docs/painting-jobs.md) add `image.paint_job_start` and
 `jobs.inspect/list/cancel`, with polled progress, sidebar CPU-budget/control/history, frozen

@@ -92,8 +92,10 @@ JOB-01 now has source-frozen [cooperative painting jobs](painting-jobs.md): prog
 live source/consent revalidation, guarded publication and tile-bounded coverage for 4K canvases.
 Full source/output arrays remain; measured native tail stalls prevent real-time/production acceptance.
 DELIVER-01 now has internal streaming PNG/float-EXR codecs and native alpha/4K raw round-trip
-fixtures, plus an explicit [delivery execution contract](texture-delivery.md). Approved-path
-export/public EXR import and cooperative publication/reimport are not implemented yet. The
+fixtures, plus an explicit [delivery execution contract](texture-delivery.md). Internal approved-folder
+staging now seals complete stream hashes and publishes without overwrite, with live edit/file/save
+grants, Windows directory pins and scoped cleanup. This is not a registered export API;
+public EXR import and typed cooperative publication/reimport are not implemented yet. The
 probes exposed a 4.5 generated-float transparency error that numeric readback missed; new
 independent CHANNEL_PACKED buffers preserve requested RGBA and render consistently on the
 tested versions. Existing images are never silently relabeled; masks/inspection remain raw.
@@ -1288,3 +1290,83 @@ latency, memory pressure/8K/UDIM, surface/sculpt/vertex/weight paint and all cha
 simulation/UX/install/upgrade/RC gates remain open. No full artist, DELIVER-01, REC-01, JOB-01,
 PAINT-01 or scenario acceptance is inferred from these foundations. Published 0.3.0 assets,
 versions and repository visibility remain unchanged.
+
+### 2026-10-21 — Approved owned texture staging and no-clobber publication
+
+DELIVER-01/LOOK-01/REC-01 now have an internal `texture_staging.TextureStaging` resource
+connecting the bounded encoder to an exact approved output path. It is **not** a registered
+export tool, generic file writer, public EXR loader or completed delivery workflow. See the
+[file contract and remaining sequence](texture-delivery.md#internal-approved-file-staging).
+The existing 32 MiB PNG/JPEG reader remains unchanged; a 256 MiB EXR needs a separately
+reviewed shared streaming preflight, not merely a bigger constant or a private import bypass.
+
+The resource requires live edit/external-file/save grants before path probes and each write/read
+action. It rejects unsafe/nonlocal/escaping paths, missing parents, volume roots, link/reparse
+ancestry and name/extension ambiguity. It creates only owned staging in an existing approved
+parent, bounds codec blocks and total bytes, flushes/fsyncs and independently hashes the entire
+file in 64 KiB read steps before sealing. Publication is an atomic hard-link create-if-absent,
+with no overwrite/rename/copy fallback; competing target bytes survive unchanged. Published
+file proof is separate from native decode/pixel/appearance verification and crash durability.
+
+Windows directory read handles deny rename/deletion while the resource owns staging. Initial
+attribute-only handles failed a native rename test; the corrected read-handle test now verifies
+both exclusion and release. Non-Windows identity checks are not hostile namespace-race exclusion
+or a security sandbox. Cancel/pause/stop and IO failures leave only private work until explicit
+publication. Cleanup unlinks only the exact unchanged owned staging entry, with live grants,
+and closes handles on every path. Revoked consent or changed identity/location retains the
+explicit staging path; a final published file is never silently removed. Short/partial failed
+writes report observed file bytes separately from bytes accepted into the encoder hash.
+Read proofs recheck folder approval before every slice. Publication attempts are tracked
+before the system call: a signal/IO error after a possible effect sets
+`publication_outcome_unknown`, never a false negative existence promise.
+
+Validation: **156 focused tests** passed, then **1,412 on each** MCP SDK 2.0.0/2.2.0, with
+one Windows skip for the POSIX symlink fixture. Lint, mypy (35 files), compilation, the unchanged
+175-tool generated inventory and development ZIP CRC/layout checks passed; all **76** packaged
+Python modules match source. Development package:
+`build/texture-staging-package-20261021-4/blender_codex_bridge-development.zip`.
+The Windows Blender 4.5.1 LTS / 5.1.2 matrix passed **66/66** (30 background,
+36 private-desktop UI) in `build/texture-staging-final-matrix-20261021-2/report.json`.
+Baseline `e60ead2` plus this then-dirty increment; all **150** Python source paths/bytes matched
+that run's `3fb76945b55f2194446fe7237f9ac190021ee406acfd84d4bf6c21ac7c2d4ffa` independently.
+Final review then added per-read folder revalidation and uncertain-publication tracking.
+Only `texture_staging.py` differs between that full matrix and the final source: the other
+**149** paths/bytes are unchanged, and only the codec fixture imports this new resource.
+Both affected native cases passed again in
+`build/texture-staging-read-consent-20261021-2/report.json`, with all current 150 source paths/
+bytes independently matching `cf0c599335000a2f2f227aa385e322f82dce2a57a0622a04ea3a251f9e8b5bc8`.
+These are explicitly **66 broad checks plus two current-source affected reruns**, not a claim
+that the earlier full report has the final global fingerprint. Earlier intermediate reports
+are retained, not substituted for final evidence. No test windows touched the input desktop.
+
+Each version stages, seals, no-clobber publishes, completely rehashes and natively reopens the
+4096² raw float DATA file: **268,501,384 bytes**, file SHA-256
+`276b6e3f57d5cf8e6c4c282290ca116e8f8cff9546313178e65b30d7cdd34ab2`, complete decoded/source
+float32 digest `6dc7792b679699077adadaf4c6aa88a921909d390e605fb1ebbc5e555cb8dbfb`.
+The codec emits 90,113 byte/CPU steps, maximum **33,160 bytes**. Encoding plus file staging,
+sealing, publication and rehash took **42.04 / 41.47 s** in the final affected rerun, including
+per-slice consent/path revalidation; those timings are not native decode,
+job responsiveness, process-memory caps, memory-pressure or production throughput acceptance.
+All eight smaller encoding/role combinations still pass native numeric interpretation checks.
+Fixture files are explicitly disposable; helper cleanup removes staging, not the final file.
+
+Of **210** prior PNG-path pairs, **193** are byte-identical, **12** render outputs have identical
+pixels with different PNG bytes, and five 4.5 scanner captures retain known rerun differences:
+4,531 UV pixels (max 215/255), calibration/front/recovered views 17,749 pixels (max 6/255),
+isometric 16,568 (max 6/255). Changed views were reviewed; silhouette/material presentation
+remains consistent, but UV/render reproducibility and artistic acceptance are not resolved.
+Protected/recovered mask pairs remain byte-identical on both versions. Existing input-pixel
+undo limitations are unchanged, not repaired by a file hash or external publication.
+
+Primary Graphify queries in `dino-s-workspace` used cloud `e60ead2` (indexed
+2026-10-21T11:44:13.958576Z). A clipped bounded path query was narrowed to exact
+`image_files.py` symbols/current source. The new unindexed resource is verified from source
+and tests, not invented graph edges. Local feedback/staleness notes are retained; no graph
+rebuild, delegation, dependency install or release/version/visibility change occurred.
+
+Next: shared bounded large PNG/EXR structural preflight, typed source-frozen 4K export/reimport
+jobs, external-effect terminal history and guarded native image publication, then complete
+numeric/visual/fresh-process/packing/save/upgrade acceptance. Keep durable input-pixel recovery,
+source/native tail latency, memory pressure/8K/UDIM, surface/sculpt/vertex/weight painting and
+all character/procedural/simulation/UX/install/RC gates open. This does not complete DELIVER-01,
+REC-01, JOB-01 or the full 1.0 artist objective.
