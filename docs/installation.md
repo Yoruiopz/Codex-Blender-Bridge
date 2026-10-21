@@ -37,7 +37,7 @@ Current Linux checks on Blender 4.5.14 and 5.2.2 found that the published 0.3.0 
 install without appearing in the add-on list. Its discovery metadata needs a literal version;
 the fix is in development source and has not changed the published downloads. If the add-on
 is missing, use the matching source add-on and MCP server from the
-[development installation](../CONTRIBUTING.md#set-up-a-checkout), or wait for a qualified replacement release.
+[source setup and package build](../CONTRIBUTING.md#set-up-a-checkout), or wait for a qualified replacement release.
 Reinstalling the same ZIP does not fix this metadata issue. Windows installation remains
 unqualified for current development source.
 
