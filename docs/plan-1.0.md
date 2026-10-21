@@ -1605,3 +1605,13 @@ interaction, constrained-memory, installed upgrade/rollback and Windows version 
 remain mandatory. This increment is substantial implementation progress, not completion of
 the full ten-step plan. No 1.0 version bump, tag, workflow dispatch, publication or repository
 visibility change is justified by these results.
+
+The first clean-checkout Linux run at integration commit `844d771` selected 21 non-UI
+cases and finished **20/21**, not a passing matrix. The pre-existing artist fixture assumed
+layered Action slots on Blender 4.3 and a Cycles denoiser omitted from this build. Its fixture
+now checks slot identity only when that API exists and explicitly disables denoising; all
+motion, protection and measured red compositor assertions remain. A focused native artist
+rerun passed at `build/release-implementation-20261022/artist-legacy-render-check/report.json`.
+The earlier failed runs remain separate diagnostic evidence. Repeat the whole selected-case
+matrix after this fixture change; do not combine the old 20 passes and focused pass as a
+single current-commit matrix. Packaged-install acceptance remains separate from source smokes.
