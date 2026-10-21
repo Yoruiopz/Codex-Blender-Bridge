@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import importlib
 import json
 import socket
@@ -385,9 +386,14 @@ def test_oversized_frame_closes_without_parsing_its_tail(addon_package: str) -> 
     ).encode("utf-8")
     try:
         with socket.create_connection(("127.0.0.1", port), timeout=3.0) as connection:
-            connection.sendall(b"x" * (4 * 1024 * 1024 + 4) + b"\n" + valid + b"\n")
-            connection.shutdown(socket.SHUT_WR)
-            assert connection.recv(1) == b""
+            try:
+                connection.sendall(b"x" * (4 * 1024 * 1024 + 4) + b"\n" + valid + b"\n")
+                connection.shutdown(socket.SHUT_WR)
+                assert connection.recv(1) == b""
+            except OSError as error:
+                # The required early close can arrive during send/shutdown,
+                # before the client reaches recv. Timeouts/other errors fail.
+                assert error.errno in {errno.ENOTCONN, errno.ECONNRESET, errno.EPIPE}
     finally:
         bridge_server.stop()
 
