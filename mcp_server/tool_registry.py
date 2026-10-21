@@ -496,8 +496,8 @@ def create_default_registry(client: AsyncRequestClient) -> ToolRegistry:
         "asset_delivery", load_asset_delivery_definitions, tools=ASSET_DELIVERY_TOOL_NAMES,
         description="Preview and no-clobber GLB/FBX delivery of explicitly scoped reviewed assets.",
     )
-    from .tools.artist import TOOL_DATA as artist_data
-    from .tools.artist import load_definitions as load_artist
+    from .tools.catalog import ARTIST_TOOL_DATA as artist_data
+    from .tools.catalog import load_artist_definitions as load_artist
 
     def artist_loader(group: str) -> Callable[[], tuple[ToolDefinition, ...]]:
         return lambda: tuple(tool for tool in load_artist() if tool.toolset == group)

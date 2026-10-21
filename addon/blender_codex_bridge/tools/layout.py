@@ -16,6 +16,7 @@ from ..errors import BridgeError, ErrorCode, invalid_argument
 from ..permissions import Permission
 from ..tool_registry import ToolContext, ToolRegistry
 from ..utils import bool_param, get_object, int_param, require_blender, vector3
+from ._object_scope import MutationGuard, require_no_external_consumers, require_object_scope
 
 LOGGER = logging.getLogger(__name__)
 MAX_TARGETS = 128
@@ -166,25 +167,36 @@ def _target_names(value: Any, *, minimum: int = 1) -> list[str]:
     return names
 
 
-def _targets(names: list[str]) -> tuple[Any, list[Any]]:
+def _targets(names: list[str], context: Any, method: str) -> tuple[Any, list[Any], MutationGuard]:
     bpy = require_blender()
+    guard = MutationGuard(bpy, context, method)
     if bpy.context.mode != "OBJECT":
         raise BridgeError(ErrorCode.INVALID_MODE, "Layout editing requires Object mode; no mode or selection is changed.")
     objects = [get_object(name, allow_active=False) for name in names]
     for obj in objects:
+        guard.remember(obj)
+    guard.check(objects)
+    _validate_targets(bpy, objects)
+    bpy.context.view_layer.update()
+    guard.check(objects)
+    _validate_targets(bpy, objects)
+    return bpy, objects, guard
+
+
+def _validate_targets(bpy: Any, objects: list[Any]) -> None:
+    for obj in objects:
         if obj.name not in bpy.context.view_layer.objects:
             raise invalid_argument("Layout targets must belong to the current view layer.", object=obj.name)
-        if not getattr(obj, "is_editable", True) or obj.library is not None or obj.override_library is not None:
-            raise invalid_argument("Layout targets must be local editable objects without library overrides.", object=obj.name)
+        require_object_scope(bpy, obj, operation="Layout")
         animation = obj.animation_data
         if (
             obj.parent is not None or len(obj.children) or len(obj.constraints)
-            or obj.rigid_body is not None
+            or obj.rigid_body is not None or getattr(obj, "instance_collection", None) is not None
             or (animation is not None and (animation.action is not None or len(animation.drivers) or len(animation.nla_tracks)))
         ):
             raise BridgeError(
                 ErrorCode.NOT_IMPLEMENTED,
-                "Layout supports independent objects only: no parents, children, constraints, rigid bodies, actions, drivers, or NLA tracks.",
+                "Layout supports independent objects only: no parents, children, constraints, rigid bodies, collection instances, actions, drivers, or NLA tracks.",
                 {"object": obj.name},
             )
         if (
@@ -194,8 +206,7 @@ def _targets(names: list[str]) -> tuple[Any, list[Any]]:
             or any(float(value) != 1.0 for value in obj.delta_scale)
         ):
             raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Layout does not support non-default delta transforms.", {"object": obj.name})
-    bpy.context.view_layer.update()
-    return bpy, objects
+    require_no_external_consumers(bpy, objects, operation="Layout")
 
 
 def _validate_changes(obj: Any, changes: Mapping[str, Sequence[float]]) -> None:
@@ -207,17 +218,33 @@ def _validate_changes(obj: Any, changes: Mapping[str, Sequence[float]]) -> None:
             raise invalid_argument("Layout does not bypass locked transform components.", object=obj.name, channel=channel)
 
 
-def _commit(bpy: Any, edits: list[tuple[Any, dict[str, tuple[float, float, float]]]]) -> dict[str, Any]:
+def _commit(bpy: Any, edits: list[tuple[Any, dict[str, tuple[float, float, float]]]], guard: MutationGuard) -> dict[str, Any]:
+    targets = [obj for obj, _ in edits]
+    guard.check(targets)
+    _validate_targets(bpy, targets)
     for obj, changes in edits:
         _validate_changes(obj, changes)
     depsgraph = bpy.context.evaluated_depsgraph_get()
     before = [_summary(obj, depsgraph) for obj, _changes in edits]
-    saved = [(obj, {channel: tuple(getattr(obj, channel)) for channel in _CHANNELS}) for obj, _changes in edits]
+    saved = [(obj, {channel: tuple(getattr(obj, channel)) for channel in changes}) for obj, changes in edits]
+    expected = {(id(obj), channel): value for obj, snapshot in saved for channel, value in snapshot.items()}
+    attempted: list[tuple[Any, str, tuple[float, ...], tuple[float, ...]]] = []
     try:
         for obj, changes in edits:
             for channel, value in changes.items():
+                guard.check(targets)
+                _validate_targets(bpy, targets)
+                _validate_changes(obj, {channel: value})
+                if any(tuple(getattr(owner, field)) != expected[(id(owner), field)] for owner, snapshot in saved for field in snapshot):
+                    raise RuntimeError("Target transform channels changed outside the operation before a write.")
+                attempted.append((obj, channel, tuple(getattr(obj, channel)), tuple(value)))
                 setattr(obj, channel, value)
+                observed = tuple(getattr(obj, channel))
+                attempted[-1] = (*attempted[-1][:3], observed)
+                expected[(id(obj), channel)] = observed
         bpy.context.view_layer.update()
+        guard.check(targets)
+        _validate_targets(bpy, targets)
         for obj, changes in edits:
             if any(not _close(getattr(obj, channel), value) for channel, value in changes.items()):
                 raise RuntimeError("Blender did not retain the requested transform channels.")
@@ -227,26 +254,35 @@ def _commit(bpy: Any, edits: list[tuple[Any, dict[str, tuple[float, float, float
     except Exception as exc:
         LOGGER.exception("Layout edit failed; restoring all transform snapshots")
         restored = True
-        for obj, snapshot in saved:
-            for channel, value in snapshot.items():
-                try:
-                    setattr(obj, channel, value)
-                except Exception:
-                    LOGGER.exception("Failed to restore layout channel %s on %s", channel, obj.name)
+        for obj, channel, original, output in reversed(attempted):
+            try:
+                if tuple(getattr(obj, channel)) == original:
+                    continue
+                guard.check(targets)
+                _validate_targets(bpy, targets)
+                _validate_changes(obj, {channel: original})
+                if tuple(getattr(obj, channel)) != output:
                     restored = False
+                    continue
+                setattr(obj, channel, original)
+            except Exception:
+                LOGGER.exception("Failed to restore owned layout channel %s on %s", channel, obj.name)
+                restored = False
         try:
             bpy.context.view_layer.update()
             restored = restored and all(_close(getattr(obj, channel), value) for obj, snapshot in saved for channel, value in snapshot.items())
+            restored = restored and all(_close(_origin(obj, depsgraph), snapshot["world_origin"]) for (obj, _), snapshot in zip(saved, before, strict=True))
         except Exception:
             LOGGER.exception("Failed to verify layout rollback")
             restored = False
         raise BridgeError(
-            ErrorCode.OPERATION_FAILED,
+            exc.code if isinstance(exc, BridgeError) else ErrorCode.OPERATION_FAILED,
             "Layout edit failed; original transform channels were restored." if restored else "Layout edit failed and rollback is incomplete; reinspect and recover from the checkpoint.",
             {
-                "execution_started": True,
+                "execution_started": bool(attempted),
                 "affected_objects": [obj.name for obj, _changes in edits],
                 "rollback_complete": restored,
+                "rollback_verified": restored,
                 "mutation_outcome_unknown": not restored,
                 "verification_required": True,
                 "exception_type": type(exc).__name__,
@@ -263,7 +299,6 @@ def _commit(bpy: Any, edits: list[tuple[Any, dict[str, tuple[float, float, float
 
 
 def transform_batch(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
-    del context
     _known(params, {"edits"})
     raw = params.get("edits")
     if not isinstance(raw, list) or not 1 <= len(raw) <= MAX_TARGETS:
@@ -280,12 +315,11 @@ def transform_batch(context: ToolContext, params: Mapping[str, Any]) -> dict[str
             raise invalid_argument("Every transform edit requires location, rotation, or scale.")
         values.append(changes)
     _target_names(names)
-    bpy, objects = _targets(names)
-    return _commit(bpy, list(zip(objects, values, strict=True)))
+    bpy, objects, guard = _targets(names, context, "object.transform_batch")
+    return _commit(bpy, list(zip(objects, values, strict=True)), guard)
 
 
 def align_objects(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
-    del context
     _known(params, {"object_names", "axis", "target", "reference_object"})
     names = _target_names(params.get("object_names"), minimum=2)
     axis = _enum(params, "axis", "X", {"X", "Y", "Z"})
@@ -296,7 +330,7 @@ def align_objects(context: ToolContext, params: Mapping[str, Any]) -> dict[str, 
             raise invalid_argument("The explicit reference object must be among object_names.")
     elif reference is not None:
         raise invalid_argument("'reference_object' is valid only when target is REFERENCE.")
-    bpy, objects = _targets(names)
+    bpy, objects, guard = _targets(names, context, "object.align")
     depsgraph = bpy.context.evaluated_depsgraph_get()
     origins = [_origin(obj, depsgraph) for obj in objects]
     index = "XYZ".index(axis)
@@ -310,15 +344,14 @@ def align_objects(context: ToolContext, params: Mapping[str, Any]) -> dict[str, 
         location = list(origin)
         location[index] = coordinate
         edits.append((obj, {"location": tuple(location)}))
-    return {"axis": axis, "target": target, "coordinate": coordinate, **_commit(bpy, edits)}
+    return {"axis": axis, "target": target, "coordinate": coordinate, **_commit(bpy, edits, guard)}
 
 
 def distribute_objects(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
-    del context
     _known(params, {"object_names", "axis"})
     names = _target_names(params.get("object_names"), minimum=3)
     axis = _enum(params, "axis", "X", {"X", "Y", "Z"})
-    bpy, objects = _targets(names)
+    bpy, objects, guard = _targets(names, context, "object.distribute")
     depsgraph = bpy.context.evaluated_depsgraph_get()
     index = "XYZ".index(axis)
     ordered = sorted(((obj, _origin(obj, depsgraph)) for obj in objects), key=lambda item: (item[1][index], item[0].name))
@@ -331,7 +364,7 @@ def distribute_objects(context: ToolContext, params: Mapping[str, Any]) -> dict[
         if 0 < number < len(ordered) - 1:
             location[index] = start + spacing * number
         edits.append((obj, {"location": tuple(location)}))
-    return {"axis": axis, "spacing": spacing, "order": [obj.name for obj, _origin_value in ordered], "endpoints_preserved": True, **_commit(bpy, edits)}
+    return {"axis": axis, "spacing": spacing, "order": [obj.name for obj, _origin_value in ordered], "endpoints_preserved": True, **_commit(bpy, edits, guard)}
 
 
 def register_tools(registry: ToolRegistry) -> None:

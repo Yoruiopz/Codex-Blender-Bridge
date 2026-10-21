@@ -1,10 +1,15 @@
 # Structured artist tools (unreleased)
 
-These 25 tools are development work on `main`, not part of the published 0.3.0 assets.
+These artist-tool foundations are development work on `main`, not part of the published 0.3.0 assets.
 They implement reviewed subsets of the requested 1.0 artist workflows. They do not yet
 provide every compositor node, simulation solver, painting brush, driver or NLA operation.
 Install matching development add-on and MCP sources to exercise them; do not mix an old
 release add-on with this server. No release assets have been replaced.
+
+Additional bounded workflows are documented separately: [weight brushes and geometric
+transfer](weight-brushes.md), [rig controls and bone drivers](rig-drivers.md),
+[mesh slides and UV refinement](mesh-uv-refinement.md), [sculpt and vertex colors](surface-brushes.md),
+[Action and curve editing](animation-curves.md), and [nested Geometry Nodes](geometry-node-groups.md).
 
 ## Enablement and permissions
 
@@ -50,11 +55,14 @@ Mutations require local, non-override, single-user mesh data.
 
 Smoothing and transfer preserve unrelated groups and do **not** normalize implicitly. Run
 explicit normalization afterward when required; inspect totals before assuming skinning is valid.
-Geometric mirroring, surface-interpolated transfer and brush strokes remain unimplemented.
+The separate [weight brush tools](weight-brushes.md) add explicit brush strokes,
+geometric mirroring and surface-interpolated transfer; they have their own tighter bounds
+and measured recovery contract.
 
 Locked target groups cannot be edited. Weight application snapshots memberships and attempts rollback
 on failure; inspect `rollback_performed` and reinspect before retrying. This is numeric skin-weight
-authoring, **not** brush strokes or deform-quality validation.
+authoring; the separate brush fixture samples actual armature deformation. Full character
+and visual deformation-quality acceptance remains open.
 
 ## Compositor
 
@@ -94,7 +102,9 @@ Each of 1–8 variables specifies `object_name`, `transform_type` (LOC/ROT/SCALE
 and `transform_space` (WORLD_SPACE/LOCAL_SPACE/TRANSFORM_SPACE). Sources must be independent:
 no parent, constraints or animation data, and not the target. Targets cannot have an active
 action/NLA or an existing driver on that channel. `drivers.remove` removes one exact channel.
-Arbitrary RNA paths, expressions, bone targets and complex dependency networks are not implemented.
+This object-transform API does not support arbitrary RNA paths, expressions or bone targets.
+The separate [rig driver API](rig-drivers.md) supports reviewed bone transforms and exact numeric
+custom properties with bounded dependency validation; broader networks remain unsupported.
 
 `nla.add_strip(object_name, track_name, strip_name, action_name, frame_start=1, slot_identifier=null)`
 uses an existing action on a new named track. It selects the sole compatible OBJECT action slot

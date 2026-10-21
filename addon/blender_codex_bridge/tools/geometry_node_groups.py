@@ -6,11 +6,13 @@ No RNA paths, file nodes, implicit deep copies or arbitrary scripts are exposed.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import math
 from collections import deque
 from collections.abc import Mapping
 from itertools import islice
+from types import SimpleNamespace
 from typing import Any
 
 from ..errors import BridgeError, ErrorCode, invalid_argument
@@ -20,6 +22,7 @@ from ..utils import bool_param, reject_unknown_params, require_blender
 from . import geometry_nodes as gn
 from . import nodes
 from ._object_safety import require_local_object
+from ._rna import serialize_properties
 from .shader_scope import name
 
 LOGGER = logging.getLogger(__name__)
@@ -119,6 +122,7 @@ def _ownership(bpy: Any, tree: Any, context: ToolContext) -> dict[str, Any]:
     owners: dict[int, Any] = {}
     parent_groups: list[str] = []
     other_owners: list[dict[str, str]] = []
+    ownership_tokens = []
     while pending:
         _check(context)
         current = pending.popleft()
@@ -127,6 +131,7 @@ def _ownership(bpy: Any, tree: Any, context: ToolContext) -> dict[str, Any]:
         if len(visited) >= MAX_TREES:
             raise invalid_argument("Parent GN ownership exceeds 32 groups; isolate the graph first.")
         visited.add(_key(current))
+        ownership_tokens.append((_key(current), getattr(current, "session_uid", None), int(current.users), bool(current.use_fake_user)))
         if not _local(current):
             raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "GN changes cannot affect linked, override or read-only parent groups.")
         direct = bpy.data.user_map(subset={current}).get(current, set())
@@ -145,7 +150,9 @@ def _ownership(bpy: Any, tree: Any, context: ToolContext) -> dict[str, Any]:
             elif getattr(getattr(owner, "bl_rna", None), "identifier", None) != "Object":
                 other_owners.append({"name": owner.name, "type": getattr(getattr(owner, "bl_rna", None), "identifier", "unknown")})
     objects = sorted(owner.name for owner in owners.values() if getattr(getattr(owner, "bl_rna", None), "identifier", None) == "Object")
+    signature = repr((sorted(ownership_tokens), sorted((_key(owner), getattr(owner, "session_uid", None)) for owner in owners.values()))).encode()
     return {"affected_objects": objects, "parent_groups": sorted(set(parent_groups)), "other_owners": other_owners,
+            "scope_sha256": hashlib.sha256(signature).hexdigest(),
             "requires_shared_consent": (int(tree.users) - int(bool(getattr(tree, "use_fake_user", False))) > 1 or bool(parent_groups)
                                          or len(objects) > 1 or bool(other_owners)),
             "coverage_complete": True,
@@ -231,6 +238,81 @@ def _post(tree: Any, scope: dict[str, Any]) -> dict[str, Any]:
             "evaluation_verified": False, "project_saved": False}
 
 
+def _validation_context(context: ToolContext) -> Any:
+    return SimpleNamespace(check_cancelled=None, state=context.state, require=context.require)
+
+
+def _graph_guard(tree: Any) -> dict[str, Any]:
+    """Bounded semantic state plus node identity, without callbacks or evaluation."""
+    if len(tree.nodes) > MAX_NODES or len(tree.links) > MAX_LINKS or len(tree.interface.items_tree) > 128:
+        raise invalid_argument("GN state exceeds the guarded graph budget.")
+    records = []
+    for node in tree.nodes:
+        if len(node.inputs) > 128 or len(node.outputs) > 128:
+            raise invalid_argument("GN state exceeds the guarded socket budget.")
+        records.append([_key(node), node.name, node.bl_idname,
+                        None if getattr(node, "node_tree", None) is None else _key(node.node_tree),
+                        {key: _read(value) for key, value in serialize_properties(node, gn._NODE_PROPERTIES).items()},
+                        [[socket.identifier, _read(socket.default_value) if hasattr(socket, "default_value") else None]
+                         for socket in node.inputs],
+                        [[socket.identifier, _read(socket.default_value) if hasattr(socket, "default_value") else None]
+                         for socket in node.outputs]])
+    return {"name": tree.name, "identity": _key(tree), "nodes": records,
+            "links": [(link.from_node.name, link.from_socket.identifier, link.to_node.name, link.to_socket.identifier) for link in tree.links],
+            "interface": [(item.name, getattr(item, "identifier", None), item.item_type,
+                           getattr(item, "in_out", None), getattr(item, "socket_type", None),
+                           _read(item.default_value) if hasattr(item, "default_value") else None) for item in tree.interface.items_tree]}
+
+
+def _current_group(bpy: Any, group_name: str, expected_key: int) -> Any:
+    tree = _group(bpy, group_name)
+    if _key(tree) != expected_key:
+        raise invalid_argument("GN target group identity changed; reinspect before retrying.")
+    return tree
+
+
+def _preflight(context: ToolContext, bpy: Any, group_name: str, expected_key: int,
+               params: Mapping[str, Any], before: dict[str, Any], expected_scope: dict[str, Any]) -> tuple[Any, dict[str, Any]]:
+    tree = _current_group(bpy, group_name, expected_key)
+    scope = _editable(bpy, tree, _validation_context(context), params)
+    if _graph_guard(tree) != before or scope["scope_sha256"] != expected_scope["scope_sha256"]:
+        raise invalid_argument("GN graph changed after inspection; no stale write is performed.")
+    return tree, scope
+
+
+def _compensation_group(context: ToolContext, bpy: Any, group_name: str, expected_key: int,
+                        params: Mapping[str, Any], expected_scope: dict[str, Any]) -> Any:
+    tree = _current_group(bpy, group_name, expected_key)
+    current_scope = _editable(bpy, tree, _validation_context(context), params)
+    if current_scope["scope_sha256"] != expected_scope["scope_sha256"]:
+        raise invalid_argument("GN consumer scope changed; automatic graph compensation skipped.")
+    return tree
+
+
+def _object_token(obj: Any) -> tuple[int, int | None]:
+    data = getattr(obj, "data", None)
+    return _key(obj), None if data is None else _key(data)
+
+
+def _current_object(bpy: Any, object_name: str, token: tuple[int, int | None]) -> Any:
+    matches = list(islice((obj for obj in bpy.context.scene.objects if obj.name == object_name), 2))
+    if len(matches) != 1 or _object_token(matches[0]) != token:
+        raise invalid_argument("GN object/data identity changed; reinspect before retrying.")
+    _object_mode(bpy)
+    require_local_object(matches[0], operation="GN modifier editing")
+    return matches[0]
+
+
+def _current_modifier(bpy: Any, params: Mapping[str, Any], token: tuple[int, int | None],
+                      modifier_key: int, group_key: int) -> tuple[Any, Any, Any]:
+    obj = _current_object(bpy, params["object_name"], token)
+    modifier = obj.modifiers.get(params["modifier_name"])
+    if (modifier is None or _key(modifier) != modifier_key or modifier.type != "NODES"
+            or modifier.node_group is None or _key(modifier.node_group) != group_key):
+        raise invalid_argument("GN modifier/binding identity changed; automatic stale edits are refused.")
+    return obj, modifier, modifier.node_group
+
+
 def _failed(error: Exception, message: str, *, restored: bool = False, **evidence: Any) -> BridgeError:
     return BridgeError(error.code if isinstance(error, BridgeError) else ErrorCode.OPERATION_FAILED, message,
                        {"execution_started": True, "rollback_verified": restored, "possible_mutation": not restored,
@@ -250,13 +332,24 @@ def group_bind(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any
     requested = name(params.get("node_name"), "node_name")
     if parent.nodes.get(requested) is not None or len(parent.nodes) >= MAX_NODES:
         raise invalid_argument("An unused exact node name and node capacity are required.")
+    parent_key, child_key = _key(parent), _key(child)
+    before, published = _graph_guard(parent), None
     _gate(context, Permission.EDIT_MESH)
+    parent, scope = _preflight(context, bpy, params["parent_group_name"], parent_key, params, before, scope)
+    child = _current_group(bpy, params["child_group_name"], child_key)
+    dependencies = _review(child, _validation_context(context))
+    if parent.name in dependencies:
+        raise invalid_argument("Binding would introduce a recursive GN dependency.")
     node = None
     try:
         node = parent.nodes.new("GeometryNodeGroup")
         node.name, node.node_tree = requested, child
+        published = _graph_guard(parent)
         _gate(context, Permission.EDIT_MESH)
-        _review(parent, context)
+        parent = _compensation_group(context, bpy, params["parent_group_name"], parent_key, params, scope)
+        if _graph_guard(parent) != published:
+            raise invalid_argument("GN binding was changed after publication; reinspect before recovery.")
+        _review(parent, _validation_context(context))
         if node.name != requested or node.node_tree != child:
             raise RuntimeError("GN instance binding readback mismatch")
         return {"bound": True, "node_name": node.name, "child_group_name": child.name,
@@ -266,9 +359,12 @@ def group_bind(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any
         restored = False
         try:
             context.require(Permission.EDIT_MESH)
+            parent = _compensation_group(context, bpy, params["parent_group_name"], parent_key, params, scope)
+            if published is not None and _graph_guard(parent) != published:
+                raise invalid_argument("GN binding changed; automatic cleanup skipped.")
             if node is not None:
                 parent.nodes.remove(node)
-            restored = parent.nodes.get(requested) is None
+            restored = _graph_guard(parent) == before
         except Exception:
             LOGGER.exception("GN instance cleanup failed")
         raise _failed(error, "GN group binding failed; reinspect the parent graph.", restored=restored, retained_node=None if restored else requested) from error
@@ -283,41 +379,63 @@ def group_copy_for_node(context: ToolContext, params: Mapping[str, Any]) -> dict
     if node is None or node.bl_idname != "GeometryNodeGroup" or node.node_tree is None:
         raise invalid_argument("Expected an exact bound GeometryNodeGroup instance.")
     original = node.node_tree
+    original_key, original_name, source_graph = _key(original), original.name, _graph_guard(original)
     requested = name(params.get("new_group_name"), "new_group_name")
     if any(tree.name == requested for tree in bpy.data.node_groups):
         raise invalid_argument("The new group name already exists; no implicit reuse occurs.")
     before = {item.identifier: _read(item.default_value) for item in node.inputs if hasattr(item, "default_value")}
     links = [(link.from_node.name, link.from_socket.identifier, link.to_node.name, link.to_socket.identifier) for link in parent.links]
+    parent_key = _key(parent)
+    original_graph, published, copied_graph = _graph_guard(parent), None, None
     clone = None
     _gate(context, Permission.EDIT_MESH)
+    parent, scope = _preflight(context, bpy, params["parent_group_name"], parent_key, params, original_graph, scope)
+    if any(tree.name == requested for tree in bpy.data.node_groups):
+        raise invalid_argument("New GN group name changed after inspection; no existing group is reused.")
+    original = _current_group(bpy, original_name, original_key)
+    if _graph_guard(original) != source_graph:
+        raise invalid_argument("GN copy source changed after inspection; no stale copy is created.")
+    node = parent.nodes.get(params["node_name"])
     try:
         clone = original.copy()
         clone.name = requested
         node.node_tree = clone
+        published, copied_graph = _graph_guard(parent), _graph_guard(clone)
         _gate(context, Permission.EDIT_MESH)
+        parent = _compensation_group(context, bpy, params["parent_group_name"], parent_key, params, scope)
+        if _graph_guard(parent) != published or _graph_guard(clone) != copied_graph:
+            raise invalid_argument("GN copied binding/configuration changed after publication; reinspect before recovery.")
         after = {item.identifier: _read(item.default_value) for item in node.inputs if hasattr(item, "default_value")}
         now_links = [(link.from_node.name, link.from_socket.identifier, link.to_node.name, link.to_socket.identifier) for link in parent.links]
         if clone.name != requested or node.node_tree != clone or before != after or links != now_links:
             raise RuntimeError("GN instance copy changed socket defaults, identifiers or graph links")
-        _review(parent, context)
+        _review(parent, _validation_context(context))
         return {"copied": True, "node_name": node.name, "previous_group": original.name, "new_group_name": clone.name,
-                "deep_copy": False, "nested_dependencies_retained": _review(clone, context)[1:], **_post(parent, scope)}
+                "deep_copy": False, "nested_dependencies_retained": _review(clone, _validation_context(context))[1:], **_post(parent, scope)}
     except Exception as error:
         LOGGER.exception("GN instance copy failed")
         rebound, removed, cleanup_denied = False, clone is None, False
         try:
             context.require(Permission.EDIT_MESH)
+            parent = _compensation_group(context, bpy, params["parent_group_name"], parent_key, params, scope)
+            if (published is not None and _graph_guard(parent) != published) or (copied_graph is not None and _graph_guard(clone) != copied_graph):
+                raise invalid_argument("GN copied binding/configuration changed; automatic compensation skipped.")
+            original = _current_group(bpy, original_name, original_key)
+            _review(original, _validation_context(context))
+            if _graph_guard(original) != source_graph:
+                raise invalid_argument("Original GN copy source changed; automatic rebinding skipped.")
             node.node_tree = original
             rebound = (node.node_tree == original and before == {item.identifier: _read(item.default_value) for item in node.inputs if hasattr(item, "default_value")}
-                       and links == [(link.from_node.name, link.from_socket.identifier, link.to_node.name, link.to_socket.identifier) for link in parent.links])
+                       and _graph_guard(parent) == original_graph)
             if clone is not None and clone.users == 0 and not clone.use_fake_user:
                 try:
                     context.require(Permission.DELETE_OBJECTS)
                 except BridgeError:
                     cleanup_denied = True
                 else:
-                    bpy.data.node_groups.remove(clone, do_unlink=False)
-                    removed = True
+                    if clone.users == 0 and not clone.use_fake_user and _local(clone):
+                        bpy.data.node_groups.remove(clone, do_unlink=False)
+                        removed = True
         except Exception:
             LOGGER.exception("GN instance copy recovery failed")
         raise _failed(error, "GN instance copy failed; inspect binding and retained group evidence.", restored=rebound and removed,
@@ -344,11 +462,20 @@ def group_link(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any
     if len(tree.links) >= MAX_LINKS or (previous and not target.is_multi_input and not replace):
         raise invalid_argument("Link capacity or destination binding requires explicit review/replacement.")
     gn._check_link(tree, source_node, source, target_node, target)
+    tree_key, before, published = _key(tree), _graph_guard(tree), None
     _gate(context, Permission.EDIT_MESH)
+    tree, scope = _preflight(context, bpy, params["group_name"], tree_key, params, before, scope)
+    source_node, target_node = tree.nodes.get(params["from_node"]), tree.nodes.get(params["to_node"])
+    source, target = _socket(source_node.outputs, params["from_socket_identifier"]), _socket(target_node.inputs, params["to_socket_identifier"])
+    gn._check_link(tree, source_node, source, target_node, target)
     link = None
     try:
         link = tree.links.new(source, target)
+        published = _graph_guard(tree)
         _gate(context, Permission.EDIT_MESH)
+        tree = _compensation_group(context, bpy, params["group_name"], tree_key, params, scope)
+        if _graph_guard(tree) != published:
+            raise invalid_argument("GN links/configuration changed after publication; reinspect before recovery.")
         if not any(item.from_socket == source and item.to_socket == target for item in tree.links):
             raise RuntimeError("GN link readback mismatch")
         return {"linked": True, "replaced_link_count": len(previous) if not target.is_multi_input else 0, "link": nodes._link_summary(link), **_post(tree, scope)}
@@ -357,12 +484,15 @@ def group_link(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any
         restored = False
         try:
             context.require(Permission.EDIT_MESH)
+            tree = _compensation_group(context, bpy, params["group_name"], tree_key, params, scope)
+            if published is not None and _graph_guard(tree) != published:
+                raise invalid_argument("GN links/configuration changed; automatic compensation skipped.")
             if link is not None:
                 tree.links.remove(link)
             for old_source, old_target in previous:
                 if not any(item.from_socket == old_source and item.to_socket == old_target for item in tree.links):
                     tree.links.new(old_source, old_target)
-            restored = [(item.from_socket, item.to_socket) for item in tree.links if item.to_socket == target] == previous
+            restored = _graph_guard(tree) == before
         except Exception:
             LOGGER.exception("GN link recovery failed")
         raise _failed(error, "GN link failed; reinspect links and recover the checkpoint if needed.", restored=restored) from error
@@ -381,10 +511,18 @@ def group_set_input(context: ToolContext, params: Mapping[str, Any]) -> dict[str
     if node.bl_idname == "GeometryNodeRepeatInput" and socket.name == "Iterations" and (type(value) is not int or not 0 <= value <= 64):
         raise invalid_argument("Repeat iterations must remain an integer from 0 to 64.")
     previous = _read(socket.default_value)
+    tree_key, before, published = _key(tree), _graph_guard(tree), None
     _gate(context, Permission.EDIT_MESH)
+    tree, scope = _preflight(context, bpy, params["group_name"], tree_key, params, before, scope)
+    node = tree.nodes.get(params["node_name"])
+    socket = _socket(node.inputs, params["socket_identifier"])
     try:
         socket.default_value = value
+        published = _graph_guard(tree)
         _gate(context, Permission.EDIT_MESH)
+        tree = _compensation_group(context, bpy, params["group_name"], tree_key, params, scope)
+        if _graph_guard(tree) != published:
+            raise invalid_argument("GN input/configuration changed after publication; reinspect before recovery.")
         observed = _read(socket.default_value)
         if not _same(observed, value):
             raise RuntimeError("GN input assignment was clamped or changed")
@@ -395,8 +533,11 @@ def group_set_input(context: ToolContext, params: Mapping[str, Any]) -> dict[str
         restored = False
         try:
             context.require(Permission.EDIT_MESH)
+            tree = _compensation_group(context, bpy, params["group_name"], tree_key, params, scope)
+            if published is not None and _graph_guard(tree) != published:
+                raise invalid_argument("GN input/configuration changed; automatic compensation skipped.")
             socket.default_value = previous
-            restored = _same(_read(socket.default_value), previous)
+            restored = _graph_guard(tree) == before
         except Exception:
             LOGGER.exception("GN socket recovery failed")
         raise _failed(error, "GN input edit failed; inspect the node and recovery evidence.", restored=restored) from error
@@ -409,7 +550,11 @@ def group_remove(context: ToolContext, params: Mapping[str, Any]) -> dict[str, A
     tree = _group(bpy, params.get("group_name"))
     if not bool_param(params, "confirm_unused", False) or not _local(tree) or tree.users != 0 or tree.use_fake_user:
         raise invalid_argument("Removal requires confirm_unused=true and a local editable unused group without fake-user retention.")
+    tree_key, before = _key(tree), _graph_guard(tree)
     _gate(context, Permission.EDIT_MESH, Permission.DELETE_OBJECTS)
+    tree = _current_group(bpy, params["group_name"], tree_key)
+    if not _local(tree) or tree.users != 0 or tree.use_fake_user or _graph_guard(tree) != before:
+        raise invalid_argument("GN group users/configuration changed after inspection; removal refused.")
     requested = tree.name
     try:
         bpy.data.node_groups.remove(tree, do_unlink=False)
@@ -483,11 +628,26 @@ def modifier_set_input(context: ToolContext, params: Mapping[str, Any]) -> dict[
         raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "GN modifier constant editing currently requires an unanimated object for verified recovery.")
     existed = identifier in modifier
     previous = _read(modifier.get(identifier, socket.default_value))
+    object_token, modifier_key, group_key = _object_token(obj), _key(modifier), _key(tree)
+    before_properties, published_properties = _modifier_properties(modifier), None
+    definition = _graph_guard(tree)
     _gate(context, Permission.EDIT_MESH, Permission.TRANSFORM_OBJECTS)
+    obj, modifier, tree = _current_modifier(bpy, params, object_token, modifier_key, group_key)
+    _review(tree, _validation_context(context))
+    socket = _socket(tree.interface.items_tree, params["socket_identifier"])
+    if (socket.item_type != "SOCKET" or socket.in_out != "INPUT"
+            or _modifier_properties(modifier) != before_properties or _graph_guard(tree) != definition
+            or getattr(obj, "animation_data", None) is not None):
+        raise invalid_argument("GN modifier input state changed after inspection; no stale write is performed.")
+    value = _value(socket, params.get("value"))
     try:
         modifier[identifier] = value
         obj.update_tag()
+        published_properties = _modifier_properties(modifier)
         _gate(context, Permission.EDIT_MESH, Permission.TRANSFORM_OBJECTS)
+        obj, modifier, tree = _current_modifier(bpy, params, object_token, modifier_key, group_key)
+        if _modifier_properties(modifier) != published_properties or _graph_guard(tree) != definition:
+            raise invalid_argument("GN modifier properties changed after publication; reinspect before recovery.")
         observed = _read(modifier[identifier])
         if not _same(observed, value) or modifier.node_group != tree:
             raise RuntimeError("GN modifier input readback mismatch")
@@ -500,12 +660,15 @@ def modifier_set_input(context: ToolContext, params: Mapping[str, Any]) -> dict[
         restored = False
         try:
             context.require(Permission.EDIT_MESH, Permission.TRANSFORM_OBJECTS)
+            obj, modifier, tree = _current_modifier(bpy, params, object_token, modifier_key, group_key)
+            if published_properties is not None and _modifier_properties(modifier) != published_properties:
+                raise invalid_argument("GN modifier properties changed; automatic compensation skipped.")
             if existed:
                 modifier[identifier] = previous
             elif identifier in modifier:
                 del modifier[identifier]
             obj.update_tag()
-            restored = _same(_read(modifier.get(identifier, socket.default_value)), previous)
+            restored = _modifier_properties(modifier) == before_properties
         except Exception:
             LOGGER.exception("GN modifier input recovery failed")
         raise _failed(error, "GN modifier input edit failed; inspect the object and recovery evidence.", restored=restored) from error
@@ -539,12 +702,27 @@ def group_attach(context: ToolContext, params: Mapping[str, Any]) -> dict[str, A
         if getattr(obj, "animation_data", None) is not None:
             raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "GN attachment replacement requires an unanimated object for verified recovery.")
         old_properties = _modifier_properties(modifier)
+    object_token, group_key = _object_token(obj), _key(tree)
+    modifier_key = None if created else _key(modifier)
+    published_properties = None
     _gate(context, Permission.EDIT_MESH, Permission.TRANSFORM_OBJECTS)
+    obj = _current_object(bpy, params["object_name"], object_token)
+    tree = _current_group(bpy, params["group_name"], group_key)
+    dependencies = _review(tree, _validation_context(context))
+    current = obj.modifiers.get(requested)
+    if (created and current is not None) or (not created and (current is None or _key(current) != modifier_key
+            or current.node_group != previous or _modifier_properties(current) != old_properties)):
+        raise invalid_argument("GN modifier/binding changed after inspection; no stale attachment is performed.")
     try:
         if created:
             modifier = obj.modifiers.new(requested, "NODES")
+            modifier_key = _key(modifier)
         modifier.node_group = tree
+        published_properties = _modifier_properties(modifier)
         _gate(context, Permission.EDIT_MESH, Permission.TRANSFORM_OBJECTS)
+        obj, modifier, tree = _current_modifier(bpy, params, object_token, modifier_key, group_key)
+        if _modifier_properties(modifier) != published_properties:
+            raise invalid_argument("GN modifier properties changed after attachment; reinspect before recovery.")
         if modifier.node_group != tree or modifier.name != requested:
             raise RuntimeError("GN modifier attachment readback mismatch")
         return {"object": obj.name, "modifier_name": modifier.name, "group_name": tree.name, "created_modifier": created,
@@ -555,6 +733,9 @@ def group_attach(context: ToolContext, params: Mapping[str, Any]) -> dict[str, A
         restored = False
         try:
             context.require(Permission.EDIT_MESH, Permission.TRANSFORM_OBJECTS)
+            obj, modifier, tree = _current_modifier(bpy, params, object_token, modifier_key, group_key)
+            if published_properties is not None and _modifier_properties(modifier) != published_properties:
+                raise invalid_argument("GN attachment changed; automatic compensation skipped.")
             if created and modifier is not None:
                 obj.modifiers.remove(modifier)
                 restored = obj.modifiers.get(requested) is None

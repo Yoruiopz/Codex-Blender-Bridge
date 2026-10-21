@@ -62,6 +62,10 @@ CASES = {
     "geometry_node_groups": ("blender_geometry_node_groups_smoke.py", "BLENDER_GEOMETRY_NODE_GROUPS_OK "),
     "task_plans": ("blender_task_plans_smoke.py", "BLENDER_TASK_PLANS_READER_OK "),
     "asset_delivery": ("blender_asset_delivery_smoke.py", "BLENDER_ASSET_DELIVERY_READER_OK "),
+    "weight_brushes": ("blender_weight_brushes_smoke.py", "BLENDER_CODEX_WEIGHT_BRUSHES_SMOKE_OK "),
+    "rig_drivers": ("blender_rig_drivers_smoke.py", "BLENDER_RIG_DRIVERS_OK "),
+    "surface_brushes": ("blender_surface_brushes_smoke.py", "BLENDER_SURFACE_BRUSHES_OK "),
+    "mesh_uv_refinement": ("blender_mesh_uv_refinement_smoke.py", "BLENDER_MESH_UV_REFINEMENT_OK "),
 }
 # Each phase must exit successfully before a new process can consume its artifacts.
 PHASED_CASES = {
@@ -80,6 +84,7 @@ INTERACTIVE_CASES.add("image_masks")
 INTERACTIVE_CASES.add("image_alpha")
 INTERACTIVE_CASES.add("image_streams")
 INTERACTIVE_CASES.add("image_delivery")
+INTERACTIVE_CASES.add("mesh_uv_refinement")
 
 
 def success_payload(output: str, marker: str) -> dict | None:

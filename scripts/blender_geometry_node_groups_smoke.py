@@ -130,14 +130,14 @@ def main():
 
     # A post-allocation fault restores binding but respects denied datablock deletion.
     grants[Permission.DELETE_OBJECTS.value] = False
-    original_check = groups._check
+    original_gate = groups._gate
 
-    def fail_after_copy(context):
-        original_check(context)
+    def fail_after_copy(context, *required):
+        original_gate(context, *required)
         if bpy.data.node_groups.get("Retained GN Copy") is not None:
             raise BridgeError(ErrorCode.OPERATION_FAILED, "Fixture post-allocation fault")
 
-    groups._check = fail_after_copy
+    groups._gate = fail_after_copy
     try:
         call("group_copy_for_node", parent_group_name=parent_name, node_name="Nested", new_group_name="Retained GN Copy")
     except BridgeError as error:
@@ -147,7 +147,7 @@ def main():
     else:
         raise AssertionError("Injected copy failure was not reported")
     finally:
-        groups._check = original_check
+        groups._gate = original_gate
     assert root.nodes["Nested"].node_tree == isolated
     retained = bpy.data.node_groups["Retained GN Copy"]
     assert retained.users == 0

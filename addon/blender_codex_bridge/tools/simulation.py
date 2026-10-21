@@ -167,6 +167,8 @@ def cache(context: Any, params: Mapping[str, Any]) -> dict[str, Any]:
     scene = bpy.context.scene
     frame, subframe = scene.frame_current, scene.frame_subframe
     old_range = (point_cache.frame_start, point_cache.frame_end)
+    failure: Exception | None = None
+    range_recovery: dict[str, Any] = {"attempted": False}
     try:
         if operation == "BAKE":
             point_cache.frame_start, point_cache.frame_end = start, end
@@ -180,24 +182,48 @@ def cache(context: Any, params: Mapping[str, Any]) -> dict[str, Any]:
         if "FINISHED" not in result or point_cache.is_baked != (operation == "BAKE"):
             raise RuntimeError("Point-cache operation did not reach the requested state")
     except Exception as exc:
-        if not point_cache.is_baked:
-            point_cache.frame_start, point_cache.frame_end = old_range
+        failure = exc
+        try:
+            if not point_cache.is_baked:
+                range_recovery["attempted"] = True
+                point_cache.frame_start, point_cache.frame_end = old_range
+                range_recovery["verified"] = (
+                    point_cache.frame_start, point_cache.frame_end
+                ) == old_range
+        except Exception as restoration_error:
+            range_recovery.update(verified=False, error_type=type(restoration_error).__name__)
+    # Frame restoration can itself fail (for example in a frame-change handler).
+    # Measure it independently so it cannot mask a bake/free failure or success.
+    frame_recovery: dict[str, Any] = {"attempted": True, "verified": False}
+    try:
+        scene.frame_set(frame, subframe=subframe)
+        frame_recovery["verified"] = (
+            scene.frame_current == frame and scene.frame_subframe == subframe
+        )
+    except Exception as restoration_error:
+        frame_recovery["error_type"] = type(restoration_error).__name__
+    if failure is not None or not frame_recovery["verified"]:
         raise BridgeError(
             ErrorCode.OPERATION_FAILED,
-            "Point-cache operation failed; inspect before retrying.",
+            "Point-cache operation or frame restoration failed; inspect before retrying.",
             {
                 "object": obj.name,
+                "operation": operation,
                 "execution_started": True,
                 "verification_required": True,
+                "cache_operation_verified": failure is None,
+                "primary_error_type": type(failure).__name__ if failure else None,
+                "primary_error_code": failure.code if isinstance(failure, BridgeError) else None,
+                "range_recovery": range_recovery,
+                "frame_recovery": frame_recovery,
                 "cache_recovery": "explicit FREE; baked caches are not guaranteed recoverable by global undo",
             },
-        ) from exc
-    finally:
-        scene.frame_set(frame, subframe=subframe)
+        ) from failure
     return {
         "operation": operation,
         "cache_recovery": "explicit FREE; no durable backup or transactional undo",
-        "frame_restored": scene.frame_current == frame,
+        "frame_restored": frame_recovery["verified"],
+        "frame_recovery": frame_recovery,
         **_snapshot(obj, modifier),
     }
 

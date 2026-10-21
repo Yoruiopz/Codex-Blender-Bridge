@@ -346,12 +346,14 @@ Try this with matching 0.3.0 packages:
 
 This is broad Blender access, **not a claim that every Blender action has a structured tool**.
 Tools support their declared schemas and reviewed types, not every property in Blender.
-Mode switching does not implement sculpt or paint strokes. Unreleased `main` now adds
-structured compositor editing, vertex-weight assignment/normalization/smoothing and explicit
-mapped weight transfer, transform drivers,
-NLA clips, paired Geometry Nodes simulation/repeat zones, and scoped in-memory cloth baking.
-These are bounded implementations, not complete coverage of each editor. Fluid/rigid-body
-baking, weight-paint brushes, arbitrary driver expressions and broader NLA workflows remain gaps.
+Unreleased `main` adds structured compositor editing, explicit-mask sculpt and vertex-color
+strokes, weight brushes and geometric mirror/surface transfer, numeric rig controls and
+non-scripted bone drivers, Action/curve revision, NLA clips, nested Geometry Nodes inputs,
+paired simulation/repeat zones, and scoped in-memory cloth baking. Mesh slides require an
+explicit preview and topology rails; UV alignment, stitching and relaxation use explicit
+corner/island scope. These are bounded implementations with domain-specific ownership and
+recovery limits. Full retopology/sculpt workflows, surface texture strokes/stencils,
+fluid/rigid-body baking, broader NLA workflows and full production delivery remain open.
 See [artist-tool contracts and limits](docs/artist-tools.md). Context-sensitive
 operations can require a particular mode and selection. Unsupported requests must fail
 explicitly rather than pretend to succeed.
@@ -404,12 +406,12 @@ always inspect these fields and compare the result with the requested layout.
 ### Complete tool inventory — main branch
 
 Expand a domain for every registered MCP tool. This inventory is generated from the code
-and checked in CI. Main has one more tool than the 108-tool 0.3.0 release; unreleased work
-is identified above, and the feature table describes the published release.
+and checked in CI. The current inventory includes unreleased development beyond the 108-tool
+0.3.0 release; the feature table describes the published release.
 Blender's local recovery UI also has an add-on-only restore action, not an extra MCP tool.
 
 <!-- BEGIN GENERATED MCP TOOLS -->
-Current registry: **198 MCP tools**.
+Current registry: **218 MCP tools**.
 
 <details>
 <summary>core — 29 tools</summary>
@@ -604,10 +606,15 @@ Current registry: **198 MCP tools**.
 </details>
 
 <details>
-<summary>mesh — 17 tools</summary>
+<summary>mesh — 26 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
+| `color_attribute.create` | Create a distinct FLOAT_COLOR POINT/CORNER attribute with verified full initialization. |
+| `color_attribute.inspect` | Inspect paginated FLOAT_COLOR entries and a complete raw color digest. |
+| `color_attribute.paint` | Paint linear RGBA MIX on explicit vertex-associated POINT/CORNER entries. |
+| `color_attribute.remove` | Remove a color attribute only with data-loss and named-consumer acknowledgment plus deletion permission. |
+| `color_attribute.rename` | Rename a color attribute with explicit named-consumer acknowledgment; consumers are not rewritten. |
 | `mesh.analyze` | Inspect bounded base-mesh topology, adjacent winding and triangle crossing/contact candidates with explicit completeness. |
 | `mesh.bevel_selected` | Bevel selected mesh elements with explicit width and segments. |
 | `mesh.bridge_loops` | Bridge two referenced closed boundary/wire loops without vertex merging; unequal loops produce triangles. |
@@ -615,6 +622,7 @@ Current registry: **198 MCP tools**.
 | `mesh.delete_selected` | Delete selected mesh elements. |
 | `mesh.dissolve_selected` | Dissolve selected mesh elements. |
 | `mesh.edge_ring_inspect` | Preview paginated measured edges and expected topology for a complete connected quad ring. |
+| `mesh.edge_slide` | Apply fingerprinted selected-chain edge slides on explicit neighboring rails. |
 | `mesh.extrude_selected` | Extrude the selected mesh region by an explicit offset. |
 | `mesh.fill_holes` | Cap complete disjoint boundary loops with bounded n-gons; new face UVs start at zero. |
 | `mesh.inset_selected` | Inset selected faces with explicit thickness and depth. |
@@ -623,8 +631,11 @@ Current registry: **198 MCP tools**.
 | `mesh.mark_seams` | Mark or clear UV seams on selected edges of one local single-user Edit Mode mesh. |
 | `mesh.merge_by_distance` | Weld only selected vertices within an explicit local-space distance. |
 | `mesh.recalculate_normals` | Recalculate normals for the selected mesh region. |
+| `mesh.sculpt_brush` | Apply explicit-mask base-mesh PUSH/SMOOTH strokes with protected topology/UV/material evidence. |
 | `mesh.set_face_attributes` | Set smooth shading and/or an existing material-slot index on bounded referenced faces; material changes additionally require EDIT_MATERIALS. |
+| `mesh.slide_preview` | Preview bounded selected vertex/edge slides along explicit topology rails. |
 | `mesh.subdivide_selected` | Subdivide selected edges without smoothing under a conservative growth budget. |
+| `mesh.vertex_slide` | Apply fingerprinted vertex slides on explicit neighboring rails, preserving topology and UVs. |
 
 </details>
 
@@ -707,7 +718,7 @@ Current registry: **198 MCP tools**.
 </details>
 
 <details>
-<summary>rigging — 9 tools</summary>
+<summary>rigging — 14 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
@@ -718,8 +729,13 @@ Current registry: **198 MCP tools**.
 | `rig.constraint_add` | Add a supported named pose-bone constraint. |
 | `rig.constraint_remove` | Remove one named pose-bone constraint. |
 | `rig.create` | Create an armature object with one explicit root bone. |
+| `rig.driver_add` | Add a non-scripted pose-bone driver from reviewed numeric controls or transforms. |
+| `rig.driver_inspect` | Inspect a driver on an exact pose-bone transform component. |
+| `rig.driver_remove` | Remove one exact reviewed pose-bone transform driver. |
 | `rig.inspect` | Inspect a bounded armature hierarchy, pose transforms, and constraints. |
 | `rig.pose_transform` | Set finite pose-bone transform channels explicitly. |
+| `rig.property_inspect` | Inspect one exact numeric object or pose-bone control property. |
+| `rig.property_set` | Create or set an explicit bounded numeric rig control with dependency review. |
 
 </details>
 
@@ -751,10 +767,11 @@ Current registry: **198 MCP tools**.
 </details>
 
 <details>
-<summary>uv — 13 tools</summary>
+<summary>uv — 16 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
+| `uv.align` | Align explicit UV corners to an exact U/V coordinate while preserving pins and face orientation. |
 | `uv.analyze` | Measure bounded triangulated UV overlap/winding, pixel anisotropy and world-unit texel density, with explicit completeness. |
 | `uv.capture_layout` | Capture a bounded UV-coordinate PNG without scene/UI/render changes; not a quality verdict. |
 | `uv.coordinates_set` | Set exact face-corner UV coordinates within a validated face selection reference. |
@@ -765,23 +782,28 @@ Current registry: **198 MCP tools**.
 | `uv.layer_rename` | Rename an Object Mode UV layer; named consumers are not rewritten. |
 | `uv.pack_islands` | Pack selected UV islands using bounded margin settings. |
 | `uv.pin` | Pin or unpin selected-face UV corners without changing their coordinates. |
+| `uv.relax` | Relax one complete explicit UV island with fixed boundaries/pins and bounded displacement. |
 | `uv.smart_project` | Smart-project selected faces using bounded projection settings. |
+| `uv.stitch` | Copy explicit same-vertex UV corner correspondences to fixed anchors without welding mesh topology. |
 | `uv.transform` | Transform selected-face UV corners using explicit pivot, scale, rotation and offset; respect pins by default. |
 | `uv.unwrap` | Unwrap selected faces with explicit method and margin. |
 
 </details>
 
 <details>
-<summary>weights — 6 tools</summary>
+<summary>weights — 9 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
 | `weights.assign` | Assign a weight or remove memberships on up to 1000 explicit vertices; rollback on failure. |
+| `weights.brush_stroke` | Apply 1-32 explicit bounded spherical weight dabs to named vertices/group, preserving other memberships; no auto normalization. |
 | `weights.group_create` | Create an explicitly named vertex group on a local single-user mesh. |
 | `weights.inspect` | Inspect paginated vertex weights and locked groups in Object Mode. |
+| `weights.mirror_geometric` | Reflect explicit source vertices across an explicit LOCAL/WORLD plane; require unique one-to-one bounded correspondence and exact group mapping. |
 | `weights.normalize` | Normalize named unlocked groups while preserving all unmentioned weights. |
 | `weights.smooth` | Smooth one unlocked group across mesh edges on explicit vertices; fixed outside boundary and no implicit normalization. |
 | `weights.transfer` | Copy one group through explicit source/target vertex pairs, snapshotting before writes; no geometric correspondence guesses. |
+| `weights.transfer_surface` | Transfer explicit mapped groups through closest base-mesh triangles and barycentric weights, rejecting distant/ambiguous correspondence. |
 
 </details>
 

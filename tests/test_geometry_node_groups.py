@@ -247,3 +247,172 @@ def test_inspection_reports_stable_ids_after_name_change_without_evaluation(gn_g
     assert result["inputs"][0]["identifier"] == "Socket_1"
     assert result["inputs"][0]["name"] == "Renamed" and result["inputs"][0]["value"] == 2.0
     assert not result["truncated"]
+
+
+def gate_hook(gn_groups, monkeypatch, hook):
+    original = gn_groups.module._gate
+    count = []
+
+    def gate(context, *permissions):
+        original(context, *permissions)
+        count.append(None)
+        hook(len(count))
+
+    monkeypatch.setattr(gn_groups.module, "_gate", gate)
+
+
+def runtime_socket():
+    return NS(name="Width", identifier="Socket_1", type="VALUE", socket_type="NodeSocketFloat", default_value=2.0,
+              enabled=True, is_linked=False, is_multi_input=False)
+
+
+def graph_input(gn_groups):
+    target = node(name="Math")
+    target.inputs.append(runtime_socket())
+    gn_groups.root.nodes.append(target)
+    return target.inputs[0]
+
+
+@pytest.mark.parametrize("ordinal", [1, 2])
+def test_group_input_gate_edits_are_not_overwritten_by_write_or_compensation(gn_groups, monkeypatch, ordinal):
+    socket = graph_input(gn_groups)
+
+    def hook(count):
+        if count == ordinal:
+            socket.default_value = 42.0
+
+    gate_hook(gn_groups, monkeypatch, hook)
+    with pytest.raises(gn_groups.module.BridgeError):
+        gn_groups.module.group_set_input(gn_groups.context, {"group_name": "Graph", "node_name": "Math", "socket_identifier": "Socket_1", "value": 4.0})
+    assert socket.default_value == 42.0
+
+
+@pytest.mark.parametrize("ordinal", [1, 2])
+@pytest.mark.parametrize("change_binding", [False, True])
+def test_modifier_gate_value_or_binding_edits_are_preserved(gn_groups, monkeypatch, ordinal, change_binding):
+    replacement = tree("Manual Replacement")
+
+    def hook(count):
+        if count == ordinal:
+            gn_groups.modifier["Socket_1"] = 42.0
+            if change_binding:
+                gn_groups.modifier.node_group = replacement
+
+    gate_hook(gn_groups, monkeypatch, hook)
+    with pytest.raises(gn_groups.module.BridgeError):
+        set_modifier(gn_groups)
+    assert gn_groups.modifier["Socket_1"] == 42.0
+    assert gn_groups.modifier.node_group == (replacement if change_binding else gn_groups.root)
+
+
+def test_group_link_final_gate_does_not_replace_new_manual_connection(gn_groups, monkeypatch):
+    source, target, manual = node("Source"), node("Target"), node("Manual")
+    source.outputs.append(runtime_socket())
+    manual.outputs.append(runtime_socket())
+    target.inputs.append(runtime_socket())
+    gn_groups.root.nodes.extend([source, target, manual])
+    connection = NS(from_node=manual, from_socket=manual.outputs[0], to_node=target, to_socket=target.inputs[0])
+
+    def hook(count):
+        if count == 1:
+            gn_groups.root.links.append(connection)
+
+    gate_hook(gn_groups, monkeypatch, hook)
+    with pytest.raises(gn_groups.module.BridgeError, match="changed after inspection"):
+        gn_groups.module.group_link(gn_groups.context, {"group_name": "Graph", "from_node": "Source", "from_socket_identifier": "Socket_1", "to_node": "Target", "to_socket_identifier": "Socket_1"})
+    assert gn_groups.root.links == [connection]
+
+
+def test_group_copy_final_gate_does_not_overwrite_a_changed_child_binding(gn_groups, monkeypatch):
+    original, replacement = tree("Child"), tree("Replacement")
+    gn_groups.bpy.data.node_groups.extend([original, replacement])
+    original.copy = lambda: pytest.fail("Stale child binding was copied")
+    instance = node("Nested", "GeometryNodeGroup", node_tree=original)
+    gn_groups.root.nodes.append(instance)
+
+    def hook(count):
+        if count == 1:
+            instance.node_tree = replacement
+
+    gate_hook(gn_groups, monkeypatch, hook)
+    with pytest.raises(gn_groups.module.BridgeError, match="changed after inspection"):
+        gn_groups.module.group_copy_for_node(gn_groups.context, {"parent_group_name": "Graph", "node_name": "Nested", "new_group_name": "Copy"})
+    assert instance.node_tree == replacement
+
+
+@pytest.mark.parametrize("change_binding", [False, True])
+def test_post_copy_manual_binding_or_configuration_is_not_rolled_back(gn_groups, monkeypatch, change_binding):
+    original, replacement, clone = tree("Child"), tree("Replacement"), tree("Copy")
+    gn_groups.bpy.data.node_groups.extend([original, replacement])
+
+    def copy():
+        gn_groups.bpy.data.node_groups.append(clone)
+        return clone
+
+    original.copy = copy
+    instance = node("Nested", "GeometryNodeGroup", node_tree=original)
+    gn_groups.root.nodes.append(instance)
+
+    def hook(count):
+        if count == 2:
+            if change_binding:
+                instance.node_tree = replacement
+            else:
+                clone.nodes.append(node("Manual edit"))
+
+    gate_hook(gn_groups, monkeypatch, hook)
+    with pytest.raises(gn_groups.module.BridgeError) as error:
+        gn_groups.module.group_copy_for_node(gn_groups.context, {"parent_group_name": "Graph", "node_name": "Nested", "new_group_name": "Copy"})
+    assert error.value.context["possible_mutation"] and not error.value.context["rollback_verified"]
+    assert not error.value.context["binding_restored"]
+    assert instance.node_tree == (replacement if change_binding else clone)
+    assert clone in gn_groups.bpy.data.node_groups
+
+
+def test_group_removal_rechecks_live_users_after_gate(gn_groups, monkeypatch):
+    def hook(count):
+        if count == 1:
+            gn_groups.root.users = 1
+
+    gate_hook(gn_groups, monkeypatch, hook)
+    with pytest.raises(gn_groups.module.BridgeError, match="users/configuration changed"):
+        gn_groups.module.group_remove(gn_groups.context, {"group_name": "Graph", "confirm_unused": True})
+    assert gn_groups.root in gn_groups.bpy.data.node_groups
+
+
+@pytest.mark.parametrize("ordinal", [1, 2])
+def test_group_attachment_gate_rebinding_is_not_overwritten_or_rolled_back(gn_groups, monkeypatch, ordinal):
+    original, replacement = tree("Old Binding"), tree("Manual Binding")
+    gn_groups.modifier.node_group = original
+    gn_groups.root.interface.items_tree.append(NS(name="Geometry", identifier="Socket_0", item_type="SOCKET", in_out="OUTPUT", socket_type="NodeSocketGeometry"))
+
+    def hook(count):
+        if count == ordinal:
+            gn_groups.modifier.node_group = replacement
+            gn_groups.modifier["Socket_1"] = 42.0
+
+    gate_hook(gn_groups, monkeypatch, hook)
+    with pytest.raises(gn_groups.module.BridgeError):
+        gn_groups.module.group_attach(gn_groups.context, {"group_name": "Graph", "object_name": "Object", "modifier_name": "Procedural", "replace_existing_group": True})
+    assert gn_groups.modifier.node_group == replacement and gn_groups.modifier["Socket_1"] == 42.0
+
+
+@pytest.mark.parametrize("allow_shared", [False, True])
+@pytest.mark.parametrize("change", ["consumer", "readonly"])
+def test_graph_compensation_refuses_new_consumer_scope_or_readonly_root(gn_groups, monkeypatch, allow_shared, change):
+    socket = graph_input(gn_groups)
+    consumer = ID("Protected New Consumer", bl_rna=NS(identifier="Object"))
+
+    def hook(count):
+        if count == 2:
+            if change == "consumer":
+                gn_groups.user_map[gn_groups.root].add(consumer)
+                gn_groups.root.users = 2
+            else:
+                gn_groups.root.is_editable = False
+
+    gate_hook(gn_groups, monkeypatch, hook)
+    with pytest.raises(gn_groups.module.BridgeError) as error:
+        gn_groups.module.group_set_input(gn_groups.context, {"group_name": "Graph", "node_name": "Math", "socket_identifier": "Socket_1", "value": 4.0, "allow_shared": allow_shared})
+    assert socket.default_value == 4.0
+    assert error.value.context["possible_mutation"] and not error.value.context["rollback_verified"]

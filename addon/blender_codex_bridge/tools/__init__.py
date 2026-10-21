@@ -32,17 +32,20 @@ def register_all(registry: ToolRegistry) -> None:
         mesh_analysis,
         mesh_loops,
         mesh_repair,
+        mesh_slide,
         modifiers,
         nodes,
         objects,
         paint_jobs,
         python_exec,
         render,
+        rig_drivers,
         rigging,
         scene_edit,
         shader_groups,
         shader_settings,
         simulation,
+        surface_brushes,
         task_plan,
         transforms,
         uv,
@@ -50,6 +53,8 @@ def register_all(registry: ToolRegistry) -> None:
         uv_capture,
         uv_edit,
         uv_layers,
+        uv_refine,
+        weight_brushes,
         weights,
     )
 
@@ -59,6 +64,7 @@ def register_all(registry: ToolRegistry) -> None:
     asset_delivery.register_tools(registry)
     for module in (animation_layers, compositor, simulation, weights):
         module.register_tools(registry)
+    weight_brushes.register_tools(registry)
     batch.register_tools(registry)
     interaction.register_tools(registry)
     layout.register_tools(registry)
@@ -71,6 +77,8 @@ def register_all(registry: ToolRegistry) -> None:
     mesh_analysis.register_tools(registry)
     mesh_loops.register_tools(registry)
     mesh_repair.register_tools(registry)
+    mesh_slide.register_tools(registry)
+    surface_brushes.register_tools(registry)
     materials.register_tools(registry)
     images.register_tools(registry)
     image_paint.register_tools(registry)
@@ -86,10 +94,12 @@ def register_all(registry: ToolRegistry) -> None:
     uv_capture.register_tools(registry)
     uv_edit.register_tools(registry)
     uv_layers.register_tools(registry)
+    uv_refine.register_tools(registry)
     modifiers.register_tools(registry)
     constraints.register_tools(registry)
     animation.register_tools(registry)
     rigging.register_tools(registry)
+    rig_drivers.register_tools(registry)
     scene_edit.register_tools(registry)
     render.register_tools(registry)
     python_exec.register_tools(registry)

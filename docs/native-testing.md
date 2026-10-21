@@ -81,6 +81,13 @@ Private-desktop execution is Windows-only. UI checks on Linux/macOS are reported
 or a separately managed test display/session where needed; the runner does not claim
 cross-platform hidden UI support.
 
+Large Linux fixtures measure `/proc/meminfo` availability together with the tightest
+visible cgroup-v2 ancestor headroom before requiring 8 GiB. An unmeasurable hierarchy
+fails before allocating the workload. Process RSS and its lifetime high-water mark are
+read from procfs. These are point-in-time/lifetime measurements, not a memory reservation,
+allocation cap or constrained-memory acceptance. Other-platform unsupported probes remain
+explicit; no Windows acceptance is inferred from a Linux test display.
+
 Win32 contracts: [desktop creation](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-createdesktopw),
 [startup desktop](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/ns-processthreadsapi-startupinfow),
 [handle allow-list](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-updateprocthreadattribute),

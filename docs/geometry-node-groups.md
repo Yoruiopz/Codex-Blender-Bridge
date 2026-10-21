@@ -74,6 +74,15 @@ return structural state and `verification_required=true`, never an evaluated-geo
 certificate. Independently inspect evaluated output and protected objects, then capture
 appropriate appearance evidence when the task needs it.
 
+After the final control callback, bounded callback-free preflight rechecks group/node graph
+state, consumer ownership and object/data/modifier/binding identity before writing. Semantic
+state guards cover reviewed defaults/settings, bindings, links and interfaces; ownership
+fingerprints also cover observed parent-group/user identities and reference counts. A late
+manual value, binding, link or consumer change causes refusal rather than a stale overwrite.
+Compensating graph writes repeat the authoritative editability/ownership check and refuse
+a newly shared/read-only scope. Modified published values/bindings are retained for inspection
+instead of restoring over someone else's interleaved edit.
+
 Recovery attempts require live permissions. A failed instance copy can restore its binding
 while retaining an unused new tree when deletion consent is absent. Such failures report
 `binding_restored`, `cleanup_denied`, `retained_group`, `possible_mutation` and the measured
@@ -95,6 +104,6 @@ python scripts/run_blender_checks.py --blender <absolute executable> --case geom
 ```
 
 The focused Linux Blender 4.3.2 run passed at
-`build/geometry-node-groups-native-20261022-b/report.json`. This is dirty-source development
+`build/gn-rig-boundary-native-20261022-c/report.json`. This is dirty-source development
 evidence with `release_readiness=NOT_ASSESSED`. Windows 4.5/5.x, actual native undo/recovery,
 packaged installation, visual quality and complete procedural/simulation acceptance remain open.

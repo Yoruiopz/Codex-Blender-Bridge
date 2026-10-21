@@ -45,3 +45,23 @@ def test_default_registry_declares_every_wrapper_even_when_disabled() -> None:
 
     assert set(registry.tool_names(include_disabled=True)) == wrapper_names
     assert registry.enabled_toolsets == ("core",)
+
+
+def test_remote_permission_and_mutation_metadata_matches_blender(addon_package: str) -> None:
+    """Composed specialist loaders must not weaken Blender's public permission metadata."""
+    addon_registry = importlib.import_module(f"{addon_package}.tool_registry").ToolRegistry()
+    importlib.import_module(f"{addon_package}.tools").register_all(addon_registry)
+    mcp_registry = create_default_registry(NoopClient())
+    for toolset in mcp_registry.inspect()["toolsets"]:
+        if toolset["name"] != "core":
+            mcp_registry.enable(toolset["name"])
+    for name in addon_registry.list_tools():
+        spec = addon_registry.get(name)
+        # MCP enable/disable also mutate local enablement; Blender classifies
+        # these controls outside scene mutation and its checkpoint lifecycle.
+        if not spec.remote or name in {"toolsets.enable", "toolsets.disable"}:
+            continue
+        definition = mcp_registry._tools[name]
+        assert set(definition.required_permissions) == {p.value for p in spec.permissions}, name
+        assert definition.modifying == spec.modifies, name
+        assert definition.toolset == spec.toolset, name
