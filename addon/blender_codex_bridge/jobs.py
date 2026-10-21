@@ -15,7 +15,7 @@ from .errors import BridgeError, ErrorCode, invalid_argument
 from .permissions import Permission
 from .protocol import utc_timestamp
 from .request_lifecycle import RequestLifetime
-from .tools import image_paint, images, pixel_brush
+from .tools import image_masks, image_paint, images, pixel_brush
 from .utils import require_blender
 
 LOGGER = logging.getLogger(__name__)
@@ -46,7 +46,7 @@ class PaintJob:
     prepared: dict
     source_identity: tuple
     source_metadata: dict
-    source_is_file: bool
+    requires_external_files: bool
     created_at: str = field(default_factory=utc_timestamp)
     state: str = "QUEUED"
     revision: int = 1
@@ -94,7 +94,7 @@ class PaintJobs:
                               {"job_cancel_requested": bool(job.cancel_reason), "reason": job.cancel_reason,
                                "job_deadline_expired": time.monotonic() >= job.deadline})
         required = [Permission.EDIT_MATERIALS]
-        if job.source_is_file:
+        if job.requires_external_files:
             required.append(Permission.ACCESS_EXTERNAL_FILES)
         context.require(*required)
         if job.in_commit:
@@ -113,7 +113,7 @@ class PaintJobs:
         lifetime = getattr(context, "request_lifecycle", None) or RequestLifetime.local()
         job = PaintJob("job_" + uuid.uuid4().hex, getattr(context, "request_id", ""), prepared["source_name"], prepared["name"],
                        lifetime, started + time_limit, prepared, _identity(prepared["source"]), _metadata(prepared["source"]),
-                       prepared["source"].source == "FILE", started=started)
+                       prepared["source"].source == "FILE" or bool(prepared["mask"] and prepared["mask"]["requires_external_files"]), started=started)
         pixel_bytes = prepared["width"] * prepared["height"] * 16
         job.workload = {"image_size": [prepared["width"], prepared["height"]],
                         "frozen_source_pixel_bytes": pixel_bytes, "candidate_pixel_tests": prepared["tests"],
@@ -121,6 +121,13 @@ class PaintJobs:
                         "private_pixel_buffers_peak_estimate_bytes": 2 * pixel_bytes + pixel_brush.TILE_SIZE**2 * 8,
                         "estimate_excludes": "Plan metadata, Blender/native/GPU/undo/file buffers and allocator overhead",
                         "large_image_requires_job": prepared["width"] * prepared["height"] > pixel_brush.MAX_SYNC_PIXELS}
+        if prepared["mask"] is not None:
+            mask = prepared["mask"]
+            job.workload.update(image_paint.masked_memory_estimate(prepared))
+            job.workload["mask"] = {"size": [mask["kernel"]["width"], mask["kernel"]["height"]],
+                "channel": mask["channel"], "invert": mask["kernel"]["invert"],
+                "frozen_channel_bytes": len(mask["kernel"]["values"]) * mask["kernel"]["values"].itemsize}
+            job.workload["large_image_requires_job"] |= mask["kernel"]["width"] * mask["kernel"]["height"] > pixel_brush.MAX_SYNC_PIXELS
         self._check(job, context)
         images._check(context)
         self.active = job
@@ -154,6 +161,7 @@ class PaintJobs:
         if bpy.data.images.get(job.new_name) is not None:
             raise invalid_argument("The painting job's output name is now in use; no overwrite or implicit rename is allowed.")
         job.prepared["source"] = source
+        image_masks.validate(context, bpy, job.prepared.get("mask"), read=image_paint._read)
 
     def _commit(self, job: PaintJob, context: Any, output):
         self._validate_source(job, context)
@@ -236,7 +244,8 @@ class PaintJobs:
             if job.work is None:
                 prepared = job.prepared
                 job.work = pixel_brush.paint_steps(prepared.pop("values"), prepared["width"], prepared["height"], prepared["strokes"],
-                    prepared["role"], srgb=prepared["srgb"], check=lambda: self._check(job, context))
+                    prepared["role"], srgb=prepared["srgb"], mask=prepared["mask"]["kernel"] if prepared["mask"] else None,
+                    check=lambda: self._check(job, context))
             budget = self.budget_ms()
             budget = min(8., max(1., float(budget))) if isinstance(budget, (int, float)) and math.isfinite(budget) else 4.
             deadline = time.perf_counter() + budget / 1000

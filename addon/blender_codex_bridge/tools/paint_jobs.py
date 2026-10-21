@@ -25,7 +25,7 @@ def _id(params: Mapping[str, Any]) -> str:
 
 
 def start(context: Any, params: Mapping[str, Any]) -> dict:
-    reject_unknown_params(params, {"image_name", "new_name", "strokes", "time_limit_seconds"})
+    reject_unknown_params(params, {"image_name", "new_name", "strokes", "time_limit_seconds", "mask"})
     return _manager(context).start(context, {k: v for k, v in params.items() if k != "time_limit_seconds"},
                                    params.get("time_limit_seconds", 60.))
 

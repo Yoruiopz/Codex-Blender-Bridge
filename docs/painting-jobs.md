@@ -27,9 +27,15 @@ new image pixels and unchanged source digest, bind the version explicitly, captu
 appearance and compare with the brief/protected scope. No automatic binding or saving occurs.
 Do not issue dependent work against the output name before completion and verification.
 
+Optional `mask={image_name:"Mask", channel:"R", invert:false}` adds a frozen raw RGBA channel
+with normalized UV pixel-centre bilinear sampling, including different mask/canvas dimensions.
+See the [complete mask contract](texture-painting.md#uv-image-channel-masks). Inspect both input
+digests after success. FILE masks need live external-file/path consent independently of the
+canvas. No color transform/luminance/unpremultiply is applied to the mask channel.
+
 | Tool | Blender permission | Contract |
 | --- | --- | --- |
-| `image.paint_job_start` | `EDIT_MATERIALS`; FILE sources also need approved-path and `ACCESS_EXTERNAL_FILES` consent | Typed brushes, up to 16,777,216 pixels/4,096 per axis, finite 1–300 second job deadline; sync painting stays <=1M |
+| `image.paint_job_start` | `EDIT_MATERIALS`; FILE sources/masks also need approved-path and `ACCESS_EXTERNAL_FILES` consent | Typed brushes and optional raw-channel mask, up to 16,777,216 pixels/4,096 per axis per image, finite 1–300 second job deadline; sync painting stays <=1M |
 | `jobs.inspect` | `INSPECT_SCENE` | State, monotonic revision, phase-local progress, final result or structured failure/recovery evidence |
 | `jobs.list` | `INSPECT_SCENE` | 1–32 summaries, newest active then terminal; explicit truncation |
 | `jobs.cancel` | No scene-edit grant | Requests internal cancellation, including while paused; does not authorize deletion or promise rollback |
@@ -53,7 +59,7 @@ that a remote process is still alive. Disconnect is observed asynchronously.
 The normal request queue is serviced before each CPU slice. Blender's sidebar/preferences
 provide a **Paint Job CPU Budget (ms)** setting: 1–8 ms, default 4; MCP cannot change it.
 This budget is cooperative, not a hard latency ceiling. Work yields approximately every 256
-pixels/candidates in normalization, coverage, application and comparison. `revision` orders
+pixels/candidates in mask validation, normalization, coverage, application and comparison. `revision` orders
 observations; `completed/total` is local to its phase/stroke, not a global percentage.
 The sidebar shows recent jobs, progress, cancellation, errors and possible retained-image warnings.
 Minimal `bridge.status.jobs` control summaries do not expose full results or bypass inspection
@@ -71,7 +77,8 @@ NDJSON progress events are emitted.
 
 Before allocation, jobs recheck live permissions/toolset/pause/emergency/ownership/deadline,
 Object Mode, exact image identity, complete relevant metadata and pixels, approved FILE evidence,
-and output-name availability. Source changes or name conflicts fail without creating a version.
+and output-name availability. A mask gets equivalent complete revalidation, including its
+non-selected channels. Source/mask changes or name conflicts fail without creating a version.
 Metadata comparison excludes only the source's consumer count: adding a read-only consumer does
 not change the frozen source. No source locking or overwrite is implied.
 
@@ -111,7 +118,7 @@ arrays remain. At 4K square those two float32 RGBA arrays alone total 512 MiB.
 Use an explicit longer deadline when needed; e.g. `time_limit_seconds=300` for the 4K fixture.
 The CPU-slice preference is a responsiveness/work-share choice, not permission to exceed the
 job deadline. 8K/UDIM, real memory-pressure and broader production throughput remain mandatory
-1.0 work, not an accepted final ceiling. This does not implement surface-projected painting, masks,
+1.0 work, not an accepted final ceiling. This does not implement surface-projected painting, viewport stencils,
 sculpt/vertex/weight brushes, native bake jobs, packing or durable pixel delivery.
 
 ## Evidence
@@ -140,3 +147,9 @@ it never forces global memory pressure or opens a visible fallback. This headroo
 test requirement, not a guarantee about all user scenes or an accepted production RAM minimum.
 Run with `--case large_paint --timeout 480` through the non-interrupting runner. An actual
 native error/insufficient headroom is a failed check, not evidence that the workflow passed.
+
+The `image_masks` fixture extends real socket/timer acceptance to raw channel masks, inversion,
+different-resolution bilinear sampling, a mask larger than the synchronous limit, stale-mask and
+live FILE-mask consent failures, cancellation and confirmed output recovery. Complete input
+preservation is independently checked on success. An externally changed existing mask pixel
+survives native output undo: input-pixel rollback is not promised or silently attempted.

@@ -141,6 +141,11 @@ Read [`docs/protocol.md`](docs/protocol.md) before changing framing or lifecycle
 - Bound expensive inspection and image sizes. Report truncation explicitly.
 - Add non-Blender tests for schemas, malformed frames, request IDs, timeout/error propagation, connection lifecycle, registry metadata, and permission behavior.
 - Keep Blender-dependent integration tests separate and mark their environment requirements.
+- Run native fixtures through `scripts/run_blender_checks.py`; see `docs/native-testing.md`.
+  On Windows, UI-dependent tests must use a private, non-input desktop and fail closed if
+  isolation fails. Never launch UI smoke scripts directly, fall back to a visible window,
+  switch desktops, or minimize/manipulate the user's windows. Keep factory scenes, preferences
+  and recovery files in the runner's disposable paths; never test against the user's session.
 - Run the focused tests after a change, then the full non-Blender suite. Do not report success without the command result.
 - Keep documentation aligned with the actual registry. Planned tools belong in the roadmap, not in current-feature claims.
 

@@ -14,7 +14,7 @@ space or binding. New image names must be unique non-control UTF-8, at most 63 b
 | Tool | Inputs beyond the exact image name | Blender permission |
 | --- | --- | --- |
 | `image.create` | `new_name`, `width`, `height`, optional `role="COLOR"`, `color=[0,0,0,1]`; up to 4K square | `EDIT_MATERIALS` |
-| `image.paint_version` | `image_name`, `new_name`, complete `strokes` | `EDIT_MATERIALS`; FILE sources also need `ACCESS_EXTERNAL_FILES` and approved-path preflight |
+| `image.paint_version` | `image_name`, `new_name`, complete `strokes`, optional `mask` | `EDIT_MATERIALS`; FILE sources/masks also need `ACCESS_EXTERNAL_FILES` and approved-path preflight |
 | `image.paint_job_start` | Same brush inputs plus `time_limit_seconds=60`; inspect/cancel by returned job ID | Same edit/file grants; separate polling needs `INSPECT_SCENE` |
 | `image.inspect_pixels` | `image_name`, optional `samples=[[x,y],...]`, `include_statistics=true`; explicit false for larger digest-only reads | `INSPECT_SCENE`; FILE sources also need `ACCESS_EXTERNAL_FILES` and approved-path preflight |
 
@@ -82,9 +82,50 @@ reviewed: it interpolates all four channels by geometric coverage × opacity, wi
 conversion or interpreting the fourth data channel as compositing coverage.
 
 There are no viewport coordinates, guessed surface targets, brush pressure/spacing/time,
-screen-to-surface projection, UV seam wrapping, image masks, stencils, texture layers or
+screen-to-surface projection, UV seam wrapping, viewport stencils, texture layers or
 arbitrary brush RNA. Those are still needed for full painting acceptance, as are sculpt,
 vertex/weight brush workflows and baking; do not describe this subset as all paint modes.
+
+## UV-image channel masks
+
+Both painting entry points accept one optional operation-level mask:
+
+```json
+{"image_name":"Paint Mask", "channel":"R", "invert":false}
+```
+
+`channel` is exactly `R`, `G`, `B` or `A` (default `R`); inversion defaults to false.
+The mask must be an already-loaded, local, simple four-channel FILE/GENERATED image without
+animation. **Non-Color is recommended**, but sampling explicitly uses the selected stored raw
+channel: no sRGB transfer, luminance inference, unpremultiply or alpha-role reinterpretation.
+Other stored channels are not used as weights; they may contain HDR/nonfinite values. The
+**entire selected channel** must be finite in `[0,1]`, including pixels outside the stroke.
+The full RGBA digest still detects changes to any channel. No implicit load/reload occurs.
+
+Mask dimensions can differ from the canvas. For target pixel `(x,y)`, sampling uses
+`fx=(x+0.5)/canvas_width*mask_width-0.5` (and the corresponding `fy`), clamped to the mask edges,
+then bilinear interpolation. Equal dimensions read the exact corresponding stored pixel.
+Inversion is `1-weight`. This weight multiplies each stroke's maximum geometric coverage ×
+opacity, before COLOR brush alpha or DATA RGBA mixing. Zero weight prevents a brush edit;
+whole-image byte-sRGB-to-linear conversion still happens in the output even with a zero mask.
+There is no UV wrapping, surface projection or sculpt/vertex masking in this contract.
+
+Both source and mask are read-only. A source may also serve as its own mask. Synchronous
+painting limits **each** input to 1,048,576 pixels; jobs allow each up to 16,777,216 pixels and
+4,096 per axis, with a packed float32 selected-channel array. Jobs validate that channel in
+cooperative slices and freeze/revalidate the mask identity, metadata, animation, approved-file
+evidence and full pixel digest before/after checkpoint setup and after publication. FILE
+**masks** require live external-file consent even with a generated canvas. New result metadata
+includes `mask` (null when absent), sampling/value-space details and independent preservation
+digests. Masked memory estimates conservatively include source/output/readback, mask RGBA
+revalidation/channel arrays and coverage scratch; native/GPU/undo/allocator costs remain excluded.
+
+A stale mask fails publication; a change observed after allocation retains truthful possible-
+mutation and finalized-boundary evidence. Confirmed undo can remove the new output, but native
+global undo **does not reliably restore externally edited existing image pixels**. Reinspect both
+inputs; never silently overwrite the user's external mask edit using the frozen weights.
+Durable full-image recovery remains open 1.0 work. These are UV-image masks, not full paint-mode
+acceptance or a reason to drop viewport stencils, sculpt/vertex masks or surface painting.
 
 ## Bounds, failure and verification
 
@@ -162,3 +203,15 @@ full pixel bound and records create/paint/inspect times rather than asserting a 
 The [reference scanner](field-scanner-workflow.md) batches blue-image revision, painted readiness
 accents and exact nested-node binding into one recoverable stage, retaining all source buffers.
 Factory scenes/preferences remain isolated; use the [private-desktop runner](native-testing.md).
+
+The `image_masks` fixture adds independent RGBA-channel and bilinear boundary samples on a
+128×64 canvas/16×8 mask, raw byte-sRGB FILE-mask weights, zero/inverted masks, a larger
+1,025×1,024 mask in an actual socket/timer job, stale-mask/live-file-grant refusal, cancellation,
+protected material captures and interleaved-transform-preserving native output recovery.
+Post-publication canvas identity/metadata and animation are checked as well as complete pixels;
+a reentrant alpha-role change cannot be falsely reported as preserved input.
+Native undo after such an external alpha-role change can also invalidate a generated image's
+loaded pixel buffer; the fixture records `has_data` without implicitly regenerating it. Restored
+RNA settings or output removal alone do not prove recovery of existing input pixels.
+An injected external mask-pixel edit is explicitly observed to survive global undo; only the
+fixture then restores its own injected edit. This is not claimed as input-pixel recovery.

@@ -85,8 +85,9 @@ identity-preserving edits and durable pixel recovery remain mandatory, not silen
 An [original reference-constrained scanner](field-scanner-workflow.md) now integrates structured
 modeling, shell/display UVs, nested materials, texture variants and staged native recovery.
 PAINT-01 now includes generated linear/data canvases, bounded copy-on-write UV-image strokes,
-pixel digests/samples and a painted display revision in the reference workflow. Surface/viewport
-projection, masks, sculpt/vertex/weight brushes and complete paint acceptance remain open.
+raw-channel image masks with inversion/bilinear resampling, pixel digests/samples and a painted
+display revision in the reference workflow. Surface/viewport projection, stencils, sculpt/vertex
+masks/brushes, weight brushes and complete paint acceptance remain open.
 JOB-01 now has source-frozen [cooperative painting jobs](painting-jobs.md): progress/cancel,
 live source/consent revalidation, guarded publication and tile-bounded coverage for 4K canvases.
 Full source/output arrays remain; measured native tail stalls prevent real-time/production acceptance.
@@ -1129,3 +1130,76 @@ identity-preserving/durable pixels, sculpt/vertex/weight painting, full characte
 procedural simulation/baking, SAFE-02, persistent UX, delivery and clean install/upgrade/RC gates.
 Neither JOB-01 nor PAINT-01 nor scenario B nor the full artist target is closed. Published 0.3.0
 assets, package versions and repository visibility are unchanged; no 1.0 release was published.
+
+### 2026-10-21 — Raw-channel UV-image masks and preserved-input paint jobs
+
+PAINT-01 now has one operation-level typed `mask` on synchronous paint versions and cooperative
+jobs: exact image name, R/G/B/A channel (default R), optional strict boolean inversion. It uses
+raw stored `[0,1]` channel values, not luminance, implicit color transfer or unpremultiply.
+Different canvas/mask resolutions use normalized UV pixel-centre bilinear edge-clamped sampling;
+equal dimensions read exact corresponding pixels. The weight modulates maximum per-stroke
+coverage before COLOR alpha or DATA mixing. A zero mask still permits the explicit whole-output
+byte-sRGB conversion; changed-pixel counts exclude that encoding-only change.
+
+New small `image_masks.py` and `pixel_mask.py` modules separate Blender input freeze/revalidation
+from pure sampling math. Source and mask remain read-only, including an image used as its own
+mask. Jobs freeze complete RGBA digest/identity/metadata/file evidence plus a packed float32
+selected channel; validation yields every 256 channel values. All selected-channel pixels must
+be finite `[0,1]`, not just the brush footprint. Non-selected channels do not supply weights but
+are included in the full preservation digest. Both input names must remain unambiguous. Live
+FILE-mask consent is required even with a generated canvas. Revalidation runs before and after
+checkpoint setup and after publication; terminal jobs release all channel arrays/handles.
+
+Each input retains the current 1M synchronous / 16,777,216-pixel, 4,096-axis job bounds. Masked
+memory estimates conservatively include source/output/readback, mask RGBA/channel buffers and
+coverage scratch; native/GPU/undo/allocator memory is excluded, not capped. The existing 175
+tools are extended compatibly rather than claiming completeness from a larger tool count.
+
+The `image_masks` native fixture connects structured 128×64 painting and a 16×8 pattern, all
+four channels, independent bilinear boundary samples, raw sRGB FILE weights, zero/inverted masks,
+a 1,025×1,024 job mask, real socket/timer publication, interleaved transform, explicit binding,
+protected captures and confirmed output recovery. It rejects a stale mask and live FILE consent
+loss before allocation, cancels private work, and injects a mask change after native publication.
+It also injects a canvas alpha-role change after publication: source identity/metadata/animation
+are verified again after allocation/readback, not only its complete pixel digest.
+Native undo of that external alpha-role edit can invalidate the existing generated canvas buffer;
+the fixture records `has_data` without implicit regeneration. Metadata/output recovery is not
+accepted as input-pixel restoration.
+That fault is detected with `input_preservation_verified=false`, possible-mutation and finalized
+boundary evidence, not reported as success. **Native undo removes the owned output but does not
+restore the externally edited existing mask pixels.** The fixture verifies that retained edit,
+then explicitly restores only its own injected change. Never silently replace a user's mask edit
+with frozen weights. Durable/identity-preserving image-pixel recovery remains mandatory 1.0 work.
+
+Primary-agent Graphify in `dino-s-workspace` located `_read`, `prepare_paint`, `finish_paint` and
+`paint_version` in the cloud `8136ed9` outline. The index predates `9e69ddd` tiled 4K work and this
+mask increment; current source and tests governed implementation. No graph rebuild, added agents,
+dependency install, version bump or release/visibility change was performed.
+
+Validation: **217 focused tests**, then **1,321 tests on each** MCP SDK 2.0.0/2.2.0; lint,
+mypy (35 files), compilation, generated README inventory (175 tools), and development ZIP
+layout/CRC/new-module source checks passed. `AGENTS.md` now requires the private non-input
+Windows desktop runner, fail-closed isolation and disposable factory scenes/preferences/recovery
+paths for future native work.
+The final Windows Blender 4.5.1 LTS / 5.1.2 matrix passed **62/62** (28 background and 34 private-
+desktop UI cases) at `build/image-masks-final-matrix-20261021-3/report.json`. It records baseline
+`9e69ddd` plus this then-dirty increment; independent byte/path verification matches all **146**
+Python sources and fingerprint
+`75cddbb06ac1a2b7c9140a9b594e60679d6cb81eee6aea8a0b0d69c4c9bd1168`.
+Earlier mixed-source/failing probes remain local and are not substituted for final evidence.
+
+All **16** new mask captures match the focused source-reference fixture byte-for-byte; masked/
+inverted views were reviewed, and protected before/after/recovered and pre-binding/recovered pairs
+match on both versions. Of **184** prior PNG-path pairs, **176** are byte-identical, two renders
+are pixel-identical with different PNG bytes, and six Blender 4.5 scanner captures retain known
+rerun variation: 133 UV pixels (max 215/255), preview differences up to 997 pixels (max 5/255)
+and five wire pixels (max 2/255). Those UV/front/calibration/isometric/wire variants were reviewed;
+this does not resolve packing/render nondeterminism or establish production artistic acceptance.
+Both versions explicitly report the external mask pixel edit retained after native output undo,
+and `has_data=false` after undo of the external canvas alpha-role edit. Input-pixel recovery is
+**not verified**; no implicit regeneration or save conceals that limitation. All 74 packaged add-on
+Python modules match current source; the development archive is not a replacement for 0.3.0 assets.
+Surface/viewport projection and stencils, sculpt/vertex masks/brushes, pressure/spacing/layers,
+weight painting, broader roles/blends, memory-pressure/native tail latency, 8K/UDIM, durable pixel
+delivery and the complete character/procedural/simulation/UX/install/upgrade/RC gates remain open.
+This increment does not close PAINT-01, JOB-01, scenario B or the full 1.0 artist target.

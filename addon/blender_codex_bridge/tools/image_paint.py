@@ -11,7 +11,7 @@ from typing import Any
 from ..errors import BridgeError, ErrorCode, invalid_argument
 from ..permissions import Permission
 from ..utils import bool_param, reject_unknown_params, require_blender
-from . import images
+from . import image_masks, images
 from . import pixel_brush as brush
 
 LOGGER = logging.getLogger(__name__)
@@ -126,7 +126,8 @@ def source_role(source: Any) -> tuple[str, bool]:
 
 
 def prepare_paint(context: Any, params: Mapping[str, Any], *, allow_large=False) -> dict:
-    reject_unknown_params(params, {"image_name", "new_name", "strokes"})
+    reject_unknown_params(params, {"image_name", "new_name", "strokes", "mask"})
+    mask_spec = image_masks.specification(params.get("mask"))
     source_name, name = images._name(params, "image_name"), images._name(params, "new_name")
     # Validate syntax/counts without Blender/file work first. The actual image
     # dimensions and data role get their own authoritative footprint validation.
@@ -146,16 +147,50 @@ def prepare_paint(context: Any, params: Mapping[str, Any], *, allow_large=False)
                                    check=lambda: _require(context, source, modifying=True))
     values, _, _, source_file = _read(context, source, modifying=True)
     before = brush.digest(values)
+    mask = image_masks.freeze(context, bpy, mask_spec, read=_read,
+        maximum_pixels=brush.MAX_PIXELS if allow_large else brush.MAX_SYNC_PIXELS,
+        source=source, source_values=values, source_file=source_file)
     return {"source": source, "source_name": source_name, "name": name, "width": width, "height": height,
             "role": role, "values": values, "strokes": strokes, "tests": tests, "srgb": srgb,
-            "source_file": source_file, "source_digest": before}
+            "source_file": source_file, "source_digest": before, "mask": mask,
+            "source_identity": image_masks.identity(source), "source_metadata": image_masks.metadata(source)}
+
+
+def validate_source_reference(prepared: dict) -> None:
+    source = images.image_exact(require_blender(), prepared["source_name"])
+    if (image_masks.identity(source) != prepared["source_identity"]
+            or image_masks.metadata(source) != prepared["source_metadata"]):
+        raise BridgeError(ErrorCode.OPERATION_FAILED, "Painting source identity/metadata changed; reinspect before further edits.", {"stale_source": True})
+    source_role(source)
+
+
+def require_paint(context: Any, prepared: dict) -> None:
+    _require(context, prepared["source"], modifying=True)
+    if prepared.get("mask") is not None:
+        _require(context, prepared["mask"]["image"], modifying=True)
+
+
+def masked_memory_estimate(prepared: dict) -> dict:
+    mask = prepared.get("mask")
+    if mask is None:
+        return {}
+    kernel = mask["kernel"]
+    channel_bytes = len(kernel["values"]) * kernel["values"].itemsize
+    # Conservative overestimate: generator source/output, retained source readback,
+    # a complete mask RGBA revalidation and packed channel plus coverage scratch.
+    return {"private_pixel_buffers_peak_estimate_bytes": 3 * prepared["width"] * prepared["height"] * 16
+                + 5 * channel_bytes + brush.TILE_SIZE**2 * 8,
+            "mask_channel_bytes": channel_bytes,
+            "memory_estimate_scope": "Conservative source/output/readback and mask RGBA/channel arrays plus coverage scratch; excludes plan metadata, Blender/native/GPU/undo/file buffers and allocator overhead."}
 
 
 def finish_paint(context: Any, prepared: dict, result: array, evidence: dict) -> dict:
     source, source_name, name = prepared["source"], prepared["source_name"], prepared["name"]
     width, height, role = prepared["width"], prepared["height"], prepared["role"]
     before = prepared["source_digest"]
-    _require(context, source, modifying=True)
+    require_paint(context, prepared)
+    validate_source_reference(prepared)
+    image_masks.validate(context, require_blender(), prepared.get("mask"), read=_read)
     new = _new(context, require_blender(), name, width, height, role, result)
     # Reinspect the entire original after allocation/readback, not just its size.
     # If this check fails, retain the created version and truthful mutation evidence
@@ -164,14 +199,19 @@ def finish_paint(context: Any, prepared: dict, result: array, evidence: dict) ->
         retained, _, _, _ = _read(context, source, modifying=True)
         if brush.digest(retained) != before:
             raise RuntimeError("Original source pixels changed during copy-on-write painting")
+        validate_source_reference(prepared)
+        image_masks.validate(context, require_blender(), prepared.get("mask"), read=_read)
+        require_paint(context, prepared)
     except Exception as exc:
         raise BridgeError(exc.code if isinstance(exc, BridgeError) else ErrorCode.OPERATION_FAILED,
-                          "Paint version exists but original-source preservation could not be verified; recover or reinspect.",
-                          {"execution_started": True, "requested_image": name, "possible_mutation": True,
-                           "verification_required": True}) from exc
+                          "Paint version exists but input preservation could not be verified; recover output and reinspect both inputs. Native undo may not restore externally edited image pixels.",
+                          {**(exc.context if isinstance(exc, BridgeError) else {}),
+                           "execution_started": True, "requested_image": name, "possible_mutation": True,
+                           "input_preservation_verified": False, "verification_required": True}) from exc
     return {"painted_image": images._summary(new), "source_image": source_name, "role": role,
             "source_pixels_sha256_float32_le": before, "pixels_sha256_float32_le": brush.digest(result),
             "source_pixels_unchanged": True, "candidate_pixel_tests": prepared["tests"], **evidence,
+            **masked_memory_estimate(prepared), "mask": image_masks.evidence(prepared.get("mask")),
             "file_written": False, "bound_to_nodes": False, "source_file_at_read": prepared["source_file"],
             "stroke_coordinates": "UV [0,1], bottom-left origin; radius in image pixels, clipped at edges, no wrapping",
             "verification_required": True, "full_texture_paint_workflow_verified": False}
@@ -181,7 +221,8 @@ def paint_version(context: Any, params: Mapping[str, Any]) -> dict:
     prepared = prepare_paint(context, params)
     result, evidence = brush.paint(prepared["values"], prepared["width"], prepared["height"], prepared["strokes"],
                                    prepared["role"], srgb=prepared["srgb"],
-                                   check=lambda: _require(context, prepared["source"], modifying=True))
+                                   mask=prepared["mask"]["kernel"] if prepared["mask"] else None,
+                                   check=lambda: require_paint(context, prepared))
     return finish_paint(context, prepared, result, evidence)
 
 
@@ -224,6 +265,6 @@ def register_tools(registry: Any) -> None:
     registry.register("image.create", create_image, toolset="materials", modifies=True, permissions=(Permission.EDIT_MATERIALS,),
                       description="Create a bounded new floating-point linear-color/data texture; verify complete pixels, never overwrite or write files.")
     registry.register("image.paint_version", paint_version, toolset="materials", modifies=True, permissions=(Permission.EDIT_MATERIALS,),
-                      description="Paint bounded UV-image brush strokes into a new image version, preserving the original; FILE sources also require approved-path/external-file consent.")
+                      description="Paint bounded UV-image strokes with optional raw-channel mask/inversion/resampling into a new version, preserving both inputs; FILE reads require approved-path/external-file consent.")
     registry.register("image.inspect_pixels", inspect_pixels, toolset="materials", permissions=(Permission.INSPECT_SCENE,),
                       description="Inspect complete loaded RGBA digests/samples; default statistics <=1M pixels, explicit include_statistics=false for <=16M with no ranges/nonfinite scan; FILE reads require approved-path/external-file consent.")

@@ -112,8 +112,11 @@ Unreleased [texture-painting tools](docs/texture-painting.md) create new linear-
 canvases, paint bounded UV-image strokes into separate versions, and inspect complete pixel
 digests/ranges with selected samples. They support color source-over, alpha erasing and data
 mixing without changing the original image or writing files. A painted scanner display and
-native failure/recovery tests connect this to look development. Viewport-projected strokes,
-masks, sculpt/vertex painting, baking and durable delivery still need implementation.
+native failure/recovery tests connect this to look development. Optional
+[UV-image masks](docs/texture-painting.md#uv-image-channel-masks) select raw R/G/B/A weights,
+support inversion and bilinear sampling across different image sizes, and preserve/revalidate
+both input images. FILE-mask reads require live approved-path consent. Viewport-projected
+strokes/stencils, sculpt/vertex painting, baking and durable delivery still need implementation.
 
 Unreleased [cooperative painting jobs](docs/painting-jobs.md) add `image.paint_job_start` and
 `jobs.inspect/list/cancel`, with polled progress, sidebar CPU-budget/control/history, frozen
@@ -517,8 +520,8 @@ Current registry: **175 MCP tools**.
 | `image.inspect` | Inspect bounded image metadata/direct users without loading unloaded buffers. |
 | `image.inspect_pixels` | Inspect complete RGBA digests/samples; default statistics <=1M pixels, explicit include_statistics=false for <=16M (no ranges/nonfinite scan); FILE reads need external-file consent. |
 | `image.load` | Load a new bounded PNG/JPEG image from Blender's user-approved texture folder; no implicit reuse or file writes. |
-| `image.paint_job_start` | Accept one cooperative source-frozen tiled paint job up to 16,777,216 pixels; poll evidence, keep owner connected, native commit is not preemptible. |
-| `image.paint_version` | Paint bounded UV-image strokes into a new version, retaining original pixels; FILE reads need approved-folder/external-file consent. |
+| `image.paint_job_start` | Accept one source/mask-frozen tiled paint job up to 16,777,216 pixels; poll evidence, keep owner connected, native commit is not preemptible. |
+| `image.paint_version` | Paint bounded UV-image strokes with optional raw RGBA-channel mask/inversion/resampling into a new version; preserve both inputs, FILE reads need external-file consent. |
 | `image.remove` | Remove one explicitly confirmed unused image datablock, never its source file. |
 | `material.assign` | Assign a material to an exact object slot or append it. |
 | `material.copy_for_object` | Copy a material for one object slot without changing shared mesh data. |

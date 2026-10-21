@@ -132,6 +132,8 @@ def test_sdk_enforces_annotated_bounds_and_strict_types_before_forwarding():
                 ("image.inspect_pixels", {"image_name": "Canvas", "include_statistics": "false"}),
                 ("image.paint_job_start", {"image_name": "Canvas", "new_name": "Painted", "strokes": [brush], "time_limit_seconds": 301}),
                 ("image.paint_job_start", {"image_name": "Canvas", "new_name": "Painted", "strokes": [{**brush, "radius_pixels": 257.}]}),
+                ("image.paint_job_start", {"image_name": "Canvas", "new_name": "Painted", "strokes": [brush], "mask": {"image_name": "Mask", "invert": 1}}),
+                ("image.paint_version", {"image_name": "Canvas", "new_name": "Painted", "strokes": [brush], "mask": {"image_name": "Mask", "channel": "luma"}}),
             ):
                 assert (await client.call_tool(name, params)).is_error
             assert calls == []
@@ -141,4 +143,7 @@ def test_sdk_enforces_annotated_bounds_and_strict_types_before_forwarding():
             assert calls[0][1]["time_limit_seconds"] == 60.
             result = await client.call_tool("image.inspect_pixels", {"image_name": "Canvas", "include_statistics": False})
             assert not result.is_error and calls[1][1]["include_statistics"] is False
+            result = await client.call_tool("image.paint_version", {"image_name": "Canvas", "new_name": "Painted", "strokes": [brush],
+                "mask": {"image_name": "Mask", "channel": "A", "invert": True}})
+            assert not result.is_error and calls[2][1]["mask"] == {"image_name": "Mask", "channel": "A", "invert": True}
     asyncio.run(scenario())

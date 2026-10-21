@@ -26,7 +26,7 @@ No current release should be described as a complete human-equivalent artist.
 | --- | --- | --- |
 | Understand a brief and references | Scene/selection/object inspection, task display | Reference management, persistent constraints, scene units/scale checks, ambiguity resolution benchmarks |
 | Model and repair assets | Primitives, arbitrary meshes, selection-scoped edits, modifiers; [repair primitives](mesh-repair.md), [quad-ring preview/cuts and two-loop bridging](mesh-loops.md), [bounded topology/winding/contact diagnostics](mesh-analysis.md) | Edge slide, open/multi-loop bridging, explicit unequal correspondence, retopology, localized/cross-object/evaluated diagnostics, outward/custom normals, shape-key/shared-data workflows and protected-scope editing |
-| Sculpt and paint | Mode entry; [bounded copy-on-write UV-image brushes](texture-painting.md), canvas creation and pixel inspection | Viewport/surface-projected texture strokes, masks/stencils, broader blends/roles, sculpt/vertex painting, multires and full workflow feedback |
+| Sculpt and paint | Mode entry; [bounded copy-on-write UV-image brushes and raw-channel masks](texture-painting.md), inversion/bilinear sampling, canvas creation and pixel inspection | Viewport/surface-projected texture strokes/stencils, sculpt/vertex masks, broader blends/roles, sculpt/vertex painting, multires and full workflow feedback |
 | UV and textures | Seams, unwrap/project/pack, bounded coordinate/island evidence; [authoring](uv-authoring.md), [layout PNGs](mesh-loops.md#uv-coordinate-visual-evidence), [scoped overlap/pixel-stretch/density checks](uv-analysis.md); [approved PNG/JPEG loading/binding](image-assets.md), [versioned root/nested refresh and relocation](image-revisions.md), [bounded generated canvases/paint versions and complete pixel digests](texture-painting.md) | UV-editor selection, relax/stitch/alignment, cross-object/evaluated atlas checks, broader quality acceptance, full painting/baking, in-place reload/identity-preserving pixel recovery, packing and broader image formats |
 | Materials and look development | Principled controls, shader graphs, isolated copies, approved images, [nested paths/group lifecycle/instance isolation](shader-groups.md), [reviewed properties on 14 node types and complete Color Ramps](shader-settings.md), with matched fixture revisions and an [integrated reference-prop fixture](field-scanner-workflow.md) | Interface editing/conversion, properties beyond the reviewed subset, animated ramps/curve collections, deep asset lifecycle, nested snapshots, production materials and broader look-development acceptance |
 | Procedural modeling | Allowlisted Geometry Nodes graph authoring/attachment; paired simulation/repeat zones and scoped item rename/reorder/removal | Nested groups, modifier inputs, zone-item type conversion/disk baking, evaluated diagnostics and broader node types |
@@ -107,7 +107,13 @@ direct canvas pause/emergency safe points. Both 1,278-test SDK suites and the so
 60-case Windows Blender matrix pass. Native 4K jobs still measured roughly 37–42 s and
 status-poll tail stalls near eight seconds here; full source/output arrays and native/GPU/undo
 memory remain. Tile scratch and logical release are not production latency or memory-pressure
-acceptance. Surface projection, masks, out-of-core/UDIM, broad paint and full artist gates remain open.
+acceptance. Surface projection/stencils, sculpt/vertex masks, out-of-core/UDIM, broad paint and full artist gates remain open.
+
+The newer [UV-image channel masks](texture-painting.md#uv-image-channel-masks) extend synchronous
+and cooperative painting with raw R/G/B/A weights, inversion, different-resolution bilinear
+sampling, source/mask preservation and authoritative live FILE-mask consent. This does not
+provide surface/sculpt masks or durable input-pixel recovery: externally edited existing image
+pixels can survive native global undo even when the owned output is successfully recovered.
 
 For the newer bounded painting lifecycle, see [cooperative painting jobs](painting-jobs.md)
 and the dated [execution evidence](plan-1.0.md#2026-10-20--cooperative-paint-jobs-transport-ownership-and-guarded-publication).

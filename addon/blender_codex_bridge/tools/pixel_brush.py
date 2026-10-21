@@ -12,6 +12,7 @@ from typing import Any
 
 from ..errors import invalid_argument
 from .brush_tiles import TILE_SIZE, comparison_rows, segment_tiles
+from .pixel_mask import sample as sample_mask
 
 MAX_PIXELS = 16_777_216
 MAX_SYNC_PIXELS = 1_048_576
@@ -99,9 +100,19 @@ def srgb_to_linear(value: float) -> float:
     return value / 12.92 if value <= .04045 else ((value + .055) / 1.055) ** 2.4
 
 
-def paint_steps(source: array, width: int, height: int, strokes: list[dict], role: str, *, srgb=False, check=lambda: None):
+def paint_steps(source: array, width: int, height: int, strokes: list[dict], role: str, *, srgb=False, mask=None, check=lambda: None):
     """Yield bounded CPU work progress; no Blender calls or mutation between yields."""
     result = array("f", source)
+    if mask is not None:
+        mw, mh = size(mask["width"], mask["height"])
+        if len(mask["values"]) != mw * mh or type(mask["invert"]) is not bool:
+            raise invalid_argument("Frozen mask dimensions/inversion do not match its channel buffer.")
+        for index, value in enumerate(mask["values"]):
+            if index % 256 == 0:
+                check()
+                yield {"phase": "validating_mask", "completed": index, "total": mw * mh}
+            if not math.isfinite(value) or not 0 <= value <= 1:
+                raise invalid_argument("The complete selected raw mask channel must be finite within [0,1].")
     for offset in range(0, len(result), 4):
         if offset % 1024 == 0:
             check()
@@ -153,6 +164,10 @@ def paint_steps(source: array, width: int, height: int, strokes: list[dict], rol
                 applied += 1
                 if not value:
                     continue
+                if mask is not None:
+                    value *= sample_mask(mask, tx + index % tw, ty + index // tw, width, height)
+                    if not value:
+                        continue
                 offset = ((ty + index // tw) * width + tx + index % tw) * 4
                 if role == "DATA":
                     for channel in range(4):
@@ -193,12 +208,13 @@ def paint_steps(source: array, width: int, height: int, strokes: list[dict], rol
                     "coverage_tile_size": TILE_SIZE, "coverage_scratch_max_bytes": max_coverage_bytes,
                     "baseline_copy_bytes": 0, "comparison_pixels": total_compare,
                     "pixel_array_bytes": len(result) * result.itemsize,
-                    "private_pixel_buffers_peak_estimate_bytes": 2 * len(result) * result.itemsize + max(max_coverage_bytes, 12),
+                    "mask_channel_bytes": len(mask["values"]) * mask["values"].itemsize if mask is not None else 0,
+                    "private_pixel_buffers_peak_estimate_bytes": 2 * len(result) * result.itemsize + max(max_coverage_bytes, 12) + (len(mask["values"]) * mask["values"].itemsize if mask is not None else 0),
                     "memory_estimate_scope": "Source/output pixel arrays and bounded coverage/comparison scratch only; excludes plan metadata, Blender/native/GPU/undo/file buffers and allocator overhead."}
 
 
-def paint(source: array, width: int, height: int, strokes: list[dict], role: str, *, srgb=False, check=lambda: None) -> tuple[array, dict]:
-    work = paint_steps(source, width, height, strokes, role, srgb=srgb, check=check)
+def paint(source: array, width: int, height: int, strokes: list[dict], role: str, *, srgb=False, mask=None, check=lambda: None) -> tuple[array, dict]:
+    work = paint_steps(source, width, height, strokes, role, srgb=srgb, mask=mask, check=check)
     while True:
         try:
             next(work)
