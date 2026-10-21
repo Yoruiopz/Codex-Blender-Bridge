@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import math
 from array import array
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from ..errors import BridgeError, ErrorCode, invalid_argument
@@ -66,7 +66,14 @@ def _read(context: Any, image: Any, *, modifying=False, maximum_pixels=brush.MAX
     return values, width, height, file
 
 
-def _new(context: Any, bpy: Any, name: str, width: int, height: int, role: str, values: array) -> Any:
+def _new(context: Any, bpy: Any, name: str, width: int, height: int, role: str, values: array,
+         *, owned_output_guard: Callable[[Any], None] | None = None) -> Any:
+    """Allocate a generated version; optional domain guard owns stricter output CAS.
+
+    Existing callers keep their established behavior. A guarded caller receives
+    the actual newly allocated handle before the first callback and after every
+    callback preceding another output write, including final verification.
+    """
     _require(context, modifying=True)
     spaces = {item.identifier for item in bpy.types.ColorManagedInputColorspaceSettings.bl_rna.properties["name"].enum_items}
     if SPACES[role] not in spaces:
@@ -75,25 +82,37 @@ def _new(context: Any, bpy: Any, name: str, width: int, height: int, role: str, 
         raise invalid_argument("The new image name already exists; no implicit overwrite or reuse is allowed.")
     image = None
     before = len(bpy.data.images)
+    def output_gate():
+        _require(context, modifying=True)
+        if owned_output_guard is not None:
+            owned_output_guard(image)
     try:
         image = bpy.data.images.new(name, width, height, alpha=True, float_buffer=True)
-        _require(context, modifying=True)
+        if owned_output_guard is not None:
+            owned_output_guard(image)  # Freeze the actual allocation before callbacks.
+        output_gate()
         image.use_fake_user = False
+        if owned_output_guard is not None:
+            output_gate()
         image.colorspace_settings.name = SPACES[role]
         # Pixels are our explicit unassociated RGBA contract, not a native file
         # decoder's associated float ImBuf. CHANNEL_PACKED prevents implicit
         # alpha/color coupling in both 4.5 and 5.1 renderers and keeps hidden RGB.
+        if owned_output_guard is not None:
+            output_gate()
         image.alpha_mode = "CHANNEL_PACKED"
-        _require(context, modifying=True)
+        output_gate()
         image.pixels.foreach_set(values)
+        if owned_output_guard is not None:
+            output_gate()
         image.update()
-        _require(context, modifying=True)
+        output_gate()
         actual, w, h, _ = _read(context, image, modifying=True)
         if (image.name != name or image.source != "GENERATED" or not image.is_float or image.alpha_mode != "CHANNEL_PACKED"
                 or image.colorspace_settings.name != SPACES[role] or (w, h) != (width, height)
                 or brush.digest(actual) != brush.digest(values)):
             raise RuntimeError("Generated image metadata or complete float32 pixels did not match readback")
-        _require(context, modifying=True)
+        output_gate()
         return image
     except Exception as exc:
         LOGGER.exception("New pixel image failed; attempting only owned zero-user image cleanup")
@@ -101,15 +120,42 @@ def _new(context: Any, bpy: Any, name: str, width: int, height: int, role: str, 
         cleanup_denied = False
         try:
             if image is not None:
-                _removed, cleanup_denied = images.cleanup_created_image(context, bpy, image)
+                if owned_output_guard is None:
+                    _removed, cleanup_denied = images.cleanup_created_image(context, bpy, image)
+                else:
+                    # Never delete an output acquired by an incoming consumer or
+                    # changed after a permission/input callback. Guarded cleanup
+                    # also obeys live pause/cancel/source/publication authority.
+                    try:
+                        context.require(Permission.DELETE_OBJECTS)
+                    except BridgeError as failure:
+                        if failure.code != ErrorCode.PERMISSION_DENIED.value:
+                            raise
+                        cleanup_denied = True
+                    if not cleanup_denied:
+                        output_gate()
+                        context.require(Permission.DELETE_OBJECTS, Permission.EDIT_MATERIALS)
+                        owned_output_guard(image)
+                        bpy.data.images.remove(image, do_unlink=False)
             restored = bpy.data.images.get(name) is None and len(bpy.data.images) == before
         except Exception:
             LOGGER.exception("Pixel-image cleanup could not be verified")
+        retained = {}
+        if owned_output_guard is not None and not restored and image is not None:
+            try:
+                actual_name = str(image.name)
+                current = bpy.data.images.get(actual_name)
+                if current is not None and image_masks.identity(current) == image_masks.identity(image):
+                    retained = {"retained_image_name": actual_name[:1024], "retained_image_name_truncated": len(actual_name) > 1024,
+                                "retained_image_identity": image_masks.identity(image)}
+            except (ReferenceError, RuntimeError):
+                retained = {"retained_image_identity_unavailable": True}
         raise BridgeError(exc.code if isinstance(exc, BridgeError) else ErrorCode.OPERATION_FAILED,
                           "Pixel-image creation failed; reinspect the requested image and recovery evidence.",
-                          {"execution_started": True, "requested_image": name, "rollback_verified": restored,
+                          {**(exc.context if owned_output_guard is not None and isinstance(exc, BridgeError) else {}),
+                           "execution_started": True, "requested_image": name, "rollback_verified": restored,
                            "possible_mutation": not restored, "cleanup_permission_denied": cleanup_denied,
-                           "verification_required": True}) from exc
+                           "verification_required": True, **retained}) from exc
 
 
 def create_image(context: Any, params: Mapping[str, Any]) -> dict:

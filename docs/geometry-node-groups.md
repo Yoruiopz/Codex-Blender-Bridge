@@ -107,3 +107,19 @@ The focused Linux Blender 4.3.2 run passed at
 `build/gn-rig-boundary-native-20261022-c/report.json`. This is dirty-source development
 evidence with `release_readiness=NOT_ASSESSED`. Windows 4.5/5.x, actual native undo/recovery,
 packaged installation, visual quality and complete procedural/simulation acceptance remain open.
+
+The next development increment adds [paired zone conversion and nested interface
+maintenance](geometry-zone-lifecycle.md). GN ownership fingerprints now also include
+socket names/types, complete bounded zone schemas/pairing and interface panel identity.
+
+Linux 4.3.2, 4.5.14 LTS and 5.2.2 LTS development fixtures cover the same nested workflow.
+Blender 5.2 uses typed modifier input/output storage instead of modifier IDProperties;
+the bridge feature-detects that reviewed API while preserving public socket identifiers.
+Geometry-only modifiers, reviewed constants and attribute-mode refusal are verified.
+Unknown native property shapes fail closed, and existing IDProperty errors are never
+silently converted to an empty snapshot. Typed 5.2 modifier panel storage remains
+unsupported. The extended fixture injects a failed binding replacement and verifies
+restoration of the previous binding and every stored constant/mode, separately from
+native global undo. Reports are retained under
+`build/gn-zone-final-<version>-20261022-b/report.json`; these are source development
+checks, not Windows or release qualification.

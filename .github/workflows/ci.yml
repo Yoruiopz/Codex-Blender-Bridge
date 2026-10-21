@@ -31,7 +31,15 @@ jobs:
         run: python -m ruff check .
 
       - name: Test
-        run: python -m pytest --cov=mcp_server --cov-report=term-missing
+        run: python -m pytest --cov=mcp_server --cov-report=term-missing --junitxml=build/reports/python-tests.xml
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: python-tests-${{ matrix.python-version }}-mcp-${{ matrix.mcp-version }}-${{ github.sha }}
+          path: build/reports/python-tests.xml
+          if-no-files-found: warn
+          retention-days: 90
 
       - name: Type check
         run: python -m mypy mcp_server
@@ -71,4 +79,4 @@ jobs:
           name: blender-codex-bridge-development-${{ github.sha }}
           path: dist/release/
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 90

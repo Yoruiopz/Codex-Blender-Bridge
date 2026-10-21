@@ -88,6 +88,12 @@ the authenticity of a host assertion or replace human artistic review. Reviewers
 the actual native/CI logs, package-install provenance and images, and inspect their meaning.
 No successful receipt is generated automatically by this infrastructure.
 
+Development CI retains its package artifacts and per-matrix JUnit reports for 90
+days. This extends the previous 14-day package window, but is not permanent release
+evidence. Before those artifacts expire, retain the complete accepted bundle and
+hashed receipts outside expiring CI storage. The qualified publication workflow
+uploads the hash-checked evidence ZIP alongside the immutable release packages.
+
 ## Manual release workflow
 
 The `Qualify and publish 1.0` workflow is explicitly dispatched; pushes and pull requests

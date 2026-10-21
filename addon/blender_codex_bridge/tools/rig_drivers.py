@@ -434,6 +434,34 @@ def _driver_configuration(curve: Any) -> dict[str, Any]:
             "sample_count": len(curve.sampled_points)}
 
 
+def _normalize_new_driver_mapping(curve: Any) -> int:
+    """Remove a reviewed diagonal identity mapping from our fresh allocation.
+
+    Blender 5.2 adds two AUTO_CLAMPED BEZIER keys at (0,0)/(1,1), with
+    collinear handles and LINEAR extrapolation. Existing curves are never passed
+    here: their keys/modifiers remain unsupported by dependency validation.
+    """
+    if len(curve.sampled_points):
+        raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "A fresh driver has unreviewed sampled mapping data.")
+    points = list(islice(curve.keyframe_points, 3))
+    if not points:
+        return 0
+    identity = len(points) == 2 and len(curve.keyframe_points) == 2 and curve.extrapolation == "LINEAR"
+    for point, expected in zip(points, ((0., 0.), (1., 1.)), strict=False):
+        identity = identity and tuple(point.co) == expected and point.interpolation == "BEZIER"
+        identity = identity and point.handle_left_type == point.handle_right_type == "AUTO_CLAMPED"
+        for handle in (point.handle_left, point.handle_right):
+            values = tuple(handle)
+            identity = identity and len(values) == 2 and all(math.isfinite(value) and abs(value) <= 2 for value in values)
+            identity = identity and len(values) == 2 and abs(values[0]-values[1]) <= 1e-7
+    if not identity:
+        raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "A fresh driver has an unreviewed native mapping; it is retained for inspection.")
+    curve.keyframe_points.clear()
+    if len(curve.keyframe_points):
+        raise RuntimeError("Blender did not clear the fresh native identity mapping")
+    return 2
+
+
 def driver_inspect(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
     reject_unknown_params(params, {"object_name", "bone_name", "channel", "index"})
     bpy = require_blender()
@@ -483,6 +511,7 @@ def driver_add(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any
     try:
         curve = obj.driver_add(path, index)
         curve_key = _key(curve)
+        removed_mapping_keys = _normalize_new_driver_mapping(curve)
         driver = curve.driver
         driver.type = kind
         driver.use_self = False
@@ -524,7 +553,7 @@ def driver_add(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any
                   or target.transform_space != expected["transform_space"]):
                 raise RuntimeError("Bone driver transform source readback mismatch")
         dependencies = _dependencies(validation, bpy, [obj])
-        return {"added": True, "channel": params["channel"], "index": index, "driver": _driver_summary(curve),
+        return {"added": True, "channel": params["channel"], "index": index, "native_mapping_keyframes_removed": removed_mapping_keys, "driver": _driver_summary(curve),
                 **_result(obj, bone_name, dependencies, consumers)}
     except Exception as error:
         LOGGER.exception("Bone driver creation failed")

@@ -150,6 +150,74 @@ def test_static_property_source_can_drive_the_same_bone_without_false_transform_
     assert result["added"] and not result["dependencies"]["dependency_cycle_detected"]
 
 
+def _native_identity_points():
+    return [NS(co=(value, value), interpolation="BEZIER", handle_left_type="AUTO_CLAMPED", handle_right_type="AUTO_CLAMPED",
+               handle_left=(value-1/3, value-1/3), handle_right=(value+1/3, value+1/3)) for value in (0., 1.)]
+
+
+def test_new_owned_native_identity_mapping_is_removed_before_driver_validation(drivers):
+    allocate = drivers.obj.driver_add
+
+    def native(path, index):
+        curve = allocate(path, index)
+        curve.keyframe_points = _native_identity_points()
+        curve.extrapolation = "LINEAR"
+        return curve
+
+    drivers.obj.driver_add = native
+    result = add_driver(drivers)
+    assert result["native_mapping_keyframes_removed"] == 2
+    assert not drivers.obj.animation_data.drivers[0].keyframe_points
+    assert set_property(drivers)["value"] == 3.
+
+
+@pytest.mark.parametrize("change", ["value", "interpolation", "extrapolation", "handle_type", "handle_geometry", "nonfinite", "extra_point", "samples"])
+def test_unreviewed_new_native_mapping_is_retained_without_being_erased(drivers, change):
+    allocate = drivers.obj.driver_add
+    captured = []
+
+    def native(path, index):
+        curve = allocate(path, index)
+        curve.keyframe_points = _native_identity_points()
+        curve.extrapolation = "LINEAR"
+        if change == "value":
+            curve.keyframe_points[0].co = (0., 1.)
+        elif change == "interpolation":
+            curve.keyframe_points[0].interpolation = "CONSTANT"
+        elif change == "extrapolation":
+            curve.extrapolation = "CONSTANT"
+        elif change == "handle_type":
+            curve.keyframe_points[0].handle_left_type = "FREE"
+        elif change == "handle_geometry":
+            curve.keyframe_points[0].handle_right = (.3, .5)
+        elif change == "nonfinite":
+            curve.keyframe_points[0].handle_right = (float("nan"), float("nan"))
+        elif change == "extra_point":
+            curve.keyframe_points.append(curve.keyframe_points[0])
+        else:
+            curve.sampled_points.append(object())
+        captured.append(curve)
+        return curve
+
+    drivers.obj.driver_add = native
+    with pytest.raises(drivers.module.BridgeError) as error:
+        add_driver(drivers)
+    assert error.value.code == "NOT_IMPLEMENTED" and error.value.context["possible_mutation"]
+    assert error.value.context["cleanup_skipped"] and not error.value.context["rollback_verified"]
+    assert drivers.obj.animation_data.drivers == captured and len(captured[0].keyframe_points) >= 2
+
+
+def test_existing_native_identity_mapping_is_not_a_dependency_exception(drivers):
+    add_driver(drivers)
+    curve = drivers.obj.animation_data.drivers[0]
+    curve.keyframe_points = _native_identity_points()
+    curve.extrapolation = "LINEAR"
+    with pytest.raises(drivers.module.BridgeError) as error:
+        set_property(drivers)
+    assert error.value.code == "NOT_IMPLEMENTED" and len(curve.keyframe_points) == 2
+    assert drivers.control['move"X'] == 2.
+
+
 @pytest.mark.parametrize("source_bone,target_bone", [("Deform", 'Control"A'), ("Deform", "Deform")])
 def test_descendant_and_self_transform_cycles_are_rejected_before_allocation(drivers, source_bone, target_bone):
     with pytest.raises(drivers.module.BridgeError, match="cycle"):

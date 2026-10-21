@@ -1,5 +1,16 @@
 # UV authoring (unreleased)
 
+Scoped unwrap/Smart Project/packing preserve the actual native UV selection.
+Blender 4.3/4.5 use per-layer BMLoopUV flags; Blender 5.2 uses mesh-wide
+`BMLoop.uv_select_vert`, `uv_select_edge`, `BMFace.uv_select` and
+`BMesh.uv_select_sync_valid`. The temporary scope sets and then restores those
+fields, including a previously invalid sync state. Legacy-named `.vs`/`.es`
+custom attributes are not substituted for the mesh-wide native flags.
+Inspection identifies the storage and validity; an invalid native sync state
+has no authoritative selected-loop count. Full context preservation is bounded
+to 200,000 mesh elements and 200,000 corners. Operator, restoration and final
+mesh-update failures retain separate evidence; inspect before retrying.
+
 Main adds seven structured tools beyond unwrap, Smart Project, packing and inspection.
 They are not included in the 0.3.0 downloads. All require Blender's `EDIT_MESH` permission
 and the enabled `uv` toolset. No Python/file permissions or object deletion are needed.

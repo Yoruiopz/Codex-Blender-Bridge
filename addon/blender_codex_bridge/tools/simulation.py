@@ -9,6 +9,8 @@ from ..errors import BridgeError, ErrorCode, invalid_argument
 from ..permissions import Permission
 from ..utils import get_object, int_param, reject_unknown_params, require_blender
 from ._mesh_safety import require_local_single_user_mesh
+from ._object_safety import require_single_user_object_data
+from ._object_scope import MutationGuard, datablock_identity
 from ._rna import (
     apply_assignments,
     bounded_name,
@@ -127,6 +129,40 @@ def configure(context: Any, params: Mapping[str, Any]) -> dict[str, Any]:
     return _snapshot(obj, modifier)
 
 
+def _cache_guard(bpy: Any, context: Any, obj: Any, modifier: Any, point_cache: Any):
+    """Recheck consent and the complete owned target relationship after callbacks."""
+    guard = MutationGuard(bpy, context, "simulation.cache")
+    mesh = obj.data
+    guard.remember(obj, bpy.data.objects)
+    guard.remember(mesh, bpy.data.meshes)
+    guard.remember(modifier, obj.modifiers)
+    guard.remember(point_cache)
+
+    def check():
+        guard.check(objects=(obj,))
+        require_single_user_object_data(obj, operation="simulation.cache")
+        if (
+            datablock_identity(obj.data) != datablock_identity(mesh)
+            or datablock_identity(modifier.point_cache) != datablock_identity(point_cache)
+            or len(obj.modifiers) != 1
+            or modifier.type != "CLOTH"
+            or len(mesh.vertices) > 2000
+            or modifier.settings.quality > 5
+            or point_cache.use_external
+            or point_cache.use_disk_cache
+            or bpy.context.view_layer.objects.get(obj.name) != obj
+            or obj.hide_get()
+            or not obj.visible_get()
+        ):
+            raise BridgeError(
+                ErrorCode.NOT_IMPLEMENTED,
+                "Cloth/cache ownership, memory-only budget or visibility changed; no further writes are allowed.",
+                {"object": obj.name, "scope_complete": False},
+            )
+
+    return check
+
+
 def cache(context: Any, params: Mapping[str, Any]) -> dict[str, Any]:
     reject_unknown_params(
         params, {"object_name", "modifier_name", "operation", "frame_start", "frame_end"}
@@ -162,31 +198,62 @@ def cache(context: Any, params: Mapping[str, Any]) -> dict[str, Any]:
         or not obj.visible_get()
     ):
         raise invalid_argument("Simulation object must be visible in the current view layer.")
-    if getattr(context, "check_cancelled", None):
-        context.check_cancelled()
+    check = _cache_guard(bpy, context, obj, modifier, point_cache)
+    try:
+        check()
+    except BridgeError as error:
+        error.context.update(execution_started=False, possible_mutation=False)
+        raise
     scene = bpy.context.scene
     frame, subframe = scene.frame_current, scene.frame_subframe
     old_range = (point_cache.frame_start, point_cache.frame_end)
+    owned_range = old_range
+    execution_started = cache_started = range_started = False
     failure: Exception | None = None
     range_recovery: dict[str, Any] = {"attempted": False}
     try:
         if operation == "BAKE":
-            point_cache.frame_start, point_cache.frame_end = start, end
+            for name, value in (("frame_start", start), ("frame_end", end)):
+                check()
+                if (point_cache.frame_start, point_cache.frame_end) != owned_range:
+                    raise RuntimeError("Cache range changed outside the current operation")
+                if point_cache.is_baked:
+                    raise RuntimeError("Another bake appeared before a range write")
+                execution_started = range_started = True
+                setattr(point_cache, name, value)
+                owned_range = (point_cache.frame_start, point_cache.frame_end)
         with bpy.context.temp_override(
             scene=scene, object=obj, active_object=obj, point_cache=point_cache
         ):
             operator = bpy.ops.ptcache.bake if operation == "BAKE" else bpy.ops.ptcache.free_bake
             if not operator.poll():
                 raise invalid_argument("Point-cache operator is unavailable in this context.")
+            check()
+            if (point_cache.frame_start, point_cache.frame_end) != owned_range:
+                raise RuntimeError("Cache range changed before native execution")
+            if operation == "BAKE" and point_cache.is_baked:
+                raise RuntimeError("Another bake appeared before native execution")
+            execution_started = cache_started = True
             result = operator(bake=True) if operation == "BAKE" else operator()
+        check()
+        if (point_cache.frame_start, point_cache.frame_end) != owned_range:
+            raise RuntimeError("Cache range changed during native execution")
         if "FINISHED" not in result or point_cache.is_baked != (operation == "BAKE"):
             raise RuntimeError("Point-cache operation did not reach the requested state")
     except Exception as exc:
         failure = exc
         try:
-            if not point_cache.is_baked:
+            if not point_cache.is_baked and range_started:
+                check()
+                if (point_cache.frame_start, point_cache.frame_end) != owned_range:
+                    raise RuntimeError("Newer cache range is retained instead of overwritten")
                 range_recovery["attempted"] = True
-                point_cache.frame_start, point_cache.frame_end = old_range
+                for name, value in zip(("frame_start", "frame_end"), old_range, strict=True):
+                    check()
+                    if (point_cache.frame_start, point_cache.frame_end) != owned_range:
+                        raise RuntimeError("Cache range changed before recovery")
+                    setattr(point_cache, name, value)
+                    owned_range = (point_cache.frame_start, point_cache.frame_end)
                 range_recovery["verified"] = (
                     point_cache.frame_start, point_cache.frame_end
                 ) == old_range
@@ -194,9 +261,16 @@ def cache(context: Any, params: Mapping[str, Any]) -> dict[str, Any]:
             range_recovery.update(verified=False, error_type=type(restoration_error).__name__)
     # Frame restoration can itself fail (for example in a frame-change handler).
     # Measure it independently so it cannot mask a bake/free failure or success.
-    frame_recovery: dict[str, Any] = {"attempted": True, "verified": False}
+    frame_recovery: dict[str, Any] = {"attempted": False, "verified": False}
     try:
-        scene.frame_set(frame, subframe=subframe)
+        observed_frame = (scene.frame_current, scene.frame_subframe)
+        check()
+        if (scene.frame_current, scene.frame_subframe) != observed_frame:
+            raise RuntimeError("Newer frame context is retained instead of overwritten")
+        if cache_started:
+            frame_recovery["attempted"] = True
+            scene.frame_set(frame, subframe=subframe)
+        check()
         frame_recovery["verified"] = (
             scene.frame_current == frame and scene.frame_subframe == subframe
         )
@@ -204,12 +278,14 @@ def cache(context: Any, params: Mapping[str, Any]) -> dict[str, Any]:
         frame_recovery["error_type"] = type(restoration_error).__name__
     if failure is not None or not frame_recovery["verified"]:
         raise BridgeError(
-            ErrorCode.OPERATION_FAILED,
+            failure.code if isinstance(failure, BridgeError) else ErrorCode.OPERATION_FAILED,
             "Point-cache operation or frame restoration failed; inspect before retrying.",
             {
                 "object": obj.name,
                 "operation": operation,
-                "execution_started": True,
+                "execution_started": execution_started,
+                "possible_mutation": execution_started,
+                "cache_operation_started": cache_started,
                 "verification_required": True,
                 "cache_operation_verified": failure is None,
                 "primary_error_type": type(failure).__name__ if failure else None,
@@ -224,6 +300,8 @@ def cache(context: Any, params: Mapping[str, Any]) -> dict[str, Any]:
         "cache_recovery": "explicit FREE; no durable backup or transactional undo",
         "frame_restored": frame_recovery["verified"],
         "frame_recovery": frame_recovery,
+        "verification_required": True,
+        "cache_coverage": "NOT_ASSESSED; baked flag is not complete simulation evidence",
         **_snapshot(obj, modifier),
     }
 

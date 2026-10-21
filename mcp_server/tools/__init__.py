@@ -13,14 +13,18 @@ from .asset_delivery import AssetDeliveryTools
 from .batch import BatchTools
 from .constraints import ConstraintTools
 from .core import CoreTools
+from .deformation import DeformationTools
 from .geometry_node_groups import GeometryNodeGroupTools
 from .geometry_nodes import GeometryNodeTools
+from .geometry_zone_lifecycle import GeometryZoneLifecycleTools
 from .image_portability import ImagePortabilityTools
+from .image_surface_paint import ImageSurfacePaintTools
 from .interaction import InteractionTools
 from .layout import LayoutTools
 from .materials import MaterialTools
 from .mesh import MeshTools
 from .mesh_slide import MeshSlideTools
+from .mesh_surface import MeshSurfaceTools
 from .modifiers import ModifierTools
 from .nodes import NodeTools
 from .objects import ObjectTools
@@ -28,6 +32,7 @@ from .project import ProjectTools
 from .python_exec import PythonTools
 from .render import RenderTools
 from .rig_drivers import RigDriverTools
+from .rig_ik import RigIKTools
 from .rigging import RiggingTools
 from .scene import SceneTools
 from .scene_edit import SceneEditTools
@@ -54,6 +59,7 @@ def iter_bindings(registry: ToolRegistry) -> Iterable[MCPToolBinding]:
         LayoutTools(registry),
         GeometryNodeTools(registry),
         GeometryNodeGroupTools(registry),
+        GeometryZoneLifecycleTools(registry),
         ProjectTools(registry),
         SceneTools(registry),
         ViewportTools(registry),
@@ -62,6 +68,7 @@ def iter_bindings(registry: ToolRegistry) -> Iterable[MCPToolBinding]:
         TransformTools(registry),
         MeshTools(registry),
         MeshSlideTools(registry),
+        MeshSurfaceTools(registry),
         SurfaceBrushTools(registry),
         UVTools(registry),
         UVRefineTools(registry),
@@ -69,9 +76,12 @@ def iter_bindings(registry: ToolRegistry) -> Iterable[MCPToolBinding]:
         ConstraintTools(registry),
         MaterialTools(registry),
         ImagePortabilityTools(registry),
+        ImageSurfacePaintTools(registry),
         NodeTools(registry),
         RiggingTools(registry),
         RigDriverTools(registry),
+        RigIKTools(registry),
+        DeformationTools(registry),
         AnimationTools(registry),
         AnimationCurveTools(registry),
         RenderTools(registry),

@@ -61,6 +61,37 @@ def grid():
     return bm, seen
 
 
+def enable_global_uv_flags(bm):
+    """Model native mesh-global flags independently of every UV data layer."""
+    bm.uv_select_sync_valid = True
+    index = 0
+    for face in bm.faces:
+        face.uv_select = bool(face.index % 2)
+        for loop in face.loops:
+            loop.uv_select_vert, loop.uv_select_edge = index % 3 == 0, index % 2 == 0
+            for data in loop.layers.values():
+                for name in ("select", "select_edge"):
+                    if hasattr(data, name):
+                        delattr(data, name)
+            index += 1
+
+
+def global_uv_flags(bm):
+    return (bm.uv_select_sync_valid, tuple(face.uv_select for face in bm.faces),
+        tuple((loop.uv_select_vert, loop.uv_select_edge) for face in bm.faces for loop in face.loops))
+
+
+def change_global_uv_flag(bm, channel):
+    if channel == "sync":
+        bm.uv_select_sync_valid = not bm.uv_select_sync_valid
+    elif channel == "face":
+        bm.faces[0].uv_select = not bm.faces[0].uv_select
+    else:
+        loop = bm.faces[0].loops[0]
+        name = "uv_select_vert" if channel == "vertex" else "uv_select_edge"
+        setattr(loop, name, not getattr(loop, name))
+
+
 @pytest.fixture
 def slide(addon_package, monkeypatch):
     module = importlib.import_module(addon_package + ".tools.mesh_slide")
@@ -127,6 +158,52 @@ def test_preview_is_nonmutating_and_needs_only_inspection(slide):
     preview = env.module.slide_preview(env.context, {**arguments(), "mode": "VERTEX"})
     assert len(preview["fingerprint"]) == 64 and not preview["changed"]
     assert env.module._snapshot(env.obj, env.bm) == before and env.calls == []
+
+
+@pytest.mark.parametrize("channel", ["sync", "face", "vertex", "edge"])
+def test_actual_global_uv_flag_change_invalidates_slide_preview(slide, channel):
+    env = slide
+    enable_global_uv_flags(env.bm)
+    params = arguments()
+    preview = env.module.slide_preview(env.context, {**params, "mode": "VERTEX"})
+    change_global_uv_flag(env.bm, channel)
+    with pytest.raises(env.module.BridgeError, match="fingerprint"):
+        env.module.vertex_slide(env.context, {**params, "expected_fingerprint": preview["fingerprint"]})
+    assert not env.calls and env.bm.verts[4].co == (1., 1., 0.)
+
+
+@pytest.mark.parametrize("failure", [False, True])
+def test_slide_and_owned_fault_recovery_preserve_actual_global_uv_flags(slide, monkeypatch, failure):
+    env = slide
+    enable_global_uv_flags(env.bm)
+    before = global_uv_flags(env.bm)
+    if failure:
+        def update(*args, **kwargs):
+            env.calls.append(kwargs)
+            if len(env.calls) == 1:
+                raise RuntimeError("native update failure")
+        monkeypatch.setattr(env.module.bmesh, "update_edit_mesh", update)
+        with pytest.raises(env.module.BridgeError) as caught:
+            apply(env)
+        assert caught.value.context["rollback_verified"] and env.bm.verts[4].co == (1., 1., 0.)
+    else:
+        assert apply(env)["protected_vertices_preserved"]
+    assert global_uv_flags(env.bm) == before
+
+
+@pytest.mark.parametrize("missing", ["sync", "face", "vertex", "edge"])
+def test_partial_native_global_uv_api_refuses_unproved_preservation(slide, missing):
+    env = slide
+    enable_global_uv_flags(env.bm)
+    if missing == "sync":
+        del env.bm.uv_select_sync_valid
+    elif missing == "face":
+        del env.bm.faces[0].uv_select
+    else:
+        delattr(env.bm.faces[0].loops[0], "uv_select_vert" if missing == "vertex" else "uv_select_edge")
+    with pytest.raises(env.module.BridgeError, match="API is incomplete"):
+        apply(env)
+    assert not env.calls and env.bm.verts[4].co == (1., 1., 0.)
 
 
 @pytest.mark.parametrize("value", [None, [], [{"vertex_index": True, "target_vertex_index": 5}],
