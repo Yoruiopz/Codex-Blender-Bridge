@@ -61,7 +61,7 @@ def _preflight(context: ToolContext, params: Mapping[str, Any]) -> list[tuple[st
                 step_index=index, method=method,
             )
         # Preflight *every* gate before creating the first undo marker.
-        context.registry.prepare(method, context)
+        context.registry.prepare_call(method, arguments, context)
         ids.add(identifier)
         prepared.append((identifier, spec, arguments))
     return prepared
@@ -125,14 +125,14 @@ def batch_execute(context: ToolContext, params: Mapping[str, Any]) -> dict[str, 
             if time.monotonic() >= deadline:
                 raise BridgeError(ErrorCode.TIMEOUT, "Batch time budget expired before the next step.")
             # Authoritative gates are repeated immediately before every step.
-            context.registry.prepare(spec.name, context)
+            context.registry.prepare_call(spec.name, arguments, context)
             if spec.modifies and not mutation_started:
                 undo_boundary = context.checkpoints.before_modification(f"Batch: {label}")
             mutation_started = mutation_started or spec.modifies
             current_started = True
             start = time.perf_counter()
             try:
-                result = spec.handler(context, arguments)
+                result = context.registry.invoke(spec, arguments, context)
             except Exception as exc:
                 error_code = exc.code if isinstance(exc, BridgeError) else ErrorCode.OPERATION_FAILED.value
                 context.state.record_operation(

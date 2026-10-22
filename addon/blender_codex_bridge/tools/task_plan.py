@@ -199,10 +199,11 @@ def persist_plan(context: ToolContext, params: Mapping[str, Any]) -> dict[str, A
 
 def load_plan(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
     reject_unknown_params(params, {"expected_revision"})
+    store = get_task_plans(context.state)
+    store.require_advisory("loading a plan")
     bpy = require_blender()
     parsed = decode_saved(bpy.context.scene.get(SCENE_PROPERTY))
     scope = _scope(bpy, parsed["protected_objects"], context.check_cancelled)
-    store = get_task_plans(context.state)
     if store.plan is not None:
         store.check_revision(params.get("expected_revision"))
         parsed["revision"] = store.plan["revision"] + 1
@@ -213,6 +214,7 @@ def load_plan(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]
     # operational authority are never imported from project data.
     store.plan = parsed
     store.scope, store.baseline = scope, None
+    store.invalidate_handles()
     context.state.set_task(parsed["goal"])
     return {**store.inspect(), "loaded_from_scene": bpy.context.scene.name}
 
@@ -220,6 +222,7 @@ def load_plan(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]
 def clear_plan(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
     reject_unknown_params(params, {"expected_revision"})
     store = get_task_plans(context.state)
+    store.require_advisory("clearing a plan")
     store.check_revision(params.get("expected_revision"))
     store.clear()
     context.state.set_task("")
@@ -227,6 +230,7 @@ def clear_plan(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any
 
 
 def register_tools(registry: ToolRegistry) -> None:
+    from . import artist_loop
     for name, handler, description in (
         ("set", set_plan, "Create or revision-check replacement of a bounded artist task plan; protected objects are advisory."),
         ("inspect", inspect_plan, "Inspect the current artist plan, steps and advisory protected scope."),
@@ -238,3 +242,4 @@ def register_tools(registry: ToolRegistry) -> None:
     ):
         registry.register(f"task.plan.{name}", handler, permissions=(Permission.INSPECT_SCENE,), description=description, batchable=False, record_history=False)
     registry.register("task.plan.persist", persist_plan, permissions=(Permission.INSPECT_SCENE, Permission.EDIT_SCENE), modifies=True, description="Explicitly store validated plan JSON in the active scene without saving the project.", batchable=False)
+    artist_loop.register_tools(registry)

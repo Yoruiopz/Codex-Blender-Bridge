@@ -16,6 +16,7 @@ from .permissions import PermissionManager
 from .protocol import PROTOCOL_VERSION, Request, Response
 from .scene_evidence import SceneEvidenceStore
 from .state import BridgeState, bounded_external_effects, bounded_recovery_evidence
+from .task_plans import get_task_plans
 from .tool_registry import ToolContext, ToolRegistry
 from .utils import affected_objects_from_result, require_blender
 
@@ -187,8 +188,9 @@ class MainThreadExecutor:
         try:
             if check_cancelled is not None:
                 check_cancelled()
-            spec = self.registry.prepare(
+            spec = self.registry.prepare_call(
                 request.method,
+                request.params,
                 context,
                 allow_recovery=allow_recovery,
             )
@@ -196,7 +198,11 @@ class MainThreadExecutor:
                 undo_boundary = self.checkpoints.before_modification(request.method)
             if check_cancelled is not None:
                 check_cancelled()
-            result = spec.handler(context, request.params)
+            if get_task_plans(context.state).protection is not None:
+                # A checkpoint/cancellation callback can change policy, context
+                # or consumers. Re-resolve after it, before handler entry.
+                spec = self.registry.prepare_call(request.method, request.params, context, allow_recovery=allow_recovery)
+            result = self.registry.invoke(spec, request.params, context)
             if spec.modifies and undo_boundary:
                 undo_finalized = bool(self.checkpoints.after_modification(request.method))
             if spec.modifies:

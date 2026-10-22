@@ -123,10 +123,10 @@ It is checked against the registry in CI. It does not describe the 108-tool 0.3.
 The local recovery UI also has an add-on-only action, not an extra MCP tool.
 
 <!-- BEGIN GENERATED MCP TOOLS -->
-Current registry: **251 MCP tools**.
+Current registry: **255 MCP tools**.
 
 <details>
-<summary>core — 29 tools</summary>
+<summary>core — 33 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
@@ -147,14 +147,18 @@ Current registry: **251 MCP tools**.
 | `scene.snapshot` | Capture bounded structural evidence for explicitly named objects and fields. |
 | `scene.summary` | Return an LLM-oriented structural and textual scene summary. |
 | `selection.inspect` | Inspect active and selected objects or mesh elements. |
-| `task.plan.capture` | Capture bounded structural evidence for exact protected scope; no mutator enforcement. |
+| `task.plan.apply_preview` | Apply an exact runtime transform preview once after renewed permission, identity, context and consumer checks. |
+| `task.plan.capture` | Capture bounded structural evidence for exact protected scope without enabling enforcement. |
 | `task.plan.clear` | Clear runtime plan only; scene-stored JSON remains until explicitly replaced. |
 | `task.plan.compare` | Explicitly compare protected scope with its transient baseline; incomplete coverage is not preservation proof. |
-| `task.plan.inspect` | Inspect runtime plan steps, revision and advisory protected scope. |
+| `task.plan.enforce` | Explicitly enable/disable runtime protected scope; unreviewed modifying tools fail closed while enabled. |
+| `task.plan.inspect` | Inspect runtime plan steps, revision and current protected-scope policy. |
 | `task.plan.load` | Explicitly validate/load saved scene JSON as plan data; never executes text or restores session baselines. |
 | `task.plan.persist` | Explicitly store validated plan JSON in a scene property; never saves the project. |
+| `task.plan.preview_transform` | Preview exact transform channels and reviewed affected consumers without editing or acquiring edit authority. |
 | `task.plan.set` | Create/correct a bounded artist plan with advisory protected objects; replacement requires current revision. |
 | `task.plan.update` | Correct an exact step's status/note at the expected plan revision. |
+| `task.reference.resolve` | Resolve exact object names/current selection to bounded runtime references without granting authority. |
 | `toolsets.disable` | Disable a local MCP domain toolset. |
 | `toolsets.enable` | Enable a lazy local MCP domain toolset. |
 | `toolsets.list` | List local MCP toolsets and their enablement state. |

@@ -280,7 +280,8 @@ def test_executor_tracks_failed_python_as_a_possible_mutation(
         )
 
     registry = SimpleNamespace(
-        prepare=lambda *args, **kwargs: SimpleNamespace(
+        invoke=lambda spec, params, context: spec.handler(context, params),
+        prepare_call=lambda *args, **kwargs: SimpleNamespace(
             modifies=True,
             automatic_checkpoint=True,
             handler=fail_handler,

@@ -141,6 +141,18 @@ Requirements:
 
 Public codes should remain stable. Method-specific context may include missing permission names, supported modes/options, similar object names, safe limits, or a local diagnostic ID.
 
+Blender tool metadata may additionally expose `protected_scope_reviewed`. This states
+that the registered modifying tool has a reviewed live affected-scope resolver for
+opt-in task-plan protection; it grants no permission and is not whole-scene or visual
+preservation certification. Under active protection, unreviewed modifying tools return
+`NOT_IMPLEMENTED` before handler/checkpoint entry. Existing V1 envelopes are unchanged.
+Runtime references, previews and policy generations are not serialized plan authority;
+see [task plans](task-plans.md) for the bounded static-prop contract.
+Prepared internal handler invocation tracks in-flight mutators on Blender's main
+thread; protection cannot be enabled over one. Executor, direct registry dispatch
+and batch steps use that wrapper. Calling a trusted handler directly is not a
+remote protocol entry point and does not replace registered preflight.
+
 ## Events
 
 Events reserve a V1-compatible path for progress and lifecycle information. They are non-terminal and correlated where applicable.

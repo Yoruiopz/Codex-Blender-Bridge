@@ -1628,3 +1628,32 @@ that checkout, and an isolated installed wheel exposes 198 tools over stdio. See
 [retained checkpoint summary](release-implementation-20261022.md) for fingerprints, exact
 evidence paths and limitations. These are 21 of 41 registered cases, not Windows or installed
 full-artist acceptance. All release ledger requirements remain open.
+
+### 2026-10-22 — Opt-in protected static-prop iteration (development)
+
+Four typed core tools add explicit runtime protection, exact selection/name references,
+nonmutating transform previews and single-use preview application. Default plans remain
+advisory and saved schema-v1 text never restores live policy, identity, reference or baseline
+authority. While armed, only the reviewed Object-channel transforms and preview application
+can modify Blender; unreviewed mutators, context/undo/save/persistence remain denied before
+their handler/checkpoint. Every accepted field and compensation rechecks protected identities,
+policy generation, authored/context state and bounded incoming Object consumers after callbacks.
+The first static profile rejects unknown callbacks, drivers, implicit physics/procedural roles
+and larger/complex affected structures; see [the exact contract](task-plans.md).
+
+Dirty-source development validation on base `91cf622` passed **3,807 tests and three Windows
+skips on each MCP SDK 2.0.0/2.2.0**, Ruff, mypy (57 standalone files), inventory and compilation.
+The registry has **255 tools**. Matching **267-file** Python inventory SHA-256:
+`98ef5b9ddef5d5968bbccfbf06b390d2179f1ee5b15dc4d9ffd60fa6edc1f78e`.
+Official Linux Blender **4.5.14 LTS** and **5.2.2 LTS** each passed the selected `artist_loop`,
+`object_rna_mutations` and two-process `task_plans` cases through the isolated native runner.
+Reports/logs are under `build/artist-loop-freeze-{45,52}-20261022/`; retained validation and
+log hashes are in `build/artist-loop-freeze-validation/summary.json` in the isolated feature
+worktree. These are **3 of 80** cases, not the complete native inventory or installed acceptance.
+
+The fixture proves exact-reference placement/correction, protected comparisons, permission and
+unknown-tool denial, late context/consumer/identity changes, explicit disable audit, cancellation/
+disconnect partials without illegal compensation, and native handler/getter rejection without
+invocation. It neither renders nor saves. The full UX-01 benchmark, visual reference understanding,
+wider protected authoring, protected authorized save/delivery, Windows and all release acceptance
+remain open. No version, release, package publication or requirement acceptance changes here.

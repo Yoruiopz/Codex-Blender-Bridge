@@ -205,13 +205,14 @@ def apply_transform(context: ToolContext, params: Mapping[str, Any]) -> dict[str
 
 
 def register_tools(registry: ToolRegistry) -> None:
+    from .artist_loop import prepare_transform_scope
     common = {
         "permissions": (Permission.TRANSFORM_OBJECTS,),
         "toolset": "objects",
         "modifies": True,
     }
-    registry.register("transform.set", set_transform, description="Set exact transform components.", **common)
-    registry.register("transform.translate", translate, description="Translate an object in world or local space.", **common)
-    registry.register("transform.rotate", rotate, description="Rotate an object by Euler-radian deltas.", **common)
-    registry.register("transform.scale", scale, description="Multiply an object's scale by deterministic factors.", **common)
+    registry.register("transform.set", set_transform, description="Set exact transform components.", protected_scope_resolver=prepare_transform_scope, **common)
+    registry.register("transform.translate", translate, description="Translate an object in world or local space.", protected_scope_resolver=prepare_transform_scope, **common)
+    registry.register("transform.rotate", rotate, description="Rotate an object by Euler-radian deltas.", protected_scope_resolver=prepare_transform_scope, **common)
+    registry.register("transform.scale", scale, description="Multiply an object's scale by deterministic factors.", protected_scope_resolver=prepare_transform_scope, **common)
     registry.register("transform.apply", apply_transform, description="Apply selected object transform channels.", **common)

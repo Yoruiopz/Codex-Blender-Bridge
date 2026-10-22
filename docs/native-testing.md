@@ -43,6 +43,14 @@ animated GLB/FBX files by hashes and sampled evaluated geometry in a fresh proce
 the [reviewed export subset](asset-delivery.md). These are separate development checks, not
 installed-package, Windows-version or full 1.0 acceptance.
 
+`artist_loop` is a small background fixture for opt-in static-prop protection. It resolves
+references, previews/applies/corrects transforms, compares protected structure, and exercises
+denial before checkpoints, stale previews, permission-provider context/identity changes,
+partial interruptions and audited explicit disablement. Runtime-getter/handler probes must
+remain uninvoked. It neither renders nor saves and does not accept visual intent, protected
+delivery or the full UX-01 benchmark. The two-process `task_plans` fixture separately covers
+saved schema-v1 persistence/reopen without imported operational authority.
+
 ## Installed add-on development probe
 
 `installed_addon_probe` installs actual pinned ZIP bytes into the runner's disposable
