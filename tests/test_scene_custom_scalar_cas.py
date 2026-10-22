@@ -53,7 +53,10 @@ def test_custom_encoding_keeps_native_field_and_setter_representation(env, addon
     case = env
     case.owner.custom_values["nested"] = {"array": [None, False, 0, 0.0, -0.0, "text"]}
     custom = dict(case.proof.custom(case.owner))["nested"]
-    leaves = dict(custom)["array"]
+    assert custom[0] == "group"
+    array = dict(custom[1])["array"]
+    assert array[:2] == ("array", ("list", None))
+    leaves = array[2]
     assert leaves == (("NoneType", None), ("bool", False), ("int", 0),
                       ("float", "0x0.0p+0"), ("float", "-0x0.0p+0"), ("str", "text"))
     assert case.proof.value([False, 0, 0.0]) == (False, 0, 0.0)

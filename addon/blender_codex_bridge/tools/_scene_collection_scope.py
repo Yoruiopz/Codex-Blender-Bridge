@@ -12,6 +12,7 @@ from itertools import islice
 from typing import Any
 
 from ..errors import BridgeError, ErrorCode
+from ._scene_mutation import custom_value
 
 MAX_COLLECTIONS = 4096
 MAX_LAYERS = 256
@@ -87,27 +88,29 @@ def _id_class(bpy: Any, owner: Any, kind: str) -> Any:
 
 
 def _primitive(raw: Any, remaining: list[int], depth: int = 0, *, custom_scalars: bool = False) -> Any:
+    if custom_scalars:
+        return custom_value(raw, depth=depth, budget=remaining, max_depth=4, max_string=1024)
     remaining[0] -= 1
     if remaining[0] < 0 or depth > 4:
         raise _unsupported("Collection custom properties exceed 4096 values or depth four.")
     if raw is None or type(raw) in (bool, int):
-        return (type(raw).__name__, raw) if custom_scalars else raw
+        return raw
     if type(raw) is str:
         if len(raw) > 1024:
             raise _unsupported("Collection strings exceed 1024 characters.")
-        return ("str", raw) if custom_scalars else raw
+        return raw
     if type(raw) is float:
         if not math.isfinite(raw):
             raise _unsupported("Collection evidence requires finite values.")
-        return ("float", raw.hex()) if custom_scalars else raw
+        return raw
     native = type(raw).__module__ == "idprop.types"
     if type(raw) is dict or (native and type(raw).__name__ == "IDPropertyGroup"):
         keys = _bounded(raw.keys(), 128, "custom keys")
         if any(type(key) is not str for key in keys):
             raise _unsupported("Collection custom keys must be strings.")
-        return tuple((key, _primitive(raw[key], remaining, depth + 1, custom_scalars=custom_scalars)) for key in sorted(keys))
+        return tuple((key, _primitive(raw[key], remaining, depth + 1)) for key in sorted(keys))
     if type(raw) in (tuple, list) or (native and type(raw).__name__ == "IDPropertyArray"):
-        return tuple(_primitive(value, remaining, depth + 1, custom_scalars=custom_scalars) for value in _bounded(raw, 256, "array values"))
+        return tuple(_primitive(value, remaining, depth + 1) for value in _bounded(raw, 256, "array values"))
     raise _unsupported("Collection custom properties contain unreviewed values or native references.")
 
 

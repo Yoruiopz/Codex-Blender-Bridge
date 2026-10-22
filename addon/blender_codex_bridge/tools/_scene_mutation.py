@@ -19,6 +19,11 @@ from ..permissions import Permission
 from ..tool_registry import check_final_mutation
 from ._object_safety import require_local_editable_id
 
+try:
+    from idprop.types import IDPropertyArray as _IDPROPERTY_ARRAY, IDPropertyGroup as _IDPROPERTY_GROUP
+except ImportError:  # Blender-free tests supply explicit canonical stand-ins.
+    _IDPROPERTY_ARRAY = _IDPROPERTY_GROUP = None
+
 LOGGER = logging.getLogger(__name__)
 MAX_ITEMS = 1024
 PRIMITIVES = frozenset({"BOOLEAN", "INT", "FLOAT", "STRING", "ENUM"})
@@ -68,30 +73,82 @@ def token(owner: Any) -> tuple[int | None, int | None]:
     return key(owner), None if owner is None else getattr(owner, "session_uid", None)
 
 
+def custom_array_kind(raw: Any) -> tuple[str, str | None]:
+    """Retain exposed custom storage without changing fixed RNA arrays."""
+    kind = type(raw)
+    if kind is _IDPROPERTY_ARRAY:
+        code = raw.typecode
+        if type(code) is not str or code not in {"i", "f", "d", "b"}:
+            raise unsupported("Scene custom array has an unreviewed native storage typecode.")
+        return "IDPropertyArray", code
+    if kind is list:
+        # Native IDP_IDPARRAY is exposed as a list, not IDPropertyArray.
+        return "list", None
+    if kind is tuple:
+        return "tuple", None
+    raise unsupported("Scene custom properties contain an unreviewed container kind or native references.")
+
+
+def custom_value(raw: Any, *, depth: int = 0, budget: list[int] | None = None,
+                 max_depth: int = 8, max_string: int = 4096) -> Any:
+    """Strict custom dispatch precedes every unknown-form callback/getter."""
+    if budget is None:
+        budget = [4096]
+    budget[0] -= 1
+    if budget[0] < 0 or depth > max_depth:
+        raise unsupported("Scene custom property evidence exceeds its bounded budget.")
+    kind = type(raw)
+    if raw is None:
+        return "NoneType", None
+    if kind is bool:
+        return "bool", raw
+    if kind is int:
+        return "int", raw
+    if kind is str:
+        if len(raw) > max_string:
+            raise unsupported("Scene custom strings exceed their bounded budget.")
+        return "str", raw
+    if kind is float:
+        if not math.isfinite(raw):
+            raise unsupported("Scene custom evidence requires finite values.")
+        return "float", raw.hex()
+    def child(item: Any) -> Any:
+        return custom_value(item, depth=depth + 1, budget=budget, max_depth=max_depth, max_string=max_string)
+    if kind is dict or kind is _IDPROPERTY_GROUP:
+        names = bounded(raw.keys(), 128, "custom-property keys")
+        if any(type(name) is not str for name in names):
+            raise unsupported("Scene custom-property group keys must be strings.")
+        return "group", tuple((name, child(raw[name])) for name in sorted(names))
+    array_kind = custom_array_kind(raw)
+    return "array", array_kind, tuple(child(item) for item in bounded(raw, 256, "custom array values"))
+
+
 def value(raw: Any, *, depth: int = 0, budget: list[int] | None = None,
           custom_scalars: bool = False) -> Any:
+    if custom_scalars:
+        return custom_value(raw, depth=depth, budget=budget)
     if budget is None:
         budget = [4096]
     budget[0] -= 1
     if budget[0] < 0 or depth > 8:
         raise unsupported("Scene mutation property evidence exceeds its bounded budget.")
     if raw is None or isinstance(raw, (bool, int)):
-        return (type(raw).__name__, raw) if custom_scalars else raw
+        return raw
     if isinstance(raw, str):
         if len(raw) > 4096:
             raise unsupported("Scene mutation strings exceed 4096 characters.")
-        return ("str", raw) if custom_scalars else raw
+        return raw
     if isinstance(raw, float):
         if not math.isfinite(raw):
             raise unsupported("Scene mutation evidence requires finite values.")
-        return ("float", raw.hex()) if custom_scalars else raw
+        return raw
     if hasattr(raw, "as_pointer"):
         return ("RNA", *token(raw))
     if hasattr(raw, "keys"):
-        return tuple((str(name), value(raw[name], depth=depth + 1, budget=budget, custom_scalars=custom_scalars))
+        return tuple((str(name), value(raw[name], depth=depth + 1, budget=budget))
                      for name in sorted(bounded(raw.keys(), 128, "custom-property keys")))
     items = sorted(raw) if isinstance(raw, set) else bounded(raw, 256, "array values")
-    return tuple(value(item, depth=depth + 1, budget=budget, custom_scalars=custom_scalars) for item in items)
+    return tuple(value(item, depth=depth + 1, budget=budget) for item in items)
 
 
 def custom(owner: Any) -> Any:

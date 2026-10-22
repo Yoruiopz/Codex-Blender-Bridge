@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 import sys
+from array import array
 from dataclasses import replace
 from pathlib import Path
 
 import bpy
+from idprop.types import IDPropertyArray, IDPropertyGroup
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "addon"))
@@ -19,6 +21,7 @@ from blender_codex_bridge.permissions import Permission, PermissionManager  # no
 from blender_codex_bridge.protocol import Request  # noqa: E402
 from blender_codex_bridge.runtime import get_runtime  # noqa: E402
 from blender_codex_bridge.tools import _scene_checkpoint_admission as admission  # noqa: E402
+from blender_codex_bridge.tools import _scene_collection_scope as collection_scope  # noqa: E402
 from blender_codex_bridge.tools import _scene_mutation as proof  # noqa: E402
 
 
@@ -270,6 +273,7 @@ def main():
                         owner[custom_key] = {"nested": {"leaf": before}}
                         initial = owner[custom_key]["nested"]["leaf"]
                         assert type(initial) is type(before)
+                        (proof.custom(owner) if owner_label == "Scene" else collection_scope._custom(owner))
                         fired = [False]
                         def change_custom(*, owner=owner, after=after, fired=fired):
                             if not fired[0]:
@@ -293,6 +297,53 @@ def main():
                         cases.append({"case": "custom-scalar-" + owner_label + "-" + str(index),
                                       "before_type": type(before).__name__, "after_type": type(after).__name__,
                                       "signed_zero": type(after) is float and after.hex().startswith("-"),
+                                      "handler_entered": False, "completed_native_pushes": 0,
+                                      "newer_custom_value_preserved": True, "marker_unchanged": True})
+                        provider_hook[0] = None
+                    container_changes = (
+                        ("group-to-empty-array", dict, lambda: array("i"), ("IDPropertyGroup", None), ("IDPropertyArray", "i")),
+                        ("empty-array-to-group", lambda: array("i"), dict, ("IDPropertyArray", "i"), ("IDPropertyGroup", None)),
+                        ("empty-array-subtype", lambda: array("f"), lambda: array("d"), ("IDPropertyArray", "f"), ("IDPropertyArray", "d")),
+                        ("equal-array-subtype", lambda: array("f", [1., 2.]), lambda: array("d", [1., 2.]), ("IDPropertyArray", "f"), ("IDPropertyArray", "d")),
+                        ("group-to-list", dict, lambda: [{}], ("IDPropertyGroup", None), ("list", None)),
+                    )
+                    def storage_kind(raw):
+                        kind = type(raw)
+                        if kind is IDPropertyArray:
+                            return "IDPropertyArray", raw.typecode
+                        if kind is IDPropertyGroup:
+                            return "IDPropertyGroup", None
+                        assert kind is list
+                        return "list", None
+                    for label, before_factory, after_factory, before_kind, after_kind in container_changes:
+                        manager = fresh()
+                        owner[custom_key] = {"nested": {"leaf": before_factory()}}
+                        initial = owner[custom_key]["nested"]["leaf"]
+                        assert storage_kind(initial) == before_kind
+                        (proof.custom(owner) if owner_label == "Scene" else collection_scope._custom(owner))
+                        frozen = proof.value(initial, custom_scalars=True)
+                        fired = [False]
+                        def change_container(*, owner=owner, after_factory=after_factory, fired=fired):
+                            if not fired[0]:
+                                fired[0] = True
+                                group = owner[custom_key]["nested"]
+                                del group["leaf"]
+                                group["leaf"] = after_factory()
+                        provider_hook[0] = change_container
+                        entries = len(domain_entries)
+                        marker = scene[checkpoint.MARKER_KEY]
+                        response = runtime.executor.execute_request(Request(
+                            "owned-custom-container-" + owner_label + label, method, params))
+                        assert fired[0] and not response.ok and response.error["code"] == "NOT_IMPLEMENTED", response.error
+                        stored = owner[custom_key]["nested"]["leaf"]
+                        assert storage_kind(stored) == after_kind
+                        assert proof.value(stored, custom_scalars=True) != frozen
+                        assert manager._window.position == 0 and len(domain_entries) == entries
+                        assert scene[checkpoint.MARKER_KEY] == marker and light.data.energy == initial_energy
+                        assert bpy.data.collections.get(collection.name) == collection
+                        assert bpy.data.collections.get("Owned Rejected Scalar Rename") is None
+                        cases.append({"case": "custom-container-" + owner_label + "-" + label,
+                                      "before_storage": before_kind, "after_storage": after_kind,
                                       "handler_entered": False, "completed_native_pushes": 0,
                                       "newer_custom_value_preserved": True, "marker_unchanged": True})
                         provider_hook[0] = None

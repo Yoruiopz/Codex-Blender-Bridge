@@ -116,8 +116,13 @@ Native Float32 storage is compared against its predicted stored values, rather
 than requiring a Python decimal to round-trip unchanged. Pointer restoration uses
 the original native object identity, not a name lookup or encoded snapshot tuple.
 Recursive raw custom-property comparisons retain each exposed scalar type and
-the exact finite float spelling, including signed zero. This custom encoding is
-separate from the native RNA field and setter prediction representation.
+the exact finite float spelling, including signed zero. They distinguish groups,
+list/tuple containers and native numeric IDPropertyArray storage, retaining the
+exact reviewed `i`, `f`, `d` or `b` typecode even for empty arrays. This custom
+encoding is separate from native RNA field and setter prediction representation.
+Custom native containers require the exact imported IDProperty classes. Unknown
+forms, byte strings, sets and custom ID-pointer aliases are refused without
+following their getters or pointers; broader alias consumer proofs remain open.
 `verified` concerns the admitted structural projection; it is not complete Scene
 or mesh-content preservation, rendered appearance or artistic acceptance.
 
