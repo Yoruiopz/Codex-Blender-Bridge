@@ -1,7 +1,7 @@
 # Development status
 
 **Unreleased development; 1.0 is NOT_READY.** The published [0.3.0 alpha](releases/0.3.0.md)
-contains 108 tools. The development registry currently contains **251 MCP tools**;
+contains 108 tools. The development registry currently contains **255 MCP tools**;
 its packages retain 0.3.0 metadata until a qualified release is accepted. Always pair the
 add-on and MCP server from one checkout. A matching version string alone does not identify
 an unpublished build.
@@ -28,11 +28,16 @@ Recent bounded additions include [mesh slides and UV refinement](mesh-uv-refinem
 [orthographic surface paint and stencils](image-surface-paint.md),
 [IK and measured deformation](rig-ik-deformation.md), and
 [zone/interface lifecycle](geometry-zone-lifecycle.md).
-The next bounded increment adds [cooperative packed recovery](image-recovery-jobs.md),
+Recent increments also add [cooperative packed recovery](image-recovery-jobs.md),
 [shader interface previews and edits](shader-interface-lifecycle.md),
 [guarded rig edits](rig-edit-boundaries.md),
 [object property recovery](object-rna-safety.md) and
 [saved two-bone NLA motion](character-nla.md).
+The [artist interaction foundation](task-plans.md) adds exact references and reviewed
+transform previews with opt-in protected scope. Undo/redo invalidates runtime handles;
+new checkpoint writes and modifying handler entry check caller lifetime again after
+preflight. Modifier and transform application also require mesh-edit permission because
+they change base geometry. These bounded changes do not complete the mutator audit.
 See the [source-matched checkpoint](artist-workflow-checkpoint-20261022.md) for retained evidence.
 Broader retopology/painting, character animation, procedural baking,
 simulation and production delivery still have open acceptance work.
