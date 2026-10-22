@@ -2,8 +2,13 @@
 
 The compatible `transform.*`, `modifier.*` and object `constraint.*` tools now
 recheck Blender authority at each direct field write, allocation, removal,
-verification and attempted compensation. Their declared permission remains
-`TRANSFORM_OBJECTS`. A stopped request does not finish configuring a partially
+verification and attempted compensation. Object-owned settings require
+`TRANSFORM_OBJECTS`. Native `modifier.apply` and `transform.apply` additionally
+require `EDIT_MESH`, because they permanently change the base Mesh. This is an
+intentional permission tightening: clients that previously enabled only object
+transforms must also obtain Mesh editing authorization before either apply tool.
+Ordinary transform channels and modifier settings retain their existing gate.
+A stopped request does not finish configuring a partially
 created component or automatically remove it. A separate authorized request may
 inspect, repair or remove that retained component.
 
@@ -37,7 +42,11 @@ permission loss and request expiry latch the operation against later automatic
 writes. RNA comparison snapshots and checkpoint history are not durable backups.
 
 Native modifier/transform application uses `temp_override` without changing
-persistent selection, active object or mode. It currently qualifies the bounded,
+persistent selection, active object or mode. It checks the coherent live grant
+set again after operator polling, followed by the complete context
+and content comparison outside the temporary selection override. No permission
+provider runs between that comparison and the pure final gate/native write.
+It currently qualifies the bounded,
 local, single-user Mesh path without shape keys; transform application additionally
 refuses animated owners. Non-Mesh application, bone/vertex-parented world deltas,
 non-default delta channels and unrepresentable matrix shear report explicit

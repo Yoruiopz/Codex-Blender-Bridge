@@ -365,6 +365,11 @@ def apply_modifier(context: ToolContext, params: Mapping[str, Any]) -> dict[str,
         with bpy.context.temp_override(object=obj, active_object=obj, selected_objects=[obj], selected_editable_objects=[obj]):
             if not bpy.ops.object.modifier_apply.poll():
                 raise BridgeError(ErrorCode.BLENDER_CONTEXT_ERROR, "Modifier apply is unavailable in the current context.")
+        # Recheck live grants and the complete persistent-state proof after
+        # poll, outside the temporary selection override. Providers finish
+        # before that comparison; only the pure gate follows the next override.
+        boundary.check()
+        with bpy.context.temp_override(object=obj, active_object=obj, selected_objects=[obj], selected_editable_objects=[obj]):
             boundary.final()
             started = time.monotonic()
             try:
@@ -394,7 +399,8 @@ def register_tools(registry: ToolRegistry) -> None:
     registry.register("modifier.add", add_modifier, description="Add and configure an allowlisted modifier.", **modifying)
     registry.register("modifier.set", set_modifier, description="Set direct allowlisted RNA properties on one modifier.", **modifying)
     registry.register("modifier.remove", remove_modifier, description="Remove one explicitly named modifier.", **modifying)
-    registry.register("modifier.apply", apply_modifier, description="Apply one modifier in a validated Object Mode context.", **modifying)
+    registry.register("modifier.apply", apply_modifier, description="Apply one modifier in a validated Object Mode context.",
+                      permissions=(Permission.TRANSFORM_OBJECTS, Permission.EDIT_MESH), toolset="modifiers", modifies=True)
 
 
 __all__ = [

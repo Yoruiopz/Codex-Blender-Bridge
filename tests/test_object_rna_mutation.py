@@ -58,7 +58,7 @@ def env(addon_package, monkeypatch):
     bpy = NS(context=NS(scene=scene, view_layer=NS(objects=objects), mode="OBJECT", selected_objects=[obj]),
              data=NS(filepath="", objects=objects, user_map=lambda *, subset: {value: users.get(value, set()) for value in subset}))
     flags = {"paused": False, "emergency_stopped": False}
-    grants = {"TRANSFORM_OBJECTS": True}
+    grants = {"TRANSFORM_OBJECTS": True, "EDIT_MESH": True}
     provider = [None]
     def allowed():
         if provider[0]:

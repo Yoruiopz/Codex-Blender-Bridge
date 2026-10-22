@@ -193,6 +193,11 @@ def apply_transform(context: ToolContext, params: Mapping[str, Any]) -> dict[str
         with bpy.context.temp_override(object=obj, active_object=obj, selected_objects=[obj], selected_editable_objects=[obj]):
             if not bpy.ops.object.transform_apply.poll():
                 raise BridgeError(ErrorCode.BLENDER_CONTEXT_ERROR, "Transform apply is unavailable in the current context.")
+        # Poll may run after the last live grant check. Revalidate authority
+        # and persistent state outside the selection override, then enter the
+        # same native context with only the pure final gate before the write.
+        boundary.check()
+        with bpy.context.temp_override(object=obj, active_object=obj, selected_objects=[obj], selected_editable_objects=[obj]):
             boundary.final()
             started = time.monotonic()
             try:
@@ -215,4 +220,5 @@ def register_tools(registry: ToolRegistry) -> None:
     registry.register("transform.translate", translate, description="Translate an object in world or local space.", protected_scope_resolver=prepare_transform_scope, **common)
     registry.register("transform.rotate", rotate, description="Rotate an object by Euler-radian deltas.", protected_scope_resolver=prepare_transform_scope, **common)
     registry.register("transform.scale", scale, description="Multiply an object's scale by deterministic factors.", protected_scope_resolver=prepare_transform_scope, **common)
-    registry.register("transform.apply", apply_transform, description="Apply selected object transform channels.", **common)
+    registry.register("transform.apply", apply_transform, description="Apply selected object transform channels.",
+                      permissions=(Permission.TRANSFORM_OBJECTS, Permission.EDIT_MESH), toolset="objects", modifies=True)

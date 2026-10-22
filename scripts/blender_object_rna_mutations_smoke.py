@@ -5,6 +5,7 @@ import json
 import math
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import bmesh
 import bpy
@@ -16,6 +17,112 @@ from blender_codex_bridge.errors import BridgeError  # noqa: E402
 from blender_codex_bridge.permissions import Permission, PermissionManager  # noqa: E402
 from blender_codex_bridge.runtime import get_runtime  # noqa: E402
 from blender_codex_bridge.tools import _object_rna_mutation as proof  # noqa: E402
+from blender_codex_bridge.tools import modifiers, transforms  # noqa: E402
+
+
+def mesh_apply_authority(runtime, scene, grants):
+    """Real grant checks and native poll interleavings before either operator."""
+    denials, operator_calls = [], []
+    initial_frame = scene.frame_current
+    original_context = (tuple(obj.as_pointer() for obj in bpy.context.selected_objects), bpy.context.view_layer.objects.active, bpy.context.mode)
+    for method, module, function, operator_name, toolset in (
+        ("modifier.apply", modifiers, modifiers.apply_modifier, "modifier_apply", "modifiers"),
+        ("transform.apply", transforms, transforms.apply_transform, "transform_apply", "objects"),
+    ):
+        native_operator = getattr(bpy.ops.object, operator_name)
+        original_blender = module.require_blender
+        for registered in (True, False):
+            cases = ("initial_denial", "poll_permission", "poll_pause", "poll_emergency", "poll_context", "poll_owned", "poll_false")
+            if registered:
+                cases += ("poll_toolset",)
+            for kind in cases:
+                label = f"Apply {method} {registered} {kind}"
+                mesh = bpy.data.meshes.new(label + " Mesh")
+                mesh.from_pydata([(0, 0, 0), (1, 0, 0), (0, 1, 0)], [], [(0, 1, 2)])
+                obj = bpy.data.objects.new(label, mesh)
+                scene.collection.objects.link(obj)
+                params = {"object_name": obj.name}
+                if method == "modifier.apply":
+                    modifier = obj.modifiers.new("Owned Apply", "TRIANGULATE")
+                    params["modifier_name"] = modifier.name
+                else:
+                    obj.scale = (2., 3., 1.)
+                    params["scale"] = True
+                before = proof._object_state(obj)
+                polls, retained = [], []
+
+                class PollOperator:
+                    def poll(self, *, native_operator=native_operator, polls=polls, kind=kind, obj=obj, retained=retained, toolset=toolset):
+                        assert native_operator.poll()
+                        polls.append(True)
+                        if kind == "poll_permission":
+                            grants[Permission.EDIT_MESH.value] = False
+                        elif kind == "poll_pause":
+                            runtime.state.set_paused(True)
+                        elif kind == "poll_emergency":
+                            runtime.state.set_emergency_stopped(True)
+                        elif kind == "poll_context":
+                            scene.frame_current = initial_frame + 1
+                        elif kind == "poll_owned":
+                            obj.data.vertices[0].co.z = 9.
+                            # Complete the manual edit's native update before
+                            # recording it: automatic texspace bounds are lazy.
+                            obj.data.update()
+                            bpy.context.view_layer.update()
+                            retained.append(proof._object_state(obj))
+                        elif kind == "poll_toolset":
+                            runtime.registry.disable_toolset(toolset)
+                        return kind != "poll_false"
+
+                    def __call__(self, *, method=method, kind=kind, native_operator=native_operator, **kwargs):
+                        operator_calls.append((method, kind))
+                        return native_operator(**kwargs)
+
+                proxy = SimpleNamespace(data=bpy.data, context=bpy.context,
+                                        ops=SimpleNamespace(object=SimpleNamespace(**{operator_name: PollOperator()})))
+                module.require_blender = lambda proxy=proxy: proxy
+                context = runtime.executor.context
+                if not registered:
+                    context.registry = None
+                grants[Permission.EDIT_MESH.value] = kind != "initial_denial"
+                try:
+                    if registered:
+                        runtime.dispatch(method, params)
+                    else:
+                        function(context, params)
+                except BridgeError as error:
+                    expected = {"initial_denial": "PERMISSION_DENIED", "poll_permission": "PERMISSION_DENIED",
+                                "poll_pause": "AGENT_PAUSED", "poll_emergency": "EMERGENCY_STOPPED",
+                                "poll_context": "INVALID_ARGUMENT", "poll_owned": "INVALID_ARGUMENT",
+                                "poll_toolset": "TOOLSET_DISABLED", "poll_false": "BLENDER_CONTEXT_ERROR"}[kind]
+                    assert error.code == expected, (label, error.code, expected)
+                    if expected == "PERMISSION_DENIED":
+                        assert error.context.get("missing_permissions", ["EDIT_MESH"]) == ["EDIT_MESH"]
+                else:
+                    raise AssertionError("Native application ignored revoked authority or changed scope: " + label)
+                finally:
+                    module.require_blender = original_blender
+                    grants[Permission.EDIT_MESH.value] = True
+                    runtime.state.set_paused(False)
+                    runtime.state.set_emergency_stopped(False)
+                    runtime.registry.enable_toolset(toolset)
+                assert not operator_calls, operator_calls
+                assert polls == ([] if kind == "initial_denial" else [True])
+                observed = proof._object_state(obj)
+                expected_state = retained[0] if retained else before
+                def first_difference(left, right, path=()):
+                    if isinstance(left, tuple) and isinstance(right, tuple) and len(left) == len(right):
+                        for ordinal, (old, new) in enumerate(zip(left, right, strict=True)):
+                            if old != new:
+                                return first_difference(old, new, (*path, ordinal))
+                    return {"path": path, "before": repr(left), "after": repr(right)}
+                assert observed == expected_state, (label, first_difference(expected_state, observed))
+                assert scene.frame_current == (initial_frame + 1 if kind == "poll_context" else initial_frame)
+                assert (tuple(item.as_pointer() for item in bpy.context.selected_objects), bpy.context.view_layer.objects.active, bpy.context.mode) == original_context
+                scene.frame_current = initial_frame
+                denials.append({"method": method, "registered_context": registered, "fault": kind, "operator_calls": 0})
+    return {"denials": denials, "complete_mesh_and_context_preserved": True, "manual_edit_retained": True,
+            "registered_and_direct_contexts": True, "native_operator_calls": len(operator_calls)}
 
 
 def boolean_material_boundaries(runtime, scene, grants):
@@ -337,6 +444,7 @@ def main():
     transform_applied = call("transform.apply", target, scale=True)
     assert tuple(target.scale) == (1., 1., 1.) and not target.modifiers
     boolean_evidence = boolean_material_boundaries(runtime, scene, grants)
+    apply_authority = mesh_apply_authority(runtime, scene, grants)
     assert protected.location.x == 41.
     assert tuple(obj.as_pointer() for obj in bpy.context.selected_objects) == selection
     assert bpy.context.view_layer.objects.active == active
@@ -344,6 +452,7 @@ def main():
           "native_apply_context_preserved": True, "protected_object_preserved": True, "windows_qualified": False,
           "native_apply_rollback_claimed": False, "manual_interleavings": adversarial, "activation_probe": activation_probe, "rotation_mode_alias_recovery": True,
           "boolean_material_boundaries": boolean_evidence,
+          "mesh_apply_authority": apply_authority,
           "native_blocking_seconds": {"modifier": modifier_applied["native_blocking_seconds"], "transform": transform_applied["native_blocking_seconds"]}}, sort_keys=True))
     blender_codex_bridge.unregister()
 

@@ -347,7 +347,11 @@ class Boundary:
             callback = self.context.check_cancelled
             if callback:
                 callback()
-            self.context.require(Permission.TRANSFORM_OBJECTS)
+            required = (Permission.TRANSFORM_OBJECTS, Permission.EDIT_MESH) if self.method in {"transform.apply", "modifier.apply"} else (Permission.TRANSFORM_OBJECTS,)
+            # Native application writes the base Mesh as well as object-owned
+            # settings. Keep both grants coherent even for direct contexts
+            # without a registry; ordinary object settings do not write Mesh.
+            self.context.require(*required)
             registry = getattr(self.context, "registry", None)
             if registry is not None:
                 registry.prepare(self.method, self.context)
