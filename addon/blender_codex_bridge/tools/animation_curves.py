@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 import math
 from collections.abc import Mapping
+from contextlib import suppress
 from itertools import islice
 from typing import Any
 
@@ -11,8 +13,58 @@ from ..errors import BridgeError, ErrorCode, invalid_argument
 from ..permissions import Permission
 from ..tool_registry import ToolContext, ToolRegistry
 from ..utils import get_object, int_param, reject_unknown_params, require_blender
+from . import _animation_scope as scope
+from . import animation_lifecycle
 from ._object_safety import require_local_object, require_owned_action
 from ._rna import bounded_name
+
+LOGGER = logging.getLogger(__name__)
+
+
+class _Boundary:
+    """Live authority and exact CAS around each native authoring write."""
+
+    def __init__(self, bpy: Any, context: ToolContext, params: Mapping[str, Any], obj: Any, action: Any, method: str, curve: Any = None):
+        self.bpy, self.context, self.params, self.obj, self.action, self.curve = bpy, context, params, obj, action, curve
+        self.guard = scope.Guard(bpy, context, method)
+        self.guard.remember(obj, bpy.data.objects)
+        self.guard.remember(action, bpy.data.actions)
+        scope.editable_action(action)
+        self.scope = scope.affected_scope(bpy, obj, params.get("affected_objects", []))
+        self.binding, self.animation = scope.binding(obj), scope.animation_context(obj)
+        self.data_key = scope.key(getattr(obj, "data", None))
+        self.users = scope.action_users(bpy, action)
+        self.expected = scope.action_content(action)
+        self.protected = self._protected(self.expected)
+
+    def _protected(self, content: tuple[Any, ...]) -> tuple[Any, ...]:
+        if self.curve is None:
+            return content
+        inventory = scope.curve_inventory(self.action)
+        selected = [ordinal for ordinal, (_, curve) in enumerate(inventory) if scope.key(curve) == scope.key(self.curve)]
+        if len(selected) != 1:
+            raise invalid_argument("Exact F-curve identity changed.")
+        curves = list(content[3])
+        curves[selected[0]] = (curves[selected[0]][0], "OWNED_CURVE")
+        return (*content[:3], tuple(curves), *content[4:])
+
+    def check(self) -> None:
+        self.guard.gate()
+        obj, _data, action = _active(self.params, edit=self.curve is not None)
+        if scope.key(obj) != scope.key(self.obj) or scope.key(action) != scope.key(self.action) or scope.key(getattr(obj, "data", None)) != self.data_key:
+            raise invalid_argument("Exact animation object, data or Action changed.")
+        if scope.binding(obj) != self.binding or scope.animation_context(obj) != self.animation:
+            raise invalid_argument("Action/slot binding or NLA context changed outside this operation.")
+        if scope.affected_scope(self.bpy, obj, self.params.get("affected_objects", [])) != self.scope:
+            raise invalid_argument("Animation affected-object scope changed.")
+        if scope.action_users(self.bpy, action) != self.users or scope.action_content(action) != self.expected:
+            raise invalid_argument("Animation content or consumers changed; stale writes and compensation refused.")
+
+    def observe_owned_curve(self) -> None:
+        observed = scope.action_content(self.action)
+        if self._protected(observed) != self.protected:
+            raise invalid_argument("Protected Action channels or metadata changed during native curve editing.")
+        self.expected = observed
 
 _MAX_POINTS = 1024
 _POINT_FIELDS = (
@@ -102,8 +154,7 @@ def _slot_curves(data: Any, action: Any, requested_slot: Any) -> tuple[list[Any]
 
 def action_copy(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
     """Create and bind one explicitly named independent active Action version."""
-    del context
-    reject_unknown_params(params, {"object_name", "new_name"})
+    reject_unknown_params(params, {"object_name", "new_name", "affected_objects"})
     obj, data, source = _active(params, edit=False)
     name = bounded_name(params.get("new_name"), "new_name", maximum=63)
     if len(name.encode("utf-8")) > 63:
@@ -122,11 +173,32 @@ def action_copy(context: ToolContext, params: Mapping[str, Any]) -> dict[str, An
         points += len(curve.keyframe_points)
         if points > 16384 or len(getattr(curve, "modifiers", ())) > 32:
             raise invalid_argument("Action copy exceeds the 16384-keyframe or 32-modifier-per-curve budget.")
+    boundary = _Boundary(bpy, context, params, obj, source, "animation.action_copy")
+    object_name, source_name = obj.name, source.name
+    boundary.check()
     created = None
+    created_state = None
+
+    def fresh_copy() -> None:
+        boundary.check()
+        assert created is not None
+        scope.editable_action(created)
+        if bpy.data.actions.get(created.name) != created or scope.action_content(created) != boundary.expected or scope.action_users(bpy, created)["real_users"]:
+            raise invalid_argument("New Action copy changed or acquired a consumer; no further setup/binding is permitted.")
+        if (created.name, bool(created.use_fake_user)) != created_state:
+            raise invalid_argument("New Action copy metadata changed outside this operation.")
+
     try:
         created = source.copy()
+        boundary.guard.remember(created, bpy.data.actions)
+        created_state = (created.name, bool(created.use_fake_user))
+        fresh_copy()
         created.name = name
+        created_state = (name, bool(created.use_fake_user))
+        fresh_copy()
         created.use_fake_user = False
+        created_state = (name, False)
+        fresh_copy()
         if created.name != name:
             raise RuntimeError("Blender could not preserve the explicit Action name.")
         target_slot = None
@@ -135,40 +207,39 @@ def action_copy(context: ToolContext, params: Mapping[str, Any]) -> dict[str, An
             if len(choices) != 1:
                 raise RuntimeError("Copied Action did not preserve its active slot identity.")
             target_slot = choices[0]
-        data.action = created
-        if target_slot is not None:
-            data.action_slot = target_slot
+        animation_lifecycle.action_bind(context, {"object_name": obj.name, "action_name": name,
+            "expected_action_name": source.name, "slot_identifier": getattr(target_slot, "identifier", None),
+            "affected_objects": params.get("affected_objects", []), "allow_session_only_previous": True})
         if data.action != created or (target_slot is not None and data.action_slot != target_slot):
             raise RuntimeError("Independent Action binding did not verify.")
     except Exception as exc:
-        restored = False
-        try:
-            data.action = source
-            if old_slot is not None:
-                data.action_slot = old_slot
-            restored = data.action == source and (old_slot is None or data.action_slot == old_slot)
-        except Exception:
-            pass
+        LOGGER.exception("Action copy or guarded binding failed; allocations remain for explicit inspection")
+        # Binding has its own live/CAS compensation. Never replay a stale binding
+        # here or remove an allocation after cancellation/ownership changes.
+        restored, retained_name = False, None
+        with suppress(ReferenceError, AttributeError):
+            restored = scope.binding(obj) == boundary.binding
+        with suppress(ReferenceError, AttributeError):
+            retained_name = getattr(created, "name", None)
         raise BridgeError(
-            ErrorCode.OPERATION_FAILED,
+            exc.code if isinstance(exc, BridgeError) else ErrorCode.OPERATION_FAILED,
             "Action version creation failed; inspect retained data before retrying.",
-            {"object": obj.name, "source_action": source.name,
-             "retained_action": getattr(created, "name", None), "rollback_verified": restored,
+            {**(exc.context if isinstance(exc, BridgeError) else {}), "object": object_name, "source_action": source_name,
+             "retained_action": retained_name, "rollback_verified": restored,
              "possible_mutation": created is not None or not restored},
         ) from exc
     return {
-        "object": obj.name, "affected_objects": [obj.name], "source_action": source.name,
+        "object": obj.name, "affected_objects": [obj.name, *params.get("affected_objects", [])], "source_action": source.name,
         "action": created.name, "slot_identifier": old_identifier, "independent_version": True,
         "source_retained_in_session": True, "source_users_after": int(source.users),
         "source_fake_user": bool(source.use_fake_user),
-        "source_save_retention": "REFERENCED" if source.users else "SESSION_ONLY",
+        "source_save_retention": "REFERENCED" if source.users-int(source.use_fake_user) else "FAKE_USER" if source.use_fake_user else "SESSION_ONLY",
     }
 
 
 def curve_edit(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
     """Edit exact existing keyframes; no implicit insertion, channel or slot guesses."""
-    del context
-    reject_unknown_params(params, {"object_name", "data_path", "index", "keyframes", "extrapolation", "slot_identifier"})
+    reject_unknown_params(params, {"object_name", "data_path", "index", "keyframes", "extrapolation", "slot_identifier", "affected_objects"})
     obj, data, action = _active(params, edit=True)
     path = bounded_name(params.get("data_path"), "data_path", maximum=512)
     index = int_param(params, "index", 0, minimum=0, maximum=16384)
@@ -221,17 +292,36 @@ def curve_edit(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any
         prepared.append((float(point.co[0]), values))
     before = [_point_state(point) for point in points]
     old_extrapolation = curve.extrapolation
+    boundary = _Boundary(require_blender(), context, params, obj, action, "animation.curve_edit", curve)
+    object_name, action_name = obj.name, action.name
+
+    def write(field: str, value: Any, frame: float | None = None) -> None:
+        boundary.check()
+        # Never reuse a KeyframePoint wrapper across a live callback or a
+        # native write which can reallocate Blender's point storage.
+        owner = curve if frame is None else next(point for point in curve.keyframe_points if float(point.co[0]) == frame)
+        try:
+            setattr(owner, field, value)
+        finally:
+            boundary.observe_owned_curve()
+
+    def update() -> None:
+        boundary.check()
+        try:
+            curve.update()
+        finally:
+            boundary.observe_owned_curve()
+
     try:
         if extrapolation is not None:
-            curve.extrapolation = extrapolation
-        points = list(curve.keyframe_points)
+            write("extrapolation", extrapolation)
         for frame, values in prepared:
-            point = next(point for point in points if float(point.co[0]) == frame)
             for field, value in values.items():
-                setattr(point, field, value)
+                write(field, value, frame)
+                point = next(point for point in curve.keyframe_points if float(point.co[0]) == frame)
                 if field in _ENUMS and getattr(point, field) != value:
                     raise RuntimeError(f"Immediate keyframe readback failed for {field}.")
-        curve.update()
+        update()
         # FCurve.update may reorder/reallocate native points; old RNA wrappers
         # must not be used for readback or recovery after that call.
         points = list(curve.keyframe_points)
@@ -244,23 +334,24 @@ def curve_edit(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any
                         raise RuntimeError("Native handle readback did not match the requested value.")
                 elif observed != value:
                     raise RuntimeError(f"Native keyframe {field} readback {observed!r} did not match {value!r} at frame {frame}.")
+        boundary.check()
     except Exception as exc:
         restored = False
         try:
-            curve.extrapolation = old_extrapolation
+            write("extrapolation", old_extrapolation)
             for saved in before:
-                point = next(point for point in curve.keyframe_points if float(point.co[0]) == saved["frame"])
                 for field in _POINT_FIELDS:
-                    setattr(point, field, saved[field])
-            curve.update()
+                    write(field, saved[field], saved["frame"])
+            update()
+            boundary.check()
             restored = curve.extrapolation == old_extrapolation and [_point_state(point) for point in curve.keyframe_points] == before
         except Exception:
-            pass
-        raise BridgeError(ErrorCode.OPERATION_FAILED, "F-curve edit failed; reinspect before continuing.",
-                          {"object": obj.name, "action": action.name, "rollback_verified": restored,
+            LOGGER.exception("Curve compensation refused or failed")
+        raise BridgeError(exc.code if isinstance(exc, BridgeError) else ErrorCode.OPERATION_FAILED, "F-curve edit failed; reinspect before continuing.",
+                          {**(exc.context if isinstance(exc, BridgeError) else {}), "object": object_name, "action": action_name, "rollback_verified": restored,
                            "possible_mutation": not restored}) from exc
     return {
-        "object": obj.name, "affected_objects": [obj.name], "action": action.name,
+        "object": obj.name, "affected_objects": [obj.name, *params.get("affected_objects", [])], "action": action.name,
         "data_path": path, "index": index, "slot_identifier": slot,
         "extrapolation": curve.extrapolation, "edited_frames": [frame for frame, _ in prepared],
         "keyframes": [_point_state(point) for point in curve.keyframe_points], "truncated": False,

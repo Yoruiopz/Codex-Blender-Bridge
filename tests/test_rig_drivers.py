@@ -290,8 +290,15 @@ def test_missing_control_needs_explicit_creation_and_readback(drivers):
 
 @pytest.mark.parametrize("revoke", [False, True])
 def test_post_allocation_driver_failure_reports_measured_cleanup_or_retention(drivers, revoke):
+    fired = False
+    drivers.obj.animation_data = NS(action=None, nla_tracks=[], use_tweak_mode=False, drivers=[])
+
     def fail_after_allocation():
-        if len(drivers.module._curves(drivers.obj)):
+        nonlocal fired
+        curves = drivers.module._curves(drivers.obj)
+        configured = curves and curves[0].driver.variables and curves[0].driver.variables[0].targets[0].data_path
+        if configured and not fired:
+            fired = True
             if revoke:
                 drivers.grants["EDIT_ANIMATION"] = False
             else:
@@ -307,8 +314,12 @@ def test_post_allocation_driver_failure_reports_measured_cleanup_or_retention(dr
 
 
 def test_post_creation_property_failure_restores_original_absence(drivers):
+    fired = False
+
     def fail_after_creation():
-        if "new_control" in drivers.control:
+        nonlocal fired
+        if "new_control" in drivers.control and not fired:
+            fired = True
             raise drivers.module.BridgeError(drivers.module.ErrorCode.OPERATION_FAILED, "Injected fault")
 
     drivers.context.check_cancelled = fail_after_creation
@@ -376,7 +387,8 @@ def test_post_write_driver_replacement_or_edit_is_never_deleted(drivers, monkeyp
     protected = []
 
     def hook(ordinal):
-        if ordinal == 2:
+        current = drivers.module._curve(drivers.obj, path, 0)
+        if not protected and current is not None and current.driver.variables:
             if replace:
                 drivers.obj.driver_remove(path, 0)
                 curve = drivers.obj.driver_add(path, 0)
@@ -449,3 +461,242 @@ def test_driver_remove_does_not_delete_replacement_created_in_final_gate(drivers
     with pytest.raises(drivers.module.BridgeError, match="no replacement curve"):
         drivers.module.driver_remove(drivers.context, {"object_name": "Rig", "bone_name": "Deform", "channel": "location", "index": 0})
     assert drivers.obj.animation_data.drivers == protected
+
+
+@pytest.mark.parametrize("stop", ["paused", "emergency_stopped", "permission", "cancel"])
+@pytest.mark.parametrize("stage", ["allocation", "variable", "named", "source", "configured"])
+def test_every_driver_setup_stage_stops_without_late_writes_or_cleanup(drivers, stop, stage):
+    retained = []
+
+    def callback():
+        curves = drivers.module._curves(drivers.obj)
+        if not curves:
+            return
+        curve = curves[0]
+        variables = curve.driver.variables
+        ready = (stage == "allocation" or (bool(variables) and (
+            stage == "variable" or (stage == "named" and variables[0].name == "v0")
+            or (stage == "source" and variables[0].targets[0].id is drivers.obj)
+            or (stage == "configured" and bool(variables[0].targets[0].data_path)))))
+        if not ready:
+            return
+        if not retained:
+            retained.append(drivers.module._driver_configuration(curve))
+        if stop == "permission":
+            drivers.grants["EDIT_ANIMATION"] = False
+        elif stop == "cancel":
+            raise drivers.module.BridgeError(drivers.module.ErrorCode.OPERATION_FAILED, "Caller disconnected/canceled")
+        else:
+            drivers.flags[stop] = True
+
+    drivers.context.check_cancelled = callback
+    with pytest.raises(drivers.module.BridgeError) as error:
+        add_driver(drivers)
+    assert retained and not error.value.context["rollback_verified"]
+    assert error.value.context["possible_mutation"] and len(drivers.module._curves(drivers.obj)) == 1
+    assert drivers.module._driver_configuration(drivers.module._curves(drivers.obj)[0]) == retained[0]
+    # Cleanup is a separate, newly authorized operation, including when setup
+    # stopped before any driver variables or source bindings existed.
+    drivers.context.check_cancelled = None
+    drivers.flags.update(paused=False, emergency_stopped=False)
+    drivers.grants["EDIT_ANIMATION"] = True
+    assert drivers.module.driver_remove(drivers.context, {"object_name": "Rig", "bone_name": "Deform", "channel": "location", "index": 0})["removed"]
+    assert not drivers.module._curves(drivers.obj)
+
+
+@pytest.mark.parametrize("stop", ["paused", "emergency_stopped", "permission", "cancel"])
+def test_property_postwrite_stop_retains_measured_value_until_new_operation(drivers, stop):
+    def callback():
+        if drivers.control['move"X'] != 3.:
+            return
+        if stop == "permission":
+            drivers.grants["EDIT_ANIMATION"] = False
+        elif stop == "cancel":
+            raise drivers.module.BridgeError(drivers.module.ErrorCode.OPERATION_FAILED, "Canceled")
+        else:
+            drivers.flags[stop] = True
+
+    drivers.context.check_cancelled = callback
+    with pytest.raises(drivers.module.BridgeError) as error:
+        set_property(drivers)
+    assert drivers.control['move"X'] == 3.
+    assert error.value.context["possible_mutation"] and not error.value.context["rollback_verified"]
+
+
+@pytest.mark.parametrize("change", ["scene", "view_layer", "filepath", "mode", "consumer", "target_uid", "source_uid"])
+def test_driver_setup_rejects_new_context_consumers_or_reused_source_identity(drivers, change):
+    retained = []
+    source = drivers.other
+    source.session_uid = 101
+
+    def callback():
+        curves = drivers.module._curves(drivers.obj)
+        if not curves or retained:
+            return
+        retained.append(drivers.module._driver_configuration(curves[0]))
+        if change == "scene":
+            drivers.bpy.context.scene = NS(objects=drivers.bpy.context.scene.objects)
+        elif change == "view_layer":
+            drivers.bpy.context.view_layer = object()
+        elif change == "filepath":
+            drivers.bpy.data.filepath = "/manual/reopened.blend"
+        elif change == "mode":
+            drivers.bpy.context.mode = "POSE"
+        elif change == "consumer":
+            drivers.users[drivers.obj].add(object_id("New protected consumer"))
+        elif change == "target_uid":
+            drivers.obj.session_uid = 202
+        else:
+            source.session_uid = 202
+
+    drivers.context.check_cancelled = callback
+    with pytest.raises(drivers.module.BridgeError) as error:
+        add_driver(drivers, variables=[{"kind": "PROPERTY", "object_name": source.name, "property_name": "value"}])
+    assert retained and error.value.context["possible_mutation"] and not error.value.context["rollback_verified"]
+    assert drivers.module._driver_configuration(drivers.module._curves(drivers.obj)[0]) == retained[0]
+
+
+def test_partial_native_identity_mapping_can_be_removed_only_by_explicit_followup(drivers):
+    path = drivers.module._bone_path("Deform") + ".location"
+    curve = drivers.obj.driver_add(path, 0)
+    curve.keyframe_points = _native_identity_points()
+    curve.extrapolation = "LINEAR"
+    curve.modifiers.append(NS(type="GENERATOR"))
+    result = drivers.module.driver_remove(drivers.context, {"object_name": "Rig", "bone_name": "Deform", "channel": "location", "index": 0})
+    assert result["removed"] and not drivers.module._curves(drivers.obj)
+
+
+def test_consumer_acquired_after_property_write_blocks_compensation(drivers):
+    def callback():
+        if drivers.control['move"X'] == 3.:
+            drivers.users[drivers.obj].add(drivers.other)
+
+    drivers.context.check_cancelled = callback
+    with pytest.raises(drivers.module.BridgeError) as error:
+        set_property(drivers)
+    assert drivers.control['move"X'] == 3. and not error.value.context["rollback_verified"]
+
+
+def test_manual_same_name_driver_source_replacement_blocks_further_setup(drivers):
+    manual = object_id("Rig")
+    captured = []
+
+    def callback():
+        curves = drivers.module._curves(drivers.obj)
+        if not curves or captured or not curves[0].driver.variables:
+            return
+        target = curves[0].driver.variables[0].targets[0]
+        if target.id is drivers.obj:
+            target.id = manual
+            captured.append(drivers.module._driver_configuration(curves[0]))
+
+    drivers.context.check_cancelled = callback
+    with pytest.raises(drivers.module.BridgeError) as error:
+        add_driver(drivers)
+    assert captured and error.value.context["cleanup_skipped"]
+    assert drivers.module._driver_configuration(drivers.module._curves(drivers.obj)[0]) == captured[0]
+
+
+def test_toolset_disabled_during_driver_setup_stops_all_later_writes(drivers):
+    retained = []
+
+    def prepare(method, context):
+        assert method == "rig.driver_add"
+        curves = drivers.module._curves(drivers.obj)
+        if curves:
+            if not retained:
+                retained.append(drivers.module._driver_configuration(curves[0]))
+            raise drivers.module.BridgeError(drivers.module.ErrorCode.TOOLSET_DISABLED, "Disabled locally")
+
+    drivers.context.registry = NS(prepare=prepare)
+    with pytest.raises(drivers.module.BridgeError) as error:
+        add_driver(drivers)
+    assert error.value.code == "TOOLSET_DISABLED" and retained
+    assert not error.value.context["rollback_verified"]
+    assert drivers.module._driver_configuration(drivers.module._curves(drivers.obj)[0]) == retained[0]
+
+
+def test_scoped_curve_cleanup_does_not_claim_full_restore_with_new_animdata(drivers):
+    fired = False
+
+    def callback():
+        nonlocal fired
+        curves = drivers.module._curves(drivers.obj)
+        if not fired and curves and curves[0].driver.variables and curves[0].driver.variables[0].targets[0].data_path:
+            fired = True
+            raise RuntimeError("One-shot native postwrite failure")
+
+    drivers.context.check_cancelled = callback
+    with pytest.raises(drivers.module.BridgeError) as error:
+        add_driver(drivers)
+    assert fired and not drivers.module._curves(drivers.obj) and drivers.obj.animation_data is not None
+    assert error.value.context["retained_empty_anim_data"]
+    assert not error.value.context["rollback_verified"] and error.value.context["possible_mutation"]
+
+
+def test_curve_lookup_rejects_oversized_inventory_before_dereferencing_items(drivers):
+    drivers.obj.animation_data = NS(drivers=[None] * 129)
+    with pytest.raises(drivers.module.BridgeError, match="128 curves"):
+        drivers.module._curve(drivers.obj, "location", 0)
+
+
+def test_named_lookup_rejects_oversized_scene_before_dereferencing_items(drivers):
+    drivers.bpy.context.scene.objects = [None] * 65537
+    with pytest.raises(drivers.module.BridgeError, match="65536"):
+        drivers.module._object(drivers.bpy, "Rig")
+
+
+@pytest.mark.parametrize("operation", ["property", "driver"])
+@pytest.mark.parametrize("provider", ["require", "registry"])
+@pytest.mark.parametrize("stop", ["paused", "emergency_stopped"])
+def test_final_permission_provider_stop_prevents_every_first_write(drivers, operation, provider, stop):
+    if provider == "require":
+        original = drivers.context.require
+
+        def require(*permissions):
+            original(*permissions)
+            drivers.flags[stop] = True
+
+        drivers.context.require = require
+    else:
+        drivers.context.registry = NS(prepare=lambda method, context: drivers.flags.__setitem__(stop, True))
+    with pytest.raises(drivers.module.BridgeError) as error:
+        set_property(drivers) if operation == "property" else add_driver(drivers)
+    assert error.value.code in {"AGENT_PAUSED", "EMERGENCY_STOPPED"}
+    assert drivers.control['move"X'] == 2. and drivers.obj.animation_data is None
+
+
+@pytest.mark.parametrize("stop", ["paused", "emergency_stopped"])
+def test_postwrite_permission_provider_stop_blocks_property_compensation(drivers, stop):
+    original = drivers.context.require
+
+    def require(*permissions):
+        original(*permissions)
+        if drivers.control['move"X'] == 3.:
+            drivers.flags[stop] = True
+
+    drivers.context.require = require
+    with pytest.raises(drivers.module.BridgeError) as error:
+        set_property(drivers)
+    assert drivers.control['move"X'] == 3.
+    assert error.value.context["possible_mutation"] and not error.value.context["rollback_verified"]
+
+
+@pytest.mark.parametrize("stop", ["paused", "emergency_stopped"])
+def test_postallocation_permission_provider_stop_blocks_driver_setup_and_cleanup(drivers, stop):
+    original = drivers.context.require
+    retained = []
+
+    def require(*permissions):
+        original(*permissions)
+        curves = drivers.module._curves(drivers.obj)
+        if curves:
+            if not retained:
+                retained.append(drivers.module._driver_configuration(curves[0]))
+            drivers.flags[stop] = True
+
+    drivers.context.require = require
+    with pytest.raises(drivers.module.BridgeError) as error:
+        add_driver(drivers)
+    assert retained and drivers.module._driver_configuration(drivers.module._curves(drivers.obj)[0]) == retained[0]
+    assert error.value.context["possible_mutation"] and not error.value.context["rollback_verified"]

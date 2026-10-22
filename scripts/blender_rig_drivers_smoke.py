@@ -164,9 +164,68 @@ def main():
     call("driver_remove", object_name=rig_name, bone_name="Deform", channel="scale", index=2)
     call("pose_transform", object_name=rig_name, bone_name="Deform", scale=[1, 1, 1])
     assert len(rig.animation_data.drivers) == 1
+
+    # Stop after the native allocation exists, before mapping/variable setup.
+    # The retained native state must survive both setup and recovery unchanged;
+    # later authorized cleanup is a separate typed operation.
+    stop_evidence = []
+    for stopped_by in ("PAUSE", "EMERGENCY_STOP", "CALLER_CANCEL"):
+        retained = []
+
+        def stop_new_curve(context, *, retained=retained, stopped_by=stopped_by):
+            original_check(context)
+            current = rig_drivers._curve(rig, failure_path, 1)
+            if current is None:
+                return
+            if not retained:
+                retained.append(rig_drivers._driver_configuration(current))
+            if stopped_by == "PAUSE":
+                runtime.state.set_paused(True)
+            elif stopped_by == "EMERGENCY_STOP":
+                runtime.state.set_emergency_stopped(True)
+            else:
+                raise BridgeError("OPERATION_FAILED", "Injected caller cancellation")
+
+        rig_drivers._check = stop_new_curve
+        try:
+            call("driver_add", object_name=rig_name, bone_name="Deform", channel="scale", index=1, variables=[source])
+        except BridgeError as error:
+            assert error.context["possible_mutation"] and not error.context["rollback_verified"]
+            assert error.context["retained_driver_path"] == failure_path
+        else:
+            raise AssertionError("Post-allocation live stop was ignored")
+        finally:
+            rig_drivers._check = original_check
+            runtime.state.set_paused(False)
+            runtime.state.set_emergency_stopped(False)
+        current = rig_drivers._curve(rig, failure_path, 1)
+        assert retained and rig_drivers._driver_configuration(current) == retained[0]
+        stop_evidence.append({"stopped_by": stopped_by, "native_keys_retained": len(current.keyframe_points),
+                              "native_modifiers_retained": len(current.modifiers), "unchanged_after_stop": True})
+        call("driver_remove", object_name=rig_name, bone_name="Deform", channel="scale", index=1)
+        call("pose_transform", object_name=rig_name, bone_name="Deform", scale=[1, 1, 1])
+
+    def pause_after_property(context):
+        original_check(context)
+        if rig.pose.bones[control_name][control_property] == 3.:
+            runtime.state.set_paused(True)
+
+    rig_drivers._check = pause_after_property
+    try:
+        call("property_set", object_name=rig_name, bone_name=control_name, property_name=control_property, value=3.)
+    except BridgeError as error:
+        assert error.context["possible_mutation"] and not error.context["rollback_verified"]
+        assert rig.pose.bones[control_name][control_property] == 3.
+    else:
+        raise AssertionError("Postwrite pause allowed property compensation")
+    finally:
+        rig_drivers._check = original_check
+        runtime.state.set_paused(False)
     call("property_set", object_name=rig_name, bone_name=control_name, property_name=control_property, value=0.0)
     restored_points, restored_x = evaluated()
     assert restored_x == 0 and restored_points == original_points, (restored_x, restored_points)
+    call("driver_remove", object_name=rig_name, bone_name="Deform", channel="location", index=0)
+    assert not len(rig.animation_data.drivers)
     assert bpy.context.mode == "OBJECT" and list(bpy.context.selected_objects) == selected and bpy.context.view_layer.objects.active == active
     print("BLENDER_RIG_DRIVERS_OK " + json.dumps({
         "blender": bpy.app.version_string, "typed_control_and_non_scripted_bone_drivers_verified": True,
@@ -177,6 +236,9 @@ def main():
         "shared_armature_data_protected_pose_and_context_preserved": True,
         "fresh_native_driver_configurations": native_mappings,
         "fresh_native_identity_mapping_removed_only": True, "existing_keyframed_driver_preserved_and_rejected": True,
+        "live_stops_preserve_partial_native_allocation": stop_evidence,
+        "postwrite_pause_refuses_property_compensation": True,
+        "explicit_partial_and_self_reference_driver_cleanup_verified": True,
         "native_undo_verified": False, "project_saved": False, "visual_quality_verified": False,
     }))
 

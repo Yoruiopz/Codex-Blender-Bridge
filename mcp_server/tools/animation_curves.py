@@ -35,20 +35,21 @@ class AnimationCurveTools:
     def __init__(self, registry: ToolRegistry) -> None:
         self.registry = registry
 
-    async def animation_action_copy(self, object_name: str, new_name: str) -> Any:
+    async def animation_action_copy(self, object_name: str, new_name: str, affected_objects: list[str] | None = None) -> Any:
         """Bind an independent Action version; an unused source is retained only in this session."""
-        return await self.registry.call("animation.action_copy", {"object_name": object_name, "new_name": new_name})
+        return await self.registry.call("animation.action_copy", params(object_name=object_name, new_name=new_name, affected_objects=affected_objects))
 
     async def animation_curve_edit(
         self, object_name: str, data_path: str, index: int = 0,
         keyframes: list[KeyframeEdit] | None = None,
         extrapolation: Literal["CONSTANT", "LINEAR"] | None = None,
         slot_identifier: str | None = None,
+        affected_objects: list[str] | None = None,
     ) -> Any:
         """Edit one existing curve; explicit handle coordinates require corresponding FREE handle types."""
         return await self.registry.call("animation.curve_edit", params(
             object_name=object_name, data_path=data_path, index=index, keyframes=keyframes,
-            extrapolation=extrapolation, slot_identifier=slot_identifier,
+            extrapolation=extrapolation, slot_identifier=slot_identifier, affected_objects=affected_objects,
         ))
 
     def bindings(self) -> tuple[MCPToolBinding, ...]:

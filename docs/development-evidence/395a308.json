@@ -1,0 +1,186 @@
+{
+  "kind": "development-installed-addon-receipt",
+  "commit": "395a3088695c70e551ac1734485aae6f80ac348b",
+  "source_sha256": "53dbc3fc84028637cd4fabc28194f5fbd1aebd850c724fc083f72f0a240d2467",
+  "source_file_count": 214,
+  "pr": "https://github.com/Yoruiopz/Codex-Blender-Bridge/pull/3",
+  "merged_as": "df531cd4c61c214a5c984bb1dc80a706c26af4bd",
+  "python": {
+    "20": {
+      "tests": 2832,
+      "skipped": 3,
+      "errors": 0,
+      "failures": 0,
+      "sha256": "da90feb86e576a22aae130329223ffa95b9321c345aa639d898928965c4748bc"
+    },
+    "22": {
+      "tests": 2832,
+      "skipped": 3,
+      "errors": 0,
+      "failures": 0,
+      "sha256": "ee295763ee37e6c528500e154e3eb48ec075bae12702793586f9ab909e39abed"
+    }
+  },
+  "native_report_sha256": "39b0406b80fae19dd181fd22bbdc1400f857167043c6b973b1bd1aacfa5f3488",
+  "native_cases": [
+    {
+      "blender": "4.5.14 LTS",
+      "case": "installed_addon_probe",
+      "passed": true,
+      "observations": [
+        {
+          "label": "fresh-candidate",
+          "archive_sha256": "f6e049d97ab1d47a71e07ad7aab5c0ec02d8211796e58edf3de8802c96fea2d7",
+          "documented_tool_count": 229,
+          "installed_members_verified": 100,
+          "default_deletion_denied": true,
+          "discovered_in_addon_list": true,
+          "clean_directory_replacement": false
+        },
+        {
+          "label": "previous",
+          "archive_sha256": "6e06aafaac6378569aa89763d4074531320506c53fcb7d6e02e476f183689ea8",
+          "documented_tool_count": 108,
+          "installed_members_verified": 42,
+          "default_deletion_denied": true,
+          "discovered_in_addon_list": false,
+          "clean_directory_replacement": true
+        },
+        {
+          "label": "upgrade",
+          "archive_sha256": "f6e049d97ab1d47a71e07ad7aab5c0ec02d8211796e58edf3de8802c96fea2d7",
+          "documented_tool_count": 229,
+          "installed_members_verified": 100,
+          "default_deletion_denied": true,
+          "discovered_in_addon_list": true,
+          "clean_directory_replacement": true
+        },
+        {
+          "label": "rollback",
+          "archive_sha256": "6e06aafaac6378569aa89763d4074531320506c53fcb7d6e02e476f183689ea8",
+          "documented_tool_count": 108,
+          "installed_members_verified": 42,
+          "default_deletion_denied": true,
+          "discovered_in_addon_list": false,
+          "clean_directory_replacement": true
+        }
+      ]
+    },
+    {
+      "blender": "5.2.2 LTS",
+      "case": "installed_addon_probe",
+      "passed": true,
+      "observations": [
+        {
+          "label": "fresh-candidate",
+          "archive_sha256": "f6e049d97ab1d47a71e07ad7aab5c0ec02d8211796e58edf3de8802c96fea2d7",
+          "documented_tool_count": 229,
+          "installed_members_verified": 100,
+          "default_deletion_denied": true,
+          "discovered_in_addon_list": true,
+          "clean_directory_replacement": false
+        },
+        {
+          "label": "previous",
+          "archive_sha256": "6e06aafaac6378569aa89763d4074531320506c53fcb7d6e02e476f183689ea8",
+          "documented_tool_count": 108,
+          "installed_members_verified": 42,
+          "default_deletion_denied": true,
+          "discovered_in_addon_list": false,
+          "clean_directory_replacement": true
+        },
+        {
+          "label": "upgrade",
+          "archive_sha256": "f6e049d97ab1d47a71e07ad7aab5c0ec02d8211796e58edf3de8802c96fea2d7",
+          "documented_tool_count": 229,
+          "installed_members_verified": 100,
+          "default_deletion_denied": true,
+          "discovered_in_addon_list": true,
+          "clean_directory_replacement": true
+        },
+        {
+          "label": "rollback",
+          "archive_sha256": "6e06aafaac6378569aa89763d4074531320506c53fcb7d6e02e476f183689ea8",
+          "documented_tool_count": 108,
+          "installed_members_verified": 42,
+          "default_deletion_denied": true,
+          "discovered_in_addon_list": false,
+          "clean_directory_replacement": true
+        }
+      ]
+    }
+  ],
+  "distribution_manifest_sha256": "27db32dfbb573fd6d29e68216bfa77b3de0ab080c9147d19a589550a378b21d9",
+  "ci": {
+    "run_id": 39695106809,
+    "commit": "395a3088695c70e551ac1734485aae6f80ac348b",
+    "jobs": [
+      {
+        "id": 119550462501,
+        "name": "test (3.10, 2.0.0)",
+        "conclusion": "success",
+        "path": "ci/job-119550462501.log",
+        "characters": 60407,
+        "sha256": "750e1a511efd9c4f850ef364d83ca42d634f749bbe091cb04b8c2ee99331ec0f"
+      },
+      {
+        "id": 119550462562,
+        "name": "test (3.12, 2.2.0)",
+        "conclusion": "success",
+        "path": "ci/job-119550462562.log",
+        "characters": 59806,
+        "sha256": "0d5893d7c024bb8b556bd31253d9c153fec9ccd68582ed040b40338bc14a5aeb"
+      },
+      {
+        "id": 119550462598,
+        "name": "test (3.11, 2.0.0)",
+        "conclusion": "success",
+        "path": "ci/job-119550462598.log",
+        "characters": 59812,
+        "sha256": "31918dd6e77fcc0388614bbfa9b2a63ab5f3f2f92973a601da9259d52bcc0127"
+      },
+      {
+        "id": 119550462602,
+        "name": "test (3.11, 2.2.0)",
+        "conclusion": "success",
+        "path": "ci/job-119550462602.log",
+        "characters": 59802,
+        "sha256": "41318a6155ce2127545aefee86d50e3e1c6c77c4e65dfe9e7db88af46ef4a5e9"
+      },
+      {
+        "id": 119550462694,
+        "name": "test (3.12, 2.0.0)",
+        "conclusion": "success",
+        "path": "ci/job-119550462694.log",
+        "characters": 59802,
+        "sha256": "f2422b8af2c844cf77acc75572febc7185c9f176407d3dc36338052f8b441d0b"
+      },
+      {
+        "id": 119550462796,
+        "name": "test (3.10, 2.2.0)",
+        "conclusion": "success",
+        "path": "ci/job-119550462796.log",
+        "characters": 62207,
+        "sha256": "a5c0633d988c665d27997d372d61a2664d4cbde152dca7227ada0782f9799bae"
+      },
+      {
+        "id": 119550984721,
+        "name": "packages",
+        "conclusion": "success",
+        "path": "ci/job-119550984721.log",
+        "characters": 46109,
+        "sha256": "dca5be259bf87ce2a91ffd17a4af25a584249823d0ccda6f5119d6f33337a2f3"
+      }
+    ]
+  },
+  "limits": [
+    "Only the installed-addon probe was selected; full native inventory is not claimed.",
+    "Clean-directory replacement resets preferences; preferences migration/UI uninstall remain unverified.",
+    "Published alpha is acknowledged undiscoverable and enabled by known module name.",
+    "No Windows, A-F artist scenario, artistic or 1.0 acceptance.",
+    "All14mandatoryreleasegatesremainopen;existingreleaseassetsunchanged."
+  ],
+  "release_readiness": "NOT_ASSESSED",
+  "evidence_location": "/workspace/Codex-Blender-Bridge/build/public-install-fix-20261022",
+  "summary_sha256": "4e94a0391626e81083c51d4ef7f1c9387a8d4b2e9e6e8a9a4143d31354a1a4c7"
+}

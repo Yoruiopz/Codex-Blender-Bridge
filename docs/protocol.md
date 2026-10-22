@@ -225,6 +225,15 @@ finalized synchronously, never held across subsequent cooperative verification t
 verification failures retain the image for explicit recovery. These are additive method/result
 fields, not new envelopes, unsolicited events or terminal responses for the start request.
 
+Managed matched previews may additionally report `external_effects.artifacts`, a bounded
+list of flat `filepath`, `file_sha256` and `file_bytes` descriptors, and
+`render_result_replaced`. Runtime history copies at most four descriptors, reports
+`artifacts_truncated`/`artifacts_incomplete`, and never invents missing hashes or sizes.
+The preview tool may impose a smaller count. These facts describe retained files and
+Render Result effects separately from scene restoration; native scene undo does not
+remove them. They do not grant file access or certify crash durability. Inspection denial
+redacts the whole external-effects record, including all nested paths and hashes.
+
 - Multiple requests may be in flight at the transport/client layer.
 - Writes on each socket are serialized so NDJSON frames never interleave.
 - The Blender main-thread executor processes one command at a time in queue order in 0.2.0.

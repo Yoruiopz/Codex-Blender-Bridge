@@ -2,20 +2,33 @@
 
 from __future__ import annotations
 
+import logging
 import math
+import time
 from collections.abc import Iterable, Mapping, Sequence
 from itertools import islice
 from typing import Any
 
-from ..errors import BridgeError, ErrorCode, invalid_argument
+from ..errors import BridgeError as BridgeError
+from ..errors import ErrorCode as ErrorCode
+from ..errors import invalid_argument
 from ..permissions import Permission
 from ..tool_registry import ToolContext, ToolRegistry
-from ..utils import bool_param, float_param, get_object, int_param, require_blender
+from ..utils import (
+    bool_param,
+    float_param,
+    get_object,
+    int_param,
+    reject_unknown_params,
+    require_blender,
+)
+from . import _animation_mutation as mutation
 from ._object_safety import require_owned_action
 
 _MAX_ABS_FRAME = 1_000_000.0
 _MAX_DATA_PATH_LENGTH = 512
 _MAX_GROUP_NAME_LENGTH = 128
+LOGGER = logging.getLogger(__name__)
 
 
 def _required_string(
@@ -243,38 +256,58 @@ def inspect_animation(context: ToolContext, params: Mapping[str, Any]) -> dict[s
 
 
 def set_frame(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
-    del context
+    reject_unknown_params(params, {"frame"})
     bpy = require_blender()
     scene = bpy.context.scene
     requested = _frame_param(params, "frame", float(scene.frame_current_final))
     integer_frame = math.floor(requested)
     subframe = requested - integer_frame
-    scene.frame_set(integer_frame, subframe=subframe)
+    boundary = mutation.Timeline(bpy, context, "animation.set_frame")
+    original = dict(boundary.expected)
+    boundary.check()
+    started = time.monotonic()
+    try:
+        boundary.started = True
+        scene.frame_set(integer_frame, subframe=subframe)
+        observed = boundary.observe()
+        if any(observed[field] != boundary.expected[field] for field in mutation.RANGE_FIELDS):
+            raise invalid_argument("Frame evaluation changed protected playback ranges.")
+        boundary.expected = observed
+        boundary.check()
+        if abs(float(scene.frame_current_final)-requested) > 1e-5:
+            raise RuntimeError("Native frame/subframe readback did not match the request")
+    except Exception as error:
+        LOGGER.exception("Native frame evaluation failed; no automatic replay is attempted")
+        raise mutation.failed(error, "Frame evaluation failed; inspect the observed frame and scene before explicit recovery.",
+            started=boundary.started, **boundary.measured_state(), previous_timeline=original,
+            automatic_frame_replay_attempted=False, native_blocking_seconds=time.monotonic()-started) from error
     return {
         "scene": scene.name,
         "requested_frame": requested,
         "frame": int(scene.frame_current),
         "subframe": float(scene.frame_subframe),
         "frame_final": float(scene.frame_current_final),
+        "native_blocking_seconds": time.monotonic()-started,
+        "global_scene_evaluation": True,
     }
 
 
 def set_range(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
-    del context
+    reject_unknown_params(params, {"start", "end", "use_preview", "preview_start", "preview_end"})
     bpy = require_blender()
     scene = bpy.context.scene
     start = int_param(
         params,
         "start",
         int(scene.frame_start),
-        minimum=-int(_MAX_ABS_FRAME),
+        minimum=0,
         maximum=int(_MAX_ABS_FRAME),
     )
     end = int_param(
         params,
         "end",
         int(scene.frame_end),
-        minimum=-int(_MAX_ABS_FRAME),
+        minimum=0,
         maximum=int(_MAX_ABS_FRAME),
     )
     if end < start:
@@ -296,12 +329,23 @@ def set_range(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]
     )
     if preview_end < preview_start:
         raise invalid_argument("'preview_end' must be at least 'preview_start'.")
-    scene.frame_start = start
-    scene.frame_end = end
-    scene.use_preview_range = use_preview
+    boundary = mutation.Timeline(bpy, context, "animation.set_range")
+    original = dict(boundary.expected)
+    desired = {"frame_start": start, "frame_end": end, "use_preview_range": use_preview}
     if use_preview:
-        scene.frame_preview_start = preview_start
-        scene.frame_preview_end = preview_end
+        desired.update(frame_preview_start=preview_start, frame_preview_end=preview_end)
+    try:
+        boundary.apply_range(desired)
+    except Exception as error:
+        LOGGER.exception("Timeline range update failed")
+        restored = False
+        try:
+            boundary.apply_range(original)
+            restored = boundary.observe() == original
+        except Exception:
+            LOGGER.exception("Timeline range compensation refused or failed")
+        raise mutation.failed(error, "Playback range update failed; inspect observed ranges before continuing.",
+            started=boundary.started, restored=restored, **boundary.measured_state()) from error
     return {
         "scene": scene.name,
         "frame_start": int(scene.frame_start),
@@ -313,7 +357,7 @@ def set_range(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]
 
 
 def insert_keyframe(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
-    del context
+    reject_unknown_params(params, {"object_name", "data_path", "frame", "index", "group", "options", "affected_objects"})
     obj = get_object(params.get("object_name"), allow_active=False)
     require_owned_action(obj, operation="Keyframe editing")
     data_path = _data_path(params)
@@ -335,6 +379,9 @@ def insert_keyframe(context: ToolContext, params: Mapping[str, Any]) -> dict[str
     allowed = {"INSERTKEY_NEEDED", "INSERTKEY_VISUAL", "INSERTKEY_REPLACE", "INSERTKEY_AVAILABLE", "INSERTKEY_CYCLE_AWARE"}
     if len(options) > len(allowed) or not options <= allowed:
         raise invalid_argument("Unsupported keyframe insertion option.", supported=sorted(allowed))
+    boundary = mutation.Keyframe(bpy, context, params, obj, data_path, index, frame, group, "animation.keyframe_insert")
+    object_name = obj.name
+    boundary.check()
     try:
         inserted = bool(
             obj.keyframe_insert(
@@ -345,12 +392,12 @@ def insert_keyframe(context: ToolContext, params: Mapping[str, Any]) -> dict[str
                 options=options,
             )
         )
-    except (RuntimeError, TypeError, ValueError) as exc:
-        raise BridgeError(
-            ErrorCode.OPERATION_FAILED,
-            "Blender could not insert the requested keyframe.",
-            {"object": obj.name, "data_path": data_path, "detail": str(exc)},
-        ) from exc
+        post = boundary.after(inserted)
+    except Exception as exc:
+        LOGGER.exception("Native keyframe insertion failed; retaining observed data")
+        raise mutation.failed(exc, "Native keyframe insertion failed; inspect the exact retained Action and checkpoint before recovery.",
+            started=True, object=object_name, data_path=data_path,
+            **mutation.retained_action(obj), automatic_recreation_attempted=False) from exc
     action = obj.animation_data.action if obj.animation_data else None
     matching, matching_truncated = (
         _matching_curves(action, data_path, index) if action else ([], False)
@@ -364,11 +411,12 @@ def insert_keyframe(context: ToolContext, params: Mapping[str, Any]) -> dict[str
         "action": action.name if action else None,
         "matching_fcurves": matching,
         "matching_fcurves_truncated": matching_truncated,
+        **post,
     }
 
 
 def delete_keyframe(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
-    del context
+    reject_unknown_params(params, {"object_name", "data_path", "frame", "index", "group", "affected_objects"})
     obj = get_object(params.get("object_name"), allow_active=False)
     require_owned_action(obj, operation="Keyframe editing")
     data_path = _data_path(params)
@@ -381,6 +429,9 @@ def delete_keyframe(context: ToolContext, params: Mapping[str, Any]) -> dict[str
         group = _required_string(params, "group", maximum=_MAX_GROUP_NAME_LENGTH)
     else:
         group = ""
+    boundary = mutation.Keyframe(bpy, context, params, obj, data_path, index, frame, group, "animation.keyframe_delete")
+    object_name = obj.name
+    boundary.check()
     try:
         deleted = bool(
             obj.keyframe_delete(
@@ -390,12 +441,12 @@ def delete_keyframe(context: ToolContext, params: Mapping[str, Any]) -> dict[str
                 group=group,
             )
         )
-    except (RuntimeError, TypeError, ValueError) as exc:
-        raise BridgeError(
-            ErrorCode.OPERATION_FAILED,
-            "Blender could not delete the requested keyframe.",
-            {"object": obj.name, "data_path": data_path, "detail": str(exc)},
-        ) from exc
+        post = boundary.after(deleted)
+    except Exception as exc:
+        LOGGER.exception("Native keyframe deletion failed; retaining observed data")
+        raise mutation.failed(exc, "Native keyframe deletion failed; inspect the exact retained Action and checkpoint before recovery.",
+            started=True, object=object_name, data_path=data_path,
+            **mutation.retained_action(obj), automatic_recreation_attempted=False) from exc
     action = obj.animation_data.action if obj.animation_data else None
     matching, matching_truncated = (
         _matching_curves(action, data_path, index) if action else ([], False)
@@ -409,6 +460,7 @@ def delete_keyframe(context: ToolContext, params: Mapping[str, Any]) -> dict[str
         "action": action.name if action else None,
         "matching_fcurves": matching,
         "matching_fcurves_truncated": matching_truncated,
+        **post,
     }
 
 

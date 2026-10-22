@@ -103,21 +103,61 @@ def test_object_keyframes_allow_shared_mesh_and_fake_user_action(
     addon_package, monkeypatch, handler,
 ):
     module = importlib.import_module(f"{addon_package}.tools.animation")
-    action = SimpleNamespace(name="OwnAction", users=2, use_fake_user=True,
-                             library=None, override_library=None, is_editable=True)
+    class Owner(SimpleNamespace):
+        __eq__ = object.__eq__
+        __ne__ = object.__ne__
+        __hash__ = object.__hash__
+
+    class Items(list):
+        active = None
+
+        def get(self, name):
+            return next((item for item in self if item.name == name), None)
+
+    curves = Items(SimpleNamespace(data_path="location", array_index=index, extrapolation="CONSTANT",
+                                  keyframe_points=[SimpleNamespace(co=[1., 0.], interpolation="BEZIER", easing="AUTO")],
+                                  sampled_points=[], modifiers=[], group=None, mute=False) for index in range(3))
+    action = Owner(name="OwnAction", users=2, use_fake_user=True, is_action_layered=False,
+                   library=None, override_library=None, is_editable=True, fcurves=curves,
+                   layers=[], slots=[], groups=[], pose_markers=[], asset_data=None)
     calls = []
-    obj = _object(animation_data=SimpleNamespace(action=action),
-                  path_resolve=lambda path: (0.0, 0.0, 0.0),
-                  keyframe_insert=lambda **kwargs: calls.append(kwargs) or True,
-                  keyframe_delete=lambda **kwargs: calls.append(kwargs) or True)
+    obj = Owner(**vars(_object(animation_data=SimpleNamespace(action=action, use_tweak_mode=False, drivers=[], nla_tracks=Items()),
+                                path_resolve=lambda path: (0.0, 0.0, 0.0))))
+    obj.user_of_id = lambda value: int(value is action)
+    obj.bl_rna = SimpleNamespace(identifier="Object", properties=[])
+
+    def insert(**kwargs):
+        calls.append(kwargs)
+        # The guard independently checks the existing exact requested values.
+        return True
+
+    def delete(**kwargs):
+        calls.append(kwargs)
+        for curve in curves:
+            curve.keyframe_points.clear()
+        return True
+
+    obj.keyframe_insert, obj.keyframe_delete = insert, delete
     obj.data.users = 2
+    scene = Owner(name="Scene", frame_current=1, frame_subframe=0., frame_current_final=1., frame_start=1,
+                  frame_end=250, use_preview_range=False, frame_preview_start=0, frame_preview_end=0,
+                  library=None, override_library=None, is_editable=True, objects=Items([obj]))
+    obj.users_scene, obj.users_collection = [scene], []
+    bpy = SimpleNamespace(context=SimpleNamespace(scene=scene, view_layer=SimpleNamespace(objects=Items([obj])), mode="OBJECT"),
+                          data=SimpleNamespace(filepath="", scenes=Items([scene]), objects=Items([obj]), actions=Items([action]),
+                              user_map=lambda *, subset: {value: {obj} if value is action else set() for value in subset}))
+    permission_module = importlib.import_module(f"{addon_package}.permissions")
+    registry_module = importlib.import_module(f"{addon_package}.tool_registry")
+    registry = registry_module.ToolRegistry(enabled_toolsets=("animation",))
+    module.register_tools(registry)
+    context = registry_module.ToolContext(state=SimpleNamespace(snapshot=lambda: {"paused": False, "emergency_stopped": False}),
+        permissions=permission_module.PermissionManager(lambda: {"EDIT_ANIMATION": True}), registry=registry, checkpoints=None)
     monkeypatch.setattr(module, "get_object", lambda *args, **kwargs: obj)
-    monkeypatch.setattr(module, "require_blender", lambda: SimpleNamespace(
-        context=SimpleNamespace(scene=SimpleNamespace(frame_current_final=1.0))))
-    monkeypatch.setattr(module, "_matching_curves", lambda *args: ([], False))
-    result = getattr(module, handler)(None, {"object_name": obj.name, "data_path": "location"})
+    monkeypatch.setattr(module, "require_blender", lambda: bpy)
+    result = getattr(module, handler)(context, {"object_name": obj.name, "data_path": "location"})
     assert result["object"] == obj.name
     assert len(calls) == 1
+    assert result["protected_channels_preserved"]
 
 
 def test_object_transform_allows_shared_linked_mesh_data(addon_package, monkeypatch):

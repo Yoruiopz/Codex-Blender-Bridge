@@ -102,6 +102,14 @@ Each of 1–8 variables specifies `object_name`, `transform_type` (LOC/ROT/SCALE
 and `transform_space` (WORLD_SPACE/LOCAL_SPACE/TRANSFORM_SPACE). Sources must be independent:
 no parent, constraints or animation data, and not the target. Targets cannot have an active
 action/NLA or an existing driver on that channel. `drivers.remove` removes one exact channel.
+Each setup write and compensation checks live permissions, pause/stop/cancellation, exact
+scene/object/source identities, protected driver content and direct consumer scope. Reviewed
+fresh native mapping keys/modifiers are removed only from the new curve. A stop may leave
+an unchanged native allocation or partially configured curve; reinspect it and restore live
+authorization before a separate `drivers.remove`. Failed setup never implicitly clears an
+AnimData container. If an empty new container remains after curve cleanup, recovery evidence
+reports that retained mutation instead of claiming a complete rollback. Linked/override or
+ambiguous sources, unsupported dependency graphs and shared scene contexts fail explicitly.
 This object-transform API does not support arbitrary RNA paths, expressions or bone targets.
 The separate [rig driver API](rig-drivers.md) supports reviewed bone transforms and exact numeric
 custom properties with bounded dependency validation; broader networks remain unsupported.

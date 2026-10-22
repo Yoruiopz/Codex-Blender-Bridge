@@ -114,6 +114,11 @@ match alone cannot prove nested preservation: inspect and compare each relevant 
 nodes/interface/links separately. Inspect any truncation rather than treating partial state as complete.
 The fixture demonstrates iteration and recovery, not production-material or full artist acceptance.
 
+A newer [native interface lifecycle probe](shader-interface-lifecycle.md) measures
+rename/reorder/default behavior and fresh reopen on Linux 4.5.14/5.2.2. It also
+records real type-conversion default loss and an animation-index alias on 4.5 that
+5.2 repairs natively. This research does not add a public interface-edit tool.
+
 Interface edit/remove/reorder/type conversion, shader properties beyond the reviewed subset,
 animated ramps and other curve/collection controls,
 deep copies, asset marking, root World/Light editing, compositor groups/images, broader image

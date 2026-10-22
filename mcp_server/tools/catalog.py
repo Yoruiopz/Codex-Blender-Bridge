@@ -11,11 +11,16 @@ from .animation import (
 )
 from .animation_curves import TOOL_DATA as ANIMATION_CURVE_TOOL_DATA
 from .animation_curves import load_definitions as _load_animation_curve_definitions
+from .animation_lifecycle import DESTRUCTIVE_TOOL_NAMES as ACTION_DESTRUCTIVE_TOOL_NAMES
+from .animation_lifecycle import TOOL_DATA as ACTION_LIFECYCLE_TOOL_DATA
+from .animation_lifecycle import load_definitions as _load_action_lifecycle_definitions
 from .artist import TOOL_DATA as _BASE_ARTIST_TOOL_DATA
 from .artist import load_definitions as _load_base_artist_definitions
-from .asset_delivery import TOOL_DATA as ASSET_DELIVERY_TOOL_DATA
-from .asset_delivery import TOOL_NAMES as ASSET_DELIVERY_TOOL_NAMES
-from .asset_delivery import load_definitions as load_asset_delivery_definitions
+from .asset_delivery import TOOL_DATA as BASE_ASSET_DELIVERY_TOOL_DATA
+from .asset_delivery import load_definitions as _load_base_asset_delivery_definitions
+from .asset_import import DESTRUCTIVE_TOOL_NAMES as ASSET_IMPORT_DESTRUCTIVE_TOOL_NAMES
+from .asset_import import TOOL_DATA as ASSET_IMPORT_TOOL_DATA
+from .asset_import import load_definitions as _load_asset_import_definitions
 from .batch import TOOL_DATA as BATCH_TOOL_DATA
 from .batch import TOOL_NAMES as BATCH_TOOL_NAMES
 from .batch import load_definitions as load_batch_definitions
@@ -38,6 +43,9 @@ from .geometry_zone_lifecycle import TOOL_DATA as GEOMETRY_ZONE_TOOL_DATA
 from .geometry_zone_lifecycle import load_definitions as _load_geometry_zone_definitions
 from .image_portability import TOOL_DATA as IMAGE_PORTABILITY_TOOL_DATA
 from .image_portability import load_definitions as _load_image_portability_definitions
+from .image_recovery import DESTRUCTIVE_TOOL_NAMES as IMAGE_RECOVERY_DESTRUCTIVE_TOOL_NAMES
+from .image_recovery import TOOL_DATA as IMAGE_RECOVERY_TOOL_DATA
+from .image_recovery import load_definitions as _load_image_recovery_definitions
 from .image_surface_paint import TOOL_DATA as IMAGE_SURFACE_PAINT_TOOL_DATA
 from .image_surface_paint import load_definitions as _load_image_surface_paint_definitions
 from .interaction import TOOL_DATA as INTERACTION_TOOL_DATA
@@ -59,6 +67,9 @@ from .modifiers import DESTRUCTIVE_TOOL_NAMES as MODIFIER_DESTRUCTIVE_TOOL_NAMES
 from .modifiers import TOOL_DATA as MODIFIER_TOOL_DATA
 from .modifiers import TOOL_NAMES as MODIFIER_TOOL_NAMES
 from .modifiers import load_definitions as load_modifier_definitions
+from .nla_lifecycle import DESTRUCTIVE_TOOL_NAMES as NLA_DESTRUCTIVE_TOOL_NAMES
+from .nla_lifecycle import TOOL_DATA as NLA_TOOL_DATA
+from .nla_lifecycle import load_definitions as _load_nla_definitions
 from .nodes import NODE_TOOL_DATA, NODE_TOOL_NAMES, load_node_definitions
 from .python_exec import PYTHON_TOOL_NAMES
 from .python_exec import load_definitions as load_python_definitions
@@ -72,8 +83,10 @@ from .rig_ik import TOOL_DATA as RIG_IK_TOOL_DATA
 from .rig_ik import load_definitions as _load_rig_ik_definitions
 from .rigging import RIGGING_TOOL_DATA
 from .rigging import load_rigging_definitions as _load_base_rigging_definitions
-from .scene_edit import SCENE_EDIT_TOOL_DATA, SCENE_EDIT_TOOL_NAMES
-from .scene_edit import load_definitions as load_scene_edit_definitions
+from .scene_edit import SCENE_EDIT_TOOL_DATA as BASE_SCENE_EDIT_TOOL_DATA
+from .scene_edit import load_definitions as _load_base_scene_edit_definitions
+from .scene_variants import TOOL_DATA as SCENE_VARIANT_TOOL_DATA
+from .scene_variants import load_definitions as _load_scene_variant_definitions
 from .surface_brushes import TOOL_DATA as SURFACE_BRUSH_TOOL_DATA
 from .surface_brushes import load_definitions as _load_surface_brush_definitions
 from .task_plan import TOOL_DATA as TASK_PLAN_TOOL_DATA
@@ -87,19 +100,30 @@ from .weight_brushes import TOOL_DATA as WEIGHT_BRUSH_TOOL_DATA
 from .weight_brushes import load_definitions as _load_weight_brush_definitions
 
 ARTIST_TOOL_DATA = (*_BASE_ARTIST_TOOL_DATA, *((name, "weights", True, ("EDIT_MESH",), description)
-                                       for name, description in WEIGHT_BRUSH_TOOL_DATA))
+                                       for name, description in WEIGHT_BRUSH_TOOL_DATA),
+                    *((name, "animation_layers", modifies, permissions, description)
+                      for name, description, modifies, permissions in NLA_TOOL_DATA))
 
 
 def load_artist_definitions() -> tuple[ToolDefinition, ...]:
-    return (*_load_base_artist_definitions(), *_load_weight_brush_definitions())
+    return (*_load_base_artist_definitions(), *_load_weight_brush_definitions(), *_load_nla_definitions())
+
+ASSET_DELIVERY_TOOL_DATA = (*BASE_ASSET_DELIVERY_TOOL_DATA, *ASSET_IMPORT_TOOL_DATA)
+ASSET_DELIVERY_TOOL_NAMES = tuple(item[0] for item in ASSET_DELIVERY_TOOL_DATA)
+
+
+def load_asset_delivery_definitions() -> tuple[ToolDefinition, ...]:
+    return (*_load_base_asset_delivery_definitions(), *_load_asset_import_definitions())
 
 ANIMATION_TOOL_DATA = (*ANIMATION_TOOL_DATA, *((name, description, True, ("EDIT_ANIMATION",))
-                                           for name, description in ANIMATION_CURVE_TOOL_DATA))
+                                           for name, description in ANIMATION_CURVE_TOOL_DATA), *ACTION_LIFECYCLE_TOOL_DATA)
 ANIMATION_TOOL_NAMES = tuple(item[0] for item in ANIMATION_TOOL_DATA)
 GEOMETRY_TOOL_DATA = (*GEOMETRY_TOOL_DATA, *GEOMETRY_GROUP_TOOL_DATA, *GEOMETRY_ZONE_TOOL_DATA)
 GEOMETRY_TOOL_NAMES = tuple(item[0] for item in GEOMETRY_TOOL_DATA)
-MATERIAL_TOOL_DATA = (*MATERIAL_TOOL_DATA, *IMAGE_PORTABILITY_TOOL_DATA, *IMAGE_SURFACE_PAINT_TOOL_DATA)
+MATERIAL_TOOL_DATA = (*MATERIAL_TOOL_DATA, *IMAGE_PORTABILITY_TOOL_DATA, *IMAGE_SURFACE_PAINT_TOOL_DATA, *IMAGE_RECOVERY_TOOL_DATA)
 MATERIAL_TOOL_NAMES = tuple(item[0] for item in MATERIAL_TOOL_DATA)
+SCENE_EDIT_TOOL_DATA = (*BASE_SCENE_EDIT_TOOL_DATA, *SCENE_VARIANT_TOOL_DATA)
+SCENE_EDIT_TOOL_NAMES = tuple(item[0] for item in SCENE_EDIT_TOOL_DATA)
 RIGGING_TOOL_DATA = (*RIGGING_TOOL_DATA, *RIG_DRIVER_TOOL_DATA, *RIG_IK_TOOL_DATA, *DEFORMATION_TOOL_DATA)
 RIGGING_TOOL_NAMES = tuple(item[0] for item in RIGGING_TOOL_DATA)
 UV_TOOL_DATA = (*UV_TOOL_DATA, *((name, description, modifies)
@@ -116,7 +140,7 @@ def load_uv_definitions() -> tuple[ToolDefinition, ...]:
 
 
 def load_animation_definitions() -> tuple[ToolDefinition, ...]:
-    return (*_load_base_animation_definitions(), *_load_animation_curve_definitions())
+    return (*_load_base_animation_definitions(), *_load_animation_curve_definitions(), *_load_action_lifecycle_definitions())
 
 
 def load_geometry_definitions() -> tuple[ToolDefinition, ...]:
@@ -124,7 +148,11 @@ def load_geometry_definitions() -> tuple[ToolDefinition, ...]:
 
 
 def load_material_definitions() -> tuple[ToolDefinition, ...]:
-    return (*_load_base_material_definitions(), *_load_image_portability_definitions(), *_load_image_surface_paint_definitions())
+    return (*_load_base_material_definitions(), *_load_image_portability_definitions(), *_load_image_surface_paint_definitions(), *_load_image_recovery_definitions())
+
+
+def load_scene_edit_definitions() -> tuple[ToolDefinition, ...]:
+    return (*_load_base_scene_edit_definitions(), *_load_scene_variant_definitions())
 
 CORE_REMOTE_TOOLS: tuple[tuple[str, str, bool, tuple[str, ...]], ...] = (
     ("jobs.inspect", "Inspect session-local image-job progress, result/error and file/recovery evidence.", False, ("INSPECT_SCENE",)),
@@ -294,6 +322,10 @@ DESTRUCTIVE_TOOL_NAMES = frozenset(
     | set(RIG_DRIVER_DESTRUCTIVE_TOOL_NAMES)
     | set(RIG_IK_DESTRUCTIVE_TOOL_NAMES)
     | set(GEOMETRY_ZONE_DESTRUCTIVE_TOOL_NAMES)
+    | set(ACTION_DESTRUCTIVE_TOOL_NAMES)
+    | set(NLA_DESTRUCTIVE_TOOL_NAMES)
+    | set(ASSET_IMPORT_DESTRUCTIVE_TOOL_NAMES)
+    | set(IMAGE_RECOVERY_DESTRUCTIVE_TOOL_NAMES)
     | {name for name, _, modifies, _ in UV_REFINE_TOOL_DATA if modifies}
 )
 

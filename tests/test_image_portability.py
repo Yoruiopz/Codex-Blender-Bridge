@@ -37,10 +37,12 @@ class Pixels:
 class Image(dict):
     __hash__ = object.__hash__
     __eq__ = object.__eq__
+    __ne__ = object.__ne__
 
     def __init__(self, name, values, module, *, users=0):
         super().__init__()
         self.name, self.source, self.type = name, "GENERATED", "UV_TEST"
+        self.bl_rna = NS(identifier="Image")
         self.filepath = ""
         self.library, self.override_library, self.is_editable = None, None, True
         self.has_data, self.is_multiview, self.is_float, self.is_dirty = True, False, True, False
@@ -107,7 +109,7 @@ def fixture(addon_package, monkeypatch):
     target = Image("Original", values, module, users=1)
     collection = Images([target])
     consumer = NS(name="Protected Material", bl_rna=NS(identifier="Material"),
-                  library=None, override_library=None, is_editable=True)
+                  library=None, override_library=None, is_editable=True, users=1, use_fake_user=False)
     owners = [consumer]
     bpy = NS(context=NS(mode="OBJECT"), data=NS(images=collection,
              user_map=lambda **_: {target: [*owners, *(image for image in collection if image.get(module.OWNER_KEY) is target)]}))
@@ -121,6 +123,279 @@ def fixture(addon_package, monkeypatch):
     monkeypatch.setattr(module.image_paint, "_read", lambda ctx, image, **_: (*module._buffer(ctx, image), None))
     return NS(module=module, values=values, target=target, images=collection, bpy=bpy,
               context=context, grants=grants, flags=flags, owners=owners)
+
+
+@pytest.fixture
+def unloaded_recovery(fixture, addon_package, monkeypatch):
+    module = importlib.import_module(f"{addon_package}.tools.image_recovery")
+    fixture.grants["INSPECT_SCENE"] = True
+    target = fixture.target
+    target.source, target.type, target.filepath = "FILE", "IMAGE", "/unavailable/original.exr"
+    packed(fixture)
+    target.has_data = False
+    original_pack = target.pack
+    writes = []
+    def publish(*args, **kwargs):
+        writes.append(kwargs["data"])
+        original_pack(*args, **kwargs)
+        target.has_data = True
+    monkeypatch.setattr(target, "pack", publish)
+    monkeypatch.setattr(module, "require_blender", lambda: fixture.bpy)
+    return NS(module=module, fixture=fixture, target=target, writes=writes,
+              context=fixture.context, grants=fixture.grants)
+
+
+def reconstruction_preview(fixture, **kwargs):
+    return fixture.module.recovery_preview(fixture.context, {"image_name": "Original", "snapshot_name": "Snapshot", **kwargs})
+
+
+def reconstruct(fixture, preview, **kwargs):
+    return fixture.module.restore_packed_snapshot(fixture.context, {"image_name": "Original", "snapshot_name": "Snapshot",
+        "expected_target_fingerprint": preview["expected_target_fingerprint"], "confirm_replace_packed_bytes": True, **kwargs})
+
+
+def test_unloaded_preview_does_not_require_edit_or_access_native_target_pixels(unloaded_recovery, monkeypatch):
+    f = unloaded_recovery
+    f.grants["EDIT_MATERIALS"] = False
+    monkeypatch.setattr(f.target.pixels, "foreach_get", lambda _: pytest.fail("Unloaded target pixel read"))
+    result = reconstruction_preview(f)
+    assert len(result["expected_target_fingerprint"]) == 64
+    assert not result["mutation_performed"] and not result["source_file_read"]
+    assert result["requires_confirm_replace_packed_bytes"] and not f.writes and not f.target.has_data
+
+
+def test_confirmed_unloaded_reconstruction_preserves_id_and_snapshot_without_save(unloaded_recovery):
+    f = unloaded_recovery
+    preview = reconstruction_preview(f)
+    result = reconstruct(f, preview)
+    assert result["restored"] and result["image_identity_preserved"] and result["complete_pixels_verified"]
+    assert result["packed_payload_replaced"] and result["snapshot_retained"]
+    assert not result["file_written"] and not result["project_saved"]
+    assert f.fixture.images.get("Original") is f.target and len(f.writes) == 1
+    assert f.fixture.images.get("Snapshot") is not None
+
+
+@pytest.mark.parametrize("field,value", [("filepath", "/new/manual/source.exr"), ("alpha_mode", "STRAIGHT"), ("name", "Other")])
+def test_reconstruction_rejects_stale_preview_before_pack(unloaded_recovery, field, value):
+    f = unloaded_recovery
+    preview = reconstruction_preview(f)
+    setattr(f.target, field, value)
+    with pytest.raises(f.module.BridgeError):
+        reconstruct(f, preview)
+    assert not f.writes
+
+
+@pytest.mark.parametrize("permission", ["INSPECT_SCENE", "EDIT_MATERIALS", "ACCESS_EXTERNAL_FILES"])
+def test_reconstruction_live_permissions_block_before_pack(unloaded_recovery, permission):
+    f = unloaded_recovery
+    preview = reconstruction_preview(f)
+    f.grants[permission] = False
+    with pytest.raises(f.module.BridgeError) as caught:
+        reconstruct(f, preview)
+    assert caught.value.code == "PERMISSION_DENIED" and not f.writes
+
+
+def test_reconstruction_requires_explicit_confirmation(unloaded_recovery):
+    f = unloaded_recovery
+    preview = reconstruction_preview(f)
+    with pytest.raises(f.module.BridgeError, match="confirm_replace_packed_bytes"):
+        reconstruct(f, preview, confirm_replace_packed_bytes=False)
+    assert not f.writes
+
+
+def test_reconstruction_old_payload_hash_is_part_of_preview(unloaded_recovery):
+    f = unloaded_recovery
+    preview = reconstruction_preview(f)
+    f.target.packed_file = NS(size=5, data=b"older")
+    with pytest.raises(f.module.BridgeError, match="stale"):
+        reconstruct(f, preview)
+    assert not f.writes
+
+
+def test_reconstruction_final_callback_scope_change_is_preserved(unloaded_recovery, monkeypatch):
+    f = unloaded_recovery
+    preview = reconstruction_preview(f)
+    proof, calls = f.module._proof, []
+    def interleaved(*args, **kwargs):
+        calls.append(True)
+        if len(calls) == 3:
+            f.target.filepath = "/manual/newer.exr"
+        return proof(*args, **kwargs)
+    monkeypatch.setattr(f.module, "_proof", interleaved)
+    with pytest.raises(f.module.BridgeError) as caught:
+        reconstruct(f, preview)
+    assert not caught.value.context["execution_started"] and not f.writes
+    assert f.target.filepath == "/manual/newer.exr"
+
+
+def test_late_reconstruction_revocation_retains_changed_target_and_snapshot(unloaded_recovery):
+    f = unloaded_recovery
+    preview = reconstruction_preview(f)
+    def revoke_after_pack():
+        if f.writes:
+            f.grants["EDIT_MATERIALS"] = False
+    f.context.check_cancelled = revoke_after_pack
+    with pytest.raises(f.module.BridgeError) as caught:
+        reconstruct(f, preview)
+    assert caught.value.code == "PERMISSION_DENIED"
+    assert caught.value.context["possible_mutation"] and caught.value.context["packed_payload_may_have_changed"]
+    assert caught.value.context["snapshot_retained"] and not caught.value.context["rollback_verified"]
+    assert f.target.packed_file is not None and f.fixture.images.get("Snapshot") is not None
+
+
+def test_packed_reconstruction_does_not_guess_associated_float_color(unloaded_recovery):
+    f = unloaded_recovery
+    snapshot = f.fixture.images.get("Snapshot")
+    metadata = json.loads(snapshot[f.fixture.module.METADATA_KEY])
+    metadata["colorspace"], metadata["alpha_mode"] = "Linear Rec.709", "STRAIGHT"
+    snapshot[f.fixture.module.METADATA_KEY] = json.dumps(metadata)
+    f.target.colorspace_settings.name, f.target.alpha_mode = "Linear Rec.709", "STRAIGHT"
+    with pytest.raises(f.module.BridgeError, match="associated color"):
+        reconstruction_preview(f)
+    assert not f.writes
+
+
+def test_reconstruction_rejects_same_name_replacement_instead_of_retargeting_snapshot(unloaded_recovery):
+    f = unloaded_recovery
+    preview = reconstruction_preview(f)
+    f.target.name = "Original Retained Under Another Name"
+    replacement = Image("Original", f.fixture.values, f.fixture.module, users=1)
+    replacement.source, replacement.type = "FILE", "IMAGE"
+    replacement.filepath, replacement.has_data = "/unavailable/original.exr", False
+    f.fixture.images.append(replacement)
+    with pytest.raises(f.module.BridgeError, match="exact original image ID"):
+        reconstruct(f, preview)
+    assert not f.writes and replacement.packed_file is None
+
+
+def test_reconstruction_fingerprint_expires_across_sessions(unloaded_recovery, monkeypatch):
+    f = unloaded_recovery
+    preview = reconstruction_preview(f)
+    monkeypatch.setattr(f.module, "SESSION_NONCE", "different-process")
+    with pytest.raises(f.module.BridgeError, match="stale"):
+        reconstruct(f, preview)
+    assert not f.writes
+
+
+def test_reconstruction_new_buffer_acquisition_invalidates_preview_before_write(unloaded_recovery):
+    f = unloaded_recovery
+    preview = reconstruction_preview(f)
+    f.target.has_data = True
+    with pytest.raises(f.module.BridgeError, match="unloaded"):
+        reconstruct(f, preview)
+    assert not f.writes
+
+
+def test_recovery_mcp_preserves_confirmation_and_rejects_weak_schema_values():
+    from mcp_server.tools.image_recovery import ImageRecoveryTools
+    calls = []
+    class Registry:
+        async def call(self, method, params):
+            calls.append((method, params))
+            return {"forwarded": True}
+    tools = ImageRecoveryTools(Registry())
+    result = asyncio.run(tools.image_restore_packed_snapshot("Original", "Snapshot", "a"*64, True, False))
+    assert result == {"forwarded": True}
+    assert calls == [("image.restore_packed_snapshot", {"image_name": "Original", "snapshot_name": "Snapshot",
+        "expected_target_fingerprint": "a"*64, "confirm_replace_packed_bytes": True, "allow_shared": False})]
+    hints = get_type_hints(tools.image_restore_packed_snapshot, include_extras=True)
+    for bad in ("A"*64, "a"*63, "a"*65, "not-a-fingerprint", 42):
+        with pytest.raises(ValidationError):
+            TypeAdapter(hints["expected_target_fingerprint"]).validate_python(bad)
+    for bad in (1, 0, "true", None):
+        with pytest.raises(ValidationError):
+            TypeAdapter(hints["confirm_replace_packed_bytes"]).validate_python(bad)
+
+
+def _last_provider_fault(context, gate, arm, mutate):
+    """Inject at the last grant provider regardless of permission batching.
+
+    A harmless gate first measures provider calls. The real operation then arms
+    only its final write boundary; assertions concern actual protected writes.
+    """
+    original, measured = context.require, []
+    def measure(*required):
+        measured.append(required)
+        return original(*required)
+    context.require = measure
+    try:
+        gate()
+    finally:
+        context.require = original
+    assert measured
+    calls, injected = [], []
+    def provider(*required):
+        result = original(*required)
+        if arm():
+            calls.append(required)
+            if len(calls) == len(measured):
+                mutate()
+                injected.append(True)
+        return result
+    context.require = provider
+    return injected
+
+
+def _fault_state(fixture, change):
+    if change == "mode":
+        fixture.bpy.context.mode = "EDIT_MESH"
+    else:
+        fixture.flags[change] = True
+
+
+@pytest.mark.parametrize("change", ["paused", "emergency_stopped", "mode"])
+def test_final_grant_provider_cannot_allow_new_version_metadata_after_state_change(fixture, change):
+    module, context = fixture.module, fixture.context
+    injected = _last_provider_fault(context, lambda: module._gate(context, fixture.target),
+        lambda: fixture.images.get("Snapshot") is not None,
+        lambda: _fault_state(fixture, change))
+    with pytest.raises(module.BridgeError):
+        packed(fixture)
+    snapshot = fixture.images.get("Snapshot")
+    assert injected and snapshot is not None
+    assert snapshot.source == "GENERATED" and snapshot.filepath == ""
+    assert snapshot.packed_file is None and module.METADATA_KEY not in snapshot
+    assert module.OWNER_KEY not in snapshot and not snapshot.use_fake_user
+    assert fixture.target.pixels.writes == 0
+
+
+@pytest.mark.parametrize("change", ["paused", "emergency_stopped", "mode"])
+def test_final_grant_provider_blocks_loaded_pixel_write_after_state_change(fixture, monkeypatch, change):
+    packed(fixture)
+    module, context, armed = fixture.module, fixture.context, []
+    decode, calls = module._snapshot_buffer, []
+    def arm_at_publication(*args, **kwargs):
+        result = decode(*args, **kwargs)
+        calls.append(True)
+        if len(calls) == 2:
+            armed.append(True)
+        return result
+    monkeypatch.setattr(module, "_snapshot_buffer", arm_at_publication)
+    injected = _last_provider_fault(context, lambda: module._gate(context, fixture.target),
+        lambda: bool(armed), lambda: _fault_state(fixture, change))
+    before = fixture.target.pixels.values.tobytes()
+    with pytest.raises(module.BridgeError) as caught:
+        restore(fixture)
+    assert injected and not caught.value.context["execution_started"]
+    assert fixture.target.pixels.writes == 0 and fixture.target.pixels.values.tobytes() == before
+
+
+@pytest.mark.parametrize("change", ["paused", "emergency_stopped", "mode"])
+def test_final_grant_provider_blocks_unloaded_pack_after_state_change(unloaded_recovery, monkeypatch, change):
+    f = unloaded_recovery
+    inspected, armed = reconstruction_preview(f), []
+    prepare = f.module._prepare
+    def arm_at_publication(*args, **kwargs):
+        result = prepare(*args, **kwargs)
+        armed.append(True)
+        return result
+    monkeypatch.setattr(f.module, "_prepare", arm_at_publication)
+    injected = _last_provider_fault(f.context, lambda: f.module._gate(f.context, f.target, modifying=True),
+        lambda: bool(armed), lambda: _fault_state(f.fixture, change))
+    with pytest.raises(f.module.BridgeError) as caught:
+        reconstruct(f, inspected)
+    assert injected and not caught.value.context["execution_started"]
+    assert not f.writes and not f.target.has_data and f.target.packed_file is None
 
 
 def packed(fixture):
@@ -153,6 +428,59 @@ def test_restore_changes_pixels_preserving_exact_id_and_consumers(fixture):
     assert target is fixture.images.get("Original") and target.pixels.values.tobytes() == fixture.values.tobytes()
     assert result["ownership"]["direct_consumers"] == [{"name": "Protected Material", "type": "Material"}]
     assert result["snapshot_retained"] and not result["project_saved"]
+
+
+@pytest.mark.parametrize("space", ["sRGB", "Linear Rec.709", "Non-Color"])
+@pytest.mark.parametrize("alpha", ["STRAIGHT", "CHANNEL_PACKED"])
+def test_loaded_byte_restore_accepts_exact_native_channel_values(fixture, space, alpha):
+    module, target = fixture.module, fixture.target
+    values = array("f", [index * module._BYTE_SCALE for index in (0, 1, 2, 127, 128, 253, 254, 255)])
+    target.is_float = False
+    target.colorspace_settings.name, target.alpha_mode = space, alpha
+    target.pixels.values[:] = values
+    packed(fixture)
+    target.pixels.values[:] = array("f", [0.]) * 8
+    result = restore(fixture)
+    assert result["complete_pixels_verified"] and target.pixels.values.tobytes() == values.tobytes()
+
+
+@pytest.mark.parametrize("bad", [-0., .1, -1., 1.0001])
+def test_byte_snapshot_with_unrepresentable_channels_is_refused_before_write(fixture, bad):
+    target, module = fixture.target, fixture.module
+    target.is_float = False
+    target.pixels.values[:] = array("f", [0., 1., 0., 1., 0., 1., 0., 1.])
+    packed(fixture)
+    snapshot = fixture.images.get("Snapshot")
+    values = array("f", target.pixels.values)
+    values[0] = bad
+    payload = b"".join(step.data for step in module.pixel_codecs.encode_steps(values, 2, 1, "EXR32_RAW", "DATA"))
+    snapshot.packed_file = NS(size=len(payload), data=payload)
+    metadata = json.loads(snapshot[module.METADATA_KEY])
+    metadata["packed_sha256"] = module.hashlib.sha256(payload).hexdigest()
+    metadata["pixels_sha256_float32_le"] = module.brush.digest(values)
+    snapshot[module.METADATA_KEY] = json.dumps(metadata)
+    with pytest.raises(module.BridgeError, match="lossy recovery"):
+        restore(fixture)
+    assert target.pixels.writes == 0
+
+
+def test_recovery_preserves_newer_manual_pixels_when_callback_interleaves(fixture, monkeypatch):
+    packed(fixture)
+    module, target = fixture.module, fixture.target
+    target.is_dirty = True
+    before = array("f", [1.]) * 8
+    target.pixels.values[:] = before
+    original = module._snapshot_buffer
+    newer = array("f", [.75]) * 8
+    def interleaved(*args):
+        result = original(*args)
+        target.pixels.values[:] = newer
+        return result
+    monkeypatch.setattr(module, "_snapshot_buffer", interleaved)
+    with pytest.raises(module.BridgeError) as caught:
+        restore(fixture)
+    assert not caught.value.context["execution_started"]
+    assert target.pixels.writes == 0 and target.pixels.values.tobytes() == newer.tobytes()
 
 
 @pytest.mark.parametrize("operation", ["pack", "restore"])
@@ -228,6 +556,55 @@ def test_failed_name_verification_reports_actual_retained_handle_name(fixture, m
     assert caught.value.context["retained_image_name"] == "Snapshot.001"
     assert caught.value.context["retained_name_is_last_observed"]
     assert fixture.images.get("Snapshot.001") is not None
+
+
+@pytest.mark.parametrize("incoming", ["consumer", "retention"])
+def test_acquired_new_version_receives_no_later_metadata_or_payload_writes(fixture, incoming):
+    acquired = []
+    def acquire():
+        image = fixture.images.get("Snapshot")
+        if image is not None and not acquired:
+            if incoming == "consumer":
+                image.users += 1
+            else:
+                image.use_fake_user = True
+            acquired.append(image)
+    fixture.context.check_cancelled = acquire
+    with pytest.raises(fixture.module.BridgeError) as caught:
+        packed(fixture)
+    snapshot = acquired[0]
+    assert caught.value.context["possible_mutation"] and not caught.value.context["rollback_verified"]
+    assert fixture.images.get("Snapshot") is snapshot
+    assert snapshot.source == "GENERATED" and snapshot.filepath == "" and snapshot.packed_file is None
+    assert fixture.module.METADATA_KEY not in snapshot and fixture.module.OWNER_KEY not in snapshot
+    assert fixture.target.pixels.values.tobytes() == fixture.values.tobytes()
+
+
+def test_current_pixels_missing_external_file_does_not_read_source_path(fixture, monkeypatch):
+    fixture.target.source, fixture.target.type = "FILE", "IMAGE"
+    fixture.target.filepath = "/missing/source.exr"
+    monkeypatch.setattr(fixture.module.image_paint, "_read", lambda *a, **k: pytest.fail("External source path read"))
+    result = packed(fixture)
+    assert result["current_pixels_verified"] and result["source_file_at_read"] is None
+
+
+def test_owned_cleanup_rechecks_delete_after_its_final_callback(fixture):
+    fixture.images.fail_pack = True
+    require, cleaning = fixture.context.require, []
+    def track_cleanup(*permissions):
+        result = require(*permissions)
+        if any(permission.value == "DELETE_OBJECTS" for permission in permissions):
+            cleaning.append(True)
+        return result
+    fixture.context.require = track_cleanup
+    def revoke_in_cleanup():
+        if cleaning:
+            fixture.grants["DELETE_OBJECTS"] = False
+    fixture.context.check_cancelled = revoke_in_cleanup
+    with pytest.raises(fixture.module.BridgeError) as caught:
+        packed(fixture)
+    assert cleaning and caught.value.context["cleanup_permission_denied"]
+    assert caught.value.context["possible_mutation"] and fixture.images.get("Snapshot") is not None
 
 
 @pytest.mark.parametrize("change", ["unloaded", "byte", "resized", "colorspace", "alpha", "linked", "animated"])

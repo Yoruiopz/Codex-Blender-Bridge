@@ -230,7 +230,8 @@ class MainThreadExecutor:
             effects = bounded_external_effects(error.context.get("external_effects"))
             if effects is not None and (effects.get("file_published")
                     or effects.get("publication_outcome_unknown") or effects.get("publication_attempted")
-                    or effects.get("retained_staging_path")):
+                    or effects.get("retained_staging_path") or effects.get("artifacts")
+                    or effects.get("render_result_replaced")):
                 # Scene preservation/native undo cannot reverse an external file
                 # or establish that a publication attempt had no filesystem effect.
                 execution_started = True

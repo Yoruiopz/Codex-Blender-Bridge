@@ -1,0 +1,587 @@
+{
+  "kind": "development-mutator-static-audit",
+  "metadata": {
+    "created_at": "2026-10-21T23:46:27.444797+00:00",
+    "repository": "/workspace/Codex-Blender-Bridge-artist-next",
+    "commit": "bf5c53ee7c027588762b4d5e6b59ac7c71526d16",
+    "worktree_dirty": true,
+    "registered_tools": 247,
+    "remote_tools": 246,
+    "modifying_tools": 184,
+    "remote_modifying_tools": 183,
+    "discards_context": 58,
+    "context_not_read": 68,
+    "modifying_by_toolset": {
+      "animation": 10,
+      "animation_layers": 11,
+      "asset_delivery": 2,
+      "batch": 1,
+      "compositor": 2,
+      "constraints": 3,
+      "core": 6,
+      "geometry_nodes": 22,
+      "interaction": 3,
+      "layout": 3,
+      "materials": 19,
+      "mesh": 22,
+      "modifiers": 4,
+      "nodes": 15,
+      "objects": 11,
+      "python": 1,
+      "render": 2,
+      "rigging": 13,
+      "scene_edit": 10,
+      "simulation": 3,
+      "uv": 13,
+      "weights": 8
+    },
+    "scope": "Every currently registered modifying handler; static signals are not proof. Manual priority screening is separate.",
+    "registry_entrypoint": "addon/blender_codex_bridge/tools/__init__.py:register_all",
+    "limitations": [
+      "No tool was invoked. No native Blender acceptance or authorization bypass conclusion is inferred.",
+      "Registry/executor entry gates still apply when a handler discards context; this inventory flags missing domain-level access to fresh consent/recovery services.",
+      "Imported helpers, instance methods, callbacks and native operator behavior require follow-up review and adversarial native tests.",
+      "Source is a dirty development worktree and may change concurrently; each handler/file has a captured hash."
+    ]
+  },
+  "manual_review": {
+    "scope": "Read-only static inventory plus prioritized manual source screening; no safe verdicts.",
+    "registry_inventory": "184 modifying handlers, including183 remote and1 local recovery tool, from247 total/246 remote registered tools.",
+    "full_priority_handler_source_screen": [
+      "constraint.add",
+      "constraint.remove",
+      "constraint.set",
+      "modifier.add",
+      "modifier.apply",
+      "modifier.remove",
+      "modifier.set",
+      "rig.bind_mesh",
+      "rig.bone_add",
+      "rig.bone_remove",
+      "rig.bone_update",
+      "rig.constraint_add",
+      "rig.constraint_remove",
+      "rig.create",
+      "rig.pose_transform",
+      "transform.apply",
+      "transform.rotate",
+      "transform.scale",
+      "transform.set",
+      "transform.translate"
+    ],
+    "priority_handler_count": 20,
+    "secondary_triage": [
+      "materials.py constructor/delete/slot/copy snippets and ownership-helper calls",
+      "weights.py group_create/assign/normalize and _apply",
+      "simulation.py cloth_add/configure and contrast with existing cache guard",
+      "objects.py create/delete/duplicate/rename guarded paths",
+      "_object_scope.py MutationGuard and incoming consumer checks",
+      "_rna.py prepared assignment and rollback helper",
+      "utils.py preserved_object_context",
+      "tool_registry.py and executor.py central permission/lifecycle flow"
+    ],
+    "not_claimed": [
+      "No complete manual per-tool audit for all184 handlers.",
+      "No native adversarial proof of these proposed next-increment scenarios.",
+      "No installed-package or Windows qualification.",
+      "No inference that missing direct context use eliminates registry/executor entry authorization.",
+      "No inference that a visible guard signal proves shared/linked/override, recovery or cancellation correctness."
+    ],
+    "central_gate_correction": "ToolRegistry.prepare already checks permission providers before pause/emergency flags. The ordinary real registry entry path has these gates; domain gaps concern subsequent writes and recovery. Additional custom-provider callbacks after prepare require a new frozen-state check.",
+    "findings": [
+      {
+        "id": "RIG-AUTO-WEIGHT-RECOVERY",
+        "priority": 1,
+        "tools": [
+          "rig.bind_mesh"
+        ],
+        "observed_gap": "Automatic binding recovery snapshots group/modifier names and parent/world matrix, but has no snapshot or restoration/readback of pre-existing vertex memberships.",
+        "evidence": [
+          {
+            "source_file": "addon/blender_codex_bridge/tools/rigging.py",
+            "line": 694,
+            "observation": "_bind_automatic records existing names, parent and matrix; failure cleanup removes names not in those sets at lines717\u2013724."
+          },
+          {
+            "source_file": "addon/blender_codex_bridge/tools/rigging.py",
+            "line": 743,
+            "observation": "The public handler discards ToolContext and calls this native operation without a domain cancellation gate."
+          }
+        ],
+        "risk_to_prove": "If ARMATURE_AUTO changes existing deform weights before failing, removing newly named groups/modifiers cannot recover their previous values. Name-based cleanup may also include a foreign allocation.",
+        "next_bounded_increment": "Define explicit mesh/armature/dependent-consumer scope; capture bounded existing memberships, locks, modifier identities, parenting and context; add live gates and exact owned-allocation tracking; report any unrecovered native result honestly.",
+        "adversarial_scenarios": [
+          "Existing deform groups with nonuniform weights plus a locked protected group; inject failure after native parent_set has modified existing weights.",
+          "Pause, permission revocation, cancellation or disconnect after native return; no unauthorized cleanup or late rewrites.",
+          "A native callback adds a differently identified group/modifier with an old/new name; automatic cleanup must preserve it.",
+          "Manual parent/weight changes interleaved with recovery; compare full memberships and sampled deformation before/after."
+        ],
+        "status": "OPEN_STATIC_FINDING_NATIVE_ADVERSARIAL_PROOF_NOT_RUN",
+        "declared_permissions": {
+          "rig.bind_mesh": [
+            "EDIT_ANIMATION",
+            "TRANSFORM_OBJECTS"
+          ]
+        },
+        "source_hashes": {
+          "addon/blender_codex_bridge/tools/rigging.py": "79e039ef7f75481207f657b640d84cfb852bcad3b5b3b3b8e9de48cf5f228629"
+        }
+      },
+      {
+        "id": "LEGACY-MULTI-WRITE-LIVE-BOUNDARIES",
+        "priority": 1,
+        "tools": [
+          "rig.bone_add",
+          "rig.bone_update",
+          "rig.bone_remove",
+          "rig.pose_transform",
+          "rig.constraint_add",
+          "rig.constraint_remove",
+          "modifier.add",
+          "modifier.set",
+          "modifier.remove",
+          "constraint.add",
+          "constraint.set",
+          "constraint.remove",
+          "transform.set"
+        ],
+        "observed_gap": "These priority handlers discard ToolContext. Their domain writes and compensation therefore do not directly use its cancellation/permission/checkpoint services after initial registry/executor preparation.",
+        "evidence": [
+          {
+            "source_file": "addon/blender_codex_bridge/tools/rigging.py",
+            "line": 375,
+            "observation": "Bone updates perform multiple Edit Bone setters at lines444\u2013460 with no retained context."
+          },
+          {
+            "source_file": "addon/blender_codex_bridge/tools/constraints.py",
+            "line": 225,
+            "observation": "Constraint assignment delegates to context-free apply_assignments."
+          },
+          {
+            "source_file": "addon/blender_codex_bridge/tools/_rna.py",
+            "line": 259,
+            "observation": "apply_assignments writes prevalidated fields, then attempts every saved old field on failure without a live gate, exact identity/configuration CAS or rollback readback."
+          },
+          {
+            "source_file": "addon/blender_codex_bridge/tools/modifiers.py",
+            "line": 290,
+            "observation": "Modifier assignment uses the same context-free batch helper."
+          }
+        ],
+        "risk_to_prove": "A stop or changed ownership/configuration during a native setter or partial failure can leave later writes/recovery outside the originally reviewed state. Initial entry authorization is present and is not being called a bypass.",
+        "next_bounded_increment": "Introduce domain-specific frozen object/child/dependency snapshots and per-write guards; make generic RNA compensation accept an explicit live boundary and expected output rather than blindly replay old fields.",
+        "adversarial_scenarios": [
+          "Revoke the relevant permission or cancel between the first and second RNA assignments.",
+          "A failed setter partially writes, then a callback makes a newer manual edit; compensation must preserve that edit.",
+          "Replace the owner or named child with a same-name/different-session ID before the next write/removal.",
+          "Acquire a protected consumer after preflight; refuse subsequent writes and measure retained effects."
+        ],
+        "status": "OPEN_STATIC_FINDING_NATIVE_ADVERSARIAL_PROOF_NOT_RUN",
+        "declared_permissions": {
+          "rig.bone_add": [
+            "EDIT_ANIMATION"
+          ],
+          "rig.bone_update": [
+            "EDIT_ANIMATION"
+          ],
+          "rig.bone_remove": [
+            "DELETE_OBJECTS",
+            "EDIT_ANIMATION"
+          ],
+          "rig.pose_transform": [
+            "EDIT_ANIMATION",
+            "TRANSFORM_OBJECTS"
+          ],
+          "rig.constraint_add": [
+            "EDIT_ANIMATION"
+          ],
+          "rig.constraint_remove": [
+            "EDIT_ANIMATION"
+          ],
+          "modifier.add": [
+            "TRANSFORM_OBJECTS"
+          ],
+          "modifier.set": [
+            "TRANSFORM_OBJECTS"
+          ],
+          "modifier.remove": [
+            "TRANSFORM_OBJECTS"
+          ],
+          "constraint.add": [
+            "TRANSFORM_OBJECTS"
+          ],
+          "constraint.set": [
+            "TRANSFORM_OBJECTS"
+          ],
+          "constraint.remove": [
+            "TRANSFORM_OBJECTS"
+          ],
+          "transform.set": [
+            "TRANSFORM_OBJECTS"
+          ]
+        },
+        "source_hashes": {
+          "addon/blender_codex_bridge/tools/rigging.py": "79e039ef7f75481207f657b640d84cfb852bcad3b5b3b3b8e9de48cf5f228629",
+          "addon/blender_codex_bridge/tools/modifiers.py": "26994134802d2ed80c05e9f9c40a71d7ec564f41fd022f5614776c3e22f938bf",
+          "addon/blender_codex_bridge/tools/constraints.py": "f780c5baf2ad5d4e0a7f53a2c3eacf3ebc8a8e982b80357a076e2998f85f4564",
+          "addon/blender_codex_bridge/tools/transforms.py": "d9b9754651e1c3ea3a08f66fda03f3064d4ac2d02560a0b60cbe7c560377573e"
+        }
+      },
+      {
+        "id": "REST-RIG-DEPENDENCY-CLOSURE",
+        "priority": 1,
+        "tools": [
+          "rig.bone_update",
+          "rig.bone_remove",
+          "rig.pose_transform",
+          "rig.constraint_add",
+          "rig.constraint_remove"
+        ],
+        "observed_gap": "Single-user/local object-data checks exist, but the reviewed legacy paths do not enumerate and freeze skinned meshes, Action/driver paths, bone-parented objects, constraints or other incoming consumers affected by rest-bone or pose edits.",
+        "evidence": [
+          {
+            "source_file": "addon/blender_codex_bridge/tools/rigging.py",
+            "line": 173,
+            "observation": "_edit_armature checks single-user armature data and changes mode/selection, without explicit dependent consumer closure."
+          },
+          {
+            "source_file": "addon/blender_codex_bridge/tools/rigging.py",
+            "line": 444,
+            "observation": "Bone rename/parent/head/tail/roll/deform/connect setters run as one sequence."
+          },
+          {
+            "source_file": "addon/blender_codex_bridge/tools/rigging.py",
+            "line": 466,
+            "observation": "Bone removal optionally reparents children and removes the bone, returning only local hierarchy facts."
+          }
+        ],
+        "risk_to_prove": "Single-user Armature data does not by itself prove that dependent skins or protected animation are unchanged by a rest-bone rename/removal or pose constraint.",
+        "next_bounded_increment": "Add explicit affected/protected rig consumer scope and complete rest/pose/hierarchy/animation snapshots; prove or reject rename/removal side effects across dependent objects.",
+        "adversarial_scenarios": [
+          "A skinned mesh plus protected skin, bone-parented prop, shared Action slots and custom-property driver targets.",
+          "Rename a deform bone and inspect weight group names, F-curve paths, constraint subtargets and sampled deformation.",
+          "Remove a connected parent while preserving/reparenting children; inject failure after the first child change.",
+          "Linked/override consumers and hidden nested collections must be rejected or explicitly included."
+        ],
+        "status": "OPEN_STATIC_FINDING_NATIVE_ADVERSARIAL_PROOF_NOT_RUN",
+        "declared_permissions": {
+          "rig.bone_update": [
+            "EDIT_ANIMATION"
+          ],
+          "rig.bone_remove": [
+            "DELETE_OBJECTS",
+            "EDIT_ANIMATION"
+          ],
+          "rig.pose_transform": [
+            "EDIT_ANIMATION",
+            "TRANSFORM_OBJECTS"
+          ],
+          "rig.constraint_add": [
+            "EDIT_ANIMATION"
+          ],
+          "rig.constraint_remove": [
+            "EDIT_ANIMATION"
+          ]
+        },
+        "source_hashes": {
+          "addon/blender_codex_bridge/tools/rigging.py": "79e039ef7f75481207f657b640d84cfb852bcad3b5b3b3b8e9de48cf5f228629"
+        }
+      },
+      {
+        "id": "NATIVE-TOPOLOGY-AND-CONTEXT-RECOVERY",
+        "priority": 1,
+        "tools": [
+          "transform.apply",
+          "modifier.apply"
+        ],
+        "observed_gap": "Both paths apply native geometry mutations with local/single-user/unkeyed checks, but no domain live boundary, bounded before/after geometry/dependency comparison, measured recovery or native blocking/cancellation evidence in the handler.",
+        "evidence": [
+          {
+            "source_file": "addon/blender_codex_bridge/tools/transforms.py",
+            "line": 147,
+            "observation": "transform_apply switches context and invokes bpy.ops.object.transform_apply."
+          },
+          {
+            "source_file": "addon/blender_codex_bridge/tools/modifiers.py",
+            "line": 334,
+            "observation": "modifier_apply resolves any named modifier, changes selection/active state and invokes the native operator."
+          },
+          {
+            "source_file": "addon/blender_codex_bridge/utils.py",
+            "line": 175,
+            "observation": "preserved_object_context unconditionally restores mode/selection/active state in finally and suppresses RuntimeError/ReferenceError; it has no live owner/configuration comparison."
+          }
+        ],
+        "risk_to_prove": "Protected dependency output and recovery after a partial native topology operation are not established by FINISHED, and blind context restoration can overwrite a newer manual selection/mode.",
+        "next_bounded_increment": "Freeze exact modifier, source mesh/custom data and dependent consumer scope; classify reviewed modifier types; preserve context by identity and expected temporary state; retain partial native edits with explicit measured recovery rather than inferred success.",
+        "adversarial_scenarios": [
+          "Apply a topology-changing modifier with UVs, colors, weights and protected incoming Geometry Nodes/Object Info consumers.",
+          "Failure/cancellation during native return or context restoration; record native blocking interval and retained geometry.",
+          "A frame/depsgraph callback changes selection, mode or active object; preserve the newer state.",
+          "Modifier replacement under the same name between lookup and application; no replacement may be applied."
+        ],
+        "status": "OPEN_STATIC_FINDING_NATIVE_ADVERSARIAL_PROOF_NOT_RUN",
+        "declared_permissions": {
+          "transform.apply": [
+            "TRANSFORM_OBJECTS"
+          ],
+          "modifier.apply": [
+            "TRANSFORM_OBJECTS"
+          ]
+        },
+        "source_hashes": {
+          "addon/blender_codex_bridge/tools/transforms.py": "d9b9754651e1c3ea3a08f66fda03f3064d4ac2d02560a0b60cbe7c560377573e",
+          "addon/blender_codex_bridge/tools/modifiers.py": "26994134802d2ed80c05e9f9c40a71d7ec564f41fd022f5614776c3e22f938bf"
+        }
+      },
+      {
+        "id": "NEW-ID-CLEANUP-CONSENT",
+        "priority": 1,
+        "tools": [
+          "rig.create",
+          "material.create"
+        ],
+        "observed_gap": "Exception cleanup removes newly allocated Object/Armature/Material IDs without a ToolContext deletion check or a frozen check that the allocation remains unconsumed and owned.",
+        "evidence": [
+          {
+            "source_file": "addon/blender_codex_bridge/tools/rigging.py",
+            "line": 327,
+            "observation": "create_rig removes the armature object with do_unlink=True and removes its data when users==0 after setup failure."
+          },
+          {
+            "source_file": "addon/blender_codex_bridge/tools/materials.py",
+            "line": 393,
+            "observation": "create_material allocates before diffuse-color coercion; its except path removes the Material ID."
+          }
+        ],
+        "risk_to_prove": "The repository policy requires DELETE_OBJECTS for data-block deletion. Cleanup should not implicitly unlink an allocation that acquired another consumer.",
+        "next_bounded_increment": "Use the already established retain-for-explicit-recovery policy, or require live deletion permission and exact unpublished allocation/consumer proof before deleting it.",
+        "adversarial_scenarios": [
+          "Grant creation permissions but deny DELETE_OBJECTS, then inject a setup failure after allocation.",
+          "Acquire a protected consumer before cleanup and verify that the ID and consumer remain unchanged.",
+          "A same-name replacement must never be deleted; retain identity and source fingerprints in the failure record."
+        ],
+        "status": "OPEN_STATIC_FINDING_NATIVE_ADVERSARIAL_PROOF_NOT_RUN",
+        "declared_permissions": {
+          "rig.create": [
+            "EDIT_ANIMATION",
+            "TRANSFORM_OBJECTS"
+          ],
+          "material.create": [
+            "EDIT_MATERIALS"
+          ]
+        },
+        "source_hashes": {
+          "addon/blender_codex_bridge/tools/rigging.py": "79e039ef7f75481207f657b640d84cfb852bcad3b5b3b3b8e9de48cf5f228629",
+          "addon/blender_codex_bridge/tools/materials.py": "c350321c265166b61955b1a50e3f39519ccb99a1545d64be837dbaa03c7874a5"
+        }
+      },
+      {
+        "id": "LEGACY-WEIGHT-RECOVERY",
+        "priority": 2,
+        "tools": [
+          "weights.group_create",
+          "weights.assign",
+          "weights.normalize"
+        ],
+        "observed_gap": "The simple legacy weight paths do not read ToolContext. _apply snapshots memberships and replays them on failure without live consent, group identity/lock/value CAS, or independent restoration readback.",
+        "evidence": [
+          {
+            "source_file": "addon/blender_codex_bridge/tools/weights.py",
+            "line": 80,
+            "observation": "_apply writes each membership, then restores all before records on exception. rollback_performed reflects only whether restore setters raised."
+          },
+          {
+            "source_file": "addon/blender_codex_bridge/tools/weights.py",
+            "line": 124,
+            "observation": "assign validates group lock once then calls _apply without context."
+          }
+        ],
+        "next_bounded_increment": "Reuse the newer bounded weight brush ownership/recovery contract for assignment/normalization and group allocation, with measured per-membership output and no stale recovery.",
+        "adversarial_scenarios": [
+          "Manual group rename/reorder/replacement or lock changes between writes.",
+          "Permission denial, cancellation and memory failure after a subset of 32000 possible normalization memberships.",
+          "Restore setters return without preserving exact weights; rollback must be measured rather than assumed."
+        ],
+        "status": "OPEN_STATIC_FINDING_NATIVE_ADVERSARIAL_PROOF_NOT_RUN",
+        "declared_permissions": {
+          "weights.group_create": [
+            "EDIT_MESH"
+          ],
+          "weights.assign": [
+            "EDIT_MESH"
+          ],
+          "weights.normalize": [
+            "EDIT_MESH"
+          ]
+        },
+        "source_hashes": {
+          "addon/blender_codex_bridge/tools/weights.py": "6dceaf90fbfa5590fa989647a9155d4abd6c8d5e8c4061194b2a25474da7b70d"
+        }
+      },
+      {
+        "id": "CLOTH-SETUP-CONFIGURATION-BOUNDARIES",
+        "priority": 2,
+        "tools": [
+          "simulation.cloth_add",
+          "simulation.configure"
+        ],
+        "observed_gap": "The cache lifecycle has a live guard, but cloth allocation/configuration do not read their context and configuration uses the context-free generic RNA batch helper.",
+        "evidence": [
+          {
+            "source_file": "addon/blender_codex_bridge/tools/simulation.py",
+            "line": 83,
+            "observation": "cloth_add creates a modifier and sets quality without a domain live boundary."
+          },
+          {
+            "source_file": "addon/blender_codex_bridge/tools/simulation.py",
+            "line": 101,
+            "observation": "configure checks baked/external/disk state once and applies prepared settings through apply_assignments."
+          }
+        ],
+        "next_bounded_increment": "Extend the cache guard principles to constructor and settings writes, including cache invalidation ownership, exact settings expectations and truthful partial allocation recovery.",
+        "adversarial_scenarios": [
+          "Cache becomes baked/external, modifier is replaced or target acquires protected consumers after preflight.",
+          "Stop/cancel between modifier allocation and quality assignment, or between settings setters.",
+          "Failed configuration must preserve newer manual cache/settings edits and report whether invalidation occurred."
+        ],
+        "status": "OPEN_STATIC_FINDING_NATIVE_ADVERSARIAL_PROOF_NOT_RUN",
+        "declared_permissions": {
+          "simulation.cloth_add": [
+            "EDIT_MESH",
+            "EDIT_SCENE"
+          ],
+          "simulation.configure": [
+            "EDIT_MESH",
+            "EDIT_SCENE"
+          ]
+        },
+        "source_hashes": {
+          "addon/blender_codex_bridge/tools/simulation.py": "e7f075874a9ce6643a3fbea2ccd5208c4a7d5808433c38360a62ab4670a75f5f"
+        }
+      },
+      {
+        "id": "MATERIAL-LIFECYCLE-LIVE-SCOPE",
+        "priority": 2,
+        "tools": [
+          "material.create",
+          "material.delete",
+          "material.assign",
+          "material.unassign",
+          "material.slot_add",
+          "material.slot_remove",
+          "material.copy_for_object",
+          "material.set_principled"
+        ],
+        "observed_gap": "Existing material ownership helpers are present, but these legacy handlers discard context; initial ownership checks do not by themselves establish live per-write/recovery preservation for nested/shared consumers.",
+        "evidence": [
+          {
+            "source_file": "addon/blender_codex_bridge/tools/materials.py",
+            "line": 405,
+            "observation": "Deletion measures usage/ownership then removes the ID without a fresh domain boundary."
+          },
+          {
+            "source_file": "addon/blender_codex_bridge/tools/materials.py",
+            "line": 435,
+            "observation": "Slot edits perform data/material assignment and active slot changes without retained context."
+          },
+          {
+            "source_file": "addon/blender_codex_bridge/tools/materials.py",
+            "line": 523,
+            "observation": "Material copy-for-object isolates OBJECT binding; this existing protection must be retained while adding live scope checks."
+          }
+        ],
+        "next_bounded_increment": "Complete the broader material lifecycle gate with exact nested group/image consumers, slot identity/source snapshots and explicit owned allocation recovery.",
+        "adversarial_scenarios": [
+          "Shared mesh DATA versus OBJECT slots with protected objects and nested shader/image consumers.",
+          "Permission revocation or new consumer before ID removal/slot replacement.",
+          "Partial binding/copy failure plus manual slot changes; identity-preserving measured recovery."
+        ],
+        "status": "OPEN_STATIC_FINDING_NATIVE_ADVERSARIAL_PROOF_NOT_RUN",
+        "declared_permissions": {
+          "material.create": [
+            "EDIT_MATERIALS"
+          ],
+          "material.delete": [
+            "DELETE_OBJECTS",
+            "EDIT_MATERIALS"
+          ],
+          "material.assign": [
+            "EDIT_MATERIALS"
+          ],
+          "material.unassign": [
+            "EDIT_MATERIALS"
+          ],
+          "material.slot_add": [
+            "EDIT_MATERIALS"
+          ],
+          "material.slot_remove": [
+            "EDIT_MATERIALS"
+          ],
+          "material.copy_for_object": [
+            "EDIT_MATERIALS"
+          ],
+          "material.set_principled": [
+            "EDIT_MATERIALS"
+          ]
+        },
+        "source_hashes": {
+          "addon/blender_codex_bridge/tools/materials.py": "c350321c265166b61955b1a50e3f39519ccb99a1545d64be837dbaa03c7874a5"
+        }
+      },
+      {
+        "id": "PERMISSION-CONTRACT-CONSISTENCY-REVIEW",
+        "priority": 2,
+        "tools": [
+          "rig.bind_mesh",
+          "transform.apply"
+        ],
+        "observed_gap": "Permission consistency needs a documented policy decision, rather than an assumed bypass conclusion: binding writes vertex weights with EDIT_ANIMATION+TRANSFORM_OBJECTS while weight tools use EDIT_MESH; applying transforms changes mesh coordinates with TRANSFORM_OBJECTS.",
+        "evidence": [
+          {
+            "source_file": "addon/blender_codex_bridge/tools/rigging.py",
+            "line": 834,
+            "observation": "rig.bind_mesh declares EDIT_ANIMATION and TRANSFORM_OBJECTS."
+          },
+          {
+            "source_file": "addon/blender_codex_bridge/tools/weights.py",
+            "line": 183,
+            "observation": "Weight modifying handlers declare EDIT_MESH."
+          },
+          {
+            "source_file": "addon/blender_codex_bridge/tools/transforms.py",
+            "line": 188,
+            "observation": "Transform application shares TRANSFORM_OBJECTS metadata."
+          }
+        ],
+        "next_bounded_increment": "Resolve and document the authoritative capability model, then align Blender/MCP metadata and denial fixtures without silently breaking compatibility.",
+        "adversarial_scenarios": [
+          "Deny EDIT_MESH while permitting rig/transform edits and verify the explicitly documented boundary for weights and applied geometry."
+        ],
+        "status": "OPEN_STATIC_FINDING_NATIVE_ADVERSARIAL_PROOF_NOT_RUN",
+        "declared_permissions": {
+          "rig.bind_mesh": [
+            "EDIT_ANIMATION",
+            "TRANSFORM_OBJECTS"
+          ],
+          "transform.apply": [
+            "TRANSFORM_OBJECTS"
+          ]
+        },
+        "source_hashes": {
+          "addon/blender_codex_bridge/tools/rigging.py": "79e039ef7f75481207f657b640d84cfb852bcad3b5b3b3b8e9de48cf5f228629",
+          "addon/blender_codex_bridge/tools/transforms.py": "d9b9754651e1c3ea3a08f66fda03f3064d4ac2d02560a0b60cbe7c560377573e"
+        }
+      }
+    ],
+    "release_gate_status": "Full ownership/recovery audit and mandatory release acceptance remain open."
+  },
+  "artifacts_sha256": {
+    "metadata.json": "7455f0e02b4bca8b4652347766cae7e8b48fa15e59c3f2d68df9ba2c77f7dea1",
+    "registry.json": "6e2e1b5c07c5435f65c7c558dfbdc4de3f9e4b1038a207aab11620b6c43bf02a",
+    "mutating-handlers.json": "c8e51ca9847356b1b6a6de1ae52043a5d95bb219548575975291cf8c50f65284",
+    "manual-screen-review.json": "a04d90125b6946c156cf652f1d9d33c0a5e0c998de2f86b904d83d1ef432399c",
+    "source-observations.json": "898e2f81bc2416cba0aaf4c73731c8d52b6feac97176bd27971ce224d161c5b1"
+  },
+  "release_readiness": "NOT_ASSESSED"
+}

@@ -95,6 +95,83 @@ their own commit and hashes. They cannot be combined with the first increment's 
 Development CI now retains packages and per-matrix JUnit artifacts for 90 days. Accepted
 release evidence still needs the separately retained and hashed immutable evidence bundle.
 
+### Frozen source and verification
+
+This increment is commit `bf5c53ee7c027588762b4d5e6b59ac7c71526d16`: 212 Python source
+files with inventory SHA-256
+`62652ba7af435ff96cdddf20085cf1d99ccbf92bd25031e3066830f988a72453`.
+The following commit `4c05657` changes only the oversized-socket regression test to
+accept the platform's early closed-peer errors while still proving no request is submitted.
+Both clean SDK suites passed **2,815 tests**, with three Windows-only skips each.
+All six Python/SDK CI jobs and the package job passed in run `39690171441`.
+[PR #2](https://github.com/Yoruiopz/Codex-Blender-Bridge/pull/2) merged as
+`7bf15710fa90de293b040bfa55c46098ced7cfa5`.
+
+All **53/53** registered native cases passed on Linux Blender **4.5.14 LTS** and
+**5.2.2 LTS** at that identical clean source. The first invocation lost its runner
+connection after all 4.5 cases and 34 of the 5.2 cases; its incomplete report remains
+unchanged. A separate invocation completed the remaining 19 cases. This is complete
+case coverage across two retained invocations, not an uninterrupted passing matrix.
+The 4K delivery fixture passed on both versions, without claiming constrained-memory
+or production-latency acceptance.
+
+Evidence under `build/artist-next-20261022/` includes `native-clean/report.json`,
+`native-clean-resume/report.json`, `native-selection-receipt.json`, both
+`python-sdk*-clean-testfix.xml` files, seven CI logs and `package-verification/`.
+Exact development add-on/wheel/plugin members, archive CRCs, wheel RECORD and checksums
+passed; a fresh isolated installed wheel discovered 229 tools over actual stdio.
+Installed Blender add-on/plugin workflows remain separate. The committed
+[evidence index](development-evidence/bf5c53e.json) retains these fingerprints and limits;
+it does not replace retention of the complete logs, artifacts and reviewed visuals.
+
+## Installed-package discovery correction
+
+Commit `395a3088695c70e551ac1734485aae6f80ac348b` fixes Blender's literal add-on discovery
+metadata, validates discovery/runtime/manifest versions when packaging, and binds inventory
+generation to its own checkout. Its 214-file Python inventory SHA-256 is
+`53dbc3fc84028637cd4fabc28194f5fbd1aebd850c724fc083f72f0a240d2467`.
+Both clean SDK suites passed **2,829 tests**, with three Windows-only skips each; all seven
+CI jobs passed in run `39695106809`. [PR #3](https://github.com/Yoruiopz/Codex-Blender-Bridge/pull/3)
+merged as `df531cd4c61c214a5c984bb1dc80a706c26af4bd`.
+
+Exact-commit development packages passed archive/member/checksum/wheel RECORD checks.
+The installed-ZIP probe passed on Linux Blender 4.5.14 and 5.2.2 with all imports resolving
+to the isolated installed directory: fresh candidate and upgrade expose 229 documented
+tools; historical baseline and rollback expose 108. Default dangerous permissions, loopback
+reconnect and bounded creation/transforms were checked. Only this native case was selected;
+this is not a complete native run or installed artist acceptance. Historical metadata needs
+explicit known-name enablement, and clean-directory replacement does not prove preferences
+migration or UI uninstall. Published downloads were not replaced.
+
+The [committed evidence index](development-evidence/395a308.json) records package, report,
+suite and CI fingerprints. Complete local artifacts are under
+`build/public-install-fix-20261022/`; their permanent release retention remains a separate gate.
+
+## Next bounded workflow increment
+
+The development registry adds seventeen typed tools, reaching 246: [Action lifecycle](action-lifecycle.md),
+[NLA clips/transitions/reordering](nla-lifecycle.md), [approved-source static imports](asset-import.md),
+[static camera/light variants](cinematic-variants.md), and explicit
+[unloaded FILE reconstruction](image-portability.md). Loaded byte-buffer restoration and
+memory-only snapshots for missing backing files extend the existing image tools. A loaded
+buffer restore preserves packed bytes; unloaded reconstruction explicitly confirms their
+replacement. Both remain bounded to one million pixels and keep original native Image IDs.
+Save consent is independent; retained buffers and undo history are not durable backups.
+
+Animation/curve/driver and NLA changes add write-boundary scope, permission, context and
+known-state comparisons, with measured partial recovery. Importers operate over frozen
+validated bytes in a private scene and publish an owned closure; unsupported skin/animation
+and general textured FBX are refused. Static variant previews retain matched current/candidate
+renders and disclose Render Result replacement. None completes the full artist benchmark.
+
+Separate native [shader interface research](shader-interface-lifecycle.md) demonstrates
+socket-index animation aliasing on 4.5 and destructive default resets on type conversion.
+It adds no public interface-editing API. A separate 4K image recovery probe preserves complete
+raw pixels, identity and bindings after reopening, with roughly 2 GB peak RSS and a 17–18 s
+cooperative encoding prototype. It does not yet implement public 4K recovery jobs, native
+undo, constrained-memory or Windows acceptance. Source-matched whole-increment validation
+must identify its own frozen commit and packages; prior increment counts do not certify it.
+
 ## Remaining gates
 
 Use the [execution plan](plan-1.0.md), [readiness gates](release-1.0-readiness.md)

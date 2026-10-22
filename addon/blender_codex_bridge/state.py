@@ -15,7 +15,7 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def bounded_external_effects(value: Any) -> dict[str, Any] | None:
+def _bounded_single_effect(value: Any) -> dict[str, Any] | None:
     """Copy only bounded flat file-effect facts, never an arbitrary tool result.
 
     Invalid fields are omitted rather than coercing them into misleading proof.
@@ -27,6 +27,7 @@ def bounded_external_effects(value: Any) -> dict[str, Any] | None:
     for key in (
         "publication_attempted", "file_published", "publication_outcome_unknown",
         "published_bytes_verified", "native_undo_removes_external_file", "crash_durability_verified",
+        "render_result_replaced",
     ):
         field = value.get(key)
         if type(field) is bool:
@@ -51,6 +52,38 @@ def bounded_external_effects(value: Any) -> dict[str, Any] | None:
     size = value.get("file_bytes")
     if "file_bytes" in value and (size is None or (type(size) is int and 0 <= size <= 2**53 - 1)):
         result["file_bytes"] = size
+    return result or None
+
+
+MAX_EXTERNAL_ARTIFACTS = 4
+
+
+def bounded_external_effects(value: Any) -> dict[str, Any] | None:
+    """Retain scalar effects and at most four flat managed-file descriptors.
+
+    Optional additions preserve the existing V1 single-file representation.
+    No nested caller collection is retained or recursively traversed. Missing
+    bytes/hash information stays incomplete rather than becoming verified proof.
+    """
+    if not isinstance(value, Mapping):
+        return None
+    result = _bounded_single_effect(value) or {}
+    supplied = value.get("artifacts")
+    if isinstance(supplied, list):
+        artifacts = []
+        incomplete = False
+        for item in supplied[:MAX_EXTERNAL_ARTIFACTS]:
+            if not isinstance(item, Mapping):
+                incomplete = True
+                continue
+            parsed = _bounded_single_effect({key: item.get(key) for key in ("filepath", "file_sha256", "file_bytes")}) or {}
+            if not parsed.get("filepath"):
+                incomplete = True
+                continue
+            incomplete = incomplete or parsed.get("file_sha256") is None or parsed.get("file_bytes") is None
+            artifacts.append(parsed)
+        result.update(artifacts=artifacts, artifacts_truncated=len(supplied) > MAX_EXTERNAL_ARTIFACTS,
+                      artifacts_incomplete=bool(incomplete))
     return result or None
 
 
