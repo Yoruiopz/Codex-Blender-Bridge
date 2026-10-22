@@ -126,7 +126,8 @@ def enforce_plan(context: ToolContext, params: Mapping[str, Any]) -> dict[str, A
     store.check_revision(params.get("expected_revision"))
     if enabled:
         flags = context.state.snapshot()
-        if store.executing_mutators or (flags.get("is_executing") and flags.get("current_method") != "task.plan.enforce"):
+        if (context.registry.executing_mutators or store.executing_mutators
+                or (flags.get("is_executing") and flags.get("current_method") != "task.plan.enforce")):
             raise invalid_argument("Enforcement cannot be enabled inside another executing request; finish it first.")
         if context.jobs is not None and context.jobs.active is not None:
             raise invalid_argument("Finish or cancel the active job before enabling plan enforcement.")

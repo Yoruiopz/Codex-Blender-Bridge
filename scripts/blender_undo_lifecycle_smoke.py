@@ -15,6 +15,118 @@ import blender_codex_bridge  # noqa: E402
 from blender_codex_bridge.errors import BridgeError  # noqa: E402
 from blender_codex_bridge.permissions import PermissionManager  # noqa: E402
 from blender_codex_bridge.runtime import get_runtime  # noqa: E402
+from blender_codex_bridge.task_plans import get_task_plans  # noqa: E402
+from blender_codex_bridge.tools import artist_loop  # noqa: E402
+from blender_codex_bridge.tools._object_rna_mutation import Boundary  # noqa: E402
+
+
+def artist_history_handles(runtime):
+    """Manual/native recovery cannot revive handles for an identical pre-state."""
+    manager = runtime.checkpoints
+    manager.clear()
+    permissions = PermissionManager(lambda: {"INSPECT_SCENE": True, "TRANSFORM_OBJECTS": True})
+    runtime.permissions = runtime.executor.permissions = permissions
+    runtime.registry.enable_toolset("objects")
+    working = bpy.data.objects.new("Artist History Working", None)
+    bpy.context.scene.collection.objects.link(working)
+    for obj in tuple(bpy.context.selected_objects):
+        obj.select_set(False)
+    working.select_set(True)
+    bpy.context.view_layer.objects.active = working
+    bpy.context.view_layer.update()
+    plan = runtime.dispatch("task.plan.set", {
+        "goal": "Revise the prop while retaining protected Cube",
+        "steps": [{"id": "revise", "description": "Preview and compare placement"}],
+        "protected_objects": ["Cube"],
+    })
+    revision = plan["plan"]["revision"]
+    runtime.dispatch("task.plan.capture", {"fields": ["transforms", "hierarchy"]})
+    runtime.dispatch("task.plan.enforce", {"enabled": True, "expected_revision": revision})
+    store = get_task_plans(runtime.state)
+    expected_plan, expected_protection, expected_baseline = store.plan, store.protection, store.baseline
+
+    def pair():
+        reference = runtime.dispatch("task.reference.resolve", {"source": "selection"})["reference_id"]
+        preview = runtime.dispatch("task.plan.preview_transform", {
+            "reference_id": reference, "expected_revision": revision, "location": [5., 0., 0.],
+        })["preview_id"]
+        return reference, preview
+
+    def boundary():
+        return Boundary(bpy, runtime.executor.context, "transform.set", bpy.data.objects["Artist History Working"], transform=True)
+
+    def retained():
+        assert get_task_plans(runtime.state) is store
+        assert store.plan is expected_plan and store.protection is expected_protection
+        assert store.baseline is expected_baseline and store.inspect()["protected_scope_enforced"]
+        assert store.executing_mutators == 0
+
+    def stale(reference, preview):
+        before = tuple(bpy.data.objects["Artist History Working"].location)
+        for method, params in (
+            ("task.plan.preview_transform", {"reference_id": reference, "expected_revision": revision, "location": [8., 0., 0.]}),
+            ("task.plan.apply_preview", {"preview_id": preview, "expected_revision": revision}),
+        ):
+            try:
+                runtime.dispatch(method, params)
+            except BridgeError as error:
+                assert error.code == "INVALID_ARGUMENT", error.to_dict()
+            else:
+                raise AssertionError("Native history revived a stale artist handle")
+        assert tuple(bpy.data.objects["Artist History Working"].location) == before
+        retained()
+
+    bpy.ops.ed.undo_push(message="Artist history exact zero pre-state")
+    zero_reference, zero_preview = pair()
+    zero_context, zero_profile = artist_loop._context(bpy), artist_loop._profile(boundary())
+    working.location.x = 1.
+    bpy.ops.ed.undo_push(message="Artist history alternate one pre-state")
+    one_reference, one_preview = pair()
+    one_context, one_profile = artist_loop._context(bpy), artist_loop._profile(boundary())
+    active_boundary = boundary()
+    generation = store.protection_generation
+    assert bpy.ops.ed.undo() == {"FINISHED"}
+    assert store.protection_generation > generation and not store.references and not store.previews
+    assert bpy.data.objects["Artist History Working"].location.x == 0.
+    undo_context_same = artist_loop._context(bpy) == zero_context
+    undo_profile_same = artist_loop._profile(boundary()) == zero_profile
+    stale(zero_reference, zero_preview)
+    try:
+        active_boundary.write(active_boundary.obj, "location", (9., 0., 0.))
+    except BridgeError as error:
+        assert error.code == "INVALID_ARGUMENT", error.to_dict()
+    else:
+        raise AssertionError("A pre-undo Boundary wrote after the policy epoch changed")
+    assert bpy.data.objects["Artist History Working"].location.x == 0.
+    redo_reference, redo_preview = pair()
+    generation = store.protection_generation
+    assert bpy.ops.ed.redo() == {"FINISHED"}
+    assert store.protection_generation > generation and not store.references and not store.previews
+    assert bpy.data.objects["Artist History Working"].location.x == 1.
+    redo_context_same = artist_loop._context(bpy) == one_context
+    redo_profile_same = artist_loop._profile(boundary()) == one_profile
+    stale(one_reference, one_preview)
+    stale(redo_reference, redo_preview)
+
+    # Trusted fixture recovery exercises the handler's recovery_in_progress path;
+    # the public whole-scene undo tool remains unreviewed/denied while armed.
+    assert manager.before_modification("artist working-only recovery fixture")
+    bpy.data.objects["Artist History Working"].location.x = 2.
+    assert manager.after_modification("artist working-only recovery fixture")
+    own_reference, own_preview = pair()
+    generation = store.protection_generation
+    assert manager.restore_operation()["snapshot_marker_verified"]
+    assert store.protection_generation > generation and not store.references and not store.previews
+    assert bpy.data.objects["Artist History Working"].location.x == 1.
+    stale(own_reference, own_preview)
+    comparison = runtime.dispatch("task.plan.compare")["evidence"]
+    assert comparison["status"] == "unchanged_within_scope" and comparison["coverage_complete"]
+    return {"manual_undo_redo_artist_handles_invalidated": True,
+            "known_bridge_recovery_artist_handles_invalidated": True,
+            "armed_plan_protection_baseline_retained": True,
+            "pre_undo_boundary_epoch_rejected": True,
+            "undo_same_native_context": undo_context_same, "undo_same_authored_profile": undo_profile_same,
+            "redo_same_native_context": redo_context_same, "redo_same_authored_profile": redo_profile_same}
 
 
 def run():
@@ -127,6 +239,7 @@ def run():
         assert bpy.data.objects["Cube"].location.x == before
         assert bpy.ops.ed.redo() == {"FINISHED"}
         assert manager.list() == []
+        artist_handles = artist_history_handles(get_runtime())
         # Re-registration must not leak duplicate native handlers.
         blender_codex_bridge.unregister()
         blender_codex_bridge.register()
@@ -142,6 +255,7 @@ def run():
             + json.dumps(
                 {
                     "blender": bpy.app.version_string,
+                    **artist_handles,
                     "native_undo_redo_invalidation": True,
                     "stale_bridge_undo_refused_without_mutation": True,
                     "handler_lifecycle_verified": True,

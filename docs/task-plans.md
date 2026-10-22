@@ -35,6 +35,18 @@ current revision, remains possible under pause/emergency stop, and records an op
 audit. Cancellation/inspection denial still prevents the control change. Reconnect preserves
 runtime protection; reset/project replacement clears it.
 
+An in-flight mutator is also counted by the surviving Blender tool registry. Replacing or
+clearing runtime plan/project state and resetting enabled toolsets cannot hide that writer
+and enable a new protected plan before its handler finishes. Both counters unwind on failure;
+they are runtime bookkeeping and are never restored from saved JSON.
+
+Every native undo and redo, including a known bridge recovery, invalidates all runtime
+references/previews and advances the protection generation even if Blender restores identical
+object identities, context and authored values. Reinspect and create new handles afterward.
+The plan, active protection, baseline and in-flight mutator counter remain intact. An already
+active preview or write boundary keeps its prior generation and cannot continue or compensate
+across that history change. This invalidation does not grant whole-scene undo while armed.
+
 Only `transform.set`, `transform.translate`, `transform.rotate`, `transform.scale` and
 `task.plan.apply_preview` currently have reviewed modifying scope. Other modifying tools,
 including context selection/mode, mesh/material/rig edits, batch execution, viewport/render

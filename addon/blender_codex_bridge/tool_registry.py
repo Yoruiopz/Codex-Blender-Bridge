@@ -104,6 +104,13 @@ class ToolRegistry:
         self._tools: dict[str, ToolSpec] = {}
         self._toolsets: set[str] = {self.CORE_TOOLSET}
         self._enabled_toolsets: set[str] = {self.CORE_TOOLSET, *enabled_toolsets}
+        # Registry lifetime spans project/state replacement. A new plan store
+        # must not hide a handler that is still unwinding on Blender's thread.
+        self._executing_mutators = 0
+
+    @property
+    def executing_mutators(self) -> int:
+        return self._executing_mutators
 
     def register(
         self,
@@ -241,12 +248,14 @@ class ToolRegistry:
         """Enter a prepared handler without arming over an in-flight writer."""
         store = get_task_plans(context.state)
         if spec.modifies:
+            self._executing_mutators += 1
             store.executing_mutators += 1
         try:
             return spec.handler(context, params)
         finally:
             if spec.modifies:
                 store.executing_mutators -= 1
+                self._executing_mutators -= 1
 
     def enable_toolset(self, name: str) -> None:
         normalized = name.strip().lower()

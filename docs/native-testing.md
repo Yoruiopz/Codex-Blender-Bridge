@@ -51,6 +51,13 @@ remain uninvoked. It neither renders nor saves and does not accept visual intent
 delivery or the full UX-01 benchmark. The two-process `task_plans` fixture separately covers
 saved schema-v1 persistence/reopen without imported operational authority.
 
+The interactive `undo_lifecycle` fixture additionally exercises real manual undo/redo and
+known bridge recovery while a protected plan remains active. It records whether native
+identities/context and authored pre-states match, requires stale artist references/previews
+to fail without applying, and checks that a pre-undo write boundary cannot cross the new
+generation. Baselines and protection remain intact. The trusted fixture recovery does not
+add an exception to the public armed whole-scene undo restriction.
+
 ## Installed add-on development probe
 
 `installed_addon_probe` installs actual pinned ZIP bytes into the runner's disposable

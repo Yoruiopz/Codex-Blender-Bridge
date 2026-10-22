@@ -443,6 +443,97 @@ def test_disable_lifetime_revoked_by_last_permission_provider_retains_protection
     assert loop.data.get_task_plans(loop.context.state).inspect()["protected_scope_enforced"]
 
 
+@pytest.mark.parametrize("recovery_in_progress", [False, True])
+def test_native_undo_callback_invalidates_same_state_handles_and_active_boundary(loop, addon_package, monkeypatch, recovery_in_progress):
+    arm(loop)
+    result = preview(loop)
+    store = loop.data.get_task_plans(loop.context.state)
+    reference_id = store.previews[result["preview_id"]]["reference_id"]
+    guard = loop.module.Boundary(loop.bpy, loop.context, "transform.set", loop.obj, transform=True)
+    measured_before = loop.loop._context(loop.bpy), loop.loop._profile(guard)
+    stamp = loop.loop.policy_stamp(loop.context)
+    store.baseline = {"snapshot_id": "protected-baseline"}
+    baseline = store.baseline
+    runtime = importlib.import_module(f"{addon_package}.runtime")
+    monkeypatch.setattr(runtime, "_RUNTIME", NS(state=loop.context.state, jobs=NS(cancel_all=lambda _reason: None),
+        checkpoints=NS(recovery_in_progress=recovery_in_progress, clear=lambda: None)))
+    monkeypatch.setattr(runtime, "clear_selection_references", lambda: None)
+    runtime._before_external_undo_redo(None)
+    new_guard = loop.module.Boundary(loop.bpy, loop.context, "transform.set", loop.obj, transform=True)
+    assert measured_before == (loop.loop._context(loop.bpy), loop.loop._profile(new_guard))
+    assert loop.loop.policy_stamp(loop.context) != stamp
+    assert store.inspect()["protected_scope_enforced"] and store.baseline is baseline
+    with pytest.raises(loop.module.BridgeError, match="missing or evicted"):
+        loop.loop._reference(loop.context, loop.bpy, reference_id)
+    with pytest.raises(loop.module.BridgeError, match="missing, consumed or evicted"):
+        loop.loop.apply_preview(loop.context, {"preview_id": result["preview_id"], "expected_revision": 1})
+    with pytest.raises(loop.module.BridgeError, match="protection changed"):
+        guard.write(loop.obj, "location", (8., 9., 10.))
+    assert loop.obj.location == loop.protected.location == (0., 0., 0.)
+    assert preview(loop)["scope_complete"]
+
+
+def test_native_history_epoch_during_active_preview_retains_partial_without_compensation(loop, addon_package, monkeypatch):
+    arm(loop)
+    result = preview(loop, scale=[2., 2., 2.])
+    store = loop.data.get_task_plans(loop.context.state)
+    epoch = store.protection_generation
+    runtime = importlib.import_module(f"{addon_package}.runtime")
+    monkeypatch.setattr(runtime, "_RUNTIME", NS(state=loop.context.state, jobs=NS(cancel_all=lambda _reason: None),
+        checkpoints=NS(recovery_in_progress=True, clear=lambda: None)))
+    fired = []
+    def callback():
+        if loop.obj.location == (1., 2., 3.) and not fired:
+            assert store.applying_preview is not None and store.executing_mutators == 1
+            fired.append(True)
+            runtime._before_external_undo_redo(None)
+    loop.provider[0] = callback
+    with pytest.raises(loop.module.BridgeError) as error:
+        loop.loop.apply_preview(loop.context, {"preview_id": result["preview_id"], "expected_revision": 1})
+    assert fired and store.protection_generation > epoch
+    assert loop.obj.location == (1., 2., 3.) and loop.obj.scale == (1., 1., 1.)
+    assert error.value.context["possible_mutation"] and not error.value.context["rollback_verified"]
+    assert store.inspect()["protected_scope_enforced"] and store.executing_mutators == 0
+    assert not store.references and not store.previews and store.applying_preview is None
+
+
+@pytest.mark.parametrize("replacement", ["state_reset", "clear_task_plans", "new_store", "runtime_file_load"])
+def test_registry_counter_survives_plan_state_and_project_replacement(loop, addon_package, monkeypatch, replacement):
+    original_store = loop.data.get_task_plans(loop.context.state)
+    registry = loop.context.registry
+    unsafe_edits = []
+    observations = []
+    def writer(context, _params):
+        assert registry.executing_mutators == original_store.executing_mutators == 1
+        if replacement == "state_reset":
+            context.state.reset()
+        elif replacement == "clear_task_plans":
+            loop.data.clear_task_plans(context.state)
+        elif replacement == "new_store":
+            context.state._artist_task_plans = loop.data.TaskPlanStore()
+        else:
+            runtime_module = importlib.import_module(f"{addon_package}.runtime")
+            monkeypatch.setattr(runtime_module, "clear_selection_references", lambda: None)
+            runtime = NS(state=context.state, registry=registry, jobs=NS(cancel_all=lambda _reason: None),
+                server=NS(stop=lambda: None), command_queue=NS(cancel_all=lambda _reason: None),
+                checkpoints=NS(clear=lambda: None), executor=NS(evidence=NS(clear=lambda: None)))
+            runtime_module.BridgeRuntime.prepare_for_file_load(runtime)
+        registry.reset_enabled_toolsets()
+        fresh = loop.data.get_task_plans(context.state)
+        observations.append((registry.executing_mutators, fresh.executing_mutators))
+        loop.plans.set_plan(context, {"goal": "Reinspect the replacement project", "protected_objects": ["Protected"],
+            "steps": [{"id": "inspect", "description": "Resolve and inspect fresh project data"}]})
+        loop.loop.enforce_plan(context, {"enabled": True, "expected_revision": 1})
+        unsafe_edits.append(True)
+    registry.register("fixture.replacement_writer", writer, modifies=True)
+    with pytest.raises(loop.module.BridgeError, match="inside another executing"):
+        registry.dispatch("fixture.replacement_writer", {}, loop.context)
+    assert observations == [(1, 0 if replacement == "new_store" else 1)]
+    assert not unsafe_edits and registry.executing_mutators == original_store.executing_mutators == 0
+    assert loop.data.get_task_plans(loop.context.state).executing_mutators == 0
+    assert arm(loop)["protected_scope_enforced"]
+
+
 @pytest.mark.parametrize("fault", ["cancel", "inspect_denied"])
 def test_cancelled_or_denied_explicit_disable_retains_constraints_and_audit(loop, fault):
     arm(loop)
