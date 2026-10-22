@@ -107,6 +107,9 @@ CASES = {
     "rigid_evaluation_dependencies": ("blender_rigid_evaluation_dependencies_smoke.py", "BLENDER_RIGID_EVALUATION_DEPENDENCIES_OK "),
     "rigid_runtime_getters": ("blender_rigid_runtime_getters_smoke.py", "BLENDER_RIGID_RUNTIME_GETTERS_OK "),
     "rigid_create_new_probe": ("blender_rigid_create_new_probe_smoke.py", "BLENDER_RIGID_CREATE_NEW_PROBE_OK "),
+    "portable_blend_writer_probe": ("blender_portable_blend_worker_probe_smoke.py", "BLENDER_PORTABLE_BLEND_WORKER_WRITER_OK "),
+    "portable_blend_worker_probe": ("blender_portable_blend_worker_probe_smoke.py", "BLENDER_PORTABLE_BLEND_WORKER_WORKER_OK "),
+    "portable_blend_reader_probe": ("blender_portable_blend_worker_probe_smoke.py", "BLENDER_PORTABLE_BLEND_WORKER_READER_OK "),
 }
 # Each phase must exit successfully before a new process can consume its artifacts.
 PHASED_CASES = {
@@ -145,6 +148,12 @@ OPT_IN_CASES.add("rigid_body_scope")
 OPT_IN_CASES.add("rigid_evaluation_dependencies")
 OPT_IN_CASES.add("rigid_runtime_getters")
 OPT_IN_CASES.add("rigid_create_new_probe")
+PORTABLE_BLEND_RESEARCH_PHASES = {
+    "portable_blend_writer_probe": "writer",
+    "portable_blend_worker_probe": "worker",
+    "portable_blend_reader_probe": "reader",
+}
+OPT_IN_CASES.update(PORTABLE_BLEND_RESEARCH_PHASES)
 INTERACTIVE_CASES = {"undo_lifecycle", "mesh_edit_recovery", "mesh_repair", "uv_authoring", "prop_workflow", "uv_analysis", "mesh_analysis", "image_assets", "shader_groups", "undo_capacity", "shader_settings", "image_revisions", "field_scanner", "texture_paint"}
 
 
@@ -165,6 +174,7 @@ INTERACTIVE_CASES.add("character_nla")
 INTERACTIVE_CASES.add("shader_interface")
 INTERACTIVE_CASES.add("image_recovery_jobs")
 INTERACTIVE_CASES.add("image_recovery_jobs_large")
+INTERACTIVE_CASES.update({"portable_blend_writer_probe", "portable_blend_reader_probe"})
 
 
 def success_payload(output: str, marker: str) -> dict | None:
@@ -218,6 +228,27 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
         directory = temporary / folder
         directory.mkdir()
         environment[key] = str(directory)
+    launch_cwd = ROOT
+    if case in PORTABLE_BLEND_RESEARCH_PHASES:
+        # Research-only operational profile. This is not an OS/network sandbox.
+        # Do not inherit credential variables or arbitrary Python/Blender paths.
+        environment = {key: os.environ[key] for key in (
+            "PATH", "LANG", "LC_ALL", "DISPLAY", "XAUTHORITY", "LD_LIBRARY_PATH",
+            "LIBGL_ALWAYS_SOFTWARE", "GALLIUM_DRIVER", "MESA_LOADER_DRIVER_OVERRIDE",
+            "LP_NUM_THREADS",
+        ) if key in os.environ}
+        for key in ("HOME", "BLENDER_USER_CONFIG", "BLENDER_USER_SCRIPTS", "BLENDER_USER_DATAFILES",
+                    "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_RUNTIME_DIR"):
+            directory = temporary / ("worker-profile-" + key.lower())
+            directory.mkdir(mode=0o700)
+            environment[key] = str(directory)
+        environment.update(TEMP=str(temporary), TMP=str(temporary), TMPDIR=str(temporary),
+                           BRIDGE_TEST_PROCESS_TOKEN=process_instance,
+                           BRIDGE_TEST_PORTABLE_BLEND_PHASE=PORTABLE_BLEND_RESEARCH_PHASES[case],
+                           GSETTINGS_BACKEND="memory", NO_AT_BRIDGE="1")
+        launch_cwd = temporary / "working"
+        launch_cwd.mkdir(mode=0o700)
+        command.insert(1, "--disable-autoexec")
     log = output / f"{label}.log"
     start = time.monotonic()
     result = {
@@ -241,11 +272,11 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
             if interactive and sys.platform == "win32":
                 from scripts.windows_test_process import run_isolated
 
-                process = run_isolated(command, cwd=ROOT, stdout=stream,
+                process = run_isolated(command, cwd=launch_cwd, stdout=stream,
                                        timeout=timeout, env=environment)
             else:
                 process = subprocess.run(
-                    command, cwd=ROOT, stdout=stream, stderr=subprocess.STDOUT,
+                    command, cwd=launch_cwd, stdout=stream, stderr=subprocess.STDOUT,
                     timeout=timeout, check=False, env=environment,
                     creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
                 )
