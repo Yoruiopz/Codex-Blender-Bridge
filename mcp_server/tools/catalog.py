@@ -86,6 +86,8 @@ from .rig_ik import TOOL_DATA as RIG_IK_TOOL_DATA
 from .rig_ik import load_definitions as _load_rig_ik_definitions
 from .rigging import RIGGING_TOOL_DATA
 from .rigging import load_rigging_definitions as _load_base_rigging_definitions
+from .rigid_body import TOOL_DATA as RIGID_BODY_TOOL_DATA
+from .rigid_body import load_definitions as _load_rigid_body_definitions
 from .scene_edit import SCENE_EDIT_TOOL_DATA as BASE_SCENE_EDIT_TOOL_DATA
 from .scene_edit import load_definitions as _load_base_scene_edit_definitions
 from .scene_variants import TOOL_DATA as SCENE_VARIANT_TOOL_DATA
@@ -105,11 +107,13 @@ from .weight_brushes import load_definitions as _load_weight_brush_definitions
 ARTIST_TOOL_DATA = (*_BASE_ARTIST_TOOL_DATA, *((name, "weights", True, ("EDIT_MESH",), description)
                                        for name, description in WEIGHT_BRUSH_TOOL_DATA),
                     *((name, "animation_layers", modifies, permissions, description)
-                      for name, description, modifies, permissions in NLA_TOOL_DATA))
+                      for name, description, modifies, permissions in NLA_TOOL_DATA),
+                    *((name, "simulation", modifies, permissions, description)
+                      for name, description, modifies, permissions in RIGID_BODY_TOOL_DATA))
 
 
 def load_artist_definitions() -> tuple[ToolDefinition, ...]:
-    return (*_load_base_artist_definitions(), *_load_weight_brush_definitions(), *_load_nla_definitions())
+    return (*_load_base_artist_definitions(), *_load_weight_brush_definitions(), *_load_nla_definitions(), *_load_rigid_body_definitions())
 
 ASSET_DELIVERY_TOOL_DATA = (*BASE_ASSET_DELIVERY_TOOL_DATA, *ASSET_IMPORT_TOOL_DATA)
 ASSET_DELIVERY_TOOL_NAMES = tuple(item[0] for item in ASSET_DELIVERY_TOOL_DATA)

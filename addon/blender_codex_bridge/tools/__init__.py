@@ -51,6 +51,7 @@ def register_all(registry: ToolRegistry) -> None:
         rig_drivers,
         rig_ik,
         rigging,
+        rigid_body,
         scene_edit,
         scene_variants,
         shader_groups,
@@ -78,6 +79,7 @@ def register_all(registry: ToolRegistry) -> None:
     asset_import.register_tools(registry)
     for module in (animation_layers, compositor, simulation, weights):
         module.register_tools(registry)
+    rigid_body.register(registry)
     nla_lifecycle.register_tools(registry)
     weight_brushes.register_tools(registry)
     batch.register_tools(registry)

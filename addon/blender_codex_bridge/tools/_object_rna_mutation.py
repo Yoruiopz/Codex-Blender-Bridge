@@ -163,8 +163,9 @@ def _data_state(obj: Any) -> Any:
     return base
 
 
-def _object_state(obj: Any, *, transform: bool = False, omit: str | None = None, artist_profile: bool = False) -> Any:
-    exclude = DERIVED | (TRANSFORMS if transform else frozenset())
+def _object_state(obj: Any, *, transform: bool = False, omit: str | None = None, artist_profile: bool = False,
+                  exclude_object_rna: frozenset[str] = frozenset()) -> Any:
+    exclude = DERIVED | (TRANSFORMS if transform else frozenset()) | exclude_object_rna
     if artist_profile:
         from ._artist_scope_profile import IGNORED_OBJECT_RUNTIME
         exclude |= IGNORED_OBJECT_RUNTIME
@@ -179,18 +180,20 @@ def _object_state(obj: Any, *, transform: bool = False, omit: str | None = None,
             tuple((slot.link, scope.action_token(slot.material)) for slot in _items(getattr(obj, "material_slots", ()), 128, "material slots")))
 
 
-def object_state(obj: Any, *, omit: frozenset[str] = frozenset()) -> tuple[Any, ...]:
+def object_state(obj: Any, *, omit: frozenset[str] = frozenset(), exclude_object_rna: frozenset[str] = frozenset()) -> tuple[Any, ...]:
     """Named immutable projections for other domains' separate mutation proofs.
 
     Omissions are internal literal field names, never caller-supplied scope.
     A caller must independently measure every omitted field it modifies.
+    Object RNA exclusions are also internal; the calling domain must validate
+    their descriptors and prove they are irrelevant before suppressing reads.
     """
     names = ("identity", "name", "data_identity", "rna", "channels", "custom", "modifiers", "constraints", "collections",
              "animation", "pose", "data", "vertex_groups", "material_slots")
     unknown = omit-set(names)
     if unknown:
         raise ValueError("Unknown internal object snapshot projection")
-    return tuple((name, state) for name, state in zip(names, _object_state(obj), strict=True) if name not in omit)
+    return tuple((name, state) for name, state in zip(names, _object_state(obj, exclude_object_rna=exclude_object_rna), strict=True) if name not in omit)
 
 
 def _native_mesh_metadata(base: Any, mesh: Any) -> Any:

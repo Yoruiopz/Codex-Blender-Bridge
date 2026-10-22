@@ -39,6 +39,7 @@ from .render import RenderTools
 from .rig_drivers import RigDriverTools
 from .rig_ik import RigIKTools
 from .rigging import RiggingTools
+from .rigid_body import RigidBodyTools
 from .scene import SceneTools
 from .scene_edit import SceneEditTools
 from .scene_variants import SceneVariantTools
@@ -57,6 +58,7 @@ def iter_bindings(registry: ToolRegistry) -> Iterable[MCPToolBinding]:
 
     bundles = (
         ArtistTools(registry),
+        RigidBodyTools(registry),
         WeightBrushTools(registry),
         AssetDeliveryTools(registry),
         AssetImportTools(registry),

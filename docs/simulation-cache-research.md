@@ -1,9 +1,15 @@
 # Native simulation-cache research
 
-Status: **private fixture research, no new public cache API**. The cloth follow-up below
+Status: **historical fixture research, retained separately from newer typed tools**.
+The research fixture itself adds no public cache API. The cloth follow-up below
 strengthens existing cache guards; its tool surface and permissions remain compatible.
 The shared image-job scheduler is unchanged by this research. This work does
 not complete SIM-01, JOB-01 or the 1.0 acceptance gates.
+
+A separate [bounded rigid-body lifecycle increment](rigid-body-lifecycle.md)
+adds stronger same-value reset, ownership, complete sampled playback, conservative
+static Main dependency admission and recovery proof. Three typed methods are registered in the development checkout. The
+historical results and negative evidence below remain independently identified.
 
 The isolated interactive `simulation_cache_probe` case runs
 `scripts/blender_simulation_cache_probe_smoke.py`. Its success marker is

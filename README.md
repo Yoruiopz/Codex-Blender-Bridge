@@ -123,7 +123,7 @@ It is checked against the registry in CI. It does not describe the 108-tool 0.3.
 The local recovery UI also has an add-on-only action, not an extra MCP tool.
 
 <!-- BEGIN GENERATED MCP TOOLS -->
-Current registry: **255 MCP tools**.
+Current registry: **258 MCP tools**.
 
 <details>
 <summary>core — 33 tools</summary>
@@ -504,10 +504,13 @@ Current registry: **255 MCP tools**.
 </details>
 
 <details>
-<summary>simulation — 4 tools</summary>
+<summary>simulation — 7 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
+| `rigid_body.cache` | Execute an exact whole-world memory cache proposal; BAKE verifies every matrix/frame and all operations measure context recovery. |
+| `rigid_body.cache_preview` | Preview a bounded memory-only world operation and session/context fingerprint; requires static reviewed Main dependencies including unused IDs. |
+| `rigid_body.inspect` | Inspect the exact current Scene's bounded whole-world rigid bodies, constraints and cache ownership. |
 | `simulation.cache` | Bake/free one in-memory cloth cache, at most 32 frames and 2000 vertices; excluded from batches. |
 | `simulation.cloth_add` | Add cloth to a local single-user mesh with a bounded empty modifier stack. |
 | `simulation.configure` | Configure reviewed cloth and pin-group settings before baking. |
