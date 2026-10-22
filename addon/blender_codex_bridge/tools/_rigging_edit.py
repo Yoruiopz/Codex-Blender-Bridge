@@ -13,6 +13,7 @@ from typing import Any
 
 from ..errors import BridgeError, ErrorCode, invalid_argument
 from ..permissions import Permission
+from ..tool_registry import check_final_mutation
 from . import _animation_scope as scope
 from . import _object_rna_mutation as measured
 from ._object_safety import require_local_object, require_single_user_object_data
@@ -211,12 +212,13 @@ class Boundary:
             raise self.failed(error) from error
         if not stable:
             raise self.failed(invalid_argument("Rig identity, exact consumer closure, content or context changed; further writes and compensation refused.", completed_writes=self.steps, scope_complete=False))
-        final_job = getattr(self.context, "check_final_job", None)
-        if final_job is not None:
-            try:
-                final_job()
-            except Exception as error:
-                raise self.failed(error) from error
+        self.final()
+
+    def final(self) -> None:
+        try:
+            check_final_mutation(self.context, self.method)
+        except Exception as error:
+            raise self.failed(error) from error
 
     def failed(self, error: Exception) -> BridgeError:
         details = dict(error.context) if isinstance(error, BridgeError) else {}
@@ -236,6 +238,7 @@ class Boundary:
         old = self._owned()
         owner_name = getattr(owner, "name", None)
         before_protected = self._protected()
+        self.final()
         self.attempted = True
         try:
             setattr(owner, field, value)
@@ -305,6 +308,7 @@ class Boundary:
     def allocate_constraint(self, bone: Any, kind: str) -> Any:
         self.check()
         before = self.expected
+        self.final()
         self.attempted = True
         try:
             constraint = bone.constraints.new(type=kind)
@@ -320,6 +324,7 @@ class Boundary:
     def remove_constraint(self, bone: Any, constraint: Any) -> None:
         self.check()
         predicted = tuple(item for item in self.expected if item[0] != scope.key(constraint))
+        self.final()
         self.attempted = True
         try:
             bone.constraints.remove(constraint)
@@ -333,6 +338,7 @@ class Boundary:
     def allocate_bone(self, bones: Any, name: str) -> Any:
         self.check()
         before = self.expected
+        self.final()
         self.attempted = True
         result = bones.new(name)
         self.steps += 1
@@ -346,6 +352,7 @@ class Boundary:
     def remove_bone(self, bones: Any, bone: Any) -> None:
         self.check()
         before, name = self.expected, bone.name
+        self.final()
         self.attempted = True
         bones.remove(bone)
         self.steps += 1
@@ -362,6 +369,7 @@ class Boundary:
         pose = _pose(self.rig)
         expected_session = list(self.session)
         expected_session[change[0]] = change[1]
+        self.final()
         self.attempted = True
         callback()
         self.steps += 1
@@ -490,9 +498,7 @@ class Creation:
         require_collection_scope(self.bpy, self.collection, operation="Rig creation")
         if _session(self.bpy) != self.session or self._ids() != self.ids or self._content() != self.content:
             raise invalid_argument("Rig creation session or ID inventory changed; further writes refused.")
-        final_job = getattr(self.context, "check_final_job", None)
-        if final_job is not None:
-            final_job()
+        check_final_mutation(self.context, "rig.create")
 
     def _content(self) -> Any:
         records = {}
@@ -513,6 +519,7 @@ class Creation:
 
     def allocate(self, callback: Any) -> Any:
         self.check()
+        check_final_mutation(self.context, "rig.create")
         self.allocation_attempted = True
         item = callback()
         before = self._content()
@@ -538,6 +545,7 @@ class Creation:
         if field not in dict(record[category]):
             raise invalid_argument("New rig property lacks a complete writable receipt.", property=field)
         record[category] = tuple((name, scope.value(value) if name == field else old) for name, old in record[category])
+        check_final_mutation(self.context, "rig.create")
         setattr(owner, field, value)
         current = self._content()
         if not _close(current, predicted):
@@ -548,6 +556,7 @@ class Creation:
         self.check()
         predicted = deepcopy(self.content)
         predicted[scope.action_token(owner)]["collections"] = (scope.action_token(self.collection),)
+        check_final_mutation(self.context, "rig.create")
         self.collection.objects.link(owner)
         current = self._content()
         if current != predicted:

@@ -14,10 +14,109 @@ import bpy
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "addon"))
 import blender_codex_bridge  # noqa: E402
+from blender_codex_bridge.command_queue import QueuedRequest  # noqa: E402
 from blender_codex_bridge.errors import BridgeError  # noqa: E402
 from blender_codex_bridge.permissions import Permission, PermissionManager  # noqa: E402
+from blender_codex_bridge.protocol import Request  # noqa: E402
+from blender_codex_bridge.request_lifecycle import ConnectionLifetime, RequestLifetime  # noqa: E402
 from blender_codex_bridge.runtime import get_runtime  # noqa: E402
 from blender_codex_bridge.tools import _rigging_edit as proof  # noqa: E402
+
+
+def final_authority_cases(runtime, grants, rig, skin, target):
+    """Real queued/request owners expire in final providers and content reads."""
+    evidence = []
+    for domain in ("rig", "object"):
+        boundary_type = proof.Boundary if domain == "rig" else proof.measured.Boundary
+        method = "rig.pose_transform" if domain == "rig" else "transform.set"
+        params = {"object_name": rig.name, "bone_name": "Child", "location": [.91, 0, 0], "affected_objects": [skin.name]} if domain == "rig" else {
+            "object_name": target.name, "location": [3, 4, 5]}
+        for phase in ("last_provider", "content", "last_read"):
+            for stopped_by in ("queued", "disconnect", "deadline", "rejected", "job", "toolset", "pause", "emergency"):
+                lifetime = RequestLifetime(ConnectionLifetime())
+                request = Request(id=f"final-{domain}-{phase}-{stopped_by}", method=method, params=params, _lifecycle=lifetime)
+                queued = QueuedRequest(request, deadline=float("inf"))
+                assert queued.try_start()
+                state = {"inside": False, "providers": 0, "fired": False, "job_stopped": False}
+                original_check, original_capture = boundary_type.check, boundary_type._protected
+                original_predict = getattr(boundary_type, "_predict", None)
+                before = (proof._pose(rig), proof.measured._object_state(skin), proof.measured._object_state(target), proof._session(bpy))
+
+                def stop(*, state=state, stopped_by=stopped_by, queued=queued, lifetime=lifetime, method=method):
+                    if state["fired"]:
+                        return
+                    state["fired"] = True
+                    if stopped_by == "queued":
+                        queued.cancel_pending(BridgeError("TIMEOUT", "Native fixture caller cancellation"))
+                    elif stopped_by == "disconnect":
+                        lifetime.connection.disconnected.set()
+                    elif stopped_by == "deadline":
+                        lifetime.deadline = 0.
+                    elif stopped_by == "rejected":
+                        lifetime.rejected.set()
+                    elif stopped_by == "job":
+                        state["job_stopped"] = True
+                    elif stopped_by == "toolset":
+                        runtime.registry.disable_toolset(runtime.registry.get(method).toolset)
+                    elif stopped_by == "pause":
+                        runtime.state.set_paused(True)
+                    else:
+                        runtime.state.set_emergency_stopped(True)
+
+                def job_check(*, state=state):
+                    if state["job_stopped"]:
+                        raise BridgeError("TIMEOUT", "Native fixture scheduler deadline")
+
+                def provider(*, state=state, phase=phase, stop=stop):
+                    if state["inside"]:
+                        state["providers"] += 1
+                        if phase == "last_provider" and state["providers"] == 2:
+                            stop()
+                    return grants
+
+                def check(self, *, lifetime=lifetime, job_check=job_check, state=state, original_check=original_check):
+                    assert self.context.request_lifecycle is lifetime
+                    assert self.context.check_final_request is not None
+                    self.context.check_final_job = job_check
+                    state["inside"], state["providers"] = True, 0
+                    try:
+                        return original_check(self)
+                    finally:
+                        state["inside"] = False
+
+                def capture(self, *, original_capture=original_capture, phase=phase, domain=domain, state=state, stop=stop):
+                    value = original_capture(self)
+                    if (phase == "content" and state["inside"]) or (phase == "last_read" and domain == "rig" and not state["inside"] and hasattr(self, "expected")):
+                        stop()
+                    return value
+
+                def predict(self, *args, original_predict=original_predict, phase=phase, stop=stop):
+                    value = original_predict(self, *args)
+                    if phase == "last_read":
+                        stop()
+                    return value
+
+                boundary_type.check, boundary_type._protected = check, capture
+                if domain == "object":
+                    boundary_type._predict = predict
+                runtime.permissions = runtime.executor.permissions = PermissionManager(provider)
+                try:
+                    response = runtime.executor.execute_request(request, check_cancelled=queued.check_active)
+                    assert not response.ok and response.error["code"] in {"TIMEOUT", "TOOLSET_DISABLED", "AGENT_PAUSED", "EMERGENCY_STOPPED"}, response
+                    assert state["fired"]
+                finally:
+                    boundary_type.check, boundary_type._protected = original_check, original_capture
+                    if domain == "object":
+                        boundary_type._predict = original_predict
+                    runtime.state.set_paused(False)
+                    runtime.state.set_emergency_stopped(False)
+                    runtime.registry.enable_toolset("rigging" if domain == "rig" else "objects")
+                    runtime.permissions = runtime.executor.permissions = PermissionManager(lambda: grants)
+                after = (proof._pose(rig), proof.measured._object_state(skin), proof.measured._object_state(target), proof._session(bpy))
+                assert after == before, (domain, phase, stopped_by)
+                evidence.append({"domain": domain, "phase": phase, "stopped_by": stopped_by,
+                                 "error_code": response.error["code"], "authored_and_context_state_unchanged": True})
+    return evidence
 
 
 def persistent(rig, skin):
@@ -36,7 +135,7 @@ def writer(bundle=None):
     runtime = get_runtime()
     grants = {permission.value: permission != Permission.EXECUTE_PYTHON for permission in Permission}
     runtime.permissions = runtime.executor.permissions = PermissionManager(lambda: grants)
-    for name in ("rigging", "animation"):
+    for name in ("rigging", "animation", "objects"):
         runtime.registry.enable_toolset(name)
     selected, active = list(bpy.context.selected_objects), bpy.context.view_layer.objects.active
     created = runtime.dispatch("rig.create", {"name": "Boundary Rig", "root_bone_name": "Root"})
@@ -91,6 +190,8 @@ def writer(bundle=None):
     call("rig.pose_transform", bone_name="Child", location=[.75, 0, 0], affected_objects=[skin.name])
     assert proof.scope.action_content(rig.animation_data.action) == action_before
     assert proof.measured._object_state(skin) == skin_before
+
+    final_authority = final_authority_cases(runtime, grants, rig, skin, target)
     for method, params in (("rig.bone_update", {"bone_name": "Child", "new_name": "Unsafe"}), ("rig.bone_remove", {"bone_name": "Child"})):
         try:
             call(method, affected_objects=[skin.name], **params)
@@ -198,6 +299,7 @@ def writer(bundle=None):
           "explicit_skin_closure": True, "existing_action_preserved": True,
           "rename_removal_propagation_refused": True, "live_stops": stops,
           "creation_retains_exact_ids": True, "revocation_retains_edit_context": True,
+          "final_canonical_authority_cases": final_authority,
           "visual_reviewed": False, "durable_recovery_verified": False}
     if bundle is not None:
         # The pose Action is intentionally evaluated before saving and after

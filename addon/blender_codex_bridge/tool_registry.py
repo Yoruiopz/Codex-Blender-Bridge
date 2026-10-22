@@ -55,9 +55,39 @@ class ToolContext:
     # Set only by the scheduler: Events/deadline/toolset checks without calling
     # permission providers or Blender. Domains invoke this after live providers.
     check_final_job: Callable[[], None] | None = None
+    # Set only for the canonical queued-request safe point by the executor.
+    # Arbitrary check_cancelled callbacks may call providers and are not pure.
+    check_final_request: Callable[[], None] | None = None
 
     def require(self, *permissions: Permission) -> None:
         self.permissions.require(permissions)
+
+
+def check_final_mutation(context: ToolContext, method: str) -> None:
+    """Pure final safe point after all providers and Blender content reads.
+
+    The hooks are internal executor/scheduler services, never wire parameters.
+    This function must not run permission providers, Blender APIs or arbitrary
+    cancellation callbacks after a domain's compare-and-swap proof.
+    """
+    lifetime = getattr(context, "request_lifecycle", None)
+    if lifetime is not None:
+        lifetime.check()
+    for name in ("check_final_request", "check_final_job"):
+        hook = getattr(context, name, None)
+        if hook is not None:
+            hook()
+    registry = getattr(context, "registry", None)
+    if registry is not None:
+        spec = registry.get(method)
+        if spec.toolset not in registry.enabled_toolsets:
+            raise BridgeError(ErrorCode.TOOLSET_DISABLED, "Mutation toolset was disabled before its next write.",
+                              {"tool": method, "toolset": spec.toolset})
+    flags = context.state.snapshot()
+    if flags.get("emergency_stopped"):
+        raise BridgeError(ErrorCode.EMERGENCY_STOPPED, "Mutation emergency-stopped before its next write.")
+    if flags.get("paused"):
+        raise BridgeError(ErrorCode.AGENT_PAUSED, "Mutation paused before its next write.")
 
 
 class ToolRegistry:

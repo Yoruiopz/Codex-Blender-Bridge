@@ -13,6 +13,7 @@ from typing import Any
 
 from ..errors import BridgeError, ErrorCode, invalid_argument
 from ..permissions import Permission
+from ..tool_registry import check_final_mutation
 from . import _animation_scope as scope
 from ._object_safety import require_local_object
 from ._object_scope import _ordinary_scene_membership, require_object_scope
@@ -364,6 +365,19 @@ class Boundary:
             stable = False
         if not stable:
             raise invalid_argument("Object identity, content, context or consumers changed; further writes and compensation are refused.", scope_complete=False)
+        self.final()
+
+    def final(self) -> None:
+        """Latch canonical lifetime loss without rerunning live providers."""
+        if self.stopped is not None:
+            raise self.stopped
+        try:
+            check_final_mutation(self.context, self.method)
+        except BridgeError as error:
+            if error.code in {ErrorCode.PERMISSION_DENIED.value, ErrorCode.TOOLSET_DISABLED.value, ErrorCode.TIMEOUT.value,
+                              ErrorCode.EMERGENCY_STOPPED.value, ErrorCode.AGENT_PAUSED.value}:
+                self.stopped = error
+            raise
 
     def sources(self, assignments: Sequence[Any]) -> None:
         for assignment in assignments:
@@ -424,6 +438,7 @@ class Boundary:
         self.check()
         predicted = self._predict(owner, name, requested)
         before = self.expected
+        self.final()
         self.started = True
         try:
             setattr(owner, name, requested)
@@ -479,6 +494,7 @@ class Boundary:
     def allocate(self, operation: Any, kind: str) -> Any:
         self.check()
         before = self.expected
+        self.final()
         self.started = True
         created = operation()
         receipt = self._owned()
@@ -507,6 +523,7 @@ class Boundary:
     def remove(self, owner: Any) -> None:
         self.check()
         expected = self.removed_state(owner)
+        self.final()
         self.started = True
         getattr(self.obj, self.kind).remove(owner)
         if self._owned() != expected:
@@ -533,6 +550,7 @@ class Boundary:
         self.check()
         protected_before, owned_before = self.protected, self.expected
         expected = self.removed_state(removed) if removed is not None else None
+        self.final()
         self.started = True
         try:
             result = operation()

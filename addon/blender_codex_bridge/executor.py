@@ -179,6 +179,11 @@ class MainThreadExecutor:
         context.check_cancelled = check_cancelled
         context.request_lifecycle = request._lifecycle
         context.request_id = request.id
+        queued_owner = getattr(check_cancelled, "__self__", None)
+        if isinstance(queued_owner, QueuedRequest) and getattr(check_cancelled, "__func__", None) is QueuedRequest.check_active:
+            # Bind the known class implementation, not an arbitrary callback or
+            # an overridden method that could invoke permission providers.
+            context.check_final_request = lambda: QueuedRequest.check_active(queued_owner)
         try:
             if check_cancelled is not None:
                 check_cancelled()
