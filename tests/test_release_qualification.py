@@ -175,6 +175,11 @@ def test_missing_or_stale_coverage_blocks(evidence, mutation, expected) -> None:
     assert any(expected in blocker for blocker in run(evidence)["blockers"])
 
 
+def first_native_process(result):
+    """Phased aggregate rows carry success only through their real processes."""
+    return result["phases"][0] if result.get("phases") else result
+
+
 @pytest.mark.parametrize("change,expected", [
     (lambda data: data.update(commit="a" * 40), "commit mismatch"),
     (lambda data: data.update(package_sha256={}), "package hashes mismatch"),
@@ -204,7 +209,7 @@ def test_hash_mismatch_and_dirty_checkout_block(evidence) -> None:
     (lambda report: report.update(all_cases_selected=False), "incomplete/failing native"),
     (lambda report: report["results"].pop(), "missing/duplicate cases"),
     (lambda report: report["results"][0].update(status="timeout"), "native success evidence"),
-    (lambda report: report["results"][0].update(exit_code=False), "native success evidence"),
+    (lambda report: first_native_process(report["results"][0]).update(exit_code=False), "native success evidence"),
     (lambda report: report["results"][0].update(script_sha256="a" * 64), "fixture source mismatch"),
     (lambda report: report["results"][0].update(execution_mode="interactive_display"), "execution isolation"),
     (lambda report: report.update(release_readiness="READY"), "must remain NOT_ASSESSED"),
@@ -215,6 +220,21 @@ def test_native_requires_complete_clean_current_source_matrix(evidence, change, 
         rewrite_receipt(receipt["report"], change)
     rewrite_receipt(receipt_ref, modify)
     assert any(expected in blocker for blocker in run(evidence)["blockers"])
+
+
+@pytest.mark.parametrize("phase", ["single", "writer", "reader"])
+def test_native_boolean_exit_code_is_rejected_for_each_process_kind(evidence, phase) -> None:
+    receipt_ref = evidence[2]["native_matrices"][0]
+
+    def modify(receipt):
+        def change(report):
+            row = next(item for item in report["results"] if bool(item.get("phases")) == (phase != "single"))
+            process = row if phase == "single" else row["phases"][0 if phase == "writer" else 1]
+            process["exit_code"] = False
+        rewrite_receipt(receipt["report"], change)
+
+    rewrite_receipt(receipt_ref, modify)
+    assert any("native success evidence" in blocker for blocker in run(evidence)["blockers"])
 
 
 def test_native_success_flags_cannot_replace_retained_log(evidence) -> None:
