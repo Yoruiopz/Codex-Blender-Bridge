@@ -17,6 +17,14 @@ with at most 31 dependent objects. Objects must be local and editable in the
 current view layer and one current scene, with reviewed collection ownership.
 Linked, override, cross-scene and unexplained non-Object consumers fail closed.
 
+Same-object driver references are also outside this generic rig-edit boundary,
+including a supported numeric property driving a bone on its own rig. Listing
+every skin does not make that self-reference reviewed. Use the separate typed
+control/driver tools for their documented operations; combined pose/rest editing
+with those self-drivers remains an open character-workflow requirement. Removing
+a driver retains its last evaluated channel value. A separately authorized pose
+reset is accepted after those self-references are removed, with all skins listed.
+
 For example, a pose revision can preserve an existing Action while changing its
 current stored pose channel:
 
