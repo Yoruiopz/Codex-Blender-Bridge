@@ -116,6 +116,11 @@ CASES = {
     "scene_collection_scope": ("blender_scene_collection_scope_smoke.py", "BLENDER_SCENE_COLLECTION_SCOPE_OK "),
     "scene_edit_boundaries": ("blender_scene_edit_boundaries_smoke.py", "BLENDER_SCENE_EDIT_BOUNDARIES_OK "),
     "scene_checkpoint_admission": ("blender_scene_checkpoint_admission_smoke.py", "BLENDER_SCENE_CHECKPOINT_ADMISSION_OK "),
+    "render_scope_probe": ("blender_render_scope_probe_smoke.py", "BLENDER_RENDER_SCOPE_PROBE_OK "),
+    "render_boundaries": ("blender_render_boundaries_smoke.py", "BLENDER_RENDER_BOUNDARIES_OK "),
+    "render_adversarial": ("blender_render_adversarial_smoke.py", "BLENDER_RENDER_ADVERSARIAL_OK "),
+    "render_boundaries_interactive": ("blender_render_boundaries_smoke.py", "BLENDER_RENDER_BOUNDARIES_OK "),
+    "render_checkpoint_probe": ("blender_render_checkpoint_probe_smoke.py", "BLENDER_RENDER_CHECKPOINT_PROBE_OK "),
 }
 # Each phase must exit successfully before a new process can consume its artifacts.
 PHASED_CASES = {
@@ -166,6 +171,11 @@ OPT_IN_CASES.add("scene_edit_probe")
 OPT_IN_CASES.add("scene_collection_scope")
 OPT_IN_CASES.add("scene_edit_boundaries")
 OPT_IN_CASES.add("scene_checkpoint_admission")
+OPT_IN_CASES.add("render_scope_probe")
+OPT_IN_CASES.add("render_boundaries")
+OPT_IN_CASES.add("render_adversarial")
+OPT_IN_CASES.add("render_boundaries_interactive")
+OPT_IN_CASES.add("render_checkpoint_probe")
 INTERACTIVE_CASES = {"undo_lifecycle", "mesh_edit_recovery", "mesh_repair", "uv_authoring", "prop_workflow", "uv_analysis", "mesh_analysis", "image_assets", "shader_groups", "undo_capacity", "shader_settings", "image_revisions", "field_scanner", "texture_paint"}
 
 
@@ -189,6 +199,7 @@ INTERACTIVE_CASES.add("image_recovery_jobs_large")
 INTERACTIVE_CASES.update({"portable_blend_writer_probe", "portable_blend_reader_probe"})
 INTERACTIVE_CASES.add("rigid_startup_defaults_probe")
 INTERACTIVE_CASES.add("rigid_scope_profile_probe")
+INTERACTIVE_CASES.add("render_boundaries_interactive")
 
 
 def success_payload(output: str, marker: str) -> dict | None:
