@@ -153,6 +153,9 @@ def _checkpoint_internal_case(route, where, kind):
         def __getattr__(self, name):
             return getattr(self.native, name)
 
+        def __contains__(self, key):
+            return key in self.native
+
         def get(self, key, default=None):
             value = self.native.get(key, default)
             if enabled and where == "marker_read" and key == MARKER_KEY:
