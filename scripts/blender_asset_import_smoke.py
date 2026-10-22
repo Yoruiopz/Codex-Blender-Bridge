@@ -13,8 +13,10 @@ from pathlib import Path
 import bpy
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
 sys.path[:0] = [str(ROOT / "addon"), str(ROOT / "scripts")]
 from blender_asset_import_probe_smoke import writer as create_sources  # noqa: E402
+from native_fixture_save import serialize_owned_fixture  # noqa: E402
 
 
 def setup(bundle):
@@ -233,7 +235,7 @@ def writer(bundle):
     denied(runtime, "PERMISSION_DENIED", "project.save", {"filepath": str(project)})
     assert not project.exists()
     prefs.allow_save_project = True
-    assert runtime.dispatch("project.save", {"filepath": str(project)})["saved"]
+    fixture_save = serialize_owned_fixture(runtime, project)
     manifest = {
         "state": state,
         "project": project.name,
@@ -241,13 +243,13 @@ def writer(bundle):
         "imports": results,
     }
     (bundle / "import-typed.json").write_text(json.dumps(manifest), encoding="utf8")
-    # Only owned fixture sources are relocated, after import and the approved save.
+    # Only owned fixture sources are relocated after fixture-only serialization.
     unavailable = bundle / "unavailable"
     unavailable.mkdir()
     for filename in ("embedded.glb", "untextured.fbx"):
         (bundle / filename).rename(unavailable / filename)
     return {
-        "imports": results,
+        **fixture_save, "imports": results,
         "project_sha256": manifest["project_sha256"],
         "protected_same_name_path_image_material_action_and_context_verified": True,
         "source_files_unavailable_for_reader": True,

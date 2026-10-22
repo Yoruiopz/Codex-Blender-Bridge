@@ -1,5 +1,10 @@
 # Stored rig editing and live write boundaries
 
+**Save availability:** `project.save` currently refuses Save and Save As before
+native/path access; see [the safety change](project-save-safety.md). Fresh-process
+results below establish feature serialization through owned fixture setup, not a
+safe bridge project-save capability. Earlier typed-save reports are historical.
+
 The existing `rig.create`, `rig.bone_add`, `rig.bone_update`, `rig.bone_remove`,
 `rig.pose_transform`, `rig.constraint_add` and `rig.constraint_remove` now use
 Blender-side live boundaries throughout their multi-write operations. These are
@@ -49,8 +54,8 @@ key revision; changing frame can reevaluate the existing Action.
 | `rig.constraint_add`, `rig.constraint_remove` | `EDIT_ANIMATION` |
 
 The `rigging` toolset must remain enabled. No method saves a project. Internal
-RNA changes do not require `SAVE_PROJECT`; an authorized `project.save` is a
-separate operation. Removing a scoped pose constraint removes that RNA component,
+RNA changes do not require `SAVE_PROJECT`; safe authorized project saving remains a
+separate blocked requirement. Removing a scoped pose constraint removes that RNA component,
 and does not delete an Object or Armature ID.
 
 ## Context and preservation receipts
@@ -126,7 +131,7 @@ buffers, orphan IDs and undo history are not durable backups.
 
 The official runner cases are `rig_edit_probe` (native behavior research),
 `rig_edit_boundaries` (typed success/refusal/interruption receipts), and opt-in
-`rig_edit_reopen` (separate writer/reader processes with authorized save and file
+`rig_edit_reopen` (separate writer/reader processes with owned fixture serialization and file
 hash verification). The latter checks stored rig, raw skin and Action content
 after reopening; it does not claim durable identity-preserving rollback,
 interactive undo, constrained-memory qualification or human visual approval.

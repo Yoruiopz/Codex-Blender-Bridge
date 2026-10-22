@@ -12,6 +12,7 @@ from pathlib import Path
 import bpy
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT/"addon"))
 sys.path.insert(0, str(ROOT/"scripts"))
 import blender_codex_bridge  # noqa: E402
@@ -23,6 +24,7 @@ from blender_codex_bridge.protocol import Request  # noqa: E402
 from blender_codex_bridge.request_lifecycle import ConnectionLifetime, RequestLifetime  # noqa: E402
 from blender_codex_bridge.runtime import get_runtime  # noqa: E402
 from blender_codex_bridge.tools import shader_interface as domain  # noqa: E402
+from native_fixture_save import serialize_owned_fixture  # noqa: E402
 
 
 def resolve(refs):
@@ -326,13 +328,13 @@ def writer(runtime, grants, bundle):
     leaf = bpy.data.node_groups["Probe Shared Leaf"]
     expected = {"graphs": probe.snapshot(trees), "references": refs, "identifiers": initial_ids,
         "roughness_identifier": identifier, "leaf": leaf.name}
-    runtime.dispatch("project.save", {"filepath": str(bundle/"shader-interface.blend")})
+    fixture_save = serialize_owned_fixture(runtime, bundle/"shader-interface.blend")
     (bundle/"expected.json").write_text(json.dumps(expected), encoding="utf-8")
     return {"phase": "writer", "blender_version": bpy.app.version_string,
         "typed_operations": results, "socket_families": socket_families, "native_provider_faults": faults,
         "native_scope_recovery_faults": scope_faults, "native_undo_verified": True,
         "new_instance_default_verified": True, "shared_material_world_light_scope_verified": True,
-        "permission_mode_stale_preview_and_animation_denials": True, "explicit_separate_project_save": True,
+        **fixture_save, "permission_mode_stale_preview_and_animation_denials": True, "fixture_project_serialized": True,
         "visual_review": "No rendered appearance claim; exact interface/link/default comparisons only."}
 
 

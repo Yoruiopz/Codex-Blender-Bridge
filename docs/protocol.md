@@ -157,6 +157,12 @@ after preflight callbacks. Its diagnostic entry counter is runtime-only. The
 existing explicit local recovery override permits pause/stop recovery only for
 the two canonical recovery methods; it never bypasses caller lifetime/toolsets.
 
+Unreleased `project.save` retains its optional `filepath`, permissions and V1
+registration but returns `NOT_IMPLEMENTED` for Save and Save As after live grants
+and the canonical final stop check, before any Blender/path/save access. Expected
+errors report measured no-write facts and do not finalize an older editor session.
+Prior alpha saving is unavailable until [native side effects are bounded](project-save-safety.md).
+
 ## Events
 
 Events reserve a V1-compatible path for progress and lifecycle information. They are non-terminal and correlated where applicable.

@@ -11,6 +11,7 @@ from pathlib import Path
 import bpy
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "addon"))
 sys.path.insert(0, str(ROOT / "scripts"))
 import blender_codex_bridge  # noqa: E402
@@ -19,6 +20,7 @@ from blender_codex_bridge.errors import BridgeError  # noqa: E402
 from blender_codex_bridge.permissions import Permission, PermissionManager  # noqa: E402
 from blender_codex_bridge.runtime import get_runtime  # noqa: E402
 from blender_rig_binding_probe_smoke import fixture  # noqa: E402
+from native_fixture_save import serialize_owned_fixture  # noqa: E402
 
 
 def setup():
@@ -101,14 +103,13 @@ def writer(bundle):
     else:
         raise AssertionError("save permission bypassed")
     grants[Permission.SAVE_PROJECT.value] = True
-    saved = runtime.dispatch("project.save", {"filepath": str(path)})
-    assert saved["saved"]
+    fixture_save = serialize_owned_fixture(runtime, path)
     manifest = {"writer_process": os.environ["BRIDGE_TEST_PROCESS_TOKEN"], "file_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
                 "content": frozen, "motion": motion, "rig": rig.name, "mesh": mesh.name,
                 "native_blocking_seconds": bound["native_blocking_seconds"]}
     (bundle / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     blender_codex_bridge.unregister()
-    return {"project_saved": True, "file_sha256": manifest["file_sha256"], "typed_auto_binding": True,
+    return {**fixture_save, "project_saved": True, "file_sha256": manifest["file_sha256"], "typed_auto_binding": True,
             "complete_base_attributes_uv_material_bindings_and_protected_weights": True,
             "sampled_vertices": len(mesh.data.vertices)*len(motion), "native_blocking_seconds": bound["native_blocking_seconds"],
             "visual_reviewed": False, "full_character_acceptance_verified": False}

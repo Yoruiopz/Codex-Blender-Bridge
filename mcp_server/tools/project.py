@@ -18,7 +18,7 @@ class ProjectTools:
         return await self.registry.call("project.info")
 
     async def project_save(self, filepath: str | None = None) -> Any:
-        """Save the project when allowed; filepath performs an explicit Save As."""
+        """Unavailable pending bounded native save side effects. Requires existing save/path grants; returns NOT_IMPLEMENTED without saving."""
 
         return await self.registry.call("project.save", params(filepath=filepath))
 

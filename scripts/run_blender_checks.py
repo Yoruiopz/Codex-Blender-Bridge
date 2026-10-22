@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 CASES = {
+    "project_save_denial": ("blender_project_save_denial_smoke.py", "BLENDER_PROJECT_SAVE_DENIAL_OK "),
     "core": ("blender_smoke.py", "BLENDER_CODEX_SMOKE_OK "),
     "extended": ("blender_extended_smoke.py", "BRIDGE_EXTENDED_SMOKE "),
     "rig": ("blender_rig_animation_smoke.py", "BLENDER_CODEX_RIG_ANIMATION_SMOKE_OK "),

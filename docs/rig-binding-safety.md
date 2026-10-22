@@ -1,5 +1,10 @@
 # Armature binding safety increment
 
+**Save availability:** `project.save` currently refuses Save and Save As before
+native/path access; see [the safety change](project-save-safety.md). Fresh-process
+results below establish feature serialization through owned fixture setup, not a
+safe bridge project-save capability. Earlier typed-save reports are historical.
+
 `rig.bind_mesh` retains its existing `EMPTY_GROUPS` / `AUTOMATIC` arguments and
 adds optional `affected_objects`. The named mesh and rig are the two explicit
 roots; list every additional direct or transitive Object consumer, up to 30.
@@ -12,8 +17,7 @@ Binding now requires `EDIT_MESH` as well as `EDIT_ANIMATION` and
 `TRANSFORM_OBJECTS`, in both Blender and MCP metadata. This is a stricter safety
 requirement for the unreleased implementation: existing clients must enable the
 mesh-edit grant before binding because the tool writes vertex groups and weights.
-The protocol envelope and existing argument meanings are unchanged. Saving is a
-separate explicit `project.save` operation with its own grants.
+The protocol envelope and existing argument meanings are unchanged. Safe authorized project saving is a separate blocked requirement; the native backend is unavailable.
 
 ## Bounded supported inputs
 

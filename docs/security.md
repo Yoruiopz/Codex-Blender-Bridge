@@ -132,7 +132,7 @@ The project exposes no shell or network tool. Adding a generic shell tool would 
 
 ## Filesystem and saving
 
-Reading or writing a user-chosen external path through a structured tool requires `ACCESS_EXTERNAL_FILES` in addition to the domain permission. Saving through `project.save` requires `SAVE_PROJECT`; saving to a new/external path requires both. Render settings require `EDIT_RENDER`; a managed temporary still requires `EDIT_RENDER` and `CAPTURE_VIEWPORT`, while an explicit render path additionally checks `ACCESS_EXTERNAL_FILES`. An armed Python script does not re-enter these per-handler checks, which is why `python.execute` requires both `ACCESS_EXTERNAL_FILES` and `SAVE_PROJECT` even when its declared expected effect does not mention files.
+Reading or writing a user-chosen external path through a structured tool requires `ACCESS_EXTERNAL_FILES` in addition to the domain permission. `project.save` retains `SAVE_PROJECT` and the additional path grant, but now refuses both Save and Save As before native/path access: [native save side effects remain unbounded](project-save-safety.md). Those grants do not make the unavailable backend safe. Render settings require `EDIT_RENDER`; a managed temporary still requires `EDIT_RENDER` and `CAPTURE_VIEWPORT`, while an explicit render path additionally checks `ACCESS_EXTERNAL_FILES`. An armed Python script does not re-enter these per-handler checks, which is why `python.execute` requires both `ACCESS_EXTERNAL_FILES` and `SAVE_PROJECT` even when its declared expected effect does not mention files.
 
 Path-handling requirements:
 

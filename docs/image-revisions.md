@@ -1,5 +1,10 @@
 # Versioned texture refresh and relocation
 
+**Save availability:** `project.save` currently refuses Save and Save As before
+native/path access; see [the safety change](project-save-safety.md). Fresh-process
+results below establish feature serialization through owned fixture setup, not a
+safe bridge project-save capability. Earlier typed-save reports are historical.
+
 Unreleased on `main`; not part of the published 0.3.0 packages. `nodes.refresh_image` refreshes
 an Image Texture node from disk, or repairs its source path, by loading a **new image version**
 and rebinding that node in one logical operation. It does not reload or modify the old image.
@@ -118,7 +123,7 @@ Default refresh also accepts the existing image's stored `//` dependency after a
 Save As. Resolution uses the saved local project and preserves canonical alias semantics;
 the original filepath, project anchor and approved root are revalidated during access.
 Caller-supplied relocation remains strictly absolute and can repair a missing old source.
-The separate-process `image_reopen` fixture exercises approved Save As, fresh-profile consent,
+The separate-process `image_reopen` fixture uses owned fixture-only serialization, fresh-profile consent,
 typed refresh, complete pixel digests and matched camera evidence. It does not certify edited
 generated inputs, crash durability or whole-project production delivery.
 

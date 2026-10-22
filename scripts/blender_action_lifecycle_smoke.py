@@ -12,14 +12,15 @@ from pathlib import Path
 import bpy
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "addon"))
-
 import blender_codex_bridge  # noqa: E402
 from blender_codex_bridge.errors import BridgeError  # noqa: E402
 from blender_codex_bridge.permissions import Permission, PermissionManager  # noqa: E402
 from blender_codex_bridge.runtime import get_runtime  # noqa: E402
 from blender_codex_bridge.tools import _animation_scope as scope  # noqa: E402
 from blender_codex_bridge.tools import animation_lifecycle as lifecycle  # noqa: E402
+from native_fixture_save import serialize_owned_fixture  # noqa: E402
 
 
 def setup():
@@ -158,18 +159,17 @@ def writer(bundle):
     assert bpy.data.actions.get("Lifecycle Removed") is None
     assert list(bpy.context.selected_objects) == selected and bpy.context.view_layer.objects.active == active
 
-    # Saving is its own explicit authorized tool, not implied by fake retention.
+    # Public saving is refused; fixture-only serialization tests native retention.
     path = bundle / "action-lifecycle.blend"
     grants[Permission.SAVE_PROJECT.value] = False
     deny(runtime, "PERMISSION_DENIED", "project.save", {"filepath": str(path)})
     assert not path.exists()
     grants[Permission.SAVE_PROJECT.value] = True
-    saved = call("project.save", {"filepath": str(path)})
-    assert saved["saved"]
+    fixture_save = serialize_owned_fixture(runtime, path)
     manifest = {"sampled_motion": revised, "source_content_sha256": scope.digest(scope.action_content(source)),
                 "file_sha256": hashlib.sha256(path.read_bytes()).hexdigest(), "writer_process": os.environ["BRIDGE_TEST_PROCESS_TOKEN"]}
     (bundle / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-    return {**manifest, "permission_denials_verified": True, "invalid_slot_rejected": True,
+    return {**manifest, **fixture_save, "permission_denials_verified": True, "invalid_slot_rejected": True,
             "identity_preserving_compensation_verified": True, "late_revocation_retains_partial_result": True,
             "protected_action_preserved": True, "project_saved": True, "full_character_acceptance_verified": False}
 
