@@ -54,6 +54,31 @@ class MeshEditSession:
     attempts: int = 1
 
 
+@dataclass(slots=True)
+class _CheckpointGuard:
+    """Trusted pure safe point for new bookkeeping, never failed-writer cleanup."""
+
+    before_write: Callable[[], None]
+    marker_writes: int = 0
+    native_snapshots: int = 0
+
+    def check(self, next_write: str) -> None:
+        try:
+            self.before_write()
+        except BridgeError as error:
+            # Preserve the exact primary denial and measured partial state.
+            # Owner loss never authorizes compensating marker writes.
+            error.context.update(checkpoint_authority_rejected=True, checkpoint_bookkeeping={
+                "marker_writes_completed": self.marker_writes,
+                "native_snapshots_completed": self.native_snapshots,
+                "next_write_rejected": next_write,
+                "compensation_performed": False,
+            })
+            if self.marker_writes or self.native_snapshots:
+                error.context.update(execution_started=True, possible_mutation=True, verification_required=True)
+            raise
+
+
 class CheckpointManager:
     """Navigate to measured native markers, never infer position from a label count."""
 
@@ -90,7 +115,7 @@ class CheckpointManager:
             raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Recovery supports at most 200 scenes.")
         return blender
 
-    def _stamp(self, blender: Any) -> str:
+    def _stamp(self, blender: Any, *, guard: _CheckpointGuard | None = None) -> str:
         scene = blender.context.scene
         if scene.library is not None or scene.override_library is not None or not scene.is_editable:
             raise BridgeError(
@@ -118,9 +143,17 @@ class CheckpointManager:
                     )
                 owned.append(item)
         for item in owned:
+            if guard is not None:
+                guard.check("delete_marker")
             del item[MARKER_KEY]
+            if guard is not None:
+                guard.marker_writes += 1
         token = self._prefix + uuid.uuid4().hex
+        if guard is not None:
+            guard.check("set_marker")
         scene[MARKER_KEY] = token
+        if guard is not None:
+            guard.marker_writes += 1
         return token
 
     def _marker(self, blender: Any) -> str | None:
@@ -136,13 +169,20 @@ class CheckpointManager:
             )
         return next(iter(values), None)
 
-    def _snapshot(self, blender: Any, label: str) -> str:
-        token = self._stamp(blender)
-        if "FINISHED" not in blender.ops.ed.undo_push(message=label[:120]):
+    def _snapshot(self, blender: Any, label: str, *, guard: _CheckpointGuard | None = None) -> str:
+        token = self._stamp(blender, guard=guard) if guard is not None else self._stamp(blender)
+        # Resolve readers/operator wrappers before the final trusted safe point.
+        undo_push, message = blender.ops.ed.undo_push, label[:120]
+        step_limit = self._step_limit(blender)
+        if guard is not None:
+            guard.check("native_undo_push")
+        if "FINISHED" not in undo_push(message=message):
             raise BridgeError(
                 ErrorCode.OPERATION_FAILED, "Blender did not create the native snapshot."
             )
-        self._window.pushed(self._step_limit(blender))
+        self._window.pushed(step_limit)
+        if guard is not None:
+            guard.native_snapshots += 1
         self._prune_expired_operations()
         return token
 
@@ -207,13 +247,14 @@ class CheckpointManager:
             "warning": "Only bridge pushes are counted. Manual/operator snapshots, memory limits, preference changes and editor stacks can expire other targets. Global recovery can undo interleaved work; labels are not durable backups.",
         }
 
-    def create(self, description: str = "Agent checkpoint") -> dict[str, Any]:
+    def create(self, description: str = "Agent checkpoint", *, before_write: Callable[[], None] | None = None) -> dict[str, Any]:
+        guard = _CheckpointGuard(before_write) if before_write is not None else None
         blender = self._ensure_undo_enabled()
         description = (description or "Agent checkpoint").strip()[:120]
-        token = self._snapshot(blender, f"Codex Checkpoint: {description}")
+        token = self._snapshot(blender, f"Codex Checkpoint: {description}", guard=guard) if guard is not None else self._snapshot(blender, f"Codex Checkpoint: {description}")
         self._window.track(token)
         # A later native/manual snapshot must not masquerade as this named checkpoint.
-        self._stamp(blender)
+        self._stamp(blender, guard=guard) if guard is not None else self._stamp(blender)
         self._sequence += 1
         checkpoint = Checkpoint(
             f"cp_{uuid.uuid4().hex[:10]}",
@@ -226,34 +267,43 @@ class CheckpointManager:
         self._retain_targets()
         return checkpoint.to_dict()
 
-    def before_modification(self, tool_name: str) -> bool:
-        self._pending = None
+    def before_modification(self, tool_name: str, *, before_write: Callable[[], None] | None = None) -> bool:
+        guard = _CheckpointGuard(before_write) if before_write is not None else None
         try:
             blender = self._ensure_undo_enabled(require_object_mode=False)
+            invalid_editor = False
             if self._editor_session is not None:
                 if blender.context.mode == "OBJECT":
-                    self.finish_editor_session()
+                    self._finish_editor_session(guard)
                 elif not self._editor_matches(blender):
-                    self._editor_session = None
-                    self._undo_steps.clear()
+                    invalid_editor = True
             if blender.context.mode != "OBJECT":
                 # Keep earlier global checkpoints identifiable, but do not promise a
                 # per-operation boundary on an editor-specific undo stack.
-                self._stamp(blender)
+                self._stamp(blender, guard=guard) if guard is not None else self._stamp(blender)
+                self._pending = None
+                if invalid_editor:
+                    self._editor_session = None
+                    self._undo_steps.clear()
                 if self._editor_session is not None:
                     self._editor_session.attempts += 1
                 else:
                     self._undo_steps.clear()
                 return False
-            token = self._snapshot(blender, f"Codex Before: {tool_name}")
+            token = self._snapshot(blender, f"Codex Before: {tool_name}", guard=guard) if guard is not None else self._snapshot(blender, f"Codex Before: {tool_name}")
             self._sequence += 1
             self._pending = UndoStep(tool_name, token, self._sequence)
             self._window.track(token)
             self._retain_targets()
             # Child operators must not carry BEFORE into intermediate snapshots.
-            self._stamp(blender)
+            self._stamp(blender, guard=guard) if guard is not None else self._stamp(blender)
             return True
-        except (BridgeError, RuntimeError):
+        except BridgeError as error:
+            if error.context.get("checkpoint_authority_rejected"):
+                raise
+            self.clear()
+            return False
+        except RuntimeError:
             self.clear()
             return False
 
@@ -323,7 +373,11 @@ class CheckpointManager:
             "state": "deferred",
         }
 
-    def finish_editor_session(self) -> dict[str, Any] | None:
+    def finish_editor_session(self, *, before_write: Callable[[], None] | None = None) -> dict[str, Any] | None:
+        guard = _CheckpointGuard(before_write) if before_write is not None else None
+        return self._finish_editor_session(guard)
+
+    def _finish_editor_session(self, guard: _CheckpointGuard | None) -> dict[str, Any] | None:
         if self._editor_session is None:
             return None
         status = self.editor_session_status()
@@ -336,16 +390,26 @@ class CheckpointManager:
         if blender.context.mode != "OBJECT":
             return None
         session = self._editor_session
-        self._editor_session = None
         if not self._editor_matches_session(blender, session):
+            self._editor_session = None
             self._undo_steps.clear()
             return {**status, "state": "invalidated"}
         try:
-            self._snapshot(blender, f"Codex After Mesh Edit: {session.object_name}")
-        except (BridgeError, RuntimeError):
+            if guard is not None:
+                self._snapshot(blender, f"Codex After Mesh Edit: {session.object_name}", guard=guard)
+            else:
+                self._snapshot(blender, f"Codex After Mesh Edit: {session.object_name}")
+        except BridgeError as error:
+            if error.context.get("checkpoint_authority_rejected"):
+                raise
             LOGGER.exception("Could not finalize the mesh edit session")
             self.clear()
             return {**status, "state": "unavailable"}
+        except RuntimeError:
+            LOGGER.exception("Could not finalize the mesh edit session")
+            self.clear()
+            return {**status, "state": "unavailable"}
+        self._editor_session = None
         self._undo_steps.appendleft(
             UndoStep(
                 f"Mesh edit session: {session.object_name}",

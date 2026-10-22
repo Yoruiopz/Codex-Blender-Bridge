@@ -62,12 +62,15 @@ class ToolContext:
     # Set only for the canonical queued-request safe point by the executor.
     # Arbitrary check_cancelled callbacks may call providers and are not pure.
     check_final_request: Callable[[], None] | None = None
+    # Per-context diagnostic receipt. Only actual handler entry increments it;
+    # it is never a wire parameter or an authorization grant.
+    handler_entries: int = 0
 
     def require(self, *permissions: Permission) -> None:
         self.permissions.require(permissions)
 
 
-def check_final_mutation(context: ToolContext, method: str) -> None:
+def check_final_mutation(context: ToolContext, method: str, *, allow_recovery: bool = False) -> None:
     """Pure final safe point after all providers and Blender content reads.
 
     The hooks are internal executor/scheduler services, never wire parameters.
@@ -88,9 +91,10 @@ def check_final_mutation(context: ToolContext, method: str) -> None:
             raise BridgeError(ErrorCode.TOOLSET_DISABLED, "Mutation toolset was disabled before its next write.",
                               {"tool": method, "toolset": spec.toolset})
     flags = context.state.snapshot()
-    if flags.get("emergency_stopped"):
+    recovery_override = allow_recovery and method in ToolRegistry.RECOVERY_TOOLS
+    if flags.get("emergency_stopped") and not recovery_override:
         raise BridgeError(ErrorCode.EMERGENCY_STOPPED, "Mutation emergency-stopped before its next write.")
-    if flags.get("paused"):
+    if flags.get("paused") and not recovery_override:
         raise BridgeError(ErrorCode.AGENT_PAUSED, "Mutation paused before its next write.")
 
 
@@ -244,13 +248,18 @@ class ToolRegistry:
         spec = self.prepare_call(name, params, context)
         return self.invoke(spec, params, context)
 
-    def invoke(self, spec: ToolSpec, params: Mapping[str, Any], context: ToolContext) -> Any:
+    def invoke(self, spec: ToolSpec, params: Mapping[str, Any], context: ToolContext, *, allow_recovery: bool = False) -> Any:
         """Enter a prepared handler without arming over an in-flight writer."""
         store = get_task_plans(context.state)
         if spec.modifies:
             self._executing_mutators += 1
             store.executing_mutators += 1
         try:
+            if spec.modifies:
+                # All remote/direct/batch handler entries share this final pure
+                # gate, after callbacks in their params-aware preflight.
+                check_final_mutation(context, spec.name, allow_recovery=allow_recovery)
+            context.handler_entries += 1
             return spec.handler(context, params)
         finally:
             if spec.modifies:

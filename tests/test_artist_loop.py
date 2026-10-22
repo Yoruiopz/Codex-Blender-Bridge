@@ -247,7 +247,7 @@ def test_dispatch_and_executor_refuse_unknown_mutator_before_checkpoint_or_handl
     protocol = importlib.import_module(f"{addon_package}.protocol")
     executor = executor_module.MainThreadExecutor(command_queue=queue.CommandQueue(), registry=loop.context.registry,
         state=loop.context.state, permissions=loop.context.permissions,
-        checkpoints=NS(before_modification=lambda _: calls.append("checkpoint"), after_modification=lambda _: True))
+        checkpoints=NS(before_modification=lambda _, **_kwargs: calls.append("checkpoint"), after_modification=lambda _: True))
     response = executor.execute_request(protocol.Request(id="protected", method="fixture.unknown"))
     assert not response.ok and response.error["code"] == "NOT_IMPLEMENTED" and not calls
 
@@ -260,7 +260,7 @@ def test_protected_transform_is_denied_before_executor_checkpoint(loop, addon_pa
     protocol = importlib.import_module(f"{addon_package}.protocol")
     executor = executor_module.MainThreadExecutor(command_queue=queue.CommandQueue(), registry=loop.context.registry,
         state=loop.context.state, permissions=loop.context.permissions,
-        checkpoints=NS(before_modification=lambda _: calls.append("checkpoint"), after_modification=lambda _: True))
+        checkpoints=NS(before_modification=lambda _, **_kwargs: calls.append("checkpoint"), after_modification=lambda _: True))
     response = executor.execute_request(protocol.Request(id="protected", method="transform.set", params={"object_name": "Protected", "location": [2., 3., 4.]}))
     assert not response.ok and response.error["context"]["affected_protected_objects"] == ["Protected"]
     assert not calls and loop.protected.location == (0., 0., 0.)
@@ -375,7 +375,7 @@ def test_direct_batch_cannot_arm_during_unreviewed_child_and_counter_unwinds(loo
         loop.loop.enforce_plan(context, {"enabled": True, "expected_revision": 1})
         calls.append("unsafe edit")
     loop.context.registry.register("fixture.writer", handler, toolset="objects", modifies=True)
-    loop.context.checkpoints = NS(before_modification=lambda _: False, after_modification=lambda _: False)
+    loop.context.checkpoints = NS(before_modification=lambda _, **_kwargs: False, after_modification=lambda _: False)
     with pytest.raises(loop.module.BridgeError, match="inside another executing"):
         batch.batch_execute(loop.context, {"steps": [{"method": "fixture.writer"}]})
     assert not calls and loop.data.get_task_plans(loop.context.state).executing_mutators == 0

@@ -17,7 +17,8 @@
     },
     "SAFE-01": {
       "status": "open",
-      "evidence": []
+      "evidence": [],
+      "progress": "New checkpoint marker/native-push writes and every modifying handler entry have canonical final lifetime/toolset/stop checks after preflight. Complete per-tool dependency/ownership/permission/recovery audit remains open, including scene, render and legacy project-save findings."
     },
     "SAFE-02": {
       "status": "open",
@@ -67,7 +68,7 @@
     "UX-01": {
       "status": "open",
       "evidence": [],
-      "progress": "Revisioned plans and explicit persistence, advisory protected comparisons, and bounded persistent static-scene camera/light variants with matched previews implemented; reference management, enforced persistent constraints and full artist interaction remain."
+      "progress": "Revisioned saved plans, exact references, reviewed transform previews/corrections and opt-in runtime protected static-prop transforms implemented. Undo/redo invalidates handles while preserving policy. Visual references, wider protected authoring, protected save/delivery and full artist acceptance remain."
     },
     "DELIVER-01": {
       "status": "open",

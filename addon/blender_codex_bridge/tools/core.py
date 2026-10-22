@@ -12,7 +12,7 @@ from ..errors import BridgeError, ErrorCode, invalid_argument
 from ..permissions import Permission
 from ..scene_inspector import inspect_object, inspect_scene, project_info, scene_summary
 from ..selection import inspect_selection
-from ..tool_registry import ToolContext, ToolRegistry
+from ..tool_registry import ToolContext, ToolRegistry, check_final_mutation
 from ..utils import bool_param, int_param, require_blender
 from ..viewport import capture_viewport
 
@@ -149,7 +149,7 @@ def checkpoint_create(context: ToolContext, params: Mapping[str, Any]) -> dict[s
     description = params.get("description", "Agent checkpoint")
     if not isinstance(description, str):
         raise invalid_argument("'description' must be a string.")
-    return context.checkpoints.create(description)
+    return context.checkpoints.create(description, before_write=lambda: check_final_mutation(context, "checkpoint.create"))
 
 
 def scene_snapshot(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:

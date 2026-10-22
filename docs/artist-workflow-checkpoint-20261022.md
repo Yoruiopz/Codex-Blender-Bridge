@@ -266,6 +266,36 @@ records exact signed HDR/negative-zero channels, roughly 93–98-second snapshot
 the public deadline and memory preflight were preserved. Native publication can block
 for several seconds. See the domain contract for measured limits and exact source drift.
 
+## Protected transforms and checkpoint authority
+
+The subsequent development source adds four typed interaction tools, reaching 255:
+runtime protected-scope enforcement, exact references, transform previews and single-use
+preview application. [The contract](task-plans.md) limits enforcement to reviewed static
+Object transforms; wider authoring, visual references and protected saving remain open.
+Undo and redo invalidate handles without dropping the active plan or protected policy.
+
+New checkpoint work checks canonical caller lifetime, toolsets and pause/stop after
+readers and before every marker write or native undo push. All modifying handler entries
+share a final pure check. Batch budgets are checked again after preflight and before
+child entry. Rejected handlers do not finalize unrelated deferred editor work; an entered
+writer can still retain measured failure-recovery bookkeeping. These are cooperative
+boundaries, not preemption of a running Blender call.
+
+The isolated checkpoint increment `f544094238404926b244d072c03160891d3f479d`
+passed 3,977 tests and three Windows-only skips on each SDK, plus the selected interactive
+undo and artist-loop cases on both Linux Blender versions. Its 267-file source SHA-256 is
+`c2b3c66f5c3503954f0d9addee8b68c36a5f34641ebfebbe777ca9ce2a00c9d1`;
+the receipt remains in the isolated checkpoint worktree under
+`build/checkpoint-authority-validation/source-receipt.json`. Combined-source packages,
+complete native validation and installation require their own frozen receipts.
+
+Applying modifiers and transforms now requires both `EDIT_MESH` and
+`TRANSFORM_OBJECTS`. A post-poll authority/content check runs outside the temporary
+selection override before the native call. The isolated permission correction retains
+both-version denial, successful application and recovery evidence; it does not establish
+that all modifying domains are safe. The wider audit still has open scene, render and
+project-save findings.
+
 ## Remaining gates
 
 Use the [execution plan](plan-1.0.md), [readiness gates](release-1.0-readiness.md)

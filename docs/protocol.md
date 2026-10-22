@@ -152,6 +152,10 @@ Prepared internal handler invocation tracks in-flight mutators on Blender's main
 thread; protection cannot be enabled over one. Executor, direct registry dispatch
 and batch steps use that wrapper. Calling a trusted handler directly is not a
 remote protocol entry point and does not replace registered preflight.
+Each modifying handler entry has a final internal lifetime/toolset/stop check
+after preflight callbacks. Its diagnostic entry counter is runtime-only. The
+existing explicit local recovery override permits pause/stop recovery only for
+the two canonical recovery methods; it never bypasses caller lifetime/toolsets.
 
 ## Events
 
@@ -217,6 +221,10 @@ The 0.3.0 implementation adds cooperative safe points for `batch.execute`.
 Disconnect/timeout signals a running request without attempting to interrupt its current
 Blender call. Before each subsequent child step, the batch checks that signal, the queue
 deadline, its own bounded budget, and live toolset/permission/pause/emergency gates.
+The local batch budget is rechecked after live step preflight, at each initial
+checkpoint write, and immediately before child handler entry. A slow provider
+cannot consume that budget and still start the next child. The budget is
+cooperative: a native call already running remains non-preemptible.
 Failure returns bounded completed-step evidence with `rollback_performed: false` and
 retains the logical recovery marker. No subsequent child is started after a stop is
 observed. A C operation already started may still finish after caller timeout. Batch

@@ -57,6 +57,18 @@ identities/context and authored pre-states match, requires stale artist referenc
 to fail without applying, and checks that a pre-undo write boundary cannot cross the new
 generation. Baselines and protection remain intact. The trusted fixture recovery does not
 add an exception to the public armed whole-scene undo restriction.
+It also stops queued/lifetime cancellation, expiry, disconnect, disabled toolsets,
+pause and emergency stop during new-request preflight, before automatic checkpoint
+entry. Executor and batch probes require unchanged native Scene markers and no
+checkpoint snapshot/undo push or requested edit. These checks do not establish
+interruptibility during an already running native undo push.
+Fault-injected native marker and preference readers exercise cancellation and
+expiry inside initial automatic/explicit checkpoint work. Each following marker
+write and undo push must stop; rejection after one marker deletion reports that
+partial bookkeeping without compensation. Existing checkpoints remain listed.
+Direct dispatch, protected re-preflight after checkpoint creation, and a later
+batch child also exercise the shared final handler-entry gate; the earlier batch
+writer retains measured native recovery while rejected handlers never run.
 
 ## Installed add-on development probe
 

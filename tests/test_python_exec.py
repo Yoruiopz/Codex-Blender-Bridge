@@ -256,7 +256,7 @@ def test_executor_tracks_failed_python_as_a_possible_mutation(
         def __init__(self) -> None:
             self.labels: list[str] = []
 
-        def before_modification(self, tool_name: str) -> bool:
+        def before_modification(self, tool_name: str, **_kwargs) -> bool:
             assert tool_name == "python.execute"
             return True
 
@@ -279,21 +279,17 @@ def test_executor_tracks_failed_python_as_a_possible_mutation(
             },
         )
 
-    registry = SimpleNamespace(
-        invoke=lambda spec, params, context: spec.handler(context, params),
-        prepare_call=lambda *args, **kwargs: SimpleNamespace(
-            modifies=True,
-            automatic_checkpoint=True,
-            handler=fail_handler,
-        )
-    )
+    registry_module = importlib.import_module(f"{addon_package}.tool_registry")
+    permissions_module = importlib.import_module(f"{addon_package}.permissions")
+    registry = registry_module.ToolRegistry()
+    registry.register("python.execute", fail_handler, modifies=True)
     checkpoints = Checkpoints()
     state = state_module.BridgeState()
     executor = executor_module.MainThreadExecutor(
         command_queue=SimpleNamespace(),
         registry=registry,
         state=state,
-        permissions=SimpleNamespace(),
+        permissions=permissions_module.PermissionManager(lambda: {}),
         checkpoints=checkpoints,
     )
 
