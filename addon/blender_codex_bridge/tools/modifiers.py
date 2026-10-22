@@ -80,7 +80,7 @@ _PROPERTIES: dict[str, frozenset[str]] = {
             "material",
         }
     ),
-    "BOOLEAN": frozenset({"operation", "solver", "operand_type", "object"}),
+    "BOOLEAN": frozenset({"operation", "solver", "operand_type", "object", "material_mode"}),
     "BUILD": frozenset({"frame_start", "frame_duration", "use_reverse", "use_random_order", "seed"}),
     "CAST": frozenset(
         {

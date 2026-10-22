@@ -361,6 +361,7 @@ def boolean_apply(env, addon_package, monkeypatch):
     modifier.bl_rna.properties["operand_type"] = prop("operand_type", "ENUM")
     modifier.bl_rna.properties["object"] = prop("object", "POINTER")
     modifier.bl_rna.properties["material_mode"] = prop("material_mode", "ENUM")
+    modifier.bl_rna.properties["material_mode"].enum_items = [NS(identifier=value) for value in ("INDEX", "TRANSFER")]
     modifier.bl_rna.properties["solver"] = prop("solver", "ENUM")
     env.context.registry.register("modifier.apply", lambda *_: None, permissions=("TRANSFORM_OBJECTS",), toolset="objects", modifies=True)
     calls = []
@@ -440,6 +441,34 @@ def test_boolean_exact_shared_material_id_static_operand_can_apply(boolean_apply
     result = case.modifiers_module.apply_modifier(case.context, {"object_name": case.obj.name, "modifier_name": case.modifier.name})
     assert result["verified"] and len(case.native_calls) == 1
     assert not case.obj.modifiers and case.cutter.data.materials == case.obj.data.materials
+
+
+def test_boolean_material_mode_can_be_inspected_and_corrected_through_typed_tools(boolean_apply):
+    case = boolean_apply
+    params = {"object_name": case.obj.name, "modifier_name": case.modifier.name}
+    inspected = case.modifiers_module.inspect_modifiers(case.context, params)
+    assert inspected["modifier"]["settings"]["material_mode"] == "INDEX"
+    before_bindings = tuple(case.obj.data.materials), tuple(case.cutter.data.materials)
+    result = case.modifiers_module.set_modifier(case.context, {**params, "settings": {"material_mode": "TRANSFER"}})
+    assert result["updated_properties"] == ["material_mode"]
+    assert case.modifiers_module.inspect_modifiers(case.context, params)["modifier"]["settings"]["material_mode"] == "TRANSFER"
+    with pytest.raises(case.module.BridgeError) as error:
+        case.modifiers_module.apply_modifier(case.context, params)
+    assert error.value.code == "NOT_IMPLEMENTED" and not case.native_calls
+    case.modifiers_module.set_modifier(case.context, {**params, "settings": {"material_mode": "INDEX"}})
+    assert (tuple(case.obj.data.materials), tuple(case.cutter.data.materials)) == before_bindings
+    assert case.modifiers_module.apply_modifier(case.context, params)["verified"]
+
+
+@pytest.mark.parametrize("mode", ["BY_NAME", "index", True, 0, None])
+def test_boolean_material_mode_invalid_enum_is_refused_without_changing_modifier(boolean_apply, mode):
+    case = boolean_apply
+    before = case.module.component_state(case.modifier)
+    with pytest.raises(case.module.BridgeError) as error:
+        case.modifiers_module.set_modifier(case.context, {"object_name": case.obj.name, "modifier_name": case.modifier.name,
+                                                        "settings": {"material_mode": mode}})
+    assert error.value.code == "INVALID_ARGUMENT"
+    assert case.module.component_state(case.modifier) == before and not case.native_calls
 
 
 @pytest.mark.parametrize("change", ["target_object_link", "source_object_link", "source_index", "target_index", "material_mode", "solver", "target_zero", "target_multiple", "target_null"])

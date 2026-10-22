@@ -142,6 +142,22 @@ def boolean_material_boundaries(runtime, scene, grants):
         target, cutter = fixture("Shared Slot Success")
         target_before, cutter_before = proof._object_state(target), proof._object_state(cutter)
         modifier_identity = target.modifiers["Owned Cut"].as_pointer()
+        params = {"object_name": target.name, "modifier_name": "Owned Cut"}
+        assert runtime.dispatch("modifier.inspect", params)["modifier"]["settings"]["material_mode"] == "INDEX"
+        runtime.dispatch("modifier.set", {**params, "settings": {"material_mode": "TRANSFER"}})
+        transfer_state = proof._object_state(target)
+        assert runtime.dispatch("modifier.inspect", params)["modifier"]["settings"]["material_mode"] == "TRANSFER"
+        try:
+            runtime.dispatch("modifier.apply", params)
+        except BridgeError as error:
+            assert error.code == "NOT_IMPLEMENTED" and "EXACT/INDEX" in error.message
+        else:
+            raise AssertionError("TRANSFER conversion reached native apply")
+        assert not operator_entries and proof._object_state(target) == transfer_state and proof._object_state(cutter) == cutter_before
+        runtime.dispatch("modifier.set", {**params, "settings": {"material_mode": "INDEX"}})
+        assert proof._object_state(target) == target_before
+        assert target.modifiers["Owned Cut"].as_pointer() == modifier_identity
+        cases.append("typed_transfer_denial_and_exact_index_correction")
         result = runtime.dispatch("modifier.apply", {"object_name": target.name, "modifier_name": "Owned Cut"})
         assert result["verified"] and operator_entries == [target.name]
         assert not target.modifiers and proof._object_state(cutter) == cutter_before
@@ -150,7 +166,8 @@ def boolean_material_boundaries(runtime, scene, grants):
         assert len(target.data.vertices) != 0 and proof._object_state(target)[11][1] != target_before[11][1]
         return {"cases": cases, "shared_slot_same_material_id_success": True, "native_operation_entries": len(operator_entries),
                 "removed_modifier_identity": modifier_identity, "target_bindings_unchanged": True,
-                "cutter_full_stored_state_preserved": True, "native_material_research_profiles": native_profiles}
+                "cutter_full_stored_state_preserved": True, "native_material_research_profiles": native_profiles,
+                "material_mode_inspected_and_corrected_through_typed_tools": True}
     finally:
         proof.Boundary.sources, proof.Boundary.native_apply = original_sources, original_native
 
