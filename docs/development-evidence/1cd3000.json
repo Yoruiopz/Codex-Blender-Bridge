@@ -1,0 +1,74 @@
+{
+  "kind": "development-workflow-validation",
+  "commit": "1cd300014d337d13c272f75c957380ded20508b4",
+  "source_sha256": "1ba5a88809950bbb20cdfd13008d93ed2aba8e5fc4a5d6f571248377fafa4df3",
+  "source_file_count": 264,
+  "mcp_tool_count": 251,
+  "native": {
+    "report_sha256": "347b9edd3d5788d17b592c31751ee61012ddad924f9d93d6d3fdb592247a1dd5",
+    "all_cases_selected": true,
+    "cases_per_runtime": 79,
+    "passed": 158,
+    "processes_passed": 196,
+    "versions": {
+      "4.5.14 LTS": 79,
+      "5.2.2 LTS": 79
+    },
+    "os": "Linux",
+    "one_complete_invocation": true,
+    "started_at": "2026-10-22T01:29:51.718391+00:00",
+    "completed_at": "2026-10-22T02:00:08.252037+00:00",
+    "evidence_inventory_sha256": "34704fba681a44b1f1a26dec4b0ddcec3285daa9b443721cdcab10e1dba6e666",
+    "technical_visual_review_sha256": "2f23857777d809ae05475fabce619690ba97d15ebffd57b219c6c987c389c771"
+  },
+  "ci": {
+    "run_id": 39705859462,
+    "summary_sha256": "6afde188cbaf456f5ec5650d3eec5add84e9ed099602aa5b202e293200830926",
+    "all_seven_jobs_passed": true,
+    "test_merge_tree_identical_to_head": true
+  },
+  "limits": [
+    "No Windows 11 runner; Linux development results do not qualify Windows.",
+    "No full installed artist scenarios A-F or artistic acceptance.",
+    "All components retain 0.3.0; published releases remain unchanged.",
+    "File-cache advice targeted only closed completed owned artifacts; no constrained-memory acceptance.",
+    "Local logs, reports and visuals retained; external long-term retention remains open."
+  ],
+  "merged_as": "149ce6ed4f26f274d6637ea3ee172eddaae0881f",
+  "pr": "https://github.com/Yoruiopz/Codex-Blender-Bridge/pull/5",
+  "python": {
+    "20": {
+      "tests": 3834,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 3,
+      "passed": 3831,
+      "sha256": "1f7b453b3be3d9e948ac586af16263929cf40284290e529c6be5d3490757edf8"
+    },
+    "22": {
+      "tests": 3834,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 3,
+      "passed": 3831,
+      "sha256": "f0cabc45adbe7f0fc408e060bb2e3cf411b1d9216da76e8300ab7d9b471b3b37"
+    }
+  },
+  "packages": {
+    "distribution_manifest_sha256": "98f097a8ecbac5532e3efc57d38240ba73e05c5e5ba3754f212f21f0a2667b5c",
+    "installed_wheel_evidence_sha256": "ae86ea9edcbbdad278a60b12290024292acdc3982a5a0a883c8ac5c55be3c266",
+    "package_crc_and_source_bytes_verified": true,
+    "installed_stdio_verified": true
+  },
+  "complete_validation_receipt_sha256": "71167d0339acf1b9ec7a073cd452692fd5366b9f74fe5bfd0eb43c85160b5552",
+  "evidence_location": "/workspace/Codex-Blender-Bridge/build/next2-final-freeze-20261022",
+  "release_readiness": "NOT_ASSESSED",
+  "all_14_release_gates_open": true,
+  "historical_failed_matrix": {
+    "commit": "91cf62279afe2d3615cc2d9388ed0f034ca3a27d",
+    "passed": 155,
+    "total": 158,
+    "report_sha256": "983d29bc3caa62da834ba12ee4e0f9eb4986b604ed01b27cd6e7896c1d7ec073",
+    "preserved_separately": true
+  }
+}

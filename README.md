@@ -10,7 +10,7 @@ status, permissions and recovery controls inside Blender.
 
 This is **alpha software**. Try it on a disposable scene or a copy of your project.
 The published **0.3.0** packages provide **108 MCP tools**. The current development branch
-has **246 registered tools**, including unreleased features and safety changes.
+adds unreleased tools and safety changes, listed in the generated inventory below.
 Development builds still use 0.3.0 metadata; they are not the published release and must
 be installed as matching add-on/server builds from one checkout.
 

@@ -233,8 +233,29 @@ DATA-linked material on target and cutter, with the same native Material ID and
 zero polygon material indices. The scanner performs geometry with those explicit
 bindings before isolating its finish. Final pure authority checks after content
 comparisons and operator polling also block late cancellation or deadline expiry.
-Corrected combined-source suites, packages and complete native verification need
+Corrected combined-source suites, packages and complete native verification use
 their own commit-bound receipts; the initial results do not certify later source.
+
+The corrected increment is frozen at `1cd300014d337d13c272f75c957380ded20508b4`
+and merged through [PR #5](https://github.com/Yoruiopz/Codex-Blender-Bridge/pull/5)
+as `149ce6ed4f26f274d6637ea3ee172eddaae0881f`. Both complete SDK suites passed
+**3,831 tests**, with three Windows-only skips each. All seven CI jobs passed in
+run `39705859462`, covering Python 3.10–3.12 and SDK 2.0.0/2.2.0 plus packages.
+Exact add-on, wheel and plugin bytes/checksums and installed-wheel stdio discovery
+passed; only core was enabled by default.
+
+One complete clean invocation passed **79/79 native fixtures on each Linux
+Blender 4.5.14 LTS and 5.2.2 LTS**: 158 cases and 196 isolated processes,
+including interactive, 4K, installed-ZIP and fresh-process checks. Source hashes,
+script hashes, distinct process identities, integer-zero exit codes and the clean
+checkout were verified after completion. Final scanner front/isometric captures
+received technical visual review on both versions; this is not artist acceptance.
+
+The [corrected evidence index](development-evidence/1cd3000.json) identifies the
+264-file source fingerprint, exact packages, CI and complete validation receipt.
+Local reports, logs and visuals remain under `build/next2-final-freeze-20261022/`,
+with all 1,128 native evidence files hashed. External long-term retention remains
+open. These Linux development results do not close any of the fourteen gates.
 
 The [two-bone ribbon benchmark](character-nla.md) samples complete deformation,
 rest/weights/material/UV data and protected motion after a fresh reopen. Its 24 matched
