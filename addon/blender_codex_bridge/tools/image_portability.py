@@ -52,6 +52,9 @@ def _gate(context: Any, image: Any | None = None, *, extra_permissions: tuple = 
     lifetime = getattr(context, "request_lifecycle", None)
     if lifetime is not None:
         lifetime.check()
+    final_job = getattr(context, "check_final_job", None)
+    if final_job is not None:
+        final_job()
     flags = context.state.snapshot()
     if flags.get("emergency_stopped"):
         raise BridgeError(ErrorCode.EMERGENCY_STOPPED, "Image recovery is emergency-stopped.")
@@ -91,9 +94,9 @@ def _buffer(context: Any, image: Any) -> tuple[array, int, int]:
     return values, width, height
 
 
-def _packed(image: Any) -> bytes:
+def _packed(image: Any, *, maximum_bytes: int = MAX_BYTES) -> bytes:
     packed = image.packed_file
-    if packed is None or not 1 <= packed.size <= MAX_BYTES:
+    if packed is None or not 1 <= packed.size <= maximum_bytes:
         raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "A complete packed payload within the synchronous byte budget is required.")
     payload = bytes(packed.data)
     if len(payload) != packed.size:
@@ -290,7 +293,8 @@ def pack_version(context: Any, params: Mapping[str, Any]) -> dict:
                            "cleanup_permission_denied": denied, "verification_required": True}) from exc
 
 
-def _snapshot(snapshot: Any, target: Any) -> dict:
+def _snapshot(snapshot: Any, target: Any, *, maximum_pixels: int = MAX_PIXELS,
+              maximum_bytes: int = MAX_BYTES) -> dict:
     raw = snapshot.get(METADATA_KEY)
     if not isinstance(raw, str):
         raise invalid_argument("Snapshot metadata is missing or exceeds its bounded versioned contract.")
@@ -323,11 +327,11 @@ def _snapshot(snapshot: Any, target: Any) -> dict:
             raise invalid_argument("Snapshot digest metadata is invalid.")
     if type(metadata["is_float"]) is not bool or any(type(metadata[key]) is not int for key in ("width", "height")):
         raise invalid_argument("Snapshot dimensions/storage metadata is invalid.")
-    brush.size(metadata["width"], metadata["height"], maximum_pixels=MAX_PIXELS)
+    brush.size(metadata["width"], metadata["height"], maximum_pixels=maximum_pixels)
     if (snapshot.source != "FILE" or snapshot.colorspace_settings.name != "Non-Color"
             or snapshot.alpha_mode != "CHANNEL_PACKED"):
         raise invalid_argument("Snapshot raw float storage/interpretation changed; no restoration attempted.")
-    if hashlib.sha256(_packed(snapshot)).hexdigest() != metadata["packed_sha256"]:
+    if hashlib.sha256(_packed(snapshot, maximum_bytes=maximum_bytes)).hexdigest() != metadata["packed_sha256"]:
         raise invalid_argument("Snapshot packed bytes changed; no restoration attempted.")
     return metadata
 

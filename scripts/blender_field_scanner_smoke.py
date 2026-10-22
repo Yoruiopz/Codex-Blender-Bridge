@@ -157,12 +157,17 @@ def run():
                                    {"method": "material.set_principled", "params": {"material_name": role["name"],
                                     "base_color": role["color"], "roughness": role["roughness"], "metallic": role["metallic"]}}]
         for item in parts:
+            if item.get("temporary"):
+                # Cutters share the shell's current DATA binding below.
+                continue
             material_steps.append({"method": "material.assign", "params": {"object_name": item["name"],
                 "material_name": "Calibration Source" if item["role"] == "shell" else roles[item["role"]]["name"]}})
-        material_steps += [{"method": "material.copy_for_object", "params": {"object_name": "Scanner Shell", "slot_index": 0, "new_name": roles["shell"]["name"]}},
-                           {"method": "material.set_principled", "params": {"material_name": roles["shell"]["name"],
-                            "base_color": roles["shell"]["color"], "roughness": roles["shell"]["roughness"], "metallic": roles["shell"]["metallic"]}}]
-        batch("Isolate shell finish and assign component roles", material_steps)
+        # Boolean geometry precedes OBJECT-linked finish isolation. Both shell
+        # and cutters explicitly share the existing DATA Material ID; no shader
+        # content on that protected shared source is edited.
+        material_steps += [{"method": "material.assign", "params": {"object_name": item["name"], "material_name": "Calibration Source"}}
+                           for item in parts if item.get("temporary")]
+        batch("Assign component roles and explicit cutter source binding", material_steps)
         cutters = [item["name"] for item in parts if item.get("temporary")]
         slot_steps = []
         for index, cutter in enumerate(cutters):
@@ -184,6 +189,11 @@ def run():
         assert not any(bpy.data.objects.get(name) for name in cutters)
         shell_after_slots = measured("Scanner Shell")
         assert shell_after_slots["signed_volume"] < shell_before_slots["signed_volume"]
+        batch("Isolate shell finish after geometry conversion", [
+            {"method": "material.copy_for_object", "params": {"object_name": "Scanner Shell", "slot_index": 0, "new_name": roles["shell"]["name"]}},
+            {"method": "material.set_principled", "params": {"material_name": roles["shell"]["name"],
+             "base_color": roles["shell"]["color"], "roughness": roles["shell"]["roughness"], "metallic": roles["shell"]["metallic"]}},
+        ])
         slot = call("material.slot_add", object_name="Scanner Shell", material_name=roles["bezel"]["name"])
         grille_material_index = slot["slot_index"]
         assert bpy.data.objects["Scanner Shell"].material_slots[grille_material_index].material.name == roles["bezel"]["name"]

@@ -11,12 +11,22 @@ import bpy  # type: ignore
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPOSITORY_ROOT / "addon"))
 
+import blender_codex_bridge  # noqa: E402
 from blender_codex_bridge import selection  # noqa: E402
 from blender_codex_bridge.errors import BridgeError, ErrorCode  # noqa: E402
+from blender_codex_bridge.permissions import Permission, PermissionManager  # noqa: E402
+from blender_codex_bridge.runtime import get_runtime  # noqa: E402
 from blender_codex_bridge.tools import constraints, modifiers, transforms, uv  # noqa: E402
 
 
 def main() -> None:
+    blender_codex_bridge.register()
+    runtime = get_runtime()
+    grants = {permission.value: permission != Permission.EXECUTE_PYTHON for permission in Permission}
+    runtime.permissions = runtime.executor.permissions = PermissionManager(lambda: grants)
+    for toolset in ("objects", "modifiers", "constraints"):
+        runtime.registry.enable_toolset(toolset)
+    context = runtime.executor.context
     created_objects: list[str] = []
     try:
         bpy.ops.mesh.primitive_cube_add()
@@ -30,7 +40,7 @@ def main() -> None:
         created_objects.append(target.name)
 
         added_modifier = modifiers.add_modifier(
-            object(),
+            context,
             {
                 "object_name": mesh.name,
                 "modifier_type": "BEVEL",
@@ -40,7 +50,7 @@ def main() -> None:
         )
         assert abs(added_modifier["created"]["settings"]["width"] - 0.05) < 1e-6
         modifiers.set_modifier(
-            object(),
+            context,
             {
                 "object_name": mesh.name,
                 "modifier_name": "Safe Bevel",
@@ -48,7 +58,7 @@ def main() -> None:
             },
         )
         inspected_width = modifiers.inspect_modifiers(
-            object(), {"object_name": mesh.name, "modifier_name": "Safe Bevel"}
+            context, {"object_name": mesh.name, "modifier_name": "Safe Bevel"}
         )["modifier"]["settings"]["width"]
         assert abs(inspected_width - 0.075) < 1e-6
 
@@ -66,7 +76,7 @@ def main() -> None:
             (modifiers.apply_modifier, {"object_name": mesh.name, "modifier_name": "Safe Bevel"}),
         ):
             try:
-                handler(object(), arguments)
+                handler(context, arguments)
             except BridgeError as error:
                 assert error.code == ErrorCode.NOT_IMPLEMENTED
             else:
@@ -75,14 +85,14 @@ def main() -> None:
             assert protected_vertices == [tuple(vertex.co) for vertex in alias.data.vertices]
             assert [item.name for item in bpy.context.selected_objects] == selection_before
             assert mesh.modifiers.get("Safe Bevel") is not None
-        transforms.set_transform(object(), {"object_name": alias.name, "location": [3, 0, 0]})
+        transforms.set_transform(context, {"object_name": alias.name, "location": [3, 0, 0]})
         assert tuple(mesh.location) == (0, 0, 0)
         assert tuple(alias.location) == (3, 0, 0)
         bpy.data.objects.remove(alias, do_unlink=True)
         assert mesh.data.users == 1
 
         added_constraint = constraints.add_constraint(
-            object(),
+            context,
             {
                 "object_name": mesh.name,
                 "constraint_type": "COPY_LOCATION",
@@ -92,7 +102,7 @@ def main() -> None:
         )
         assert added_constraint["created"]["settings"]["target"] == target.name
         constraints.set_constraint(
-            object(),
+            context,
             {
                 "object_name": mesh.name,
                 "constraint_name": "Follow Target",
@@ -107,7 +117,7 @@ def main() -> None:
         selection_state = selection.inspect_selection({"create_selection_id": True})
         selection_id = selection_state["mesh_selection"]["selection_id"]
         unwrapped = uv.unwrap(
-            object(),
+            context,
             {
                 "object_name": mesh.name,
                 "selection_id": selection_id,
@@ -119,7 +129,7 @@ def main() -> None:
         )
         assert unwrapped["faces_affected"] == 6
         projected = uv.smart_project(
-            object(),
+            context,
             {
                 "object_name": mesh.name,
                 "selection_id": selection_id,
@@ -130,7 +140,7 @@ def main() -> None:
         )
         assert projected["faces_affected"] == 6
         packed = uv.pack_islands(
-            object(),
+            context,
             {
                 "object_name": mesh.name,
                 "selection_id": selection_id,
@@ -140,7 +150,7 @@ def main() -> None:
         )
         assert packed["post_state"]["island_count"] >= 1
         uv_state = uv.inspect_uv(
-            object(),
+            context,
             {
                 "object_name": mesh.name,
                 "selection_id": selection_id,
@@ -152,11 +162,11 @@ def main() -> None:
 
         bpy.ops.object.mode_set(mode="OBJECT")
         modifiers.remove_modifier(
-            object(),
+            context,
             {"object_name": mesh.name, "modifier_name": "Safe Bevel"},
         )
         modifiers.add_modifier(
-            object(),
+            context,
             {
                 "object_name": mesh.name,
                 "modifier_type": "TRIANGULATE",
@@ -164,12 +174,12 @@ def main() -> None:
             },
         )
         applied = modifiers.apply_modifier(
-            object(),
+            context,
             {"object_name": mesh.name, "modifier_name": "Apply Me"},
         )
         assert applied["modifier_count_after"] == 0
         constraints.remove_constraint(
-            object(),
+            context,
             {"object_name": mesh.name, "constraint_name": "Follow Target"},
         )
 
@@ -192,6 +202,7 @@ def main() -> None:
             obj = bpy.data.objects.get(name)
             if obj is not None:
                 bpy.data.objects.remove(obj, do_unlink=True)
+        blender_codex_bridge.unregister()
 
 
 if __name__ == "__main__":

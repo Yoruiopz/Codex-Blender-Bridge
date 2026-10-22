@@ -147,7 +147,7 @@ The [committed evidence index](development-evidence/395a308.json) records packag
 suite and CI fingerprints. Complete local artifacts are under
 `build/public-install-fix-20261022/`; their permanent release retention remains a separate gate.
 
-## Next bounded workflow increment
+## Frozen 246-tool workflow increment
 
 The development registry adds seventeen typed tools, reaching 246: [Action lifecycle](action-lifecycle.md),
 [NLA clips/transitions/reordering](nla-lifecycle.md), [approved-source static imports](asset-import.md),
@@ -171,6 +171,79 @@ raw pixels, identity and bindings after reopening, with roughly 2 GB peak RSS an
 cooperative encoding prototype. It does not yet implement public 4K recovery jobs, native
 undo, constrained-memory or Windows acceptance. Source-matched whole-increment validation
 must identify its own frozen commit and packages; prior increment counts do not certify it.
+
+This increment is frozen at `cb7b536321e216bc4134403d466cf2a506751465`, with
+246 Python files and source inventory SHA-256
+`0826af25b27122c576e71f16ea93d13a0a25f73b8a306556efcc782ba290c2e4`.
+Both SDK suites passed **3,401 tests**, with three Windows-only skips each. All seven
+Python/SDK/package CI jobs passed in run `39697014490`. Exact add-on, wheel and plugin
+members/checksums passed, and a fresh isolated installed wheel exposed 246 tools over
+actual stdio with core-only defaults and disabled-domain errors.
+
+The complete **68/68 native cases passed on each Linux Blender 4.5.14 LTS and
+5.2.2 LTS** in one clean-source invocation: 136 passing cases across 162 isolated
+processes, including interactive, fresh-process, installed-ZIP and 4K checks.
+The frozen checkout remained clean and all source hashes matched after execution.
+[PR #4](https://github.com/Yoruiopz/Codex-Blender-Bridge/pull/4) merged as
+`c363f929cd1438add7729a0f5e3169c0b57feb5d`.
+
+The [committed evidence index](development-evidence/cb7b536.json) binds these results
+to their source, packages, CI logs and complete validation receipt. Full local evidence
+is under `build/next-wave-freeze-20261022/`; native report SHA-256 is
+`ef5aa8b1282c6289b46cd89cb02ea950193895f30ae88a96f34c7fa0db8276ab`.
+File-cache advice targeted only completed task-owned artifacts; no contents were
+changed or removed. These results do not establish constrained-memory, Windows,
+production latency, full installed scenarios A–F or artistic acceptance.
+
+## Subsequent guarded recovery increment
+
+The next increment reaches **251 MCP tools**. It adds three
+[cooperative packed-image recovery APIs](image-recovery-jobs.md) and two
+[shader interface plan/edit APIs](shader-interface-lifecycle.md). Existing
+[rig binding](rig-binding-safety.md), [rest/pose editing](rig-edit-boundaries.md),
+[object property mutations](object-rna-safety.md), NLA and static cinematic variants
+gain stricter ownership, exact-state recovery and late-authority checks. Binding now
+requires `EDIT_MESH` because it changes vertex weights; this is an unreleased permission
+correction with unchanged protocol envelopes.
+
+Permission sets use one coherent live grant snapshot. Toolset state is checked after
+providers, and image jobs check their owner/deadline/cancel flags without invoking another
+permission callback before publication. Recovery evidence remains separate from file
+effects; failed observations are marked unknown, detailed history is redacted when
+inspection is denied, and terminal scheduler cleanup releases the owner even after
+observation/history failures.
+
+Initial frozen source `91cf62279afe2d3615cc2d9388ed0f034ca3a27d` passed both complete
+SDK suites with **3,722 tests** and three Windows-only skips each. Ruff, mypy over
+57 standalone files, compilation, inventory, exact packages and installed-wheel stdio
+checks passed. All seven CI jobs passed in run `39701957370`.
+Its 264-file Python inventory SHA-256 is
+`bd334205139721e65ccd694113c98c1c7c7a62b6a04acfb6c1b5610dc71cab73`.
+The complete clean **79-case** inventory finished on both Linux versions, with
+**155/158 cases passing** across 196 isolated processes. The driver fixture failed
+on both versions at newly guarded pose calls. Blender 5.2's scanner workflow also
+exposed native Boolean material-binding changes. The [failed validation index](development-evidence/91cf622.json)
+retains this result separately; passing focused reruns do not replace that matrix.
+
+Follow-up changes keep generic self-driver pose editing explicitly unsupported,
+verify typed pose restoration after driver removal, and bound Boolean application
+to a demonstrated material-preserving contract. Native 5.2 can append a foreign or
+null cutter material even in INDEX mode. The guarded subset requires exactly one
+DATA-linked material on target and cutter, with the same native Material ID and
+zero polygon material indices. The scanner performs geometry with those explicit
+bindings before isolating its finish. Final pure authority checks after content
+comparisons and operator polling also block late cancellation or deadline expiry.
+Corrected combined-source suites, packages and complete native verification need
+their own commit-bound receipts; the initial results do not certify later source.
+
+The [two-bone ribbon benchmark](character-nla.md) samples complete deformation,
+rest/weights/material/UV data and protected motion after a fresh reopen. Its 24 matched
+captures retain twelve byte-identical writer/reader pairs. This is a bounded skin/NLA
+benchmark, not a production character or artist approval. The large image experiment
+records exact signed HDR/negative-zero channels, roughly 93–98-second snapshots and
+19–24-second restoration. A slower scheduling-budget run expired before publication;
+the public deadline and memory preflight were preserved. Native publication can block
+for several seconds. See the domain contract for measured limits and exact source drift.
 
 ## Remaining gates
 

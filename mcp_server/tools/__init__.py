@@ -21,6 +21,7 @@ from .geometry_nodes import GeometryNodeTools
 from .geometry_zone_lifecycle import GeometryZoneLifecycleTools
 from .image_portability import ImagePortabilityTools
 from .image_recovery import ImageRecoveryTools
+from .image_recovery_jobs import ImageRecoveryJobTools
 from .image_surface_paint import ImageSurfacePaintTools
 from .interaction import InteractionTools
 from .layout import LayoutTools
@@ -41,6 +42,7 @@ from .rigging import RiggingTools
 from .scene import SceneTools
 from .scene_edit import SceneEditTools
 from .scene_variants import SceneVariantTools
+from .shader_interface import ShaderInterfaceTools
 from .surface_brushes import SurfaceBrushTools
 from .task_plan import TaskPlanTools
 from .transforms import TransformTools
@@ -85,8 +87,10 @@ def iter_bindings(registry: ToolRegistry) -> Iterable[MCPToolBinding]:
         MaterialTools(registry),
         ImagePortabilityTools(registry),
         ImageRecoveryTools(registry),
+        ImageRecoveryJobTools(registry),
         ImageSurfacePaintTools(registry),
         NodeTools(registry),
+        ShaderInterfaceTools(registry),
         RiggingTools(registry),
         RigDriverTools(registry),
         RigIKTools(registry),

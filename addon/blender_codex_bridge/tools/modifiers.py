@@ -2,16 +2,24 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Mapping
+from itertools import chain
 from typing import Any
 
 from ..errors import BridgeError, ErrorCode, invalid_argument
 from ..permissions import Permission
 from ..selection import clear_selection_references
 from ..tool_registry import ToolContext, ToolRegistry
-from ..utils import get_object, preserved_object_context, require_blender
-from ._object_safety import require_local_object, require_unkeyed_object_data
+from ..utils import get_object, reject_unknown_params, require_blender
+from ._object_rna_mutation import Boundary
+from ._object_safety import (
+    require_local_editable_id,
+    require_local_object,
+    require_unkeyed_object_data,
+)
 from ._rna import (
+    RNAAssignment,
     apply_assignments,
     bounded_name,
     prepare_assignments,
@@ -72,7 +80,7 @@ _PROPERTIES: dict[str, frozenset[str]] = {
             "material",
         }
     ),
-    "BOOLEAN": frozenset({"operation", "solver", "operand_type", "object"}),
+    "BOOLEAN": frozenset({"operation", "solver", "operand_type", "object", "material_mode"}),
     "BUILD": frozenset({"frame_start", "frame_duration", "use_reverse", "use_random_order", "seed"}),
     "CAST": frozenset(
         {
@@ -240,151 +248,134 @@ def inspect_modifiers(context: ToolContext, params: Mapping[str, Any]) -> dict[s
 
 
 def add_modifier(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
-    del context
     bpy = require_blender()
     obj = _object(params)
     require_local_object(obj, operation="Modifier editing")
+    reject_unknown_params(params, {"object_name", "modifier_type", "modifier_name", "settings"})
     modifier_type = bounded_name(params.get("modifier_type"), "modifier_type", maximum=64).upper()
     allowed = _allowed(modifier_type)
     requested_name = params.get("modifier_name")
-    name = (
-        bounded_name(requested_name, "modifier_name")
-        if requested_name is not None
-        else modifier_type.replace("_", " ").title()
-    )
-    if len(obj.modifiers) >= _MAX_MODIFIERS:
-        raise BridgeError(
-            ErrorCode.OPERATION_FAILED,
-            f"Object '{obj.name}' has reached the structured modifier limit.",
-            {"maximum_modifiers": _MAX_MODIFIERS},
-        )
+    name = bounded_name(requested_name, "modifier_name") if requested_name is not None else modifier_type.replace("_", " ").title()
     settings = settings_mapping(params, required=False)
+    if len(obj.modifiers) >= _MAX_MODIFIERS:
+        raise BridgeError(ErrorCode.OPERATION_FAILED, "Structured modifier limit reached.", {"maximum_modifiers": _MAX_MODIFIERS})
+    boundary = Boundary(bpy, context, "modifier.add", obj, kind="modifiers")
+    modifier = None
     try:
-        modifier = obj.modifiers.new(name=name, type=modifier_type)
-    except (RuntimeError, TypeError, ValueError) as exc:
-        raise BridgeError(
-            ErrorCode.OPERATION_FAILED,
-            f"Blender could not create a {modifier_type} modifier.",
-            {"object": obj.name, "modifier_type": modifier_type},
-        ) from exc
-    try:
-        assignments = prepare_assignments(
-            modifier,
-            settings,
-            allowed=allowed,
-            object_pointers=_OBJECT_POINTERS,
-            bpy=bpy,
-        )
-        apply_assignments(modifier, assignments)
-    except Exception:
-        obj.modifiers.remove(modifier)
-        raise
-    return {
-        "object": obj.name,
-        "affected_objects": [obj.name],
-        "created": _summary(modifier),
-        "modifier_count_after": len(obj.modifiers),
-    }
+        modifier = boundary.allocate(lambda: obj.modifiers.new(name=name, type=modifier_type), modifier_type)
+        assignments = prepare_assignments(modifier, settings, allowed=allowed, object_pointers=_OBJECT_POINTERS, bpy=bpy)
+        apply_assignments(modifier, assignments, boundary=boundary)
+        boundary.check()
+    except Exception as error:
+        restored = False
+        modifier = modifier if modifier is not None else boundary.allocated
+        if modifier is not None:
+            try:
+                boundary.remove(modifier)
+                boundary.restore_activation()
+                restored = boundary.expected == boundary.original
+            except Exception:
+                pass
+        raise boundary.failure(error, restored=restored) from error
+    return {"object": obj.name, "affected_objects": boundary.affected, "created": _summary(modifier),
+            "modifier_count_after": len(obj.modifiers), "verified": True}
 
 
 def set_modifier(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
-    del context
     bpy = require_blender()
     obj = _object(params)
     require_local_object(obj, operation="Modifier editing")
+    reject_unknown_params(params, {"object_name", "modifier_name", "settings"})
     modifier = _named_modifier(obj, params.get("modifier_name"))
-    assignments = prepare_assignments(
-        modifier,
-        settings_mapping(params),
-        allowed=_allowed(str(modifier.type)),
-        object_pointers=_OBJECT_POINTERS,
-        bpy=bpy,
-    )
-    apply_assignments(modifier, assignments)
-    return {
-        "object": obj.name,
-        "affected_objects": [obj.name],
-        "modifier": _summary(modifier),
-        "updated_properties": [item.name for item in assignments],
-    }
+    assignments = prepare_assignments(modifier, settings_mapping(params), allowed=_allowed(str(modifier.type)), object_pointers=_OBJECT_POINTERS, bpy=bpy)
+    boundary = Boundary(bpy, context, "modifier.set", obj, kind="modifiers")
+    apply_assignments(modifier, assignments, boundary=boundary)
+    return {"object": obj.name, "affected_objects": boundary.affected, "modifier": _summary(modifier),
+            "updated_properties": [item.name for item in assignments], "verified": True}
 
 
 def remove_modifier(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
-    del context
+    bpy = require_blender()
     obj = _object(params)
     require_local_object(obj, operation="Modifier editing")
+    reject_unknown_params(params, {"object_name", "modifier_name"})
     modifier = _named_modifier(obj, params.get("modifier_name"))
     removed = {"name": modifier.name, "type": modifier.type}
+    boundary = Boundary(bpy, context, "modifier.remove", obj, kind="modifiers")
     try:
-        obj.modifiers.remove(modifier)
-    except (ReferenceError, RuntimeError) as exc:
-        raise BridgeError(
-            ErrorCode.OPERATION_FAILED,
-            "Blender could not remove the requested modifier.",
-            {"object": obj.name, "modifier": removed["name"]},
-        ) from exc
-    return {
-        "object": obj.name,
-        "affected_objects": [obj.name],
-        "removed": removed,
-        "modifier_count_after": len(obj.modifiers),
-    }
+        boundary.remove(modifier)
+    except Exception as error:
+        raise boundary.failure(error) from error
+    return {"object": obj.name, "affected_objects": boundary.affected, "removed": removed,
+            "modifier_count_after": len(obj.modifiers), "verified": True}
+
+
+def _boolean_apply_operand(obj: Any, modifier: Any) -> Any:
+    """Admit only the demonstrated one-slot, same-ID material profile."""
+    operand = getattr(modifier, "object", None)
+    if getattr(modifier, "operand_type", None) != "OBJECT" or operand is None or getattr(operand, "type", None) != "MESH":
+        raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Boolean application requires one exact Mesh Object operand; collection and empty operands are unsupported.")
+    require_local_object(operand, operation="Boolean operand application")
+    require_local_editable_id(operand.data, operation="Boolean operand application")
+    if (getattr(modifier, "material_mode", None) != "INDEX" or getattr(modifier, "solver", None) != "EXACT"
+            or len(obj.material_slots) != 1 or len(obj.data.materials) != 1
+            or len(operand.material_slots) != 1 or len(operand.data.materials) != 1):
+        # 5.2 appends a null binding even when the cutter has no slots. Only the
+        # explicitly demonstrated shared single-slot profile is admitted.
+        raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Boolean application requires EXACT/INDEX and one matching nonnull DATA-linked material slot on both target and cutter; broader material conversion is not qualified.",
+                          {"operand": operand.name})
+    target_slot, source_slot = obj.material_slots[0], operand.material_slots[0]
+    material = obj.data.materials[0]
+    if (material is None or target_slot.link != "DATA" or source_slot.link != "DATA"
+            or target_slot.material != material or source_slot.material != material
+            or operand.data.materials[0] != material):
+        raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Boolean target and cutter must share the exact nonnull Material ID through DATA-linked slots; names do not establish identity.",
+                          {"operand": operand.name})
+    if len(operand.data.polygons) > 131072 or any(poly.material_index != 0 for poly in chain(obj.data.polygons, operand.data.polygons)):
+        raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Boolean application requires the bounded single-slot profile with every polygon material index equal to zero.",
+                          {"operand": operand.name})
+    if (len(operand.modifiers) or len(operand.constraints) or operand.parent is not None
+            or operand.animation_data is not None or operand.data.animation_data is not None
+            or operand.data.shape_keys is not None or getattr(operand, "instance_type", "NONE") != "NONE"
+            or getattr(operand, "rigid_body", None) is not None
+            or getattr(getattr(operand, "field", None), "type", "NONE") != "NONE"):
+        raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Boolean application requires a static, unparented cutter without modifiers, constraints, animation, shape keys, instances or physics dependencies.",
+                          {"operand": operand.name})
+    return operand
 
 
 def apply_modifier(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
-    del context
     bpy = require_blender()
     obj = _object(params)
     require_unkeyed_object_data(obj, operation="Modifier application")
+    reject_unknown_params(params, {"object_name", "modifier_name"})
     modifier = _named_modifier(obj, params.get("modifier_name"))
-    if obj.mode != "OBJECT":
-        raise BridgeError(
-            ErrorCode.INVALID_MODE,
-            "Applying a modifier requires the explicit target object to be in Object Mode.",
-            {"object": obj.name, "current_mode": obj.mode, "required_mode": "OBJECT"},
-        )
-    if obj.name not in bpy.context.view_layer.objects:
-        raise BridgeError(
-            ErrorCode.BLENDER_CONTEXT_ERROR,
-            f"Object '{obj.name}' is not in the active view layer.",
-        )
+    _allowed(str(modifier.type))
+    boundary = Boundary(bpy, context, "modifier.apply", obj, kind="modifiers")
+    if modifier.type == "BOOLEAN":
+        operand = _boolean_apply_operand(obj, modifier)
+        # A newly constructed boundary has no remembered pointer assignments.
+        # Freeze the existing cutter before the final live provider callbacks.
+        boundary.sources((RNAAssignment("object", operand),))
     applied = {"name": modifier.name, "type": modifier.type}
-    try:
-        with preserved_object_context():
-            for selected in list(bpy.context.selected_objects):
-                selected.select_set(False)
-            obj.select_set(True)
-            bpy.context.view_layer.objects.active = obj
+    def operation():
+        # Context overrides avoid persistent selection/active-object writes and
+        # never switch a manually edited object out of its current mode.
+        boundary.check()
+        with bpy.context.temp_override(object=obj, active_object=obj, selected_objects=[obj], selected_editable_objects=[obj]):
             if not bpy.ops.object.modifier_apply.poll():
-                raise BridgeError(
-                    ErrorCode.BLENDER_CONTEXT_ERROR,
-                    "Blender's modifier apply operation is unavailable in the current context.",
-                    {"object": obj.name, "modifier": modifier.name},
-                )
-            result = bpy.ops.object.modifier_apply(modifier=modifier.name)
-            if "FINISHED" not in result:
-                raise BridgeError(
-                    ErrorCode.OPERATION_FAILED,
-                    "Blender canceled the requested modifier apply operation.",
-                    {"object": obj.name, "modifier": modifier.name},
-                )
-    except BridgeError:
-        raise
-    except RuntimeError as exc:
-        raise BridgeError(
-            ErrorCode.OPERATION_FAILED,
-            "Blender could not apply the requested modifier.",
-            {"object": obj.name, "modifier": applied["name"]},
-        ) from exc
-    if obj.type == "MESH":
-        clear_selection_references(obj.name)
-    return {
-        "object": obj.name,
-        "affected_objects": [obj.name],
-        "applied": applied,
-        "modifier_count_after": len(obj.modifiers),
-        "remaining_modifiers": [item.name for item in obj.modifiers[:_MAX_MODIFIERS]],
-    }
+                raise BridgeError(ErrorCode.BLENDER_CONTEXT_ERROR, "Modifier apply is unavailable in the current context.")
+            boundary.final()
+            started = time.monotonic()
+            try:
+                return bpy.ops.object.modifier_apply(modifier=modifier.name)
+            finally:
+                boundary.native_seconds = time.monotonic()-started
+    boundary.native_apply(operation, removed=modifier)
+    clear_selection_references(obj.name)
+    return {"object": obj.name, "affected_objects": boundary.affected, "applied": applied,
+            "modifier_count_after": len(obj.modifiers), "remaining_modifiers": [item.name for item in obj.modifiers[:_MAX_MODIFIERS]],
+            "verified": True, "native_call_interruptible": False, "native_blocking_seconds": boundary.native_seconds, "mesh_rollback_available": False}
 
 
 def register_tools(registry: ToolRegistry) -> None:

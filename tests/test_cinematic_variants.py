@@ -132,7 +132,10 @@ def transaction(addon_package, monkeypatch):
     data = Native(dof=Native(), lens=50.)
     obj = Native(name="Camera", type="CAMERA", data=data, rotation_mode="XYZ", location=[0., 0., 0.])
     callbacks = []
-    context = NS(require=lambda *args: None, state=NS(snapshot=lambda: {}), check_cancelled=lambda: [cb() for cb in callbacks])
+    registry = importlib.import_module(addon_package+".tool_registry").ToolRegistry(enabled_toolsets=("scene_edit",))
+    module.register_tools(registry)
+    context = NS(require=lambda *args: None, state=NS(snapshot=lambda: {}), registry=registry,
+        check_cancelled=lambda: [cb() for cb in callbacks], request_lifecycle=None)
     bpy = NS(context=NS(scene={}, view_layer=NS(update=lambda: None)))
     current = copy.deepcopy(before)
 
@@ -376,7 +379,9 @@ def test_permission_provider_stop_before_last_write_boundary(transaction, addon_
     flags, calls, writes = {}, [0], []
     # Recovery validates the complete current publication once before its
     # per-field gate. Poison the final provider pass at that actual write gate.
-    poison_at = len(tx.permissions)*(3 if recovery else 1)+1
+    # Each require reads one coherent grant set. Forward writes have two
+    # provider passes; recovery also validates the publication before its gate.
+    poison_at = 4 if recovery else 2
 
     def provider():
         calls[0] += 1
@@ -414,7 +419,7 @@ def test_permission_provider_mode_switch_has_post_provider_scope_cas(transaction
         tx.run()
     expected_location, expected_lens = list(obj.location), obj.data.lens
     calls = [0]
-    poison_at = len(tx.permissions)*(3 if recovery else 1)+1
+    poison_at = 4 if recovery else 2
 
     def provider():
         calls[0] += 1
@@ -441,3 +446,55 @@ def test_readonly_variant_inspection_remains_available_under_stop_state(addon_pa
     result = module.inspect(context, {})
     assert result["variants"] == [] and not result["authority_loaded"]
     assert flags == {flag: True}
+
+
+@pytest.mark.parametrize("recovery", [False, True])
+@pytest.mark.parametrize("signal", ["toolset", "queued_cancel", "queued_expiry", "disconnect", "handoff_rejected"])
+def test_canonical_request_authority_loss_prevents_controls_and_compensation(transaction, addon_package, monkeypatch, recovery, signal):
+    module, tx, obj, _callbacks = transaction
+    if recovery:
+        tx.run()
+    expected_location, expected_lens = list(obj.location), obj.data.lens
+    queue = importlib.import_module(addon_package+".command_queue")
+    protocol = importlib.import_module(addon_package+".protocol")
+    lifetimes = importlib.import_module(addon_package+".request_lifecycle")
+    permissions = importlib.import_module(addon_package+".permissions")
+    lifetime = lifetimes.RequestLifetime(lifetimes.ConnectionLifetime())
+    queued = queue.QueuedRequest(protocol.Request(id="cinematic-canonical", method="scene.variant.apply"))
+    assert queued.try_start()
+    tx.context.check_cancelled, tx.context.request_lifecycle = queued.check_active, lifetime
+    poisoned, writes = [False], []
+
+    def provider():
+        if not poisoned[0]:
+            poisoned[0] = True
+            if signal == "toolset":
+                tx.context.registry.disable_toolset("scene_edit")
+            elif signal == "queued_cancel":
+                queued.cancel_pending(module.BridgeError("TIMEOUT", "Canonical caller canceled"))
+            elif signal == "queued_expiry":
+                queued.deadline = 0
+            elif signal == "disconnect":
+                lifetime.connection.disconnected.set()
+            else:
+                lifetime.acknowledge(False)
+        return {permission.value: True for permission in permissions.Permission}
+
+    manager = permissions.PermissionManager(provider)
+    tx.context.require = lambda *required: manager.require(required)
+    native_setattr = Native.__setattr__
+
+    def tracked_setattr(owner, name, value):
+        if (owner is obj and name == "location") or (owner is obj.data and name == "lens"):
+            writes.append(name)
+        native_setattr(owner, name, value)
+
+    monkeypatch.setattr(Native, "__setattr__", tracked_setattr)
+    with pytest.raises(module.BridgeError) as caught:
+        (tx.restore if recovery else tx.run)()
+    assert poisoned[0] and not writes
+    assert caught.value.code == ("TOOLSET_DISABLED" if signal == "toolset" else "TIMEOUT")
+    assert obj.location == expected_location and obj.data.lens == expected_lens
+    failure = module._failure(tx, caught.value)
+    assert not writes and not failure.context["rollback_verified"]
+    assert failure.context["possible_mutation"] == recovery

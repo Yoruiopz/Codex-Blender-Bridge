@@ -8,9 +8,11 @@ from typing import Any
 from ..errors import BridgeError, ErrorCode, invalid_argument
 from ..permissions import Permission
 from ..tool_registry import ToolContext, ToolRegistry
-from ..utils import get_object, require_blender
+from ..utils import get_object, reject_unknown_params, require_blender
+from ._object_rna_mutation import Boundary
 from ._object_safety import require_local_object
 from ._rna import (
+    RNAAssignment,
     apply_assignments,
     bounded_name,
     prepare_assignments,
@@ -176,95 +178,70 @@ def inspect_constraints(context: ToolContext, params: Mapping[str, Any]) -> dict
 
 
 def add_constraint(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
-    del context
     bpy = require_blender()
     obj = _object(params)
     require_local_object(obj, operation="Constraint editing")
+    reject_unknown_params(params, {"object_name", "constraint_type", "constraint_name", "settings"})
     constraint_type = bounded_name(params.get("constraint_type"), "constraint_type", maximum=64).upper()
     allowed = _allowed(constraint_type)
     requested_name = params.get("constraint_name")
     name = bounded_name(requested_name, "constraint_name") if requested_name is not None else None
     settings = settings_mapping(params, required=constraint_type in _REQUIRES_TARGET)
     if len(obj.constraints) >= _MAX_CONSTRAINTS:
-        raise BridgeError(
-            ErrorCode.OPERATION_FAILED,
-            f"Object '{obj.name}' has reached the structured constraint limit.",
-            {"maximum_constraints": _MAX_CONSTRAINTS},
-        )
+        raise BridgeError(ErrorCode.OPERATION_FAILED, "Structured constraint limit reached.", {"maximum_constraints": _MAX_CONSTRAINTS})
+    boundary = Boundary(bpy, context, "constraint.add", obj, kind="constraints")
+    constraint = None
     try:
-        constraint = obj.constraints.new(type=constraint_type)
-    except (RuntimeError, TypeError, ValueError) as exc:
-        raise BridgeError(
-            ErrorCode.OPERATION_FAILED,
-            f"Blender could not create a {constraint_type} object constraint.",
-            {"object": obj.name, "constraint_type": constraint_type},
-        ) from exc
-    try:
-        if name is not None:
-            constraint.name = name
-        assignments = prepare_assignments(
-            constraint,
-            settings,
-            allowed=allowed,
-            object_pointers=_TARGET_PROPERTIES,
-            bpy=bpy,
-        )
+        constraint = boundary.allocate(lambda: obj.constraints.new(type=constraint_type), constraint_type)
+        assignments = prepare_assignments(constraint, settings, allowed=allowed, object_pointers=_TARGET_PROPERTIES, bpy=bpy)
         _validate_prospective_target(constraint, assignments)
-        apply_assignments(constraint, assignments)
-    except Exception:
-        obj.constraints.remove(constraint)
-        raise
-    return {
-        "object": obj.name,
-        "affected_objects": [obj.name],
-        "created": _summary(constraint),
-        "constraint_count_after": len(obj.constraints),
-    }
+        if name is not None:
+            assignments = (RNAAssignment("name", name), *assignments)
+        apply_assignments(constraint, assignments, boundary=boundary)
+        boundary.check()
+    except Exception as error:
+        restored = False
+        constraint = constraint if constraint is not None else boundary.allocated
+        if constraint is not None:
+            try:
+                boundary.remove(constraint)
+                boundary.restore_activation()
+                restored = boundary.expected == boundary.original
+            except Exception:
+                pass
+        raise boundary.failure(error, restored=restored) from error
+    return {"object": obj.name, "affected_objects": boundary.affected, "created": _summary(constraint),
+            "constraint_count_after": len(obj.constraints), "verified": True}
 
 
 def set_constraint(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
-    del context
     bpy = require_blender()
     obj = _object(params)
     require_local_object(obj, operation="Constraint editing")
+    reject_unknown_params(params, {"object_name", "constraint_name", "settings"})
     constraint = _named_constraint(obj, params.get("constraint_name"))
-    assignments = prepare_assignments(
-        constraint,
-        settings_mapping(params),
-        allowed=_allowed(str(constraint.type)),
-        object_pointers=_TARGET_PROPERTIES,
-        bpy=bpy,
-    )
+    assignments = prepare_assignments(constraint, settings_mapping(params), allowed=_allowed(str(constraint.type)), object_pointers=_TARGET_PROPERTIES, bpy=bpy)
     _validate_prospective_target(constraint, assignments)
-    apply_assignments(constraint, assignments)
-    return {
-        "object": obj.name,
-        "affected_objects": [obj.name],
-        "constraint": _summary(constraint),
-        "updated_properties": [item.name for item in assignments],
-    }
+    boundary = Boundary(bpy, context, "constraint.set", obj, kind="constraints")
+    apply_assignments(constraint, assignments, boundary=boundary)
+    return {"object": obj.name, "affected_objects": boundary.affected, "constraint": _summary(constraint),
+            "updated_properties": [item.name for item in assignments], "verified": True}
 
 
 def remove_constraint(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
-    del context
+    bpy = require_blender()
     obj = _object(params)
     require_local_object(obj, operation="Constraint editing")
+    reject_unknown_params(params, {"object_name", "constraint_name"})
     constraint = _named_constraint(obj, params.get("constraint_name"))
     removed = {"name": constraint.name, "type": constraint.type}
+    boundary = Boundary(bpy, context, "constraint.remove", obj, kind="constraints")
     try:
-        obj.constraints.remove(constraint)
-    except (ReferenceError, RuntimeError) as exc:
-        raise BridgeError(
-            ErrorCode.OPERATION_FAILED,
-            "Blender could not remove the requested object constraint.",
-            {"object": obj.name, "constraint": removed["name"]},
-        ) from exc
-    return {
-        "object": obj.name,
-        "affected_objects": [obj.name],
-        "removed": removed,
-        "constraint_count_after": len(obj.constraints),
-    }
+        boundary.remove(constraint)
+    except Exception as error:
+        raise boundary.failure(error) from error
+    return {"object": obj.name, "affected_objects": boundary.affected, "removed": removed,
+            "constraint_count_after": len(obj.constraints), "verified": True}
 
 
 def register_tools(registry: ToolRegistry) -> None:

@@ -46,6 +46,9 @@ from .image_portability import load_definitions as _load_image_portability_defin
 from .image_recovery import DESTRUCTIVE_TOOL_NAMES as IMAGE_RECOVERY_DESTRUCTIVE_TOOL_NAMES
 from .image_recovery import TOOL_DATA as IMAGE_RECOVERY_TOOL_DATA
 from .image_recovery import load_definitions as _load_image_recovery_definitions
+from .image_recovery_jobs import DESTRUCTIVE_TOOL_NAMES as IMAGE_RECOVERY_JOB_DESTRUCTIVE_TOOL_NAMES
+from .image_recovery_jobs import TOOL_DATA as IMAGE_RECOVERY_JOB_TOOL_DATA
+from .image_recovery_jobs import load_definitions as _load_image_recovery_job_definitions
 from .image_surface_paint import TOOL_DATA as IMAGE_SURFACE_PAINT_TOOL_DATA
 from .image_surface_paint import load_definitions as _load_image_surface_paint_definitions
 from .interaction import TOOL_DATA as INTERACTION_TOOL_DATA
@@ -120,7 +123,7 @@ ANIMATION_TOOL_DATA = (*ANIMATION_TOOL_DATA, *((name, description, True, ("EDIT_
 ANIMATION_TOOL_NAMES = tuple(item[0] for item in ANIMATION_TOOL_DATA)
 GEOMETRY_TOOL_DATA = (*GEOMETRY_TOOL_DATA, *GEOMETRY_GROUP_TOOL_DATA, *GEOMETRY_ZONE_TOOL_DATA)
 GEOMETRY_TOOL_NAMES = tuple(item[0] for item in GEOMETRY_TOOL_DATA)
-MATERIAL_TOOL_DATA = (*MATERIAL_TOOL_DATA, *IMAGE_PORTABILITY_TOOL_DATA, *IMAGE_SURFACE_PAINT_TOOL_DATA, *IMAGE_RECOVERY_TOOL_DATA)
+MATERIAL_TOOL_DATA = (*MATERIAL_TOOL_DATA, *IMAGE_PORTABILITY_TOOL_DATA, *IMAGE_SURFACE_PAINT_TOOL_DATA, *IMAGE_RECOVERY_TOOL_DATA, *IMAGE_RECOVERY_JOB_TOOL_DATA)
 MATERIAL_TOOL_NAMES = tuple(item[0] for item in MATERIAL_TOOL_DATA)
 SCENE_EDIT_TOOL_DATA = (*BASE_SCENE_EDIT_TOOL_DATA, *SCENE_VARIANT_TOOL_DATA)
 SCENE_EDIT_TOOL_NAMES = tuple(item[0] for item in SCENE_EDIT_TOOL_DATA)
@@ -148,7 +151,7 @@ def load_geometry_definitions() -> tuple[ToolDefinition, ...]:
 
 
 def load_material_definitions() -> tuple[ToolDefinition, ...]:
-    return (*_load_base_material_definitions(), *_load_image_portability_definitions(), *_load_image_surface_paint_definitions(), *_load_image_recovery_definitions())
+    return (*_load_base_material_definitions(), *_load_image_portability_definitions(), *_load_image_surface_paint_definitions(), *_load_image_recovery_definitions(), *_load_image_recovery_job_definitions())
 
 
 def load_scene_edit_definitions() -> tuple[ToolDefinition, ...]:
@@ -157,7 +160,7 @@ def load_scene_edit_definitions() -> tuple[ToolDefinition, ...]:
 CORE_REMOTE_TOOLS: tuple[tuple[str, str, bool, tuple[str, ...]], ...] = (
     ("jobs.inspect", "Inspect session-local image-job progress, result/error and file/recovery evidence.", False, ("INSPECT_SCENE",)),
     ("jobs.list", "List bounded session-local image jobs; no durable queue.", False, ("INSPECT_SCENE",)),
-    ("jobs.cancel", "Request safe-point painting cancellation, not rollback; available while paused.", False, ()),
+    ("jobs.cancel", "Request safe-point image-job cancellation, not rollback; available while paused.", False, ()),
     ("bridge.status", "Report Blender bridge, project, mode, and permission status.", False, ()),
     ("bridge.task.set", "Show the current high-level Codex task in Blender's UI.", False, ()),
     ("bridge.task.clear", "Clear the current high-level task from Blender's UI.", False, ()),
@@ -326,6 +329,7 @@ DESTRUCTIVE_TOOL_NAMES = frozenset(
     | set(NLA_DESTRUCTIVE_TOOL_NAMES)
     | set(ASSET_IMPORT_DESTRUCTIVE_TOOL_NAMES)
     | set(IMAGE_RECOVERY_DESTRUCTIVE_TOOL_NAMES)
+    | set(IMAGE_RECOVERY_JOB_DESTRUCTIVE_TOOL_NAMES)
     | {name for name, _, modifies, _ in UV_REFINE_TOOL_DATA if modifies}
 )
 

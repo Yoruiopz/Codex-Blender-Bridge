@@ -58,6 +58,8 @@ def _nla_context(context: Any) -> None:
 
 def _nla_authority(context: Any, method: str) -> None:
     context.require(Permission.EDIT_ANIMATION)
+    if context.check_cancelled:
+        context.check_cancelled()
     flags = context.state.snapshot()
     if flags.get("emergency_stopped") or flags.get("paused"):
         raise BridgeError(ErrorCode.EMERGENCY_STOPPED if flags.get("emergency_stopped") else ErrorCode.AGENT_PAUSED,
@@ -79,14 +81,18 @@ class _LegacyNlaGuard:
     state from arbitrary observations after a setter/cancellation callback.
     """
 
-    def __init__(self, context: Any, obj: Any, method: str, extra_actions: tuple[Any, ...] = ()):
+    def __init__(self, context: Any, obj: Any, method: str, extra_actions: tuple[Any, ...] = (), *, affected_objects: Any = None):
         self.bpy, self.obj, self.data = require_blender(), obj, obj.animation_data
         self.guard = Guard(self.bpy, context, method)
         self.guard.remember(obj, self.bpy.data.objects)
         self.name, self.object_token, self.data_token = obj.name, action_token(obj), key(self.data)
         self.actions: dict[Any, Any] = {}
         self.extra_actions = extra_actions
+        if affected_objects is not None and not isinstance(affected_objects, list):
+            raise invalid_argument("affected_objects must be an explicit object-name list.")
+        self.affected_objects = [] if affected_objects is None else list(affected_objects)
         self.created_tracks: list[Any] = []
+        self.created_strip_ids: set[int | None] = set()
         self.started = False
         for action in extra_actions:
             self._action(action)
@@ -120,7 +126,7 @@ class _LegacyNlaGuard:
         object_scope(self.bpy, obj)
         if data.use_tweak_mode or len(data.drivers):
             raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Reviewed NLA mutation excludes tweak mode and drivers.")
-        closure = affected_scope(self.bpy, obj, [])
+        closure = affected_scope(self.bpy, obj, self.affected_objects)
         tracks = bounded(data.nla_tracks, 16, "NLA tracks")
         if sum(len(track.strips) for track in tracks) > 64:
             raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "NLA recovery scope exceeds 64 total strips.")
@@ -251,6 +257,7 @@ class _LegacyNlaGuard:
         self.references(expected, action, 1)
         self.expected = expected
         self.verify()
+        self.created_strip_ids.add(key(strip))
         return strip
 
     def influence(self, track: Any, strip: Any, expected: dict[str, Any]) -> None:
@@ -411,6 +418,7 @@ def nla_add(context: Any, params: Mapping[str, Any]) -> dict[str, Any]:
             "action_name",
             "frame_start",
             "slot_identifier",
+            "affected_objects",
         },
     )
     _nla_context(context)
@@ -459,7 +467,7 @@ def nla_add(context: Any, params: Mapping[str, Any]) -> dict[str, Any]:
             guard.gate()
             _nla_authority(context, "nla.add_strip")
             object_scope(bpy, obj)
-            affected_scope(bpy, obj, [])
+            affected_scope(bpy, obj, [] if params.get("affected_objects") is None else params["affected_objects"])
             if obj.animation_data is not None or source_signature != (action_token(action), action.name, action_content(action), action_users(bpy, action), tuple(action.frame_range)):
                 raise invalid_argument("Preflight Action or empty AnimData scope changed; allocation refused.")
             # Retain an owned empty AnimData on later failure instead of clearing
@@ -481,7 +489,7 @@ def nla_add(context: Any, params: Mapping[str, Any]) -> dict[str, Any]:
     if len(data.nla_tracks) >= 16:
         raise invalid_argument("Reviewed NLA mutation supports at most 16 tracks.")
     _nla_context(context)
-    scope = _LegacyNlaGuard(context, obj, "nla.add_strip", (action,))
+    scope = _LegacyNlaGuard(context, obj, "nla.add_strip", (action,), affected_objects=params.get("affected_objects"))
     previous_active, track = data.nla_tracks.active, None
     try:
         track = scope.add_track()
@@ -524,7 +532,7 @@ def nla_add(context: Any, params: Mapping[str, Any]) -> dict[str, Any]:
                            "rollback_verified": restored, "possible_mutation": (scope.started or not had_data) and not restored,
                            "retained_track": scope.retained_track(track), "retained_empty_anim_data": not had_data,
                            "verification_required": True}) from error
-    return {"affected_objects": [obj.name], **inspect(context, {"object_name": obj.name})}
+    return {"affected_objects": [obj.name, *scope.affected_objects], **inspect(context, {"object_name": obj.name})}
 
 
 def _native_float(value: float) -> float:
@@ -650,7 +658,7 @@ def _legacy_failure(error: Exception, scope: _LegacyNlaGuard, *, restored: bool 
 
 
 def nla_edit(context: Any, params: Mapping[str, Any]) -> dict[str, Any]:
-    reject_unknown_params(params, {"object_name", "track_name", "strip_name", "settings", "remove"})
+    reject_unknown_params(params, {"object_name", "track_name", "strip_name", "settings", "remove", "affected_objects"})
     _nla_context(context)
     obj = _object(params, True)
     track_name = bounded_name(params.get("track_name"), "track_name")
@@ -677,7 +685,7 @@ def nla_edit(context: Any, params: Mapping[str, Any]) -> dict[str, Any]:
                 raise invalid_argument(f"{name} must be between 0.01 and 100.")
         assignments = prepare_assignments(strip, settings, allowed=STRIP_PROPERTIES,
                                          object_pointers=frozenset(), bpy=require_blender())
-    scope = _LegacyNlaGuard(context, obj, "nla.edit_strip")
+    scope = _LegacyNlaGuard(context, obj, "nla.edit_strip", affected_objects=params.get("affected_objects"))
     strip_id = key(strip)
     original = dict(next(item for item in scope.track(scope.expected, track)["strips"] if item["id"] == strip_id)["settings"])
     # Preflight every requested intermediate stage before the first write.
@@ -721,12 +729,12 @@ def nla_edit(context: Any, params: Mapping[str, Any]) -> dict[str, Any]:
         raise _legacy_failure(error, scope, restored=restored, strip_name=strip_name,
                               removed_strip_requires_checkpoint_recovery=remove and scope.started,
                               retained_control_curve_ids=[] if remove else _retained_controls(strip)) from error
-    return {"affected_objects": [obj.name], **inspect(context, {"object_name": obj.name})}
+    return {"affected_objects": [obj.name, *scope.affected_objects], **inspect(context, {"object_name": obj.name})}
 
 
 def nla_edit_track(context: Any, params: Mapping[str, Any]) -> dict[str, Any]:
     """Rename/mute/lock an exact NLA track, or remove an explicitly empty track."""
-    reject_unknown_params(params, {"object_name", "track_name", "settings", "remove"})
+    reject_unknown_params(params, {"object_name", "track_name", "settings", "remove", "affected_objects"})
     _nla_context(context)
     obj = _object(params, True)
     name = bounded_name(params.get("track_name"), "track_name")
@@ -753,7 +761,7 @@ def nla_edit_track(context: Any, params: Mapping[str, Any]) -> dict[str, Any]:
                 raise invalid_argument("Track name is unavailable or exceeds 63 UTF-8 bytes.")
         assignments = prepare_assignments(track, settings, allowed=frozenset({"name", "mute", "lock"}),
                                          object_pointers=frozenset(), bpy=require_blender())
-    scope = _LegacyNlaGuard(context, obj, "nla.edit_track")
+    scope = _LegacyNlaGuard(context, obj, "nla.edit_track", affected_objects=params.get("affected_objects"))
     original, completed = dict(scope.track(scope.expected, track)["settings"]), []
     try:
         if remove:
@@ -785,13 +793,13 @@ def nla_edit_track(context: Any, params: Mapping[str, Any]) -> dict[str, Any]:
                 logging.getLogger(__name__).exception("NLA track compensation refused or incomplete")
         raise _legacy_failure(error, scope, restored=restored, previous_track_name=name,
                               removed_track_requires_checkpoint_recovery=remove and scope.started) from error
-    return {"affected_objects": [obj.name], "previous_track_name": name,
+    return {"affected_objects": [obj.name, *scope.affected_objects], "previous_track_name": name,
             "removed": remove, **inspect(context, {"object_name": obj.name})}
 
 
 def nla_push_down(context: Any, params: Mapping[str, Any]) -> dict[str, Any]:
     """Move a standard active action into a new top NLA track without copying its keys."""
-    reject_unknown_params(params, {"object_name", "track_name", "strip_name"})
+    reject_unknown_params(params, {"object_name", "track_name", "strip_name", "affected_objects", "expected_action_name"})
     _nla_context(context)
     obj = _object(params, True)
     names = [bounded_name(params.get(key), key, maximum=63) for key in ("track_name", "strip_name")]
@@ -822,6 +830,10 @@ def nla_push_down(context: Any, params: Mapping[str, Any]) -> dict[str, Any]:
             "Push-down currently supports REPLACE, influence 1, HOLD active actions only.",
         )
     action, slot = data.action, getattr(data, "action_slot", None)
+    if params.get("expected_action_name") is not None:
+        expected_action = bounded_name(params["expected_action_name"], "expected_action_name", maximum=63)
+        if action.name != expected_action:
+            raise invalid_argument("Active Action does not match expected_action_name; push-down refused.")
     if len(getattr(action, "slots", ())) and slot is None:
         raise invalid_argument("The active action needs an explicitly assigned slot.")
     start, end = map(float, action.frame_range)
@@ -836,7 +848,7 @@ def nla_push_down(context: Any, params: Mapping[str, Any]) -> dict[str, Any]:
             "Push-down requires a nonzero integral action range of at most 100000 frames.",
         )
     previous_active = data.nla_tracks.active
-    scope = _LegacyNlaGuard(context, obj, "nla.push_down")
+    scope = _LegacyNlaGuard(context, obj, "nla.push_down", affected_objects=params.get("affected_objects"))
     track = strip = None
     try:
         track = scope.add_track()
@@ -880,12 +892,11 @@ def nla_push_down(context: Any, params: Mapping[str, Any]) -> dict[str, Any]:
                 if track is not None:
                     expected = deepcopy(scope.expected)
                     owned = scope.track(expected, track)
-                    if strip is not None:
-                        if [record["id"] for record in owned["strips"]] != [key(strip)]:
-                            raise invalid_argument("Created NLA track acquired foreign strips; cleanup refused.")
+                    if owned["strips"]:
+                        known = len(owned["strips"]) == 1 and owned["strips"][0]["id"] in scope.created_strip_ids and owned["strips"][0]["action"] == action_token(action)
+                        if not known or (strip is not None and owned["strips"][0]["id"] != key(strip)):
+                            raise invalid_argument("Created NLA track acquired foreign or unverified strips; cleanup refused.")
                         scope.references(expected, action, -1)
-                    elif owned["strips"]:
-                        raise invalid_argument("Created NLA track acquired foreign strips; cleanup refused.")
                     expected["tracks"] = [record for record in expected["tracks"] if record["id"] != key(track)]
                     if expected["active_track"] == key(track):
                         expected["active_track"] = key(previous_active)
@@ -911,7 +922,7 @@ def nla_push_down(context: Any, params: Mapping[str, Any]) -> dict[str, Any]:
             },
         ) from exc
     return {
-        "affected_objects": [obj.name],
+        "affected_objects": [obj.name, *scope.affected_objects],
         "pushed_action": action.name,
         "preserved_slot": getattr(slot, "identifier", None),
         "action_range": [start, end],
@@ -946,7 +957,7 @@ def register_tools(registry: Any) -> None:
 
 def nla_solo_track(context: Any, params: Mapping[str, Any]) -> dict[str, Any]:
     """Set one track's solo state with explicit consent to replace an existing solo."""
-    reject_unknown_params(params, {"object_name", "track_name", "enabled", "replace_existing"})
+    reject_unknown_params(params, {"object_name", "track_name", "enabled", "replace_existing", "affected_objects"})
     _nla_context(context)
     obj = _object(params, True)
     name = bounded_name(params.get("track_name"), "track_name")
@@ -976,7 +987,7 @@ def nla_solo_track(context: Any, params: Mapping[str, Any]) -> dict[str, Any]:
         )
     before = [(t, t.is_solo) for t in data.nla_tracks]
     expected = [(t, enabled if t == track else False if enabled else value) for t, value in before]
-    scope = _LegacyNlaGuard(context, obj, "nla.solo_track")
+    scope = _LegacyNlaGuard(context, obj, "nla.solo_track", affected_objects=params.get("affected_objects"))
     try:
         if enabled:
             for other in others:
@@ -1023,7 +1034,7 @@ def nla_solo_track(context: Any, params: Mapping[str, Any]) -> dict[str, Any]:
             },
         ) from exc
     return {
-        "affected_objects": [obj.name],
+        "affected_objects": [obj.name, *scope.affected_objects],
         "changed_tracks": [t.name for t, value in before if t.is_solo != value],
         "solo_before": [t.name for t, value in before if value],
         "solo_after": [t.name for t in data.nla_tracks if t.is_solo],

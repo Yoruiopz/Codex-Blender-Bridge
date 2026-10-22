@@ -18,6 +18,7 @@ from blender_codex_bridge.errors import BridgeError  # noqa: E402
 from blender_codex_bridge.permissions import Permission, PermissionManager  # noqa: E402
 from blender_codex_bridge.runtime import get_runtime  # noqa: E402
 from blender_codex_bridge.task_plans import SCENE_PROPERTY  # noqa: E402
+from blender_codex_bridge.tools import task_plan  # noqa: E402
 
 
 def setup():
@@ -53,6 +54,67 @@ def finish(phase, evidence):
         "protected_scope_enforced": False, "native_undo_verified": False,
         "artistic_quality_accepted": False, "release_readiness": "NOT_ASSESSED",
     }), flush=True)
+
+
+def persistence_faults(runtime, grants, revision):
+    """Probe actual Scene IDProperties after the final permission callback."""
+    scene = bpy.context.scene
+    source = runtime.permissions._source
+    results = []
+    try:
+        for stage in ("before_write", "after_write"):
+            for fault in ("pause", "stop", "consent", "manual_property"):
+                scene[SCENE_PROPERTY] = "owned prior text"
+                calls = 0
+                fired = False
+
+                def provider(stage=stage, fault=fault):
+                    nonlocal calls, fired
+                    calls += 1
+                    trigger = stage == "before_write" or scene[SCENE_PROPERTY] != "owned prior text"
+                    if not fired and trigger:
+                        fired = True
+                        if fault == "pause":
+                            runtime.state.set_paused(True)
+                        elif fault == "stop":
+                            runtime.state.set_emergency_stopped(True)
+                        elif fault == "consent":
+                            grants[Permission.EDIT_SCENE.value] = False
+                        else:
+                            scene[SCENE_PROPERTY] = "newer manual text"
+                    return grants
+
+                runtime.permissions._source = provider
+                try:
+                    task_plan.persist_plan(runtime.executor.context, {"confirm": True, "expected_revision": revision})
+                except BridgeError as error:
+                    assert fired, (stage, fault, calls, error.to_dict())
+                    assert error.code == {"pause": "AGENT_PAUSED", "stop": "EMERGENCY_STOPPED",
+                                          "consent": "PERMISSION_DENIED", "manual_property": "INVALID_ARGUMENT"}[fault]
+                    if stage == "after_write":
+                        assert error.context["possible_mutation"] and not error.context["rollback_verified"], error.to_dict()
+                        assert error.context["recovery"] == "explicit_recovery_required"
+                    current = scene[SCENE_PROPERTY]
+                    if fault == "manual_property":
+                        assert current == "newer manual text"
+                    elif stage == "before_write":
+                        assert current == "owned prior text"
+                    else:
+                        assert json.loads(current)["revision"] == revision
+                    results.append({"stage": stage, "fault": fault, "code": error.code,
+                                    "newer_property_retained": fault == "manual_property",
+                                    "illegal_compensation": False})
+                else:
+                    raise AssertionError((stage, fault, "persistence should have stopped"))
+                finally:
+                    runtime.permissions._source = source
+                    grants[Permission.EDIT_SCENE.value] = True
+                    runtime.state.set_emergency_stopped(False)
+                    runtime.state.set_paused(False)
+        del scene[SCENE_PROPERTY]
+    finally:
+        runtime.permissions._source = source
+    return results
 
 
 def writer(bundle):
@@ -95,6 +157,7 @@ def writer(bundle):
     runtime.state.set_paused(True)
     deny(runtime, "AGENT_PAUSED", "task.plan.persist", confirm=True, expected_revision=2)
     runtime.state.set_paused(False)
+    persistence_gates = persistence_faults(runtime, grants, 2)
     persisted = call("task.plan.persist", {"confirm": True, "expected_revision": 2})
     assert not persisted["project_saved"] and bpy.data.filepath == ""
     saved_plan = json.loads(bpy.context.scene[SCENE_PROPERTY])
@@ -110,6 +173,7 @@ def writer(bundle):
     (bundle / "task-plan-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     finish("writer", {"structured_plan_revision_verified": True, "advisory_change_detection_and_explicit_recovery_verified": True,
         "reconnect_retention_verified": True, "permission_pause_and_save_denial_verified": True,
+        "persistence_provider_gates": persistence_gates,
         "explicit_disposable_project_saved": True, "project_sha256": manifest["sha256"]})
 
 

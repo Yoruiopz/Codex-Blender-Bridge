@@ -9,6 +9,7 @@ from pydantic import StrictBool, StrictStr
 from ..tool_registry import ToolDefinition, ToolRegistry, remote_tool
 from ._common import MCPToolBinding, params
 from .shader_groups import SHADER_GROUP_TOOL_DATA, GroupPath, ShaderGroupTools
+from .shader_interface import TOOL_DATA as SHADER_INTERFACE_TOOL_DATA
 from .shader_settings import SHADER_SETTINGS_TOOL_DATA, ShaderSettingsTools
 
 SocketValue = bool | int | float | str | list[float]
@@ -59,6 +60,7 @@ NODE_TOOL_DATA: tuple[tuple[str, str, bool, tuple[str, ...]], ...] = (
         ("EDIT_MATERIALS",),
     ),
     *SHADER_GROUP_TOOL_DATA,
+    *SHADER_INTERFACE_TOOL_DATA,
     *SHADER_SETTINGS_TOOL_DATA,
 )
 NODE_TOOL_NAMES = tuple(item[0] for item in NODE_TOOL_DATA)

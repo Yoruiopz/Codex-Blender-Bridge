@@ -161,14 +161,21 @@ def test_object_keyframes_allow_shared_mesh_and_fake_user_action(
 
 
 def test_object_transform_allows_shared_linked_mesh_data(addon_package, monkeypatch):
+    from test_object_rna_mutation import RNA, Properties, env
+    fixture = env.__wrapped__(addon_package, monkeypatch)
     module = importlib.import_module(f"{addon_package}.tools.transforms")
-    obj = _object(rotation_mode="XYZ", location=(0, 0, 0))
-    obj.data.users = 2
-    obj.data.library = object()
+    obj = fixture.obj
+    obj.type = "MESH"
+    obj.data = RNA(name="Shared Linked Mesh", users=2, library=object(), override_library=None,
+                   is_editable=False, shape_keys=None, vertices=[], edges=[], loops=[], polygons=[],
+                   attributes=[], materials=[], bl_rna=SimpleNamespace(properties=Properties()))
     monkeypatch.setattr(module, "get_object", lambda *args, **kwargs: obj)
+    monkeypatch.setattr(module, "require_blender", lambda: fixture.bpy)
     monkeypatch.setattr(module, "serialize_transform", lambda target: {"object": target.name})
-    result = module.set_transform(None, {"object_name": obj.name, "location": [1, 2, 3]})
+    fixture.bpy.context.view_layer.update = lambda: None
+    result = module.set_transform(fixture.context, {"object_name": obj.name, "location": [1, 2, 3]})
     assert obj.location == (1.0, 2.0, 3.0)
+    assert obj.data.users == 2 and obj.data.library is not None
     assert result["changed"] is True
 
 

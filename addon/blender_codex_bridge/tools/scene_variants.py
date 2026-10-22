@@ -46,8 +46,16 @@ def _gate(context, permissions, *, recovery=False):
     # stale final guard, including while compensating an owned publication.
     context.require(*permissions)
     context.require(*permissions)
-    if not recovery and context.check_cancelled:
+    # Recovery retains the same live request/toolset authority as a forward
+    # write. Lost callers cannot authorize additional compensation mutations.
+    if context.check_cancelled:
         context.check_cancelled()
+    lifetime = getattr(context, "request_lifecycle", None)
+    if lifetime is not None:
+        lifetime.check()
+    registry = getattr(context, "registry", None)
+    if registry is not None and "scene_edit" not in registry.enabled_toolsets:
+        raise BridgeError(ErrorCode.TOOLSET_DISABLED, "Cinematic toolset was disabled during live authorization.")
     flags = context.state.snapshot() if getattr(context, "state", None) else {}
     modifying = any(permission != Permission.INSPECT_SCENE for permission in permissions)
     if modifying and flags.get("emergency_stopped"):

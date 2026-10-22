@@ -58,6 +58,44 @@ def _bounded_single_effect(value: Any) -> dict[str, Any] | None:
 MAX_EXTERNAL_ARTIFACTS = 4
 
 
+def bounded_recovery_evidence(value: Any) -> dict[str, Any] | None:
+    """Retain only bounded packed-image facts, separately from file effects.
+
+    A retained in-memory snapshot is not a saved project or an external backup.
+    Unknown fields and invalid values never become recovery proof in history.
+    """
+    if not isinstance(value, Mapping):
+        return None
+    result: dict[str, Any] = {}
+    mode = value.get("mode")
+    if isinstance(mode, str) and mode in {"CURRENT_PIXELS_SNAPSHOT", "LOADED_BUFFER", "PACKED_RECONSTRUCTION"}:
+        result["mode"] = mode
+    for key in ("image_name", "snapshot_name", "retained_image_name"):
+        field = value.get(key)
+        if isinstance(field, str) and field and len(field) <= 63 and not any(ord(c) < 32 for c in field):
+            try:
+                if len(field.encode("utf-8")) <= 63:
+                    result[key] = field
+            except UnicodeError:
+                pass
+    for key in ("snapshot_retained", "project_saved", "source_file_read", "packed_payload_replaced",
+                "complete_pixels_verified", "original_pixels_unchanged", "possible_mutation"):
+        field = value.get(key)
+        if type(field) is bool:
+            result[key] = field
+    for key in ("pixels_sha256_float32_le", "packed_sha256", "previous_packed_sha256"):
+        if key not in value:
+            continue
+        field = value[key]
+        if field is None or (isinstance(field, str) and len(field) == 64
+                             and all(c in "0123456789abcdef" for c in field)):
+            result[key] = field
+    size = value.get("packed_bytes")
+    if type(size) is int and 0 <= size <= 288 * 1024 * 1024:
+        result["packed_bytes"] = size
+    return result or None
+
+
 def bounded_external_effects(value: Any) -> dict[str, Any] | None:
     """Retain scalar effects and at most four flat managed-file descriptors.
 
@@ -99,6 +137,7 @@ class OperationRecord:
     error_code: str | None = None
     job_evidence: dict[str, Any] | None = None
     external_effects: dict[str, Any] | None = None
+    recovery_evidence: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
@@ -181,6 +220,7 @@ class BridgeState:
         error_code: str | None = None,
         job_evidence: dict[str, Any] | None = None,
         external_effects: Mapping[str, Any] | None = None,
+        recovery_evidence: Mapping[str, Any] | None = None,
     ) -> OperationRecord:
         record = OperationRecord(
             operation_id=f"op_{uuid.uuid4().hex[:10]}",
@@ -193,6 +233,7 @@ class BridgeState:
             error_code=error_code,
             job_evidence=job_evidence,
             external_effects=bounded_external_effects(external_effects),
+            recovery_evidence=bounded_recovery_evidence(recovery_evidence),
         )
         with self._lock:
             self._history.appendleft(record)

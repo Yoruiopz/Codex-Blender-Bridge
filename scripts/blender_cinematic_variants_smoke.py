@@ -16,8 +16,11 @@ sys.path.insert(0, str(ROOT/"addon"))
 sys.path.insert(0, str(ROOT/"scripts"))
 import blender_codex_bridge  # noqa: E402
 from blender_cinematic_variant_probe_smoke import camera_point, image_bytes  # noqa: E402
+from blender_codex_bridge.command_queue import QueuedRequest  # noqa: E402
 from blender_codex_bridge.errors import BridgeError, ErrorCode  # noqa: E402
 from blender_codex_bridge.permissions import Permission, PermissionManager  # noqa: E402
+from blender_codex_bridge.protocol import Request  # noqa: E402
+from blender_codex_bridge.request_lifecycle import ConnectionLifetime, RequestLifetime  # noqa: E402
 from blender_codex_bridge.runtime import get_runtime  # noqa: E402
 from blender_codex_bridge.tools import scene_variants as domain  # noqa: E402
 from native_camera_evidence import compare_rgba8  # noqa: E402
@@ -110,23 +113,39 @@ def provider_boundary_faults(runtime, params, a, b):
     manager = context.permissions
     outcomes = []
     for recovery in (False, True):
-        for signal in ("paused", "emergency_stopped", "mode"):
+        for signal in ("paused", "emergency_stopped", "mode", "toolset", "queued_cancel", "queued_expiry", "disconnect", "handoff_rejected"):
             prepared = domain._prepare(context, params, domain.APPLY)
             transaction = domain._Transaction(context, prepared, domain.APPLY)
             if recovery:
                 transaction.run()
                 assert numeric() == b
             expected = numeric()
-            original_source, calls = manager._source, [0]
-            poison_at = len(domain.APPLY)*(3 if recovery else 1)+1
+            original_source, poisoned = manager._source, [False]
+            lifetime = RequestLifetime(ConnectionLifetime())
+            queued = QueuedRequest(Request(id="cinematic-native-"+signal, method="scene.variant.apply", params=params, _lifecycle=lifetime))
+            assert queued.try_start()
+            original_cancel, original_lifetime = context.check_cancelled, context.request_lifecycle
+            context.check_cancelled, context.request_lifecycle = queued.check_active, lifetime
 
-            def provider(calls=calls, poison_at=poison_at, signal=signal, original_source=original_source):
-                calls[0] += 1
-                if calls[0] == poison_at:
+            def provider(poisoned=poisoned, signal=signal, original_source=original_source, queued=queued, lifetime=lifetime):
+                # The transaction is already prepared; poison the next real
+                # granting boundary, independent of permissions in the batch.
+                if not poisoned[0]:
+                    poisoned[0] = True
                     if signal == "mode":
                         assert bpy.ops.object.mode_set(mode="EDIT") == {"FINISHED"}
-                    else:
+                    elif signal in {"paused", "emergency_stopped"}:
                         getattr(runtime.state, "set_"+signal)(True)
+                    elif signal == "toolset":
+                        runtime.registry.disable_toolset("scene_edit")
+                    elif signal == "queued_cancel":
+                        queued.cancel_pending(BridgeError("TIMEOUT", "Canonical cinematic request canceled"))
+                    elif signal == "queued_expiry":
+                        queued.deadline = 0
+                    elif signal == "disconnect":
+                        lifetime.connection.disconnected.set()
+                    else:
+                        lifetime.acknowledge(False)
                 return original_source()
 
             manager._source = provider
@@ -135,26 +154,34 @@ def provider_boundary_faults(runtime, params, a, b):
                     (transaction.restore if recovery else transaction.run)()
                     raise AssertionError("Provider-induced stop/context change allowed a write")
                 except BridgeError as error:
-                    wanted = {"paused": "AGENT_PAUSED", "emergency_stopped": "EMERGENCY_STOPPED", "mode": "INVALID_MODE"}[signal]
+                    wanted = {"paused": "AGENT_PAUSED", "emergency_stopped": "EMERGENCY_STOPPED", "mode": "INVALID_MODE",
+                        "toolset": "TOOLSET_DISABLED"}.get(signal, "TIMEOUT")
                     assert error.code == wanted, error.to_dict()
-                assert calls[0] >= poison_at and numeric() == expected
+                    if recovery:
+                        failure = domain._failure(transaction, error)
+                        assert failure.context["possible_mutation"] and not failure.context["rollback_verified"]
+                assert poisoned[0] and numeric() == expected
                 if not recovery:
                     assert transaction.attempted == []
-                if signal != "mode":
+                if signal in {"paused", "emergency_stopped"}:
                     assert runtime.dispatch("scene.variant.inspect")["variants"]
             finally:
                 manager._source = original_source
+                context.check_cancelled, context.request_lifecycle = original_cancel, original_lifetime
+                runtime.registry.enable_toolset("scene_edit")
                 runtime.state.set_paused(False)
                 runtime.state.set_emergency_stopped(False)
                 if bpy.context.mode != "OBJECT":
                     assert bpy.ops.object.mode_set(mode="OBJECT") == {"FINISHED"}
             if recovery:
+                transaction.context = runtime.executor.context
                 transaction.restore()
             assert numeric() == a
             outcomes.append({"signal": signal, "recovery": recovery,
                 "provider_granted_permissions": True, "zero_unpermitted_control_writes": True,
-                "read_only_inspection_available": signal != "mode",
-                "explicit_resume_restores_original_controls": True})
+                "canonical_queued_request_and_lifetime": True,
+                "read_only_inspection_available": signal in {"paused", "emergency_stopped"},
+                "explicit_fresh_authority_restores_original_controls": True})
     return outcomes
 
 

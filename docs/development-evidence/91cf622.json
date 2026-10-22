@@ -1,0 +1,51 @@
+{
+  "kind": "development-validation-with-failures",
+  "commit": "91cf62279afe2d3615cc2d9388ed0f034ca3a27d",
+  "source_sha256": "bd334205139721e65ccd694113c98c1c7c7a62b6a04acfb6c1b5610dc71cab73",
+  "source_file_count": 264,
+  "mcp_tool_count": 251,
+  "python": {
+    "mcp_sdk_versions": ["2.0.0", "2.2.0"],
+    "passed_each": 3722,
+    "windows_only_skipped_each": 3
+  },
+  "ci": {
+    "run_id": 39701957370,
+    "all_seven_jobs_passed": true
+  },
+  "packages": {
+    "distribution_manifest_sha256": "837f2370ca370132a381f53655c93b864d9d0ffb4d7d9e217ad3b2944a4656f2",
+    "installed_wheel_evidence_sha256": "5b714c698bd45a52600ca248d25bc46655acbebc9f06326f0fed1f73f1c92afb",
+    "exact_commit_archive_members_verified": true,
+    "installed_mcp_stdio_tool_count": 251,
+    "core_only_default": true
+  },
+  "native": {
+    "result": "FAILED_COMPLETE_MATRIX",
+    "report_sha256": "983d29bc3caa62da834ba12ee4e0f9eb4986b604ed01b27cd6e7896c1d7ec073",
+    "all_cases_selected": true,
+    "cases_per_runtime": 79,
+    "completed_cases": 158,
+    "passed_cases": 155,
+    "isolated_processes": 196,
+    "versions": ["4.5.14 LTS", "5.2.2 LTS"],
+    "os": "Linux",
+    "one_complete_invocation": true,
+    "failed_cases": [
+      {"version": "4.5.14 LTS", "case": "rig_drivers"},
+      {"version": "5.2.2 LTS", "case": "rig_drivers"},
+      {"version": "5.2.2 LTS", "case": "field_scanner"}
+    ],
+    "checkout_clean_after_run": true,
+    "passing_reruns_not_substituted": true
+  },
+  "evidence_location": "/workspace/Codex-Blender-Bridge/build/next2-integration-root-20261022",
+  "release_readiness": "NOT_ASSESSED",
+  "all_14_release_gates_open": true,
+  "limits": [
+    "The complete native matrix failed; subsequent source needs its own clean verification.",
+    "No Windows 11 runner or installed artist acceptance scenarios A-F.",
+    "Development packages retain 0.3.0 metadata and never replace published releases.",
+    "File-cache advice targeted completed owned artifacts only; no constrained-memory acceptance."
+  ]
+}

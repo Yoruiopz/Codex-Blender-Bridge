@@ -125,6 +125,14 @@ measured value and refuses compensation. It records the fresh native defaults,
 verifies that normalization leaves no keys/samples/modifiers, and separately verifies
 that a pre-existing keyed driver is rejected without changing its mapping or control.
 
+The stricter generic rig-edit boundary separately refuses omitted skin scope and
+unreviewed same-rig driver references without changing pose channels or evaluated
+skin geometry. The fixture records both refusals. Driver removal retains its last
+evaluated channel; after all self-drivers are removed, a scoped `rig.pose_transform`
+restores the original channel and verifies every skin vertex. This is driver
+lifecycle evidence, not combined self-driver/pose-authoring acceptance; that
+workflow remains required and open for 1.0.
+
 Run through `scripts/run_blender_checks.py --case rig_drivers` with an explicit Blender
 executable and unused evidence directory. Linux Blender 4.5.14 LTS and 5.2.2 development
 evidence for the per-write guards and compatible object-driver API is at

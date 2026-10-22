@@ -15,6 +15,7 @@ from .errors import BridgeError, ErrorCode, invalid_argument
 from .permissions import Permission
 from .protocol import utc_timestamp
 from .request_lifecycle import RequestLifetime
+from .state import bounded_recovery_evidence
 from .tools import image_masks, image_paint, images, pixel_brush
 from .utils import require_blender
 
@@ -68,10 +69,30 @@ class PaintJob:
     required_permissions: tuple = (Permission.EDIT_MATERIALS,)
     driver: Any = None
     external_effects: dict = field(default_factory=dict)
+    recovery_evidence: dict = field(default_factory=dict)
+    evidence_observation_unknown: list[str] = field(default_factory=list)
     finished: float | None = None
 
+    def observe_evidence(self) -> list[str]:
+        """Retain last bounded observations if native IDs disappear or reads fail."""
+        if self.driver is None:
+            return list(self.evidence_observation_unknown)
+        unknown = []
+        for field_name, observe in (("external_effects", self.driver.evidence),
+                ("recovery_evidence", getattr(self.driver, "recovery_evidence", None))):
+            if observe is None:
+                continue
+            try:
+                value = observe()
+                setattr(self, field_name, (bounded_recovery_evidence(value) or {}) if field_name == "recovery_evidence" else dict(value))
+            except Exception:
+                LOGGER.exception("Image-job %s observation failed", field_name)
+                unknown.append(field_name)
+        self.evidence_observation_unknown = unknown
+        return list(unknown)
+
     def summary(self) -> dict:
-        effects = self.driver.evidence() if self.driver is not None else self.external_effects
+        self.observe_evidence()
         return {"job_id": self.job_id, "kind": self.kind, "request_id": self.request_id,
                 "source_image": self.source_name, "new_image": self.new_name, "state": self.state,
                 "terminal": self.state in TERMINAL, "revision": self.revision, "progress": dict(self.progress),
@@ -79,7 +100,9 @@ class PaintJob:
                 "execution_started": self.execution_started, "undo_boundary_created": self.boundary_created,
                 "undo_boundary_finalized": self.boundary_finalized, "operation_id": self.operation_id,
                 "verification_required": True, "durable": False, "workload": dict(self.workload),
-                "external_effects": dict(effects), "duration_ms": round(((self.finished or time.monotonic())-self.started)*1000, 3)}
+                "external_effects": dict(self.external_effects), "recovery_evidence": dict(self.recovery_evidence),
+                "evidence_observation_unknown": list(self.evidence_observation_unknown),
+                "duration_ms": round(((self.finished or time.monotonic())-self.started)*1000, 3)}
 
 
 class PaintJobs:
@@ -99,12 +122,25 @@ class PaintJobs:
         if threading.get_ident() != self._main_thread:
             raise BridgeError(ErrorCode.BLENDER_CONTEXT_ERROR, "Job control and execution require Blender's main thread.")
 
-    def _check(self, job: PaintJob, context: Any):
+    def _lifetime_check(self, job: PaintJob, context: Any):
+        """Pure safe point after providers: Events, clock, job and registry only."""
         job.lifetime.check()
         if job.cancel_reason or time.monotonic() >= job.deadline:
             raise BridgeError(ErrorCode.TIMEOUT, "Image job stopped before its next safe action.",
                               {"job_cancel_requested": bool(job.cancel_reason), "reason": job.cancel_reason,
                                "job_deadline_expired": time.monotonic() >= job.deadline})
+        spec = context.registry.get(job.method)
+        if spec.toolset not in context.registry.enabled_toolsets:
+            raise BridgeError(ErrorCode.TOOLSET_DISABLED, "Image job toolset was disabled before its next safe action.",
+                              {"tool": job.method, "toolset": spec.toolset})
+        if job.in_commit:
+            flags = context.state.snapshot()
+            if flags["emergency_stopped"] or flags["paused"]:
+                raise BridgeError(ErrorCode.EMERGENCY_STOPPED if flags["emergency_stopped"] else ErrorCode.AGENT_PAUSED,
+                                  "Image publication stopped at its final safe action.")
+
+    def _check(self, job: PaintJob, context: Any):
+        self._lifetime_check(job, context)
         required = list(job.required_permissions)
         if job.requires_external_files and Permission.ACCESS_EXTERNAL_FILES not in required:
             required.append(Permission.ACCESS_EXTERNAL_FILES)
@@ -113,6 +149,7 @@ class PaintJobs:
             # A pause during an already-started native call cannot hold half a
             # publication. Stop at the next safe point and retain recovery evidence.
             context.registry.prepare(job.method, context)
+        self._lifetime_check(job, context)
 
     def start(self, context: Any, params: dict, time_limit: float) -> dict:
         self._main()
@@ -155,6 +192,38 @@ class PaintJobs:
         except Exception:
             self.cancel_all("start request cancelled")
             raise
+
+    def start_prepared_driver(self, context: Any, params: dict, time_limit: float, *, prepare, required_permissions) -> dict:
+        """Trusted domain preparation; preserve the one shared owner/lifecycle.
+
+        Preparation may perform a bounded non-preemptible native input capture.
+        Driver CPU work waits for start-response delivery and shares normal tick,
+        consent, cancel, pause, undo, terminal history and buffer-release paths.
+        """
+        self._main()
+        if self.active is not None:
+            raise BridgeError(ErrorCode.OPERATION_FAILED, "One image job is already active; inspect/cancel it before starting another.",
+                              {"active_job_id": self.active.job_id})
+        time_limit = pixel_brush.number(time_limit, "time_limit_seconds", 1., 300.)
+        started = time.monotonic()
+        prepared = prepare(context, params)
+        job = PaintJob("job_"+uuid.uuid4().hex, getattr(context, "request_id", ""),
+            prepared["source_name"], prepared["name"],
+            getattr(context, "request_lifecycle", None) or RequestLifetime.local(), started+time_limit,
+            prepared, _identity(prepared["source"]), _metadata(prepared["source"]),
+            prepared["requires_external_files"], started=started,
+            method=prepared["method"], kind=prepared["kind"], required_permissions=tuple(required_permissions),
+            driver=prepared["driver_type"](prepared))
+        job.workload = dict(prepared["workload"])
+        self._accept(job, context)
+        return {"accepted": True, **job.summary(), "job_completed": False,
+                "input_frozen_at_acceptance": True, "native_commit_interruptible": False}
+
+    def start_recovery_driver(self, context: Any, params: dict, time_limit: float, *, snapshot: bool) -> dict:
+        from .tools.image_recovery_jobs import WRITE, prepare_restore, prepare_snapshot
+
+        return self.start_prepared_driver(context, params, time_limit,
+            prepare=prepare_snapshot if snapshot else prepare_restore, required_permissions=WRITE)
 
     def start_export(self, context: Any, params: dict, time_limit: float) -> dict:
         self._main()
@@ -239,6 +308,8 @@ class PaintJobs:
     def _context(self, job: PaintJob):
         context = self.context_factory()
         context.check_cancelled = lambda: self._check(job, context)
+        context.request_lifecycle = job.lifetime
+        context.check_final_job = lambda: self._lifetime_check(job, context)
         return context
 
     def _validate_source(self, job: PaintJob, context: Any):
@@ -310,10 +381,19 @@ class PaintJobs:
                                                      {"exception_type": type(failure).__name__, "cleanup_outcome_unknown": True})
             finally:
                 # Cleanup failures cannot erase already observed file effects.
-                job.external_effects = job.driver.evidence()
+                unknown = job.observe_evidence()
+                if unknown:
+                    if error is None:
+                        state, error = "FAILED", BridgeError(ErrorCode.OPERATION_FAILED,
+                            "Image-job final effects could not be observed; last observations may be stale.")
+                    error.context["evidence_observation_unknown"] = unknown
+                if job.recovery_evidence:
+                    job.recovery_evidence.setdefault("possible_mutation", bool(job.execution_started))
                 job.driver = None
             if job.result is not None:
                 job.result["external_effects"] = dict(job.external_effects)
+                if job.recovery_evidence:
+                    job.result["recovery_evidence"] = dict(job.recovery_evidence)
             if state != "SUCCEEDED":
                 job.result = None
         job.state = state
@@ -327,6 +407,8 @@ class PaintJobs:
                                   "verification_required": True})
             if job.external_effects:
                 error.context["external_effects"] = dict(job.external_effects)
+            if job.recovery_evidence:
+                error.context["recovery_evidence"] = dict(job.recovery_evidence)
             external_possible = bool(job.external_effects.get("file_published") or job.external_effects.get("publication_outcome_unknown")
                                      or job.external_effects.get("retained_staging_path"))
             if external_possible:
@@ -344,16 +426,27 @@ class PaintJobs:
         job.prepared.clear()  # Release all source/output buffers and bpy handles.
         if job.lifetime.connection is not None:
             job.lifetime.connection.background_active.clear()
-        record = self.context_factory().state.record_operation(tool=job.method,
-            description=f"Image job {job.job_id} {state.lower()}: {job.new_name}; verify state",
-            success=state == "SUCCEEDED", duration_ms=(job.finished - job.started) * 1000,
-            error_code=error.code if error else None,
-            **({"job_evidence": {"job_id": job.job_id, "state": state, "external_effects": dict(job.external_effects),
-                                 "execution_started": job.execution_started, "undo_boundary_finalized": job.boundary_finalized}}
-               if job.external_effects else {}))
-        job.operation_id = record.operation_id
-        self.history.appendleft(job)
-        self.active = None
+        try:
+            record = self.context_factory().state.record_operation(tool=job.method,
+                description=f"Image job {job.job_id} {state.lower()}: {job.new_name}; verify state",
+                success=state == "SUCCEEDED", duration_ms=(job.finished - job.started) * 1000,
+                error_code=error.code if error else None,
+                recovery_evidence=job.recovery_evidence or None,
+                **({"job_evidence": {"job_id": job.job_id, "state": state, "external_effects": dict(job.external_effects),
+                                     "execution_started": job.execution_started, "undo_boundary_finalized": job.boundary_finalized,
+                                     "evidence_observation_unknown": list(job.evidence_observation_unknown)}}
+                   if job.external_effects or job.recovery_evidence or job.evidence_observation_unknown else {}))
+            job.operation_id = record.operation_id
+        except Exception:
+            LOGGER.exception("Image-job operation history recording failed")
+            job.error = BridgeError(ErrorCode.OPERATION_FAILED, "Image-job history could not be recorded; inspect terminal evidence.",
+                                    {"operation_history_unknown": True, "possible_mutation": job.execution_started}).to_dict()
+            job.state, job.result = "FAILED", None
+            job.progress = {**job.progress, "phase": "failed"}
+        finally:
+            self.history.appendleft(job)
+            if self.active is job:
+                self.active = None
 
     def tick(self) -> bool:
         self._main()

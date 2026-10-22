@@ -1,7 +1,7 @@
 # Development status
 
 **Unreleased development; 1.0 is NOT_READY.** The published [0.3.0 alpha](releases/0.3.0.md)
-contains 108 tools. The development registry currently contains **229 MCP tools**;
+contains 108 tools. The development registry currently contains **251 MCP tools**;
 its packages retain 0.3.0 metadata until a qualified release is accepted. Always pair the
 add-on and MCP server from one checkout. A matching version string alone does not identify
 an unpublished build.
@@ -14,8 +14,8 @@ failure/recovery behavior. Tool count and isolated fixture results do not prove 
 artist workflows. The [execution plan](plan-1.0.md), [readiness gates](release-1.0-readiness.md)
 and [evidence rules](release-evidence.md) define the work needed for 1.0.
 
-Current-source Linux development checks on Blender 4.3.2, 4.5.14 LTS and 5.2.2 LTS
-are separate from historical Windows
+Linux development checks, including historical 4.3.2 increments and newer
+4.5.14 LTS / 5.2.2 LTS results, are separate from historical Windows
 reports for earlier increments. Windows 11 qualification on Blender 4.5 LTS and stable 5.x,
 installed-package acceptance and scenarios A–F remain required. There is currently no
 available Windows 11 test machine; those gates remain open.
@@ -28,6 +28,11 @@ Recent bounded additions include [mesh slides and UV refinement](mesh-uv-refinem
 [orthographic surface paint and stencils](image-surface-paint.md),
 [IK and measured deformation](rig-ik-deformation.md), and
 [zone/interface lifecycle](geometry-zone-lifecycle.md).
+The next bounded increment adds [cooperative packed recovery](image-recovery-jobs.md),
+[shader interface previews and edits](shader-interface-lifecycle.md),
+[guarded rig edits](rig-edit-boundaries.md),
+[object property recovery](object-rna-safety.md) and
+[saved two-bone NLA motion](character-nla.md).
 See the [source-matched checkpoint](artist-workflow-checkpoint-20261022.md) for retained evidence.
 Broader retopology/painting, character animation, procedural baking,
 simulation and production delivery still have open acceptance work.

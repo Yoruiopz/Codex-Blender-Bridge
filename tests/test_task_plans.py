@@ -244,3 +244,132 @@ def test_mcp_wrapper_forwards_typed_scope_and_confirmation():
         ("task.plan.set", {"goal": "Goal", "steps": [{"id": "a", "description": "Inspect"}], "protected_objects": ["Protected"]}),
         ("task.plan.persist", {"expected_revision": 2, "confirm": True}),
     ]
+
+
+@pytest.mark.parametrize("fault", ["pause", "stop", "scene", "view_layer", "mode", "project", "plan", "scope", "property"])
+def test_last_permission_provider_cannot_change_persistence_scope_before_write(plans, fault):
+    create(plans)
+    key = plans.data.SCENE_PROPERTY
+    plans.scene[key] = "prior text"
+    fired = False
+
+    def provider():
+        nonlocal fired
+        if not fired:
+            fired = True
+            if fault == "pause":
+                plans.context.state.set_paused(True)
+            elif fault == "stop":
+                plans.context.state.set_emergency_stopped(True)
+            elif fault == "scene":
+                plans.bpy.context.scene = Scene([plans.obj])
+            elif fault == "view_layer":
+                plans.bpy.context.view_layer = NS(name="Replacement")
+            elif fault == "mode":
+                plans.bpy.context.mode = "EDIT_MESH"
+            elif fault == "project":
+                plans.bpy.data = NS(filepath="another.blend")
+            elif fault == "plan":
+                plans.data.get_task_plans(plans.context.state).plan["revision"] += 1
+            elif fault == "scope":
+                plans.obj.session_uid += 1
+            else:
+                plans.scene[key] = "new manual text"
+        return plans.grants
+
+    plans.context.permissions._source = provider
+    with pytest.raises(plans.error):
+        plans.module.persist_plan(plans.context, {"confirm": True, "expected_revision": 1})
+    assert plans.scene[key] == ("new manual text" if fault == "property" else "prior text")
+
+
+@pytest.mark.parametrize("fault", ["pause", "stop", "consent", "manual_property"])
+def test_postwrite_interruption_retains_owned_or_newer_property_without_illegal_compensation(plans, fault):
+    create(plans)
+    key = plans.data.SCENE_PROPERTY
+    plans.scene[key] = "prior text"
+    fired = False
+
+    def provider():
+        nonlocal fired
+        if not fired and plans.scene[key] != "prior text":
+            fired = True
+            if fault == "pause":
+                plans.context.state.set_paused(True)
+            elif fault == "stop":
+                plans.context.state.set_emergency_stopped(True)
+            elif fault == "consent":
+                plans.grants["EDIT_SCENE"] = False
+            else:
+                plans.scene[key] = "new manual text"
+        return plans.grants
+
+    plans.context.permissions._source = provider
+    with pytest.raises(plans.error) as caught:
+        plans.module.persist_plan(plans.context, {"confirm": True, "expected_revision": 1})
+    assert fired and not caught.value.context["rollback_verified"]
+    assert caught.value.context["possible_mutation"] and caught.value.context["verification_required"]
+    assert caught.value.context["recovery"] == "explicit_recovery_required"
+    if fault == "manual_property":
+        assert plans.scene[key] == "new manual text"
+    else:
+        assert plans.data.decode_saved(plans.scene[key])["revision"] == 1
+
+
+@pytest.mark.parametrize("unknown_partial", [False, True])
+def test_native_property_failure_compensates_only_exact_owned_value(plans, monkeypatch, unknown_partial):
+    create(plans)
+    key = plans.data.SCENE_PROPERTY
+    plans.scene[key] = "prior text"
+    fired = False
+
+    def write(scene, name, value):
+        nonlocal fired
+        if name == key and not fired:
+            fired = True
+            dict.__setitem__(scene, name, "unknown native partial" if unknown_partial else value)
+            raise RuntimeError("injected after native write")
+        dict.__setitem__(scene, name, value)
+
+    monkeypatch.setattr(Scene, "__setitem__", write)
+    with pytest.raises(plans.error) as caught:
+        plans.module.persist_plan(plans.context, {"confirm": True, "expected_revision": 1})
+    assert caught.value.context["rollback_verified"] is (not unknown_partial)
+    assert plans.scene[key] == ("unknown native partial" if unknown_partial else "prior text")
+
+
+@pytest.mark.parametrize("previous", [None, 1, [], "x" * 65537, "\ud800"])
+def test_persistence_refuses_unknown_or_unbounded_existing_storage(plans, previous):
+    create(plans)
+    key = plans.data.SCENE_PROPERTY
+    plans.scene[key] = previous
+    with pytest.raises(plans.error) as caught:
+        plans.module.persist_plan(plans.context, {"confirm": True, "expected_revision": 1})
+    assert caught.value.code == "NOT_IMPLEMENTED" and plans.scene[key] == previous
+
+
+def test_lost_scene_during_postwrite_observation_preserves_primary_context_error(plans, monkeypatch):
+    create(plans)
+    key = plans.data.SCENE_PROPERTY
+    lost = False
+    original_get = Scene.get
+
+    def read(scene, name, default=None):
+        if scene is plans.scene and lost:
+            raise ReferenceError("Scene RNA was removed by project replacement")
+        return original_get(scene, name, default)
+
+    def provider():
+        nonlocal lost
+        if key in plans.scene:
+            lost = True
+            plans.bpy.context.scene = Scene([plans.obj])
+        return plans.grants
+
+    monkeypatch.setattr(Scene, "get", read)
+    plans.context.permissions._source = provider
+    with pytest.raises(plans.error) as caught:
+        plans.module.persist_plan(plans.context, {"confirm": True, "expected_revision": 1})
+    assert caught.value.code == "INVALID_ARGUMENT"
+    assert "context changed" in caught.value.message
+    assert caught.value.context["possible_mutation"] and not caught.value.context["rollback_verified"]

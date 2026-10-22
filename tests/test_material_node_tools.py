@@ -128,6 +128,7 @@ def test_addon_registry_declares_permissions_and_modification_metadata(
     importlib.import_module(f"{addon_package}.tools.paint_jobs").register_tools(registry)
     importlib.import_module(f"{addon_package}.tools.image_delivery").register_tools(registry)
     importlib.import_module(f"{addon_package}.tools.shader_groups").register_tools(registry)
+    importlib.import_module(f"{addon_package}.tools.shader_interface").register_tools(registry)
     importlib.import_module(f"{addon_package}.tools.shader_settings").register_tools(registry)
 
     assert set(MATERIAL_TOOL_NAMES).issubset(registry.list_tools())

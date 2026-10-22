@@ -32,6 +32,9 @@ def _require(context: Any, image: Any | None = None, *, modifying=False) -> None
     context.require(*required)
     images._check(context)
     context.require(*required)
+    final_job = getattr(context, "check_final_job", None)
+    if final_job is not None:
+        final_job()
     state = getattr(context, "state", None)
     if modifying and state is not None:
         flags = state.snapshot()

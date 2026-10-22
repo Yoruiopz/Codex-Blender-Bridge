@@ -1,0 +1,92 @@
+{
+  "kind": "development-workflow-validation",
+  "commit": "cb7b536321e216bc4134403d466cf2a506751465",
+  "merged_as": "c363f929cd1438add7729a0f5e3169c0b57feb5d",
+  "pr": "https://github.com/Yoruiopz/Codex-Blender-Bridge/pull/4",
+  "source_sha256": "0826af25b27122c576e71f16ea93d13a0a25f73b8a306556efcc782ba290c2e4",
+  "source_file_count": 246,
+  "mcp_tool_count": 246,
+  "python": {
+    "20": {
+      "tests": 3404,
+      "skipped": 3,
+      "failures": 0,
+      "errors": 0,
+      "sha256": "adb2ee8936e4ee29ea899a1d0d9721e8b5f5cb1761fc2dde8ffd493fe30ea8f7",
+      "passed": 3401
+    },
+    "22": {
+      "tests": 3404,
+      "skipped": 3,
+      "failures": 0,
+      "errors": 0,
+      "sha256": "18f25ef2ffa9d7e28102031f53cd3189fab90e31cc3bec18b3a1adbc545617f5",
+      "passed": 3401
+    }
+  },
+  "native": {
+    "report_sha256": "ef5aa8b1282c6289b46cd89cb02ea950193895f30ae88a96f34c7fa0db8276ab",
+    "all_cases_selected": true,
+    "cases_per_runtime": 68,
+    "passed": 136,
+    "processes_passed": 162,
+    "versions": [
+      "4.5.14 LTS",
+      "5.2.2 LTS"
+    ],
+    "os": "Linux",
+    "one_complete_invocation": true
+  },
+  "packages": {
+    "distribution_manifest_sha256": "27c947da25838e499ce1ef4895fde830b7f97c6be9dfb03ca824c0cbe574d93c",
+    "installed_wheel_evidence_sha256": "d0ed3bc75c059126e113a196e0688e8265e79988afde08abb8d34fa00387a10c",
+    "exact_commit_archive_members_verified": true,
+    "installed_mcp_stdio_tool_count": 246,
+    "core_only_default": true
+  },
+  "ci": {
+    "run_id": 39697014490,
+    "run_url": "https://github.com/Yoruiopz/Codex-Blender-Bridge/actions/runs/39697014490",
+    "all_seven_jobs_passed": true,
+    "logs": {
+      "119556749115": {
+        "sha256": "1dc7e154791d656ad1c54aafde097a84eb70295c1fadd69e4449d2650f524635",
+        "bytes": 62473
+      },
+      "119556749289": {
+        "sha256": "741bf41a9ff4d8965f7fbc14918b0741d765c8fe79fd0a17aa152c18fcf164dc",
+        "bytes": 62388
+      },
+      "119556749325": {
+        "sha256": "75c661faf701309d37d5f48b5d96c538851dc0d1b0d72535bf6c3ac1483a5c83",
+        "bytes": 64877
+      },
+      "119556749350": {
+        "sha256": "c4c42e4af0065bd51ed46f22eda50e4e694333d024a5698188e2eb18f4ccc82c",
+        "bytes": 62388
+      },
+      "119556749387": {
+        "sha256": "01de835659eaf7b3e62dbbeac7e1ca7655376a5be9841b23aee1fcb45655272c",
+        "bytes": 63058
+      },
+      "119556749453": {
+        "sha256": "fff5a15e35929210a2b3a90715ab38e96f20166c9384b7571e77d623e2266971",
+        "bytes": 62392
+      },
+      "119557308090": {
+        "sha256": "76225a86c716d847d2374505886e2e13a40de049d9892f57eb34cee967a528da",
+        "bytes": 46269
+      }
+    }
+  },
+  "complete_validation_receipt_sha256": "d63ff79744c8309ff6c08f800b78ae83f950f0c2c1807927c2f41e0def837efe",
+  "evidence_location": "/workspace/Codex-Blender-Bridge/build/next-wave-freeze-20261022",
+  "release_readiness": "NOT_ASSESSED",
+  "all_14_release_gates_open": true,
+  "limits": [
+    "No Windows 11 runner.",
+    "No full installed artist scenarios A-F or artistic acceptance.",
+    "Development packages retain 0.3.0 metadata and never replace published releases.",
+    "File-cache advice targeted only completed owned artifacts; no constrained-memory acceptance."
+  ]
+}

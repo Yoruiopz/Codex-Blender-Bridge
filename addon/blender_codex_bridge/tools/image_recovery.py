@@ -44,6 +44,9 @@ def _gate(context: Any, target: Any | None = None, *, modifying=False) -> None:
     lifetime = getattr(context, "request_lifecycle", None)
     if lifetime is not None:
         lifetime.check()
+    final_job = getattr(context, "check_final_job", None)
+    if final_job is not None:
+        final_job()
     if modifying:
         flags = context.state.snapshot()
         if flags.get("emergency_stopped"):

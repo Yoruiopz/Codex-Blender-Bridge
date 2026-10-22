@@ -1,4 +1,4 @@
-"""Typed entry points for bounded, session-local cooperative image painting."""
+"""Typed controls for the shared session-local image-job scheduler."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from ..utils import int_param, reject_unknown_params
 
 def _manager(context: Any):
     if context.jobs is None:
-        raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Cooperative painting jobs are unavailable in this runtime.")
+        raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Cooperative image jobs are unavailable in this runtime.")
     return context.jobs
 
 
@@ -54,4 +54,4 @@ def register_tools(registry: Any) -> None:
     registry.register("jobs.list", list_jobs, permissions=(Permission.INSPECT_SCENE,), batchable=False,
                       record_history=False, description="List at most 32 retained session-local image jobs; one active job, no durable queue.")
     registry.register("jobs.cancel", cancel, batchable=False,
-                      description="Request cancellation of one exact paint job, including while paused; inspect terminal evidence, never assume rollback.")
+                      description="Request cancellation of one exact image job, including while paused; inspect terminal evidence, never assume rollback.")

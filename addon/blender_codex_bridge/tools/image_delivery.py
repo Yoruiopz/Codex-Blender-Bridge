@@ -75,9 +75,12 @@ class ExportDriver:
     def _check(self, context):
         context.require(*REQUIRED)
         images._check(context)
+        context.require(*REQUIRED)
+        final_job = getattr(context, "check_final_job", None)
+        if final_job is not None:
+            final_job()
         if images._root() != self.prepared["approved_root"]:
             raise BridgeError(ErrorCode.PERMISSION_DENIED, "Approved texture folder changed during export; reinspect retained effects.")
-        context.require(*REQUIRED)
 
     def _source(self, context):
         self._check(context)

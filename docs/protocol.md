@@ -189,6 +189,18 @@ If a response arrives after the MCP caller has timed out, the Blender client dis
 
 Caller cancellation closes the shared client connection. The add-on then atomically cancels requests that are still pending and fails the other in-flight calls; a Blender operation that had already crossed the running boundary is not interrupted and remains visible in operation history. The next call reconnects and must reinspect state.
 
+Unreleased bounded object and rig mutations also check canonical request ownership
+after their final live permission providers and content comparisons, immediately
+before each owned field/context write, allocation, removal or native application.
+This final safe point reads transport lifetime Events, the executor's exact queued
+request check, any scheduler job deadline, toolset membership and pause/emergency
+state. It does not rerun permission providers or arbitrary cancellation callbacks
+after the content proof. Lost authority prevents subsequent writes and automatic
+object compensation; already completed native calls remain possible mutations.
+These are internal services, not caller-supplied protocol fields or universal
+coverage of every modifying tool. Existing envelopes and terminal-response rules
+are unchanged.
+
 The 0.3.0 implementation adds cooperative safe points for `batch.execute`.
 Disconnect/timeout signals a running request without attempting to interrupt its current
 Blender call. Before each subsequent child step, the batch checks that signal, the queue
@@ -402,6 +414,10 @@ Transport acceptance does not arm Python by itself. Blender still requires the `
 - Never expose the socket using port forwarding, a reverse proxy, container publish flags, or public host binding.
 - Dispatch only registered methods. Never use `eval`, reflective method traversal, arbitrary imports, or shell interpolation. Only the separately registered and explicitly armed `python.execute` handler may compile/execute caller source under its bounded policy; normal handlers must not route through it.
 - Validate paths and permissions in Blender, even if MCP already validated them.
+- Resolve each required permission set from one live Blender policy snapshot. Recheck
+  enabled toolsets after permission callbacks; a grant cannot keep a disabled tool active.
+  Cooperative image jobs also check owner lifetime, explicit cancellation and deadline
+  after their final permission callbacks, before publishing another native mutation.
 - Treat every local request as untrusted input for parser, type, range, and size purposes.
 
 See [`security.md`](security.md) for the complete threat model and [`tool-design.md`](tool-design.md) for method-level contracts.

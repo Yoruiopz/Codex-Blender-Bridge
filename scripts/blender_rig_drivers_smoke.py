@@ -29,7 +29,11 @@ def main():
     selected, active = list(bpy.context.selected_objects), bpy.context.view_layer.objects.active
 
     def call(tool_name, **params):
-        return runtime.dispatch("rig." + tool_name, params)
+        try:
+            return runtime.dispatch("rig." + tool_name, params)
+        except BridgeError as error:
+            print("RIG_DRIVER_FIXTURE_ERROR " + json.dumps({"method": tool_name, "code": error.code, "context": error.context}))
+            raise
 
     control_name, control_property = 'Control"A', 'move"X'
     rig_name = "Typed Driver Rig"
@@ -120,7 +124,30 @@ def main():
     bpy.context.view_layer.update()
     assert math.isclose(rig.evaluated_get(bpy.context.evaluated_depsgraph_get()).pose.bones["Deform"].matrix.translation.z, 1.25, abs_tol=1e-6)
     call("driver_remove", object_name=rig_name, bone_name="Deform", channel="location", index=2)
-    call("pose_transform", object_name=rig_name, bone_name="Deform", location=[2.0, 0.0, 0.0])
+    # Pose edits must explicitly include every downstream object. The driver
+    # fixture also checks that omitting the bound skin fails before any write.
+    before_pose = tuple(rig.pose.bones["Deform"].location)
+    before_skin, before_evaluated_x = evaluated()
+    try:
+        call("pose_transform", object_name=rig_name, bone_name="Deform", location=[2.0, 0.0, 0.0])
+    except BridgeError as error:
+        assert error.code == "NOT_IMPLEMENTED" and error.context["consumer"] == mesh.name
+    else:
+        raise AssertionError("Pose edit omitted its bound skin from affected_objects")
+    assert tuple(rig.pose.bones["Deform"].location) == before_pose
+    assert evaluated() == (before_skin, before_evaluated_x)
+    # This numeric property is on the same rig. The generic pose boundary does
+    # not yet classify self-driver references, even with the complete skin scope.
+    # Keep that conservative refusal visible instead of weakening its ownership
+    # check or presenting this fixture as combined pose/driver acceptance.
+    try:
+        call("pose_transform", object_name=rig_name, bone_name="Deform", location=[2.0, 0.0, 0.0], affected_objects=[mesh.name])
+    except BridgeError as error:
+        assert error.code == "NOT_IMPLEMENTED" and error.context["consumer"] == rig.name
+    else:
+        raise AssertionError("Generic pose edit accepted an unreviewed self-driver reference")
+    assert tuple(rig.pose.bones["Deform"].location) == before_pose
+    assert evaluated() == (before_skin, before_evaluated_x)
 
     try:
         call("driver_add", object_name=rig_name, bone_name=control_name, channel="rotation_euler", index=0,
@@ -162,7 +189,7 @@ def main():
     inspected = call("driver_inspect", object_name=rig_name, bone_name="Deform", channel="scale", index=2)
     assert inspected["driver"] is not None
     call("driver_remove", object_name=rig_name, bone_name="Deform", channel="scale", index=2)
-    call("pose_transform", object_name=rig_name, bone_name="Deform", scale=[1, 1, 1])
+    assert tuple(rig.pose.bones["Deform"].scale) == (1., 1., 1.)
     assert len(rig.animation_data.drivers) == 1
 
     # Stop after the native allocation exists, before mapping/variable setup.
@@ -203,7 +230,7 @@ def main():
         stop_evidence.append({"stopped_by": stopped_by, "native_keys_retained": len(current.keyframe_points),
                               "native_modifiers_retained": len(current.modifiers), "unchanged_after_stop": True})
         call("driver_remove", object_name=rig_name, bone_name="Deform", channel="scale", index=1)
-        call("pose_transform", object_name=rig_name, bone_name="Deform", scale=[1, 1, 1])
+        assert tuple(rig.pose.bones["Deform"].scale) == (1., 1., 1.)
 
     def pause_after_property(context):
         original_check(context)
@@ -223,9 +250,15 @@ def main():
         runtime.state.set_paused(False)
     call("property_set", object_name=rig_name, bone_name=control_name, property_name=control_property, value=0.0)
     restored_points, restored_x = evaluated()
-    assert restored_x == 0 and restored_points == original_points, (restored_x, restored_points)
+    assert restored_x == 0, restored_x
     call("driver_remove", object_name=rig_name, bone_name="Deform", channel="location", index=0)
     assert not len(rig.animation_data.drivers)
+    # Removing a driver retains the last evaluated stored channel. Restore that
+    # channel through the scoped pose API once no unreviewed self-reference is
+    # left; never use raw fixture writes to mask the delivery behavior.
+    call("pose_transform", object_name=rig_name, bone_name="Deform", location=[0, 0, 0], scale=[1, 1, 1], affected_objects=[mesh.name])
+    restored_points, restored_x = evaluated()
+    assert restored_x == 0 and restored_points == original_points, (restored_x, restored_points)
     assert bpy.context.mode == "OBJECT" and list(bpy.context.selected_objects) == selected and bpy.context.view_layer.objects.active == active
     print("BLENDER_RIG_DRIVERS_OK " + json.dumps({
         "blender": bpy.app.version_string, "typed_control_and_non_scripted_bone_drivers_verified": True,
@@ -234,6 +267,10 @@ def main():
         "quoted_bone_and_property_paths_verified": True, "transform_source_and_cycle_rejection_verified": True,
         "permission_revocation_retained_driver_and_explicit_cleanup_verified": True,
         "shared_armature_data_protected_pose_and_context_preserved": True,
+        "pose_scope_omission_rejected_without_channel_or_skin_changes": True,
+        "unreviewed_self_driver_pose_edit_rejected_without_changes": True,
+        "combined_self_driver_pose_authoring_supported": False,
+        "last_evaluated_channels_restored_by_scoped_pose_after_driver_cleanup": True,
         "fresh_native_driver_configurations": native_mappings,
         "fresh_native_identity_mapping_removed_only": True, "existing_keyframed_driver_preserved_and_rejected": True,
         "live_stops_preserve_partial_native_allocation": stop_evidence,

@@ -216,11 +216,8 @@ def test_legacy_permission_revocation_between_solo_writes_never_compensates_with
     module, env = legacy
     other = env.tracks.new()
     other.name, other.is_solo = "Previous", True
-    count = 0
     def checkpoint():
-        nonlocal count
-        count += 1
-        if count >= 2:
+        if not other.is_solo:
             env.grants[env.permission.EDIT_ANIMATION.value] = False
     env.context.check_cancelled = checkpoint
     with pytest.raises(module.BridgeError) as caught:

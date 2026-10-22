@@ -34,8 +34,8 @@ No current release should be described as a complete human-equivalent artist.
 | Understand a brief and references | Scene/selection/object inspection, task display; [revisioned plans and explicit scene persistence](task-plans.md), advisory protected scope | Reference management, enforced persistent constraints, scene units/scale checks, ambiguity resolution benchmarks |
 | Model and repair assets | Primitives, arbitrary meshes, selection-scoped edits, modifiers; [repair](mesh-repair.md), [cuts/bridging](mesh-loops.md), [diagnostics](mesh-analysis.md), [previewed explicit-rail vertex/edge slides](mesh-uv-refinement.md), [scoped base-reference projection](mesh-surface-projection.md) | Open/multi-loop bridging, explicit unequal correspondence, broader retopology, localized/cross-object/evaluated diagnostics, outward/custom normals, shape-key/shared-data workflows and broad protected editing |
 | Sculpt and paint | [UV-image brushes and raw masks](texture-painting.md), canvas/pixel inspection; [explicit-mask PUSH/SMOOTH and POINT/CORNER colors](surface-brushes.md), [weight brushes](weight-brushes.md), [bounded orthographic surface strokes/stencils](image-surface-paint.md) | Viewport/perspective painting, 4K surface workflows, painted/texture-derived sculpt masks, broader blends/roles, multires and full production sculpt/paint feedback |
-| UV and textures | [Authoring](uv-authoring.md), [UV evidence](uv-analysis.md), [align/stitch/island relax](mesh-uv-refinement.md), [approved loading/binding](image-assets.md), [refresh/relocation](image-revisions.md), [paint/digests](texture-painting.md), stored-relative FILE reopen and [loaded float/byte and explicit unloaded FILE recovery](image-portability.md) | UV-editor selection, cross-object/evaluated atlases, broader quality acceptance, full painting/baking, cooperative 4K recovery, broader formats and durable-pixel acceptance |
-| Materials and look development | Principled controls, isolated copies, approved images, [nested paths/groups](shader-groups.md), [reviewed properties/ramps](shader-settings.md), bounded nested structural evidence and [reference-prop fixture](field-scanner-workflow.md) | Interface editing/conversion, broader properties, animated ramps/curves, deep asset lifecycle, complete nested dependency preservation, production materials/look development |
+| UV and textures | [Authoring](uv-authoring.md), [UV evidence](uv-analysis.md), [align/stitch/island relax](mesh-uv-refinement.md), [approved loading/binding](image-assets.md), [refresh/relocation](image-revisions.md), [paint/digests](texture-painting.md), stored-relative FILE reopen, [loaded/unloaded FILE recovery](image-portability.md) and [cooperative 4K snapshots/recovery](image-recovery-jobs.md) | UV-editor selection, cross-object/evaluated atlases, broader quality acceptance, full painting/baking, broader formats and production durable-pixel acceptance |
+| Materials and look development | Principled controls, isolated copies, approved images, [nested paths/groups](shader-groups.md), [reviewed properties/ramps](shader-settings.md), [interface preview/rename/reorder/default](shader-interface-lifecycle.md), bounded nested evidence and [reference-prop fixture](field-scanner-workflow.md) | Interface conversion/removal and animated maintenance, broader properties, deep asset lifecycle, complete nested dependency preservation, production materials/look development |
 | Procedural modeling | Reviewed GN graphs/zones; [nested instances/copies and modifier constants](geometry-node-groups.md), [identifier-preserving zone conversion/interface edits](geometry-zone-lifecycle.md) | Broader nested/interface lifecycle, disk baking, evaluated diagnostics and broader node types |
 | Rig and skin | Armatures/bones/poses/constraints/binding; numeric weights; [brushes, geometric mirror and barycentric surface transfer](weight-brushes.md), [bounded IK controls and current-frame deformation measurements](rig-ik-deformation.md) | Broader skinning/deformation diagnosis, control-rig authoring and protected character benchmark |
 | Animate | Frames/keyframes, NLA clips/tracks; [Action copies and curve handles/interpolation](animation-curves.md), [numeric controls and non-scripted bone drivers](rig-drivers.md), [bounded Action lifecycle](action-lifecycle.md) and [NLA clips/transitions/reordering](nla-lifecycle.md) | Broader Action/constraint/control-rig combinations, complete mutator safety audit and protected multi-frame revisions |
@@ -92,13 +92,15 @@ unqualified for 1.0. Align the manifest and support claims only at candidate qua
 No row is complete merely because its happy path passes. Permission denial, unsupported
 context, preservation constraints and recovery are part of the acceptance criteria.
 
-The [current static mutator audit](development-evidence/mutator-audit-20261022.json)
-inventories all 184 registered modifying handlers (183 remote), with manual priority screening
+The [frozen 246-tool static audit](development-evidence/mutator-audit-20261022.json)
+inventories that increment's 184 modifying handlers (183 remote), with manual priority screening
 of 20 rig/transform/modifier/constraint handlers. Missing direct context use is a screening
 signal, not proof that entry authorization is absent. Nine open findings include automatic
 binding's missing pre-existing weight recovery, context-free multi-write compensation and
-incomplete rest-rig consumer scope. Native adversarial proof and the remaining per-tool audit
-are still required; this inventory closes no safety gate.
+incomplete rest-rig consumer scope. Subsequent [rig](rig-edit-boundaries.md) and
+[object-property](object-rna-safety.md) increments add bounded weight/rest/pose and
+per-write compensation checks. They do not retroactively close this historical inventory:
+current-source adversarial proof and the remaining per-tool/dependency audit are still required.
 
 ## Delivery sequence
 

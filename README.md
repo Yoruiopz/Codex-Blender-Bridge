@@ -111,6 +111,11 @@ tracked in [development status](docs/development-status.md), including the
 [structured UV-seam contract](docs/development-status.md#unreleased-structured-uv-seams).
 These features are absent from the published downloads unless their release notes say otherwise.
 
+Current development contracts include [packed recovery jobs](docs/image-recovery-jobs.md),
+[shader interface plans](docs/shader-interface-lifecycle.md),
+[guarded rig edits](docs/rig-edit-boundaries.md) and the
+[two-bone animation benchmark](docs/character-nla.md).
+
 ### Complete tool inventory — main branch
 
 This generated inventory describes the **development branch**, including unreleased tools.
@@ -118,7 +123,7 @@ It is checked against the registry in CI. It does not describe the 108-tool 0.3.
 The local recovery UI also has an add-on-only action, not an extra MCP tool.
 
 <!-- BEGIN GENERATED MCP TOOLS -->
-Current registry: **246 MCP tools**.
+Current registry: **251 MCP tools**.
 
 <details>
 <summary>core — 29 tools</summary>
@@ -131,7 +136,7 @@ Current registry: **246 MCP tools**.
 | `checkpoint.create` | Create a logical agent undo checkpoint. |
 | `checkpoint.list` | List checkpoint labels, operation history and conservative recovery availability. |
 | `checkpoint.undo_last` | Use Blender global undo only with explicit acknowledgement of user-interleaving risk. |
-| `jobs.cancel` | Request safe-point painting cancellation, not rollback; available while paused. |
+| `jobs.cancel` | Request safe-point image-job cancellation, not rollback; available while paused. |
 | `jobs.inspect` | Inspect session-local image-job progress, result/error and file/recovery evidence. |
 | `jobs.list` | List bounded session-local image jobs; no durable queue. |
 | `object.inspect` | Inspect one object without dumping raw vertex coordinates. |
@@ -300,7 +305,7 @@ Current registry: **246 MCP tools**.
 </details>
 
 <details>
-<summary>materials — 23 tools</summary>
+<summary>materials — 26 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
@@ -314,10 +319,13 @@ Current registry: **246 MCP tools**.
 | `image.paint_surface_job_start` | Accept one frozen-input surface paint job; private overlap/projection/visibility/painting yields after delivery, poll final pixel/recovery evidence. |
 | `image.paint_surface_version` | Project bounded orthographic world strokes/raw stencils through explicit opaque geometry into a NEW UV image; preserve inputs and verify pixels/appearance. |
 | `image.paint_version` | Paint bounded UV-image strokes with optional raw RGBA-channel mask/inversion/resampling into a new version; preserve both inputs, FILE reads need external-file consent. |
+| `image.recovery_job_preview` | Preview exact 4K original-ID recovery fingerprint, loaded-vs-packed mode and consumer scope; private channel validation follows in the job. |
 | `image.recovery_preview` | Preview exact unloaded FILE image identity, packed replacement and complete bounded consumers; <=1M pixels. |
 | `image.remove` | Remove one explicitly confirmed unused image datablock, never its source file. |
 | `image.restore_packed_snapshot` | Confirm current preview and reconstruct an unloaded original FILE Image ID by replacing packed bytes; <=1M pixels. |
 | `image.restore_pixels` | Restore a retained raw snapshot to its exact loaded float/byte original image ID, preserving consumers; <=1M pixels. |
+| `image.restore_snapshot_job_start` | Accept current-fingerprint cooperative 4K snapshot recovery; unloaded FILE reconstruction additionally confirms packed replacement. |
+| `image.snapshot_job_start` | Accept an owner-bound cooperative CURRENT_PIXELS raw snapshot, up to 4096 x 4096; native capture/commit block, poll completion. |
 | `material.assign` | Assign a material to an exact object slot or append it. |
 | `material.copy_for_object` | Copy a material for one object slot without changing shared mesh data. |
 | `material.create` | Create a named material with optional nodes and viewport color. |
@@ -380,7 +388,7 @@ Current registry: **246 MCP tools**.
 </details>
 
 <details>
-<summary>nodes — 18 tools</summary>
+<summary>nodes — 20 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
@@ -401,6 +409,8 @@ Current registry: **246 MCP tools**.
 | `shader_group.create` | Create a new empty local shader group with input/output nodes. |
 | `shader_group.inspect` | Inspect a bounded shader-group graph, interface and transitive parent ownership evidence. |
 | `shader_group.interface_add` | Add one typed interface socket to an explicitly scoped shader group. |
+| `shader_group.interface_edit` | Apply one exact shader interface preview with complete bounded graph/owner CAS and guarded compensation. |
+| `shader_group.interface_preview` | Preview one bounded shader interface rename/reorder/default plan with exact full-scope fingerprint. |
 | `shader_group.remove` | Remove a confirmed unused shader-group datablock without forced unlink or deleting nested data. |
 
 </details>
@@ -449,7 +459,7 @@ Current registry: **246 MCP tools**.
 
 | Tool | What it does |
 | --- | --- |
-| `rig.bind_mesh` | Bind a mesh using empty groups or contextual automatic weights. |
+| `rig.bind_mesh` | Bind a mesh using empty groups or contextual automatic weights; requires mesh-edit permission for weights/groups. |
 | `rig.bone_add` | Add one explicit edit bone to a named armature. |
 | `rig.bone_remove` | Remove one explicit bone with optional child reparenting. |
 | `rig.bone_update` | Update explicit edit-bone geometry, hierarchy, name, or deform flags. |

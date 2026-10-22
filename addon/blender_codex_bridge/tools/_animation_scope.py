@@ -53,7 +53,7 @@ def rna_state(owner: Any, *, exclude: frozenset[str] = frozenset()) -> tuple[Any
         return tuple((field, value(getattr(owner, field))) for field in fields if field not in exclude and hasattr(owner, field))
     if len(rna.properties) > 256:
         raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Animation RNA inventory exceeds 256 fields.")
-    result = []
+    result: list[tuple[str, Any]] = []
     for prop in rna.properties:
         if prop.is_readonly or prop.identifier in exclude:
             continue
@@ -76,7 +76,7 @@ def curve_inventory(action: Any) -> list[tuple[int | None, Any]]:
     if not getattr(action, "is_action_layered", False):
         return [(None, curve) for curve in bounded(action.fcurves, 1024, "curves")]
     bounded(action.slots, 64, "slots")
-    result = []
+    result: list[tuple[int | None, Any]] = []
     for layer in bounded(action.layers, 16, "layers"):
         for strip in bounded(layer.strips, 32, "layer strips"):
             bags = getattr(strip, "channelbags", None)
@@ -95,7 +95,7 @@ def curve_content(curve: Any) -> tuple[Any, ...]:
         raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Sampled curves require a separate lifecycle contract.")
     modifiers = []
     for modifier in bounded(getattr(curve, "modifiers", ()), 32, "curve modifiers"):
-        controls = ()
+        controls: tuple[Any, ...] = ()
         if hasattr(modifier, "control_points"):
             controls = tuple(rna_state(point) for point in bounded(modifier.control_points, 256, "envelope controls"))
         modifiers.append((rna_state(modifier), controls))
@@ -129,8 +129,8 @@ def action_content(action: Any) -> tuple[Any, ...]:
         layers.append((rna_state(layer), tuple(strips)))
     metadata = rna_state(action, exclude=frozenset({"name", "use_fake_user", "use_extra_user"}))
     markers = tuple(rna_state(marker) for marker in bounded(getattr(action, "pose_markers", ()), 256, "pose markers"))
-    groups = tuple(rna_state(group) for group in bounded(getattr(action, "groups", ()), 256, "legacy groups")) if not getattr(action, "is_action_layered", False) else ()
-    return metadata, slots, tuple(layers), tuple((handle, curve_content(curve)) for handle, curve in curves), markers, groups
+    legacy_groups = tuple(rna_state(group) for group in bounded(getattr(action, "groups", ()), 256, "legacy groups")) if not getattr(action, "is_action_layered", False) else ()
+    return metadata, slots, tuple(layers), tuple((handle, curve_content(curve)) for handle, curve in curves), markers, legacy_groups
 
 
 def action_users(bpy: Any, action: Any) -> dict[str, Any]:
@@ -162,16 +162,21 @@ def object_scope(bpy: Any, obj: Any) -> None:
         require_collection_scope(bpy, collection, operation="Animation lifecycle")
 
 
-def affected_scope(bpy: Any, obj: Any, names: Any) -> tuple[Any, ...]:
+def affected_scope(bpy: Any, obj: Any, names: Any, *, additional_roots: tuple[Any, ...] = ()) -> tuple[Any, ...]:
     if not isinstance(names, list) or len(names) > 31 or any(not isinstance(item, str) for item in names) or len(set(names)) != len(names):
         raise invalid_argument("affected_objects must explicitly list at most 31 distinct dependent object names.")
+    roots = (obj, *additional_roots)
+    if len(roots) > 32 or len({key(item) for item in roots}) != len(roots):
+        raise invalid_argument("Animation scope requires at most 32 distinct root objects.")
     expected = []
     for exact in names:
         matches = list(islice((item for item in bpy.context.scene.objects if item.name == exact), 2))
-        if len(matches) != 1 or matches[0] == obj:
+        if len(matches) != 1 or matches[0] in roots:
             raise invalid_argument("Each affected object must resolve exactly and exclude the animation target.")
         expected.append(matches[0])
-    pending, seen, records = [obj], set(), []
+    pending = list(roots)
+    seen: set[int | None] = set()
+    records: list[tuple[Any, ...]] = []
     while pending:
         current = pending.pop()
         if key(current) in seen:
@@ -197,16 +202,17 @@ def affected_scope(bpy: Any, obj: Any, names: Any) -> tuple[Any, ...]:
                     records.append((key(current), key(scene), root_links+bases+1, "PARTICLE_EDIT_CONTEXT", key(particle),
                                     rna_state(particle), None if brush is None else rna_state(brush)))
                     continue
-            if owner not in expected or getattr(getattr(owner, "bl_rna", None), "identifier", None) != "Object":
+            explicit_root = bool(additional_roots) and owner in roots and owner != current
+            if (owner not in expected and not explicit_root) or getattr(getattr(owner, "bl_rna", None), "identifier", None) != "Object":
                 raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Animation has consumers outside its explicit object scope.", {"object": current.name, "consumer": getattr(owner, "name", None)})
             count = int(owner.user_of_id(current))
             if not 0 < count <= 256:
                 raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Animation consumer reference count exceeds the reviewed range.")
             records.append((key(current), key(owner), count))
             pending.append(owner)
-    if seen != {key(item) for item in (obj, *expected)}:
+    if seen != {key(item) for item in (*roots, *expected)}:
         raise invalid_argument("affected_objects must match the complete reviewed direct-object closure.")
-    return tuple(sorted((key(item), getattr(item, "session_uid", None), item.name, key(getattr(item, "data", None))) for item in (obj, *expected))), tuple(sorted(records))
+    return tuple(sorted((key(item), getattr(item, "session_uid", None), item.name, key(getattr(item, "data", None))) for item in (*roots, *expected))), tuple(sorted(records))
 
 
 class Guard:
@@ -225,6 +231,10 @@ class Guard:
         registry = getattr(self.context, "registry", None)
         if registry is not None:
             registry.prepare(self.method, self.context)
+        if self.context.check_cancelled:
+            self.context.check_cancelled()
+        if registry is not None and registry.get(self.method).toolset not in registry.enabled_toolsets:
+            raise BridgeError(ErrorCode.TOOLSET_DISABLED, "Animation toolset was disabled during live authorization.")
         flags = self.context.state.snapshot()
         if flags.get("emergency_stopped"):
             raise BridgeError(ErrorCode.EMERGENCY_STOPPED, "Animation mutation emergency-stopped.")
