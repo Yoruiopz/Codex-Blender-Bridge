@@ -25,11 +25,11 @@ class CoreTools:
         return await self.registry.call("bridge.task.set", {"description": description})
 
     async def jobs_inspect(self, job_id: Annotated[StrictStr, Field(pattern=r"^job_[0-9a-f]{32}$")]) -> Any:
-        """Inspect session-local image paint/export-reimport state/revision, phase-local progress, elapsed duration, final result/error, external file effects and native recovery flags. INSPECT_SCENE required. SUCCEEDED is completion, start acceptance is not. CANCELLED/FAILED may include scene effects and published/retained files; inspect both, never assume native undo removed disk output. Terminal history retains32 summaries without pixel buffers. Polling does not crowd out operation history."""
+        """Inspect session-local image painting, export/reimport and snapshot/recovery jobs: state/revision, phase-local progress, elapsed duration, final result/error, external file effects and separate packed recovery evidence. INSPECT_SCENE required. SUCCEEDED is completion; start acceptance is not. CANCELLED/FAILED can include scene effects and retained data; inspect evidence_observation_unknown before treating last observations as current. Packed memory needs an authorized save for durability, and native undo does not remove disk output. Terminal history retains 32 summaries without pixel buffers; polling does not evict operation history."""
         return await self.registry.call("jobs.inspect", {"job_id": job_id})
 
     async def jobs_list(self, limit: Annotated[StrictInt, Field(ge=1, le=32)] = 10) -> Any:
-        """List bounded session-local image paint/export-reimport jobs, newest first (active then terminal). INSPECT_SCENE required; explicit truncation, one-active limit, 32 terminal summaries, no durable queue or general simulation/bake jobs. Export files can survive cancellation and native undo; inspect external_effects."""
+        """List bounded session-local painting, export/reimport and snapshot/recovery jobs, newest first (active then terminal). INSPECT_SCENE required; explicit truncation, one active job and 32 terminal summaries. Inspect external_effects, recovery_evidence and evidence_observation_unknown. Packed memory requires an authorized save; export files can survive cancellation and native undo. No durable queue or general simulation/bake jobs."""
         return await self.registry.call("jobs.list", {"limit": limit})
 
     async def jobs_cancel(self, job_id: Annotated[StrictStr, Field(pattern=r"^job_[0-9a-f]{32}$")]) -> Any:

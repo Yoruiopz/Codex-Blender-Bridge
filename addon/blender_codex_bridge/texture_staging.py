@@ -166,15 +166,19 @@ class TextureStaging:
             check = getattr(self.context, "check_cancelled", None)
             if check:
                 check()
+        # Trusted lifecycle callbacks can change live consent. The final grant
+        # precedes callback-free job/state checks immediately before IO.
+        self.context.require(*REQUIRED)
+        if not cleanup:
+            final_job = getattr(self.context, "check_final_job", None)
+            if final_job is not None:
+                final_job()
             state = getattr(self.context, "state", None)
             flags = state.snapshot() if state else {}
             if flags.get("emergency_stopped"):
                 raise BridgeError(ErrorCode.EMERGENCY_STOPPED, "Texture staging emergency-stopped.")
             if flags.get("paused"):
                 raise BridgeError(ErrorCode.AGENT_PAUSED, "Texture staging is paused.")
-        # Trusted lifecycle callbacks can change live consent. The final gate
-        # belongs after those callbacks, immediately before the IO action.
-        self.context.require(*REQUIRED)
 
     def _location(self) -> None:
         folder, path = approved_output(self.raw, self.root(), self.layout["extension"])

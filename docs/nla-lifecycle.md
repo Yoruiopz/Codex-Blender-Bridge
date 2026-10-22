@@ -44,10 +44,17 @@ explicit OBJECT slot for layered Actions.
 their existing request fields. Their Blender handlers now require a live ToolContext and
 recheck consent, cancellation/disconnect, pause/stop, session/ID identity, object consumers,
 Action/slot/content/user counts, timing, selection and exact known partial state before
-**each** write and compensating write. Their current explicit dependency scope remains the
-single target object; consumers beyond ordinary membership return `NOT_IMPLEMENTED` instead
-of silently affecting an undeclared character or object. Use the new lifecycle tools with
-an enumerated dependency closure where applicable.
+**each** write and compensating write. All five accept the optional `affected_objects`
+list with the same complete reviewed object dependency closure as the four lifecycle
+tools. Omission preserves the previous single-target scope: an undeclared skin, child or
+other object consumer is refused. A complete explicit skin closure permits the first
+character track through `nla.push_down` or `nla.add_strip`; both create a nonempty track
+and its first clip in one logical operation. No empty-track endpoint is required.
+
+`nla.push_down` also accepts optional `expected_action_name`. When supplied, the exact
+current active Action must match before allocation. Omission preserves the existing
+request behavior. Both additive fields are forwarded by the typed MCP wrappers, and
+successful edits enumerate the target and its declared affected objects.
 
 The reviewed isolated strip setters preserve native float storage and timing aliases,
 source range, scale/repeat, blend durations and control curves. They preflight every requested
@@ -71,7 +78,11 @@ closed. These are explicit unsupported contexts, not completed general NLA contr
 New clip/track constructors are validated against reviewed native defaults. An allocation
 that acquires foreign settings or consumers is retained and reported instead of deleted.
 On a failed first allocation, an empty newly created AnimData may also remain; its presence
-is reported and does not count as verified full rollback.
+is reported and does not count as verified full rollback. Push-down retains the identity
+proof for a fully verified private strip constructor before returning that strip to its
+caller. A failure immediately after that boundary can therefore remove the exact owned
+track/strip and measure complete restoration. Unverified or foreign allocations remain
+available for reinspection instead of being deleted by assumption.
 
 ## Recovery and development evidence
 
@@ -96,6 +107,7 @@ clip allocation, and native checkpoint recovery after transition removal. The se
 Run both only through the [isolated native runner](native-testing.md). Development reports
 and failed iterations are retained under `build/next-wave-nla-*`; the combined focused report
 is `build/next-wave-nla-final-20261022-6/report.json`. These disposable Linux scenes do not prove
-Windows isolation, an installed package, fresh-process NLA persistence, an artist-reviewed
-character/deformation benchmark, or complete release acceptance. Those requirements remain
+Windows isolation, an installed package, an artist-reviewed character/deformation benchmark,
+or complete release acceptance. The [character NLA fixture](character-nla.md) separately
+demonstrates bounded fresh-process character/NLA persistence. Remaining requirements stay
 in the [1.0 readiness ledger](release-1.0-readiness.md).

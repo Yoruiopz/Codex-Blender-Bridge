@@ -76,7 +76,7 @@ if bpy is not None:
     class BCB_OT_cancel_job(bpy.types.Operator):
         bl_idname = "blender_codex_bridge.cancel_job"
         bl_label = "Cancel Image Job"
-        bl_description = "Cancel private paint work at its next safe point; native commits cannot be preempted"
+        bl_description = "Cancel private image work at its next safe point; native commits cannot be preempted"
 
         def execute(self, context):
             del context
@@ -396,7 +396,14 @@ if bpy is not None:
                         jobs.label(text=f"{workload['candidate_pixel_tests']} brush candidates")
                     if "format" in workload:
                         jobs.label(text=f"Export/reimport: {workload['format']}")
-                    jobs.label(text=f"Private pixel estimate: {workload['private_pixel_buffers_peak_estimate_bytes'] / 1048576:.1f} MiB")
+                    if "mode" in workload:
+                        jobs.label(text={"CURRENT_PIXELS_SNAPSHOT": "Snapshot current pixels",
+                                         "LOADED_BUFFER": "Restore loaded pixels",
+                                         "PACKED_RECONSTRUCTION": "Restore packed pixels"}.get(workload["mode"], "Image recovery"))
+                    if "private_pixel_and_payload_peak_estimate_bytes" in workload:
+                        jobs.label(text=f"Private pixels/payload estimate: {workload['private_pixel_and_payload_peak_estimate_bytes'] / 1048576:.1f} MiB")
+                    elif "private_pixel_buffers_peak_estimate_bytes" in workload:
+                        jobs.label(text=f"Private pixel estimate: {workload['private_pixel_buffers_peak_estimate_bytes'] / 1048576:.1f} MiB")
                     jobs.label(text="Excludes native/GPU/undo buffers")
                 progress = job["progress"]
                 jobs.label(text=f"{progress['phase']}: {progress['completed']}/{progress['total']}")
@@ -411,6 +418,15 @@ if bpy is not None:
                     jobs.label(text="File may persist after cancel/undo; inspect", icon="INFO")
                 if effects.get("retained_staging_path"):
                     jobs.label(text="Retained staging file; inspect job details", icon="ERROR")
+                recovery = job.get("recovery_evidence", {})
+                recovery_unknown = "recovery_evidence" in job.get("evidence_observation_unknown", ())
+                if recovery_unknown:
+                    jobs.label(text="Recovery state could not be observed; inspect", icon="ERROR")
+                elif recovery.get("snapshot_retained"):
+                    jobs.label(text=("Snapshot retained at completion; verify before saving" if job["terminal"]
+                                     else "Packed snapshot retained; save for durability"), icon="INFO")
+                if recovery.get("possible_mutation"):
+                    jobs.label(text="Image may have changed; inspect recovery", icon="ERROR")
             jobs.label(text="Session only; native transfers cannot be preempted")
             history = layout.box()
             history.label(text="History", icon="TIME")
@@ -424,7 +440,9 @@ if bpy is not None:
                 row.alert = not record["success"]
                 row.label(text=record["tool"], icon=icon)
                 row.label(text=f"{record['duration_ms']:.1f} ms")
-                if record["tool"] == "image.paint_job_start":
+                if record["tool"] in {"image.paint_job_start", "image.paint_surface_job_start",
+                                      "image.export_job_start", "image.snapshot_job_start",
+                                      "image.restore_snapshot_job_start"}:
                     history.label(text=record["description"][:96])
                 if record["affected_objects"]:
                     history.label(text=f"Affected: {', '.join(record['affected_objects'][:4])}")

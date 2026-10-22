@@ -52,6 +52,9 @@ class ToolContext:
     jobs: Any = None
     request_lifecycle: RequestLifetime | None = None
     request_id: str = ""
+    # Set only by the scheduler: Events/deadline/toolset checks without calling
+    # permission providers or Blender. Domains invoke this after live providers.
+    check_final_job: Callable[[], None] | None = None
 
     def require(self, *permissions: Permission) -> None:
         self.permissions.require(permissions)
@@ -163,6 +166,12 @@ class ToolRegistry:
                 {"tool": name, "toolset": spec.toolset},
             )
         context.permissions.require(spec.permissions)
+        if spec.toolset not in self._enabled_toolsets:
+            raise BridgeError(
+                ErrorCode.TOOLSET_DISABLED,
+                f"Toolset '{spec.toolset}' was disabled during Blender permission validation.",
+                {"tool": name, "toolset": spec.toolset},
+            )
         runtime_state = context.state.snapshot()
         recovery_override = allow_recovery and name in self.RECOVERY_TOOLS
         if spec.modifies and runtime_state["emergency_stopped"] and not recovery_override:

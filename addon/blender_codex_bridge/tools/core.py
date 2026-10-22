@@ -178,12 +178,23 @@ def checkpoint_list(context: ToolContext, params: Mapping[str, Any]) -> dict[str
     # File/image evidence must not become an inspection bypass.
     if not context.permissions.snapshot().get(Permission.INSPECT_SCENE.value, False):
         for record in history:
+            image_job = record.get("tool") in {"image.paint_job_start", "image.paint_surface_job_start",
+                                              "image.export_job_start", "image.snapshot_job_start",
+                                              "image.restore_snapshot_job_start"}
+            if image_job or any(record.get(field) is not None for field in ("job_evidence", "external_effects", "recovery_evidence")):
+                # Terminal descriptions can contain image names or file paths,
+                # even after their structured evidence has been redacted.
+                record["description"] = "Operation details require scene inspection."
+                record["description_redacted"] = True
             if record.get("job_evidence") is not None:
                 record["job_evidence"] = None
                 record["job_evidence_redacted"] = True
             if record.get("external_effects") is not None:
                 record["external_effects"] = None
                 record["external_effects_redacted"] = True
+            if record.get("recovery_evidence") is not None:
+                record["recovery_evidence"] = None
+                record["recovery_evidence_redacted"] = True
     return {
         "checkpoints": checkpoints,
         "checkpoint_count": len(checkpoints),

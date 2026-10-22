@@ -67,7 +67,10 @@ class PermissionManager:
 
     def require(self, permissions: Iterable[Permission | str]) -> None:
         required = [p.value if isinstance(p, Permission) else str(p) for p in permissions]
-        denied = [permission for permission in required if not self.is_allowed(permission)]
+        # Resolve a coherent grant set once. Calling the provider separately for
+        # each permission lets its later callback invalidate an earlier grant.
+        values = self._source() if required else {}
+        denied = [permission for permission in required if not bool(values.get(permission, False))]
         if denied:
             raise BridgeError(
                 ErrorCode.PERMISSION_DENIED,

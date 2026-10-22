@@ -15,7 +15,7 @@ from .errors import BridgeError, ErrorCode
 from .permissions import PermissionManager
 from .protocol import PROTOCOL_VERSION, Request, Response
 from .scene_evidence import SceneEvidenceStore
-from .state import BridgeState, bounded_external_effects
+from .state import BridgeState, bounded_external_effects, bounded_recovery_evidence
 from .tool_registry import ToolContext, ToolRegistry
 from .utils import affected_objects_from_result, require_blender
 
@@ -33,6 +33,8 @@ def _history_description(
         return f"Accepted paint job {metadata.get('job_id', '')}; image not yet committed"
     if request.method == "image.export_job_start" and outcome == "completed" and metadata:
         return f"Accepted texture delivery job {metadata.get('job_id', '')}; export/reimport not yet completed"
+    if request.method in {"image.snapshot_job_start", "image.restore_snapshot_job_start"} and outcome == "completed" and metadata:
+        return f"Accepted image recovery job {metadata.get('job_id', '')}; recovery not yet completed"
     if request.method != "python.execute":
         return fallback
     effect = request.params.get("expected_effect")
@@ -209,6 +211,7 @@ class MainThreadExecutor:
                 duration_ms=duration_ms,
                 affected_objects=affected_objects_from_result(result),
                 external_effects=bounded_external_effects(result.get("external_effects")) if isinstance(result, Mapping) else None,
+                recovery_evidence=bounded_recovery_evidence(result.get("recovery_evidence")) if isinstance(result, Mapping) else None,
             ) if spec.record_history else None
             if spec.modifies and isinstance(result, Mapping):
                 result = dict(result)
@@ -228,6 +231,10 @@ class MainThreadExecutor:
             duration_ms = (time.perf_counter() - start) * 1000.0
             execution_started = bool(error.context.get("execution_started"))
             effects = bounded_external_effects(error.context.get("external_effects"))
+            recovery = bounded_recovery_evidence(error.context.get("recovery_evidence"))
+            if recovery is not None and (recovery.get("possible_mutation") or recovery.get("packed_payload_replaced")):
+                execution_started = True
+                error.context.update(execution_started=True, possible_mutation=True, verification_required=True)
             if effects is not None and (effects.get("file_published")
                     or effects.get("publication_outcome_unknown") or effects.get("publication_attempted")
                     or effects.get("retained_staging_path") or effects.get("artifacts")
@@ -265,6 +272,7 @@ class MainThreadExecutor:
                 affected_objects=_affected_objects_from_error(error),
                 error_code=error.code,
                 external_effects=effects,
+                recovery_evidence=recovery,
             )
             self.state.end_execution(error.message)
             if error.code == ErrorCode.PERMISSION_DENIED.value:

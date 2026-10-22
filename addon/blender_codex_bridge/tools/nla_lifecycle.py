@@ -70,6 +70,8 @@ def _quiet_authority(context: Any, method: str) -> None:
     # Permission providers can execute Blender callbacks; inspect stop flags after
     # the provider and freeze native state after every such callback before writes.
     context.require(Permission.EDIT_ANIMATION)
+    if context.check_cancelled:
+        context.check_cancelled()
     flags = context.state.snapshot()
     if flags.get("emergency_stopped") or flags.get("paused"):
         raise BridgeError(ErrorCode.EMERGENCY_STOPPED if flags.get("emergency_stopped") else ErrorCode.AGENT_PAUSED,

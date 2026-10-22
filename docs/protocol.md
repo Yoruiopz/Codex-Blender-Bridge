@@ -402,6 +402,10 @@ Transport acceptance does not arm Python by itself. Blender still requires the `
 - Never expose the socket using port forwarding, a reverse proxy, container publish flags, or public host binding.
 - Dispatch only registered methods. Never use `eval`, reflective method traversal, arbitrary imports, or shell interpolation. Only the separately registered and explicitly armed `python.execute` handler may compile/execute caller source under its bounded policy; normal handlers must not route through it.
 - Validate paths and permissions in Blender, even if MCP already validated them.
+- Resolve each required permission set from one live Blender policy snapshot. Recheck
+  enabled toolsets after permission callbacks; a grant cannot keep a disabled tool active.
+  Cooperative image jobs also check owner lifetime, explicit cancellation and deadline
+  after their final permission callbacks, before publishing another native mutation.
 - Treat every local request as untrusted input for parser, type, range, and size purposes.
 
 See [`security.md`](security.md) for the complete threat model and [`tool-design.md`](tool-design.md) for method-level contracts.

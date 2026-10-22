@@ -27,13 +27,15 @@ separate reviewed subset, not generic property access or an extension of every l
 
 ## Lifecycle tools
 
-All six tools belong to the existing `nodes` toolset. Toolset availability never grants permission.
+All tools belong to the existing `nodes` toolset. Toolset availability never grants permission.
 
 | Tool | Contract | Blender permissions |
 | --- | --- | --- |
 | `shader_group.inspect(group_name, max_nodes=100, max_links=300, max_sockets_per_direction=32)` | Exact ShaderNodeTree, bounded nodes/links/interface and incoming ownership evidence | `INSPECT_SCENE` |
 | `shader_group.create(group_name)` | Unique empty local group with named Group Input/Group Output nodes; no implicit reuse/attachment | `EDIT_MATERIALS` |
 | `shader_group.interface_add(group_name, name, in_out="INPUT", socket_type="NodeSocketFloat", default_value?, allow_shared=false)` | Append one unique name/direction socket, up to 128 interface items | `EDIT_MATERIALS` |
+| `shader_group.interface_preview(group_name, socket_identifier, operation, new_name?, to_index?, value?)` | Read-only full bounded scope/fingerprint for one exact rename, same-direction move or definition-default edit | `INSPECT_SCENE` |
+| `shader_group.interface_edit(..., expected_fingerprint, allow_shared=false)` | Apply the exact preview with live full-scope comparisons and guarded measured compensation | `INSPECT_SCENE`, `EDIT_MATERIALS` |
 | `shader_group.bind(material_name, node_name, group_name, group_path?, allow_shared=false)` | Bind an exact unlinked ShaderNodeGroup instance, or explicit null to clear; clear a different previous binding first | `EDIT_MATERIALS`; FILE dependencies also require `ACCESS_EXTERNAL_FILES` |
 | `shader_group.copy_for_node(material_name, node_name, new_name, group_path?, allow_shared=false)` | Copy the group bound to one exact instance, preserving that instance's input defaults and parent-tree links | `EDIT_MATERIALS`; FILE dependencies also require `ACCESS_EXTERNAL_FILES` |
 | `shader_group.remove(group_name, confirm_unused=false)` | Confirmed unused local group only, no fake user, forced unlink, nested-data removal or file deletion | `EDIT_MATERIALS`, `DELETE_OBJECTS` |
@@ -43,6 +45,13 @@ Mutations require Object Mode; inspection does not. Names are non-control UTF-8 
 (`NodeSocket*` identifiers shown by inspection). Socket defaults use typed/native value validation;
 Shader sockets have no editable scalar default. A zero-user group is not a durable library asset:
 bind it before relying on normal project persistence. No fake user, asset marking or save is implied.
+
+The stricter preview/edit pair requires Object Mode even for preview, flat interfaces,
+complete reviewed local unanimated scope and explicit consent for all reported shared
+owners. It preserves stable identifiers, existing instance defaults, links and active
+interface selection. Definition defaults and current instance values are separate.
+See the [interface contract and measured native hazards](shader-interface-lifecycle.md)
+for exact limits, permissions, failure/recovery behavior and conversion/animation gaps.
 
 ## Shared users and isolation
 
@@ -114,12 +123,14 @@ match alone cannot prove nested preservation: inspect and compare each relevant 
 nodes/interface/links separately. Inspect any truncation rather than treating partial state as complete.
 The fixture demonstrates iteration and recovery, not production-material or full artist acceptance.
 
-A newer [native interface lifecycle probe](shader-interface-lifecycle.md) measures
-rename/reorder/default behavior and fresh reopen on Linux 4.5.14/5.2.2. It also
+A newer [interface preview/edit contract and native proof](shader-interface-lifecycle.md)
+provides bounded typed rename/reorder/default editing and fresh reopen on Linux
+4.5.14/5.2.2. The underlying research also
 records real type-conversion default loss and an animation-index alias on 4.5 that
-5.2 repairs natively. This research does not add a public interface-edit tool.
+5.2 repairs natively; typed edits reject affected animation and type conversion.
 
-Interface edit/remove/reorder/type conversion, shader properties beyond the reviewed subset,
+Interface socket removal, panels, type conversion and animated maintenance,
+shader properties beyond the reviewed subset,
 animated ramps and other curve/collection controls,
 deep copies, asset marking, root World/Light editing, compositor groups/images, broader image
 lifecycle/formats, complete nested structural snapshots and production-scale latency/quality

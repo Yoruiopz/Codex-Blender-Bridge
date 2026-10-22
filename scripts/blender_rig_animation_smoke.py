@@ -26,6 +26,7 @@ def main() -> None:
     grants = {item.value: True for item in Permission}
     runtime.permissions = runtime.executor.permissions = PermissionManager(lambda: grants)
     runtime.registry.enable_toolset("animation")
+    runtime.registry.enable_toolset("rigging")
     created_objects: list[str] = []
     try:
         mesh_data = bpy.data.meshes.new("RigSmokeMeshData")
@@ -43,7 +44,7 @@ def main() -> None:
         bpy.context.view_layer.objects.active = mesh
 
         created = rigging.create_rig(
-            object(),
+            runtime.executor.context,
             {
                 "name": "RigSmokeArmature",
                 "root_bone_name": "Root",
@@ -63,7 +64,7 @@ def main() -> None:
         created_objects.append(protected_alias.name)
         active_before = bpy.context.view_layer.objects.active
         try:
-            rigging.add_bone(object(), {
+            rigging.add_bone(runtime.executor.context, {
                 "object_name": armature_name, "bone_name": "ForbiddenSharedBone",
                 "head": [0, 0, 1], "tail": [0, 0, 2],
             })
@@ -77,7 +78,7 @@ def main() -> None:
         bpy.data.objects.remove(protected_alias, do_unlink=True)
 
         rigging.add_bone(
-            object(),
+            runtime.executor.context,
             {
                 "object_name": armature_name,
                 "bone_name": "Forearm.Temp",
@@ -88,7 +89,7 @@ def main() -> None:
             },
         )
         updated = rigging.update_bone(
-            object(),
+            runtime.executor.context,
             {
                 "object_name": armature_name,
                 "bone_name": "Forearm.Temp",
@@ -100,7 +101,7 @@ def main() -> None:
         assert updated["bone"]["name"] == "Forearm.L"
 
         pose = rigging.pose_transform(
-            object(),
+            runtime.executor.context,
             {
                 "object_name": armature_name,
                 "bone_name": "Forearm.L",
@@ -114,7 +115,7 @@ def main() -> None:
         bpy.context.scene.collection.objects.link(target)
         created_objects.append(target.name)
         constraint = rigging.add_constraint(
-            object(),
+            runtime.executor.context,
             {
                 "object_name": armature_name,
                 "bone_name": "Forearm.L",
@@ -126,7 +127,7 @@ def main() -> None:
         )
         assert constraint["constraint"]["target"] == target.name
         rigging.remove_constraint(
-            object(),
+            runtime.executor.context,
             {
                 "object_name": armature_name,
                 "bone_name": "Forearm.L",
@@ -135,7 +136,7 @@ def main() -> None:
         )
 
         binding = rigging.bind_mesh(
-            object(),
+            runtime.executor.context,
             {
                 "mesh_object": mesh.name,
                 "armature_object": armature_name,
@@ -145,6 +146,14 @@ def main() -> None:
         )
         assert binding["parent"] == armature_name
         assert {"Root", "Forearm.L"} <= {group.name for group in mesh.vertex_groups}
+
+        # Heat weighting has a reviewed static-rest-source contract. The
+        # earlier pose test remains independently verified above.
+        rigging.pose_transform(runtime.executor.context, {
+            "object_name": armature_name, "bone_name": "Forearm.L",
+            "location": [0, 0, 0], "rotation_euler": [0, 0, 0], "scale": [1, 1, 1],
+            "affected_objects": [mesh.name],
+        })
 
         automatic_data = bpy.data.meshes.new("RigSmokeAutomaticMeshData")
         automatic_data.from_pydata(
@@ -172,12 +181,13 @@ def main() -> None:
         bpy.context.scene.collection.objects.link(automatic_mesh)
         created_objects.append(automatic_mesh.name)
         automatic_binding = rigging.bind_mesh(
-            object(),
+            runtime.executor.context,
             {
                 "mesh_object": automatic_mesh.name,
                 "armature_object": armature_name,
                 "method": "AUTOMATIC",
                 "parent": True,
+                "affected_objects": [mesh.name],
             },
         )
         assert automatic_binding["parent"] == armature_name
@@ -262,15 +272,17 @@ def main() -> None:
         )
         assert rig_state["bone_count"] == 2
         assert rig_state["truncated"] == {"bones": False, "constraints": False}
-        removed = rigging.remove_bone(
-            object(),
-            {
-                "object_name": armature_name,
-                "bone_name": "Forearm.L",
-                "reparent_children": False,
-            },
-        )
-        assert removed["bone_count"] == 1
+        try:
+            runtime.dispatch("rig.bone_remove", {
+                "object_name": armature_name, "bone_name": "Forearm.L",
+                "reparent_children": False, "affected_objects": [mesh.name, automatic_mesh.name],
+            })
+        except BridgeError as error:
+            assert error.code == ErrorCode.NOT_IMPLEMENTED
+        else:
+            raise AssertionError("Animated consumer-bound bone removal bypassed propagation review")
+        assert len(armature.data.bones) == 2
+
 
         print(
             "BLENDER_CODEX_RIG_ANIMATION_SMOKE_OK "

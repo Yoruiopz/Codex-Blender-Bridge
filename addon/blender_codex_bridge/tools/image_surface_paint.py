@@ -99,6 +99,9 @@ def _authority(context, job=None):
     lifetime = getattr(context, "request_lifecycle", None)
     if lifetime is not None:
         lifetime.check()
+    final_job = getattr(context, "check_final_job", None)
+    if final_job is not None:
+        final_job()
     if job is not None:
         job.lifetime.check()
         if job.cancel_reason or time.monotonic() >= job.deadline:

@@ -356,7 +356,8 @@ def test_live_stop_created_by_last_authority_callback_prevents_allocation(lifecy
         lifecycle.context.permissions = manager(source)
         lifecycle.context.registry = None
     else:
-        lifecycle.context.registry = NS(prepare=lambda *args: lifecycle.flags.update({flag: True}))
+        lifecycle.context.registry = NS(prepare=lambda *args: lifecycle.flags.update({flag: True}),
+                                        get=lambda _: NS(toolset="animation"), enabled_toolsets=("animation",))
     with pytest.raises(lifecycle.module.BridgeError) as error:
         lifecycle.module.action_create(lifecycle.context, {"action_name": "Must Not Allocate", "slot_name": "Owner", "keep_on_save": False})
     assert error.value.code == ("AGENT_PAUSED" if flag == "paused" else "EMERGENCY_STOPPED")

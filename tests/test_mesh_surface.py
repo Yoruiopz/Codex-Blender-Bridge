@@ -321,13 +321,24 @@ def test_uv_boolean_flag_requires_native_uv_layer_for_value_proof(surface):
 
 
 @pytest.mark.parametrize("name, domain, kind", [("sharp_edge", "CORNER", "FLOAT"),
-    (".select_vert", "POINT", "INT"), ("position", "POINT", "FLOAT")])
+    (".select_vert", "POINT", "INT"), ("position", "POINT", "FLOAT"),
+    ("uv_seam", "CORNER", "BOOLEAN"), ("uv_seam", "EDGE", "INT")])
 def test_builtin_attribute_names_require_exact_native_domain_and_type(surface, name, domain, kind):
     env = surface
     env.obj.data.attributes.append(NS(name=name, domain=domain, data_type=kind))
     with pytest.raises(env.module.BridgeError, match="Builtin mesh attribute domain/type"):
         apply(env)
     assert not env.calls and env.bm.verts[4].co == (1., 1., 0.)
+
+
+def test_native_uv_seam_builtin_uses_complete_bmesh_edge_flag_evidence(surface):
+    env = surface
+    env.obj.data.attributes.append(NS(name="uv_seam", domain="EDGE", data_type="BOOLEAN"))
+    env.bm.edges[0].seam = True
+    before = env.module._capture(env.obj, env.bm)
+    assert before["base"]["edges"][0][3] is True
+    assert apply(env)["supported_custom_data_preserved"]
+    assert env.module._capture(env.obj, env.bm)["base"]["edges"] == before["base"]["edges"]
 
 
 def test_shared_reference_is_read_only_and_source_target_alias_is_rejected(surface):

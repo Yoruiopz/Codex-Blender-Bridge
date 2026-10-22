@@ -58,9 +58,9 @@ RIGGING_TOOL_DATA: tuple[tuple[str, str, bool, tuple[str, ...]], ...] = (
     ),
     (
         "rig.bind_mesh",
-        "Bind a mesh using empty groups or contextual automatic weights.",
+        "Bind a mesh using empty groups or contextual automatic weights; requires mesh-edit permission for weights/groups.",
         True,
-        ("EDIT_ANIMATION", "TRANSFORM_OBJECTS"),
+        ("EDIT_ANIMATION", "TRANSFORM_OBJECTS", "EDIT_MESH"),
     ),
 )
 RIGGING_TOOL_NAMES = tuple(item[0] for item in RIGGING_TOOL_DATA)
@@ -139,6 +139,7 @@ class RiggingTools:
         use_connect: bool = False,
         use_deform: bool = True,
         roll: float = 0.0,
+        affected_objects: list[str] | None = None,
     ) -> Any:
         """Add one armature-local edit bone with explicit geometry and parent."""
 
@@ -153,6 +154,7 @@ class RiggingTools:
                 use_connect=use_connect,
                 use_deform=use_deform,
                 roll=roll,
+                affected_objects=affected_objects,
             ),
         )
 
@@ -168,6 +170,7 @@ class RiggingTools:
         clear_parent: bool = False,
         use_connect: bool | None = None,
         use_deform: bool | None = None,
+        affected_objects: list[str] | None = None,
     ) -> Any:
         """Update only supplied properties on one named edit bone."""
 
@@ -184,6 +187,7 @@ class RiggingTools:
                 clear_parent=clear_parent,
                 use_connect=use_connect,
                 use_deform=use_deform,
+                affected_objects=affected_objects,
             ),
         )
 
@@ -192,16 +196,13 @@ class RiggingTools:
         object_name: str,
         bone_name: str,
         reparent_children: bool = False,
+        affected_objects: list[str] | None = None,
     ) -> Any:
         """Remove one bone, rejecting children unless reparenting is explicit."""
 
         return await self.registry.call(
             "rig.bone_remove",
-            {
-                "object_name": object_name,
-                "bone_name": bone_name,
-                "reparent_children": reparent_children,
-            },
+            params(object_name=object_name, bone_name=bone_name, reparent_children=reparent_children, affected_objects=affected_objects),
         )
 
     async def rig_pose_transform(
@@ -214,6 +215,7 @@ class RiggingTools:
         rotation_quaternion: list[float] | None = None,
         rotation_axis_angle: list[float] | None = None,
         scale: list[float] | None = None,
+        affected_objects: list[str] | None = None,
     ) -> Any:
         """Set explicit finite transform channels on one pose bone."""
 
@@ -228,6 +230,7 @@ class RiggingTools:
                 rotation_quaternion=rotation_quaternion,
                 rotation_axis_angle=rotation_axis_angle,
                 scale=scale,
+                affected_objects=affected_objects,
             ),
         )
 
@@ -241,6 +244,7 @@ class RiggingTools:
         subtarget: str | None = None,
         influence: float = 1.0,
         chain_count: int = 0,
+        affected_objects: list[str] | None = None,
     ) -> Any:
         """Add a supported constraint to one named pose bone."""
 
@@ -255,6 +259,7 @@ class RiggingTools:
                 subtarget=subtarget,
                 influence=influence,
                 chain_count=chain_count,
+                affected_objects=affected_objects,
             ),
         )
 
@@ -263,16 +268,13 @@ class RiggingTools:
         object_name: str,
         bone_name: str,
         constraint_name: str,
+        affected_objects: list[str] | None = None,
     ) -> Any:
         """Remove one explicit constraint from one named pose bone."""
 
         return await self.registry.call(
             "rig.constraint_remove",
-            {
-                "object_name": object_name,
-                "bone_name": bone_name,
-                "constraint_name": constraint_name,
-            },
+            params(object_name=object_name, bone_name=bone_name, constraint_name=constraint_name, affected_objects=affected_objects),
         )
 
     async def rig_bind_mesh(
@@ -281,17 +283,13 @@ class RiggingTools:
         armature_object: str,
         method: str = "EMPTY_GROUPS",
         parent: bool = True,
+        affected_objects: list[str] | None = None,
     ) -> Any:
         """Bind one mesh to one armature using an explicit weighting method."""
 
         return await self.registry.call(
             "rig.bind_mesh",
-            {
-                "mesh_object": mesh_object,
-                "armature_object": armature_object,
-                "method": method,
-                "parent": parent,
-            },
+            params(mesh_object=mesh_object, armature_object=armature_object, method=method, parent=parent, affected_objects=affected_objects),
         )
 
     def bindings(self) -> tuple[MCPToolBinding, ...]:

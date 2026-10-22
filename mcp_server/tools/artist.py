@@ -317,6 +317,7 @@ class ArtistTools:
         action_name: str,
         frame_start: int = 1,
         slot_identifier: str | None = None,
+        affected_objects: list[str] | None = None,
     ) -> Any:
         return await self.registry.call(
             "nla.add_strip",
@@ -327,17 +328,22 @@ class ArtistTools:
                 action_name=action_name,
                 frame_start=frame_start,
                 slot_identifier=slot_identifier,
+                affected_objects=affected_objects,
             ),
         )
 
-    async def nla_push_down(self, object_name: str, track_name: str, strip_name: str) -> Any:
+    async def nla_push_down(self, object_name: str, track_name: str, strip_name: str,
+                            affected_objects: list[str] | None = None,
+                            expected_action_name: str | None = None) -> Any:
         return await self.registry.call(
             "nla.push_down",
-            params(object_name=object_name, track_name=track_name, strip_name=strip_name),
+            params(object_name=object_name, track_name=track_name, strip_name=strip_name,
+                   affected_objects=affected_objects, expected_action_name=expected_action_name),
         )
 
     async def nla_solo_track(
-        self, object_name: str, track_name: str, enabled: bool, replace_existing: bool = False
+        self, object_name: str, track_name: str, enabled: bool, replace_existing: bool = False,
+        affected_objects: list[str] | None = None,
     ) -> Any:
         return await self.registry.call(
             "nla.solo_track",
@@ -346,6 +352,7 @@ class ArtistTools:
                 track_name=track_name,
                 enabled=enabled,
                 replace_existing=replace_existing,
+                affected_objects=affected_objects,
             ),
         )
 
@@ -355,11 +362,13 @@ class ArtistTools:
         track_name: str,
         settings: dict[str, Any] | None = None,
         remove: bool = False,
+        affected_objects: list[str] | None = None,
     ) -> Any:
         return await self.registry.call(
             "nla.edit_track",
             params(
-                object_name=object_name, track_name=track_name, settings=settings, remove=remove
+                object_name=object_name, track_name=track_name, settings=settings, remove=remove,
+                affected_objects=affected_objects,
             ),
         )
 
@@ -370,6 +379,7 @@ class ArtistTools:
         strip_name: str,
         settings: dict[str, Any] | None = None,
         remove: bool = False,
+        affected_objects: list[str] | None = None,
     ) -> Any:
         return await self.registry.call(
             "nla.edit_strip",
@@ -379,6 +389,7 @@ class ArtistTools:
                 strip_name=strip_name,
                 settings=settings,
                 remove=remove,
+                affected_objects=affected_objects,
             ),
         )
 

@@ -257,8 +257,16 @@ def prepare_assignments(
     return tuple(prepared)
 
 
-def apply_assignments(owner: Any, assignments: Sequence[RNAAssignment]) -> None:
-    """Apply a prevalidated batch and best-effort roll it back on setter failure."""
+def apply_assignments(owner: Any, assignments: Sequence[RNAAssignment], *, boundary: Any = None) -> None:
+    """Apply a validated batch; live domain boundaries own measured compensation.
+
+    The optional path preserves the legacy internal call contract while callers
+    migrate to domain-specific content and ownership proofs.
+    """
+
+    if boundary is not None:
+        boundary.apply(owner, assignments)
+        return
 
     previous: list[tuple[str, Any]] = []
     failed_name: str | None = None

@@ -46,6 +46,10 @@ def test_rigging_addon_registry_metadata(addon_package: str) -> None:
             permissions.Permission.EDIT_ANIMATION,
         }
     )
+    assert registry.get("rig.bind_mesh").permissions == frozenset(
+        {permissions.Permission.EDIT_ANIMATION, permissions.Permission.TRANSFORM_OBJECTS,
+         permissions.Permission.EDIT_MESH}
+    )
     for name in RIGGING_TOOL_NAMES[1:]:
         spec = registry.get(name)
         assert spec.toolset == "rigging"
@@ -60,6 +64,8 @@ def test_rigging_mcp_definitions_match_addon_contract() -> None:
     assert definitions[0].required_permissions == ("INSPECT_SCENE",)
     remove = next(item for item in definitions if item.name == "rig.bone_remove")
     assert set(remove.required_permissions) == {"DELETE_OBJECTS", "EDIT_ANIMATION"}
+    bind = next(item for item in definitions if item.name == "rig.bind_mesh")
+    assert set(bind.required_permissions) == {"EDIT_ANIMATION", "TRANSFORM_OBJECTS", "EDIT_MESH"}
     assert all(item.modifying for item in definitions[1:])
 
 
@@ -108,6 +114,22 @@ def test_rigging_wrapper_requires_named_mesh_and_armature() -> None:
             },
         )
     ]
+
+
+@pytest.mark.parametrize("method,args", [
+    ("rig_bone_add", ("Rig", "Bone", [0, 0, 0], [0, 0, 1])),
+    ("rig_bone_update", ("Rig", "Bone")),
+    ("rig_bone_remove", ("Rig", "Bone")),
+    ("rig_pose_transform", ("Rig", "Bone")),
+    ("rig_constraint_add", ("Rig", "Bone", "COPY_LOCATION")),
+    ("rig_constraint_remove", ("Rig", "Bone", "Constraint")),
+    ("rig_bind_mesh", ("Skin", "Rig")),
+])
+def test_rigging_wrapper_forwards_explicit_complete_consumer_scope(method, args) -> None:
+    registry = RecordingRegistry()
+    tools = RiggingTools(registry)  # type: ignore[arg-type]
+    asyncio.run(getattr(tools, method)(*args, affected_objects=["ProtectedSkin"]))
+    assert registry.calls[0][1]["affected_objects"] == ["ProtectedSkin"]
 
 
 def test_rigging_numeric_validators_reject_non_finite_and_unbounded(

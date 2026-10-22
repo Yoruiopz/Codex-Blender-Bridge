@@ -28,6 +28,7 @@ def register_all(registry: ToolRegistry) -> None:
         image_paint,
         image_portability,
         image_recovery,
+        image_recovery_jobs,
         image_revisions,
         image_surface_paint,
         images,
@@ -53,6 +54,7 @@ def register_all(registry: ToolRegistry) -> None:
         scene_edit,
         scene_variants,
         shader_groups,
+        shader_interface,
         shader_settings,
         simulation,
         surface_brushes,
@@ -100,11 +102,13 @@ def register_all(registry: ToolRegistry) -> None:
     image_surface_paint.register_tools(registry)
     image_portability.register_tools(registry)
     image_recovery.register_tools(registry)
+    image_recovery_jobs.register_tools(registry)
     paint_jobs.register_tools(registry)
     image_delivery.register_tools(registry)
     image_revisions.register_tools(registry)
     nodes.register_tools(registry)
     shader_groups.register_tools(registry)
+    shader_interface.register_tools(registry)
     shader_settings.register_tools(registry)
     uv.register_tools(registry)
     uv_analysis.register_tools(registry)

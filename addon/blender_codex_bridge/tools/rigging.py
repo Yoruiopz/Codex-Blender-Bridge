@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Iterator, Mapping, Sequence
-from contextlib import contextmanager, suppress
+from contextlib import contextmanager
 from itertools import islice
 from typing import Any
 
@@ -17,10 +17,10 @@ from ..utils import (
     get_collection,
     get_object,
     int_param,
-    preserved_object_context,
     require_blender,
     vector3,
 )
+from . import _rigging_edit as rig_edit
 from ._object_safety import require_local_object, require_single_user_object_data
 
 _MAX_COORDINATE = 1_000_000.0
@@ -69,7 +69,7 @@ def _required_name(
     if not isinstance(value, str) or not value.strip():
         raise invalid_argument(f"'{key}' must be a non-empty string.", parameter=key)
     value = value.strip()
-    if len(value) > maximum or any(ord(character) < 32 for character in value):
+    if len(value) > maximum or (maximum == 63 and len(value.encode("utf-8")) > 63) or any(ord(character) < 32 for character in value):
         raise invalid_argument(
             f"'{key}' must contain at most {maximum} printable characters.",
             parameter=key,
@@ -133,65 +133,15 @@ def _bone_or_error(armature: Any, bone_name: str, *, edit: bool = False) -> Any:
     return bone
 
 
-def _ensure_object_mode() -> None:
-    bpy = require_blender()
-    active = bpy.context.view_layer.objects.active
-    if active is not None and active.mode != "OBJECT":
-        try:
-            result = bpy.ops.object.mode_set(mode="OBJECT")
-        except RuntimeError as exc:
-            raise BridgeError(
-                ErrorCode.BLENDER_CONTEXT_ERROR,
-                "Blender could not leave the active object's current mode.",
-                {"active_object": active.name, "current_mode": active.mode},
-            ) from exc
-        if "FINISHED" not in result:
-            raise BridgeError(ErrorCode.BLENDER_CONTEXT_ERROR, "Blender could not enter Object Mode.")
-
-
-def _select_only(*objects: Any, active: Any) -> None:
-    bpy = require_blender()
-    view_layer = bpy.context.view_layer
-    for selected in list(bpy.context.selected_objects):
-        selected.select_set(False)
-    for obj in objects:
-        if view_layer.objects.get(obj.name) is None:
-            raise BridgeError(
-                ErrorCode.BLENDER_CONTEXT_ERROR,
-                f"Object '{obj.name}' is not in the active view layer.",
-            )
-        if obj.hide_get() or obj.hide_viewport:
-            raise BridgeError(
-                ErrorCode.BLENDER_CONTEXT_ERROR,
-                f"Object '{obj.name}' must be visible for this contextual operation.",
-            )
-        obj.select_set(True)
-    view_layer.objects.active = active
-
-
 @contextmanager
-def _edit_armature(armature: Any) -> Iterator[Any]:
+def _edit_armature(armature: Any, context: ToolContext | None = None) -> Iterator[Any]:
+    """Private compatibility entry; contextual mutation always needs live gates."""
     require_single_user_object_data(armature, operation="Armature bone editing")
-    bpy = require_blender()
-    with preserved_object_context():
-        _ensure_object_mode()
-        _select_only(armature, active=armature)
-        try:
-            result = bpy.ops.object.mode_set(mode="EDIT")
-        except RuntimeError as exc:
-            raise BridgeError(
-                ErrorCode.BLENDER_CONTEXT_ERROR,
-                "Blender could not enter Armature Edit Mode.",
-                {"object": armature.name},
-            ) from exc
-        if "FINISHED" not in result:
-            raise BridgeError(ErrorCode.BLENDER_CONTEXT_ERROR, "Blender could not enter Armature Edit Mode.")
-        try:
-            yield armature.data.edit_bones
-        finally:
-            if armature.mode == "EDIT":
-                with suppress(RuntimeError):
-                    bpy.ops.object.mode_set(mode="OBJECT")
+    if context is None:
+        raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Armature edit sessions require a live authorization context.")
+    boundary = rig_edit.Boundary(require_blender(), context, "rig.bone_update", armature, [], kind="rest")
+    with boundary.edit() as bones:
+        yield bones
 
 
 def _bone_state(bone: Any) -> dict[str, Any]:
@@ -294,12 +244,13 @@ def inspect_rig(context: ToolContext, params: Mapping[str, Any]) -> dict[str, An
 
 
 def create_rig(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
-    del context
     bpy = require_blender()
     name = _required_name(params, "name", maximum=63)
     if bpy.data.objects.get(name) is not None:
         raise invalid_argument(f"An object named '{name}' already exists.")
-    data_name = _optional_name(params, "data_name", maximum=63) or f"{name}Armature"
+    data_name = _optional_name(params, "data_name", maximum=63) or f"{name[:55]}Armature"
+    if any(len(value.encode("utf-8")) > 63 for value in (name, data_name)):
+        raise invalid_argument("Object and armature names require at most 63 UTF-8 bytes.")
     if bpy.data.armatures.get(data_name) is not None:
         raise invalid_argument(f"An armature data block named '{data_name}' already exists.")
     collection_name = _optional_name(params, "collection")
@@ -313,21 +264,21 @@ def create_rig(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any
     root_tail = _bounded_vector3(params.get("root_tail"), "root_tail", default=(0.0, 0.0, 1.0))
     if math.dist(root_head, root_tail) <= 1e-8:
         raise invalid_argument("Root bone head and tail must be distinct.")
-    data = bpy.data.armatures.new(data_name)
-    armature = bpy.data.objects.new(name, data)
+    creation = rig_edit.Creation(bpy, context, collection)
     try:
-        collection.objects.link(armature)
-        armature.location = location
-        data.display_type = display_type
-        with _edit_armature(armature) as edit_bones:
-            root = edit_bones.new(root_name)
-            root.head = root_head
-            root.tail = root_tail
-    except Exception:
-        bpy.data.objects.remove(armature, do_unlink=True)
-        if data.users == 0:
-            bpy.data.armatures.remove(data)
-        raise
+        data = creation.allocate(lambda: bpy.data.armatures.new(data_name))
+        armature = creation.allocate(lambda: bpy.data.objects.new(name, data))
+        creation.link(armature)
+        creation.assign(armature, "location", location)
+        creation.assign(data, "display_type", display_type)
+        boundary = rig_edit.Boundary(bpy, context, "rig.create", armature, [], kind="rest")
+        with boundary.edit() as edit_bones:
+            root = boundary.allocate_bone(edit_bones, root_name)
+            boundary.write(root, "head", root_head)
+            boundary.write(root, "tail", root_tail)
+        boundary.check()
+    except Exception as error:
+        raise creation.failure(error) from error
     bone = data.bones.get(root_name)
     return {
         "created": True,
@@ -340,8 +291,8 @@ def create_rig(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any
 
 
 def add_bone(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
-    del context
     armature = _armature_object(params)
+    require_single_user_object_data(armature, operation="Armature bone editing")
     bone_name = _required_name(params, "bone_name", maximum=63)
     if armature.data.bones.get(bone_name) is not None:
         raise invalid_argument(f"Bone '{bone_name}' already exists on '{armature.name}'.")
@@ -355,26 +306,32 @@ def add_bone(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
     use_connect = bool_param(params, "use_connect", False)
     use_deform = bool_param(params, "use_deform", True)
     roll = float_param(params, "roll", 0.0, minimum=-1_000.0, maximum=1_000.0)
-    with _edit_armature(armature) as edit_bones:
+    parent = _bone_or_error(armature, parent_name) if parent_name else None
+    if use_connect and parent is None:
+        raise invalid_argument("Connected bones require 'parent_name'.")
+    if use_connect and parent is not None and math.dist(head, tuple(parent.tail_local)) > 1e-6:
+        raise invalid_argument("A connected bone's head must equal its parent's tail.")
+    boundary = rig_edit.Boundary(require_blender(), context, "rig.bone_add", armature, params.get("affected_objects", []), kind="rest")
+    with boundary.edit() as edit_bones:
         parent = _bone_or_error(armature, parent_name, edit=True) if parent_name else None
         if use_connect and parent is None:
             raise invalid_argument("Connected bones require 'parent_name'.")
-        if use_connect and math.dist(head, tuple(parent.tail)) > 1e-6:
+        if use_connect and parent is not None and math.dist(head, tuple(parent.tail)) > 1e-6:
             raise invalid_argument("A connected bone's head must equal its parent's tail.")
-        bone = edit_bones.new(bone_name)
-        bone.head = head
-        bone.tail = tail
-        bone.roll = roll
-        bone.use_deform = use_deform
-        bone.parent = parent
-        bone.use_connect = use_connect
+        bone = boundary.allocate_bone(edit_bones, bone_name)
+        boundary.write(bone, "head", head)
+        boundary.write(bone, "tail", tail)
+        boundary.write(bone, "roll", roll)
+        boundary.write(bone, "use_deform", use_deform)
+        boundary.write(bone, "parent", parent)
+        boundary.write(bone, "use_connect", use_connect)
     created = armature.data.bones.get(bone_name)
     return {"created": True, "object": armature.name, "bone": _bone_state(created)}
 
 
 def update_bone(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
-    del context
     armature = _armature_object(params)
+    require_single_user_object_data(armature, operation="Armature bone editing")
     bone_name = _required_name(params, "bone_name", maximum=63)
     new_name = _optional_name(params, "new_name", maximum=63)
     parent_name = _optional_name(params, "parent_name", maximum=63)
@@ -435,40 +392,55 @@ def update_bone(context: ToolContext, params: Mapping[str, Any]) -> dict[str, An
     if use_connect and requested_parent is None:
         raise invalid_argument("A connected bone must have a parent.")
     if use_connect:
+        assert requested_parent is not None
         parent_tail = tuple(float(value) for value in requested_parent.tail_local)
         if supplied["head"] and math.dist(head, parent_tail) > 1e-6:
             raise invalid_argument("A connected bone's head must equal its parent's tail.")
         head = parent_tail
     if math.dist(head, tail) <= 1e-8:
         raise invalid_argument("Bone head and tail must remain distinct.")
-    with _edit_armature(armature):
+    affected = params.get("affected_objects", [])
+    if new_name is not None and new_name != existing.name:
+        rig_edit.require_independent_rest(armature, affected, "Bone renaming")
+    if any(child.use_connect for child in existing.children) and any(supplied[key] for key in ("head", "tail", "roll", "parent", "use_connect")):
+        raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Editing connected descendants requires a reviewed geometry propagation transaction; no context was changed.")
+    boundary = rig_edit.Boundary(require_blender(), context, "rig.bone_update", armature, affected, kind="rest")
+    with boundary.edit():
         bone = _bone_or_error(armature, bone_name, edit=True)
         if new_name is not None and new_name != bone.name:
-            bone.name = new_name
+            boundary.write(bone, "name", new_name)
         if parent_name is not None:
             parent = _bone_or_error(armature, parent_name, edit=True)
-            bone.parent = parent
+            boundary.write(bone, "parent", parent)
         elif clear_parent:
-            bone.use_connect = False
-            bone.parent = None
-        bone.head = head
-        bone.tail = tail
+            boundary.write(bone, "use_connect", False)
+            boundary.write(bone, "parent", None)
+        boundary.write(bone, "head", head)
+        boundary.write(bone, "tail", tail)
         if roll is not None:
-            bone.roll = roll
+            boundary.write(bone, "roll", roll)
         if use_deform is not None:
-            bone.use_deform = use_deform
-        bone.use_connect = use_connect
+            boundary.write(bone, "use_deform", use_deform)
+        boundary.write(bone, "use_connect", use_connect)
         resulting_name = bone.name
     result = armature.data.bones.get(resulting_name)
     return {"updated": True, "object": armature.name, "bone": _bone_state(result)}
 
 
 def remove_bone(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
-    del context
     armature = _armature_object(params)
+    require_single_user_object_data(armature, operation="Armature bone editing")
     bone_name = _required_name(params, "bone_name", maximum=63)
     reparent_children = bool_param(params, "reparent_children", False)
-    with _edit_armature(armature) as edit_bones:
+    existing = _bone_or_error(armature, bone_name)
+    if len(existing.children) > _MAX_BONES:
+        raise invalid_argument("The bone has too many children for a structured removal.")
+    if existing.children and not reparent_children:
+        raise invalid_argument("The bone has children; set 'reparent_children' to true to preserve their hierarchy.", child_bones=[child.name for child in list(existing.children)[:64]])
+    affected = params.get("affected_objects", [])
+    rig_edit.require_independent_rest(armature, affected, "Bone removal")
+    boundary = rig_edit.Boundary(require_blender(), context, "rig.bone_remove", armature, affected, kind="rest")
+    with boundary.edit() as edit_bones:
         bone = _bone_or_error(armature, bone_name, edit=True)
         if len(bone.children) > _MAX_BONES:
             raise invalid_argument("The bone has too many children for a structured removal.")
@@ -479,24 +451,24 @@ def remove_bone(context: ToolContext, params: Mapping[str, Any]) -> dict[str, An
                 child_bones=[child.name for child in children[:64]],
             )
         parent = bone.parent
+        resulting_parent = parent.name if parent else None
         child_names = [child.name for child in children]
         if reparent_children:
             for child in children:
-                child.use_connect = False
-                child.parent = parent
-        edit_bones.remove(bone)
+                boundary.write(child, "use_connect", False)
+                boundary.write(child, "parent", parent)
+        boundary.remove_bone(edit_bones, bone)
     return {
         "removed": True,
         "object": armature.name,
         "bone_name": bone_name,
         "reparented_children": child_names if reparent_children else [],
-        "new_parent": parent.name if reparent_children and parent else None,
+        "new_parent": resulting_parent if reparent_children else None,
         "bone_count": len(armature.data.bones),
     }
 
 
 def pose_transform(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
-    del context
     armature = _armature_object(params)
     require_local_object(armature, operation="Pose editing")
     if armature.mode == "EDIT":
@@ -550,28 +522,28 @@ def pose_transform(context: ToolContext, params: Mapping[str, Any]) -> dict[str,
     if axis_angle is not None and math.sqrt(sum(value * value for value in axis_angle[1:])) <= 1e-8:
         raise invalid_argument("The axis-angle rotation axis must have non-zero length.")
     scale = _bounded_vector3(scale_value, "scale") if scale_value is not None else None
+    boundary = rig_edit.Boundary(require_blender(), context, "rig.pose_transform", armature, params.get("affected_objects", []), kind="pose", bone_name=bone_name)
     if rotation_mode is not None:
-        pose_bone.rotation_mode = rotation_mode
+        boundary.write(pose_bone, "rotation_mode", rotation_mode)
     if location is not None:
-        pose_bone.location = location
+        boundary.write(pose_bone, "location", location)
     if euler is not None:
         if pose_bone.rotation_mode in {"QUATERNION", "AXIS_ANGLE"}:
-            pose_bone.rotation_mode = "XYZ"
-        pose_bone.rotation_euler = euler
+            boundary.write(pose_bone, "rotation_mode", "XYZ")
+        boundary.write(pose_bone, "rotation_euler", euler)
     if quaternion is not None:
-        pose_bone.rotation_mode = "QUATERNION"
-        pose_bone.rotation_quaternion = quaternion
+        boundary.write(pose_bone, "rotation_mode", "QUATERNION")
+        boundary.write(pose_bone, "rotation_quaternion", quaternion)
     if axis_angle is not None:
-        pose_bone.rotation_mode = "AXIS_ANGLE"
-        pose_bone.rotation_axis_angle = axis_angle
+        boundary.write(pose_bone, "rotation_mode", "AXIS_ANGLE")
+        boundary.write(pose_bone, "rotation_axis_angle", axis_angle)
     if scale is not None:
-        pose_bone.scale = scale
-    armature.update_tag(refresh={"OBJECT"})
+        boundary.write(pose_bone, "scale", scale)
+    boundary.check()
     return {"updated": True, "object": armature.name, "pose_bone": _pose_bone_state(pose_bone)}
 
 
 def add_constraint(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
-    del context
     armature = _armature_object(params)
     require_local_object(armature, operation="Pose editing")
     bone_name = _required_name(params, "bone_name", maximum=63)
@@ -596,20 +568,20 @@ def add_constraint(context: ToolContext, params: Mapping[str, Any]) -> dict[str,
         _bone_or_error(target, subtarget)
     influence = float_param(params, "influence", 1.0, minimum=0.0, maximum=1.0)
     chain_count = int_param(params, "chain_count", 0, minimum=0, maximum=255)
-    constraint = pose_bone.constraints.new(type=constraint_type)
-    try:
-        if name is not None:
-            constraint.name = name
-        constraint.influence = influence
-        if target is not None:
-            constraint.target = target
-        if subtarget is not None:
-            constraint.subtarget = subtarget
-        if constraint_type == "IK":
-            constraint.chain_count = chain_count
-    except (AttributeError, RuntimeError, TypeError, ValueError):
-        pose_bone.constraints.remove(constraint)
-        raise
+    boundary = rig_edit.Boundary(require_blender(), context, "rig.constraint_add", armature, params.get("affected_objects", []), kind="constraints", bone_name=bone_name)
+    if target is not None:
+        boundary.source(target)
+    constraint = boundary.allocate_constraint(pose_bone, constraint_type)
+    if name is not None:
+        boundary.write(constraint, "name", name)
+    boundary.write(constraint, "influence", influence)
+    if target is not None:
+        boundary.write(constraint, "target", target)
+    if subtarget is not None:
+        boundary.write(constraint, "subtarget", subtarget)
+    if constraint_type == "IK":
+        boundary.write(constraint, "chain_count", chain_count)
+    boundary.check()
     return {
         "created": True,
         "object": armature.name,
@@ -619,7 +591,6 @@ def add_constraint(context: ToolContext, params: Mapping[str, Any]) -> dict[str,
 
 
 def remove_constraint(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
-    del context
     armature = _armature_object(params)
     require_local_object(armature, operation="Pose editing")
     bone_name = _required_name(params, "bone_name", maximum=63)
@@ -635,7 +606,9 @@ def remove_constraint(context: ToolContext, params: Mapping[str, Any]) -> dict[s
             available_constraints=[item.name for item in islice(pose_bone.constraints, 128)],
             available_constraints_truncated=len(pose_bone.constraints) > 128,
         )
-    pose_bone.constraints.remove(constraint)
+    boundary = rig_edit.Boundary(require_blender(), context, "rig.constraint_remove", armature, params.get("affected_objects", []), kind="constraints", bone_name=bone_name)
+    boundary.remove_constraint(pose_bone, constraint)
+    boundary.check()
     return {
         "removed": True,
         "object": armature.name,
@@ -645,109 +618,14 @@ def remove_constraint(context: ToolContext, params: Mapping[str, Any]) -> dict[s
     }
 
 
-def _ensure_armature_modifier(mesh: Any, armature: Any) -> Any:
-    for modifier in mesh.modifiers:
-        if modifier.type == "ARMATURE" and modifier.object == armature:
-            return modifier
-    modifier = mesh.modifiers.new(name=f"{armature.name} Deform", type="ARMATURE")
-    modifier.object = armature
-    return modifier
-
-
-def _bind_empty_groups(mesh: Any, armature: Any, *, parent: bool) -> dict[str, Any]:
-    if len(armature.data.bones) > _MAX_BONES:
-        raise invalid_argument("The armature exceeds the structured deform-bone limit.")
-    if len(mesh.vertex_groups) > 4_096 or len(mesh.modifiers) > 4_096:
-        raise invalid_argument("The mesh has too many existing groups or modifiers for safe binding.")
-    deform_bones = [bone for bone in armature.data.bones if bone.use_deform]
-    existing_groups = {group.name for group in mesh.vertex_groups}
-    existing_modifiers = {modifier.name for modifier in mesh.modifiers}
-    previous_parent = mesh.parent
-    previous_matrix = mesh.matrix_world.copy()
-    created_groups: list[str] = []
-    try:
-        for bone in deform_bones:
-            if mesh.vertex_groups.get(bone.name) is None:
-                mesh.vertex_groups.new(name=bone.name)
-                created_groups.append(bone.name)
-        modifier = _ensure_armature_modifier(mesh, armature)
-        if parent:
-            matrix_world = mesh.matrix_world.copy()
-            mesh.parent = armature
-            mesh.matrix_world = matrix_world
-    except Exception:
-        mesh.parent = previous_parent
-        mesh.matrix_world = previous_matrix
-        for group in list(mesh.vertex_groups):
-            if group.name not in existing_groups:
-                mesh.vertex_groups.remove(group)
-        for item in list(mesh.modifiers):
-            if item.name not in existing_modifiers:
-                mesh.modifiers.remove(item)
-        raise
-    return {
-        "created_vertex_groups": created_groups,
-        "modifier": modifier.name,
-    }
-
-
-def _bind_automatic(mesh: Any, armature: Any) -> dict[str, Any]:
-    bpy = require_blender()
-    if len(mesh.data.vertices) > 2_000_000:
-        raise invalid_argument("Automatic weights are limited to meshes with at most 2,000,000 vertices.")
-    if len(mesh.vertex_groups) > 4_096 or len(mesh.modifiers) > 4_096:
-        raise invalid_argument("The mesh has too many existing groups or modifiers for safe rollback tracking.")
-    existing_groups = {group.name for group in mesh.vertex_groups}
-    existing_modifiers = {modifier.name for modifier in mesh.modifiers}
-    previous_parent = mesh.parent
-    previous_matrix = mesh.matrix_world.copy()
-    try:
-        with preserved_object_context():
-            _ensure_object_mode()
-            _select_only(mesh, armature, active=armature)
-            if not bpy.ops.object.parent_set.poll():
-                raise BridgeError(
-                    ErrorCode.BLENDER_CONTEXT_ERROR,
-                    "Automatic weights are unavailable in the current Blender context.",
-                )
-            result = bpy.ops.object.parent_set(type="ARMATURE_AUTO", keep_transform=True)
-            if "FINISHED" not in result:
-                raise BridgeError(ErrorCode.OPERATION_FAILED, "Automatic weight binding did not finish.")
-    except Exception:
-        mesh.parent = previous_parent
-        mesh.matrix_world = previous_matrix
-        for group in list(mesh.vertex_groups):
-            if group.name not in existing_groups:
-                mesh.vertex_groups.remove(group)
-        for modifier in list(mesh.modifiers):
-            if modifier.name not in existing_modifiers:
-                mesh.modifiers.remove(modifier)
-        raise
-    modifier = next(
-        (item for item in mesh.modifiers if item.type == "ARMATURE" and item.object == armature),
-        None,
-    )
-    if mesh.parent != armature or modifier is None:
-        raise BridgeError(
-            ErrorCode.OPERATION_FAILED,
-            "Automatic weights returned without the expected armature parent and modifier.",
-        )
-    return {
-        "created_vertex_groups": sorted(
-            group.name for group in mesh.vertex_groups if group.name not in existing_groups
-        ),
-        "modifier": modifier.name,
-    }
-
-
 def bind_mesh(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
-    del context
+    from ._rig_binding import bind
+
     mesh = get_object(params.get("mesh_object"), allow_active=False)
     if mesh.type != "MESH":
         raise invalid_argument("'mesh_object' must name a mesh object.", object_type=mesh.type)
     require_single_user_object_data(mesh, operation="Armature binding")
-    armature_name = params.get("armature_object")
-    armature = get_object(armature_name, allow_active=False)
+    armature = get_object(params.get("armature_object"), allow_active=False)
     if armature.type != "ARMATURE":
         raise invalid_argument("'armature_object' must name an armature object.", object_type=armature.type)
     method = str(params.get("method", "EMPTY_GROUPS")).strip().upper()
@@ -756,19 +634,12 @@ def bind_mesh(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]
     parent = bool_param(params, "parent", True)
     if method == "AUTOMATIC" and not parent:
         raise invalid_argument("Automatic weights require 'parent' to be true.")
-    binding = (
-        _bind_automatic(mesh, armature)
-        if method == "AUTOMATIC"
-        else _bind_empty_groups(mesh, armature, parent=parent)
-    )
+    binding = bind(require_blender(), context, mesh, armature, params.get("affected_objects", []),
+                   automatic=method == "AUTOMATIC", parent=parent)
     return {
-        "bound": True,
-        "method": method,
-        "object": mesh.name,
-        "armature": armature.name,
+        "bound": True, "method": method, "object": mesh.name, "armature": armature.name,
         "parent": mesh.parent.name if mesh.parent else None,
-        "vertex_group_count": len(mesh.vertex_groups),
-        **binding,
+        "vertex_group_count": len(mesh.vertex_groups), **binding,
     }
 
 
@@ -780,7 +651,7 @@ def register_tools(registry: ToolRegistry) -> None:
         toolset="rigging",
         description="Inspect a bounded armature hierarchy, pose transforms, and constraints.",
     )
-    edit = {
+    edit: dict[str, Any] = {
         "permissions": (Permission.EDIT_ANIMATION,),
         "toolset": "rigging",
         "modifies": True,
@@ -831,7 +702,7 @@ def register_tools(registry: ToolRegistry) -> None:
     registry.register(
         "rig.bind_mesh",
         bind_mesh,
-        permissions=(Permission.EDIT_ANIMATION, Permission.TRANSFORM_OBJECTS),
+        permissions=(Permission.EDIT_ANIMATION, Permission.TRANSFORM_OBJECTS, Permission.EDIT_MESH),
         toolset="rigging",
         modifies=True,
         description="Bind a named mesh to an armature using empty groups or contextual automatic weights.",

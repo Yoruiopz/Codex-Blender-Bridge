@@ -6,8 +6,8 @@
   "source_files": {},
   "support": {
     "os": "Windows 11",
-    "blender_lts": "4.5.1",
-    "blender_stable": "5.1.2"
+    "blender_lts": "4.5.14",
+    "blender_stable": "5.2.2"
   },
   "packages": {},
   "requirements": {
@@ -22,16 +22,17 @@
     "SAFE-02": {
       "status": "open",
       "evidence": [],
-      "progress": "Bounded domain ownership/live-context guards include projection, IK, zone edits, paint publication and cloth cache callbacks; complete mutator/dependency audit and Windows recovery acceptance remain."
+      "progress": "Bounded rig binding/rest/pose and object RNA mutations now use explicit consumer scope, per-write authority/CAS checks and measured recovery; complete mutator/dependency audit and Windows recovery acceptance remain."
     },
     "REC-01": {
       "status": "open",
       "evidence": [],
-      "progress": "Bounded packed raw snapshots restore loaded float/byte original IDs; explicit previewed unloaded FILE reconstruction replaces packed bytes while preserving native identity and bindings. 4K native research passes; public cooperative 4K jobs, UI undo, constrained-memory, mixed-editor/general recovery and Windows acceptance remain."
+      "progress": "Typed cooperative 4K packed snapshots and loaded/unloaded original-ID recovery join bounded synchronous restoration. Complete packed pixels, saved reopen, native snapshot undo and failure evidence have Linux fixtures; constrained-memory, mixed-editor/general recovery and Windows acceptance remain."
     },
     "JOB-01": {
       "status": "open",
-      "evidence": []
+      "evidence": [],
+      "progress": "One image scheduler now handles paint, delivery and packed recovery with pure final owner/deadline/cancellation checks after grant providers. Native tails remain non-preemptible; general simulation/bake jobs and production latency/memory acceptance remain."
     },
     "EVID-02": {
       "status": "open",
@@ -46,7 +47,7 @@
     "LOOK-01": {
       "status": "open",
       "evidence": [],
-      "progress": "Reviewed nested material/group operations and static camera/light variants implemented; native shader interface proof records animated socket-index aliasing and lossy conversion. Typed interface lifecycle and full look-development acceptance remain."
+      "progress": "Typed fingerprinted shader interface rename/reorder/default preserves stable IDs and existing instances; static camera/light variants retain matched previews. Conversion/removal, animated maintenance and full look-development acceptance remain."
     },
     "PAINT-01": {
       "status": "open",
@@ -56,7 +57,7 @@
     "CHAR-01": {
       "status": "open",
       "evidence": [],
-      "progress": "Weight brushes/mirror/surface transfer, bounded IK/deformation inspection, Action lifecycle, explicit NLA clips/transitions/reordering and guarded curve/driver edits implemented. Broader control rigs, complete mutator audit and protected character acceptance remain."
+      "progress": "Weight brushes, IK, Actions and NLA lifecycle now include guarded binding/rest/pose and a saved two-bone ribbon benchmark with sampled deformation/protected motion and matched captures. Broader control rigs, complete mutator audit and production character acceptance remain."
     },
     "SIM-01": {
       "status": "open",
@@ -81,5 +82,6 @@
   },
   "quality_matrix": null,
   "native_matrices": [],
-  "installed_scenarios": []
+  "installed_scenarios": [],
+  "support_selection_status": "Provisional development versions only. Windows is unqualified; select and record exact 4.5 LTS and newest compatible stable 5.x patches again at candidate freeze."
 }

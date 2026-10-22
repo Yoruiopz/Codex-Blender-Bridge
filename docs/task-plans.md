@@ -37,6 +37,13 @@ stores validated schema-v1 JSON in the active scene custom property
 It **does not save the project** or write external files. An independently authorized
 project save with `SAVE_PROJECT` is still required for disk persistence.
 
+Persistence checks live permission, cancellation, pause/stop, project/scene/view-layer/mode,
+plan revision, protected identities and the exact previous property after all callbacks.
+Recovery writes require the same live gates and an exact owned value; newer manual text
+or an unknown partial assignment is retained with explicit recovery evidence. Existing
+non-text or oversized storage is refused. These guards protect the plan property itself;
+protected objects remain advisory for other tools.
+
 `task.plan.load` explicitly reads that property. It rejects oversized, malformed,
 duplicate-key, unknown-version and invalid-schema JSON and unresolved protected names
 before replacing the runtime plan. No saved text is evaluated, no permission is granted,

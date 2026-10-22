@@ -9,6 +9,7 @@ from typing import Any
 from ..errors import BridgeError, ErrorCode, invalid_argument
 from ..permissions import Permission
 from ..task_plans import (
+    MAX_SAVED_BYTES,
     SCENE_PROPERTY,
     STEP_STATUSES,
     contents,
@@ -124,26 +125,75 @@ def persist_plan(context: ToolContext, params: Mapping[str, Any]) -> dict[str, A
     scene = bpy.context.scene
     require_local_editable_id(scene, operation="Task-plan persistence")
     raw = encode_saved(store.require_plan())
-    context.require(Permission.INSPECT_SCENE, Permission.EDIT_SCENE)
-    if context.check_cancelled:
-        context.check_cancelled()
     previous = scene.get(SCENE_PROPERTY)
     present = SCENE_PROPERTY in scene
+    if present:
+        # This bridge property is bounded text, never a container/ID to traverse
+        # or replace implicitly. Malformed bounded text can still be repaired.
+        try:
+            valid_previous = isinstance(previous, str) and len(previous.encode("utf-8")) <= MAX_SAVED_BYTES
+        except UnicodeError:
+            valid_previous = False
+        if not valid_previous:
+            raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Existing task-plan storage is not bounded UTF-8 text; repair it explicitly.")
+    session = (_identity(scene), _identity(bpy.context.view_layer),
+               getattr(getattr(bpy, "data", None), "filepath", ""), getattr(bpy.context, "mode", "OBJECT"))
+
+    def stored() -> tuple[bool, Any]:
+        return SCENE_PROPERTY in scene, scene.get(SCENE_PROPERTY)
+
+    def check(expected: tuple[bool, Any]) -> None:
+        # Permission providers and cancellation hooks can execute callbacks.
+        # Run every callback before the terminal, callback-free scope/CAS check.
+        if context.check_cancelled:
+            context.check_cancelled()
+        context.require(Permission.INSPECT_SCENE, Permission.EDIT_SCENE)
+        if context.check_cancelled:
+            context.check_cancelled()
+        flags = context.state.snapshot()
+        if flags["emergency_stopped"]:
+            raise BridgeError(ErrorCode.EMERGENCY_STOPPED, "Task-plan persistence stopped before another write.")
+        if flags["paused"]:
+            raise BridgeError(ErrorCode.AGENT_PAUSED, "Task-plan persistence paused before another write.")
+        current_session = (_identity(bpy.context.scene), _identity(bpy.context.view_layer),
+                           getattr(getattr(bpy, "data", None), "filepath", ""), getattr(bpy.context, "mode", "OBJECT"))
+        if current_session != session or bpy.context.scene is not scene:
+            raise invalid_argument("Task-plan persistence scene or editing context changed.")
+        require_local_editable_id(scene, operation="Task-plan persistence")
+        if encode_saved(store.require_plan()) != raw or _scope(bpy, store.require_plan()["protected_objects"]) != store.scope:
+            raise invalid_argument("Task plan or protected-object scope changed before persistence.")
+        if stored() != expected:
+            raise invalid_argument("Task-plan scene property changed; newer storage is retained.")
+
+    before = (present, previous)
+    check(before)
     try:
         scene[SCENE_PROPERTY] = raw
-        if scene.get(SCENE_PROPERTY) != raw:
-            raise RuntimeError("Task-plan property readback differed.")
+        check((True, raw))
     except Exception as exc:
-        rollback_verified = False
         try:
-            if present:
-                scene[SCENE_PROPERTY] = previous
-            elif SCENE_PROPERTY in scene:
-                del scene[SCENE_PROPERTY]
-            rollback_verified = (SCENE_PROPERTY in scene) == present and (not present or scene.get(SCENE_PROPERTY) == previous)
+            rollback_verified = stored() == before
+        except Exception:
+            rollback_verified = False
+        recovery = "unchanged" if rollback_verified else "explicit_recovery_required"
+        try:
+            if not rollback_verified:
+                # Never overwrite an interleaved edit or compensate after lost
+                # consent, context, identity, plan revision or live stop state.
+                check((True, raw))
+                if present:
+                    scene[SCENE_PROPERTY] = previous
+                else:
+                    del scene[SCENE_PROPERTY]
+                rollback_verified = stored() == before
+                recovery = "restored" if rollback_verified else "explicit_recovery_required"
         except Exception:
             pass
-        raise BridgeError(ErrorCode.OPERATION_FAILED, "Task-plan persistence failed; inspect the scene property before retrying.", {"rollback_verified": rollback_verified, "possible_mutation": not rollback_verified}) from exc
+        error = exc if isinstance(exc, BridgeError) else BridgeError(ErrorCode.OPERATION_FAILED, "Task-plan persistence failed; inspect the scene property before retrying.")
+        error.context.update(execution_started=True, rollback_verified=rollback_verified,
+                             possible_mutation=not rollback_verified, verification_required=True,
+                             recovery=recovery, project_saved=False)
+        raise error from (exc if error is not exc else None)
     return {**store.inspect(), "stored_in_scene": scene.name, "scene_property": SCENE_PROPERTY, "project_saved": False}
 
 

@@ -92,10 +92,16 @@ Native refresh/render calls execute synchronously on Blender's main thread and
 cannot be interrupted before they return. Guards run around writes and native
 calls. This API does not promise a hard frame-time deadline or isolate arbitrary
 user handlers. Detected permission/context/protected-data changes stop subsequent
-writes. Compensation requires current consent and exact ownership of the attempted
-outputs; pause, emergency stop, replaced values or protected-state changes can
+writes. Compensation requires current consent, enabled `scene_edit`, an active
+queued request/lifetime and exact ownership of the attempted outputs; pause,
+emergency stop, canceled/expired requests, disconnected owners, rejected delivery,
+disabled toolset, replaced values or protected-state changes can
 refuse it. Failures report possible mutation and measured rollback status for
-reinspection and explicit recovery.
+reinspection and explicit recovery. A canceled caller never authorizes new
+compensation writes. A fresh explicitly authorized recovery context is required
+to restore retained partial work after authority returns. Read-only inspection
+remains available while paused/emergency-stopped when the toolset and read grant
+remain enabled.
 
 Preview replaces Blender's Render Result and retains two managed temporary PNGs.
 Those effects remain in bounded operation history even when numeric scene state is
@@ -116,7 +122,7 @@ Broader camera rigs, animated/procedural assets, texture-rich/nested materials,
 compositor/pass authoring, reference interpretation, interactive progress and the
 full cinematic acceptance scenario remain open release requirements.
 
-The final bounded development run passed on Linux Blender **4.5.14 LTS** and
+The earlier bounded development run passed on Linux Blender **4.5.14 LTS** and
 **5.2.2 LTS**, including separate writer/readers, camera-background/AOV/custom-ID
 rejection, permission denial, invalid mode, protected attribute and raw-JSON changes,
 post-write failure compensation and actual native undo. Six additional native
@@ -134,3 +140,16 @@ is not human artistic acceptance. Sixty-four domain tests plus related history/p
 coverage (100 tests total) passed with MCP SDK 2.0.0 and 2.2.0. These are dirty-worktree
 development results; the clean source/package matrix and Windows acceptance remain
 separate requirements.
+
+The subsequent NEXT2 authority increment adds callback-free final toolset checks
+and canonical queued cancellation/deadline and RequestLifetime disconnect/rejected
+handoff checks at every forward and compensation gate. Its unit regressions first
+reproduce ten prior failures, then prove zero new control setters after authority
+loss, truthful partial-state errors and explicit recovery under fresh authority.
+The native fixture now uses prepared transaction boundary predicates rather than
+obsolete per-permission provider invocation counts. It exercises 16 authority fault
+cases per native version, retaining pause/stop inspection and the original paired
+fresh-process render/control comparisons. Evidence is kept separately at
+`build/next2-cinematic-authority-20261022-final/report.json` and its development
+receipt; historical reports above remain unchanged. The complete frozen/package
+matrix and unavailable Windows qualification remain separate release gates.

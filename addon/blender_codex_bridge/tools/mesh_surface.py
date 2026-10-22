@@ -40,7 +40,7 @@ BUILTIN_DATA = {"position": ("POINT", "FLOAT_VECTOR"), ".edge_verts": ("EDGE", "
     ".corner_vert": ("CORNER", "INT"), ".corner_edge": ("CORNER", "INT"),
     ".select_vert": ("POINT", "BOOLEAN"), ".select_edge": ("EDGE", "BOOLEAN"), ".select_poly": ("FACE", "BOOLEAN"),
     ".hide_vert": ("POINT", "BOOLEAN"), ".hide_edge": ("EDGE", "BOOLEAN"), ".hide_poly": ("FACE", "BOOLEAN"),
-    ".edge_seam": ("EDGE", "BOOLEAN"), "sharp_edge": ("EDGE", "BOOLEAN"),
+    ".edge_seam": ("EDGE", "BOOLEAN"), "uv_seam": ("EDGE", "BOOLEAN"), "sharp_edge": ("EDGE", "BOOLEAN"),
     "sharp_face": ("FACE", "BOOLEAN"), "material_index": ("FACE", "INT")}
 BUILTIN_FLAGS = set(BUILTIN_DATA)
 GLOBAL_UV_ATTRIBUTES = {".uv_select_vert": ("CORNER", "BOOLEAN"), ".uv_select_edge": ("CORNER", "BOOLEAN"),
