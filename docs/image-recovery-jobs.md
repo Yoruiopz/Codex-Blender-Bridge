@@ -1,5 +1,10 @@
 # Cooperative image snapshots and recovery
 
+**Save availability:** `project.save` currently refuses Save and Save As before
+native/path access; see [the safety change](project-save-safety.md). Fresh-process
+results below establish feature serialization through owned fixture setup, not a
+safe bridge project-save capability. Earlier typed-save reports are historical.
+
 Three typed tools extend current-pixel recovery to ordinary RGBA images up to
 4096 x 4096 pixels, with a 288 MiB packed payload limit. The synchronous
 `image.pack_version`, `image.restore_pixels`, `image.recovery_preview` and
@@ -80,7 +85,7 @@ when evidence or operation recording fails.
 
 A source buffer, private array, fake user or undo history alone is not a backup.
 Successful snapshot jobs retain a complete packed payload in Blender memory.
-Only a separately authorized `project.save` makes that payload durable. Save
+Durability requires a safe separately authorized project save, which remains blocked. Save
 again after restoration when the restored result must survive reopening.
 
 The phased interactive native cases `image_recovery_jobs` and

@@ -1,5 +1,10 @@
 # Cinematic variants
 
+**Save availability:** `project.save` currently refuses Save and Save As before
+native/path access; see [the safety change](project-save-safety.md). Fresh-process
+results below establish feature serialization through owned fixture setup, not a
+safe bridge project-save capability. Earlier typed-save reports are historical.
+
 The development `scene_edit` toolset contains a bounded camera and lighting iteration
 workflow. It is a partial implementation of UX-01 and cinematic scenario E, not
 acceptance of the full artist workflow or Windows release qualification.
@@ -76,8 +81,7 @@ exact reference rebind and a new preview. Changed protected assets or render/wor
 time settings require capturing a newly reviewed variant.
 
 Capture, preview and apply never save a project. Persisting the library to disk is
-an independent `project.save` operation with `SAVE_PROJECT`, `ACCESS_EXTERNAL_FILES`
-and an explicit approved destination. A logical checkpoint is not a disk backup.
+a safe separately authorized project-save backend, which remains blocked. A logical checkpoint is not a disk backup.
 
 ## Matched previews and recovery
 
@@ -112,8 +116,7 @@ Result. No automatic project save, arbitrary output path or overwrite is involve
 
 The isolated `cinematic_variants` fixture uses separate writer and reader processes.
 It compares complete matched RGBA8 images, injects a failure after an actual control
-write, verifies guarded compensation and native undo, saves through the separately
-authorized project API, then reopens the project and rebinds references. It checks
+write, verifies guarded compensation and native undo, serializes through explicitly labeled fixture-only native setup, then reopens the project and rebinds references. It checks
 that a saved preview token cannot authorize apply, compares the reopened current
 render with the writer's render and exercises A → B → A controls. Per-process logs,
 capture hashes and source fingerprints are retained by the native runner.

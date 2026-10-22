@@ -1,5 +1,10 @@
 # Explicit Action lifecycle and save retention
 
+**Save availability:** `project.save` currently refuses Save and Save As before
+native/path access; see [the safety change](project-save-safety.md). Fresh-process
+results below establish feature serialization through owned fixture setup, not a
+safe bridge project-save capability. Earlier typed-save reports are historical.
+
 These unreleased tools use the `animation` toolset. They add bounded Action
 allocation, assignment, metadata and unused removal; full character acceptance
 remains open. They run on Blender's main thread through normal operation history
@@ -54,8 +59,7 @@ it has neither; it can disappear on saving and reopening. Clearing/replacing the
 last active reference to an unpinned Action requires explicit
 `allow_session_only_previous=true`, or first set retention through `action_update`.
 Setting fake retention changes Blender data; durable storage still requires a
-separately authorized `project.save` with `SAVE_PROJECT` and the appropriate
-external-path permission. The lifecycle tools never grant those permissions.
+safe separately authorized project saving, whose native backend is currently blocked. The lifecycle tools never grant those permissions.
 
 Before every assignment and compensation, live permission, pause, emergency stop,
 cancellation, toolset, scene/session, exact ID/session UID, slot, content, direct
@@ -72,7 +76,7 @@ truthfully and never claims identity preservation by recreating an Action.
 LTS** and **5.2.2 LTS**, its writer exercises typed allocation, shared protected
 source channels, exact slot binding, permission and invalid-slot denial, known
 postwrite compensation, and post-assignment permission revocation. The writer then
-uses an independently authorized project save. A distinct reader process verifies
+uses fixture-only native project serialization after verifying typed-save refusal. A distinct reader process verifies
 sampled actor/protected motion, retained unbound Actions, omitted session-only
 Actions, removed IDs and unchanged protected Action content.
 

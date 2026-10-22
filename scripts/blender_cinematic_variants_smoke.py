@@ -12,6 +12,7 @@ from pathlib import Path
 import bpy
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT/"addon"))
 sys.path.insert(0, str(ROOT/"scripts"))
 import blender_codex_bridge  # noqa: E402
@@ -24,6 +25,7 @@ from blender_codex_bridge.request_lifecycle import ConnectionLifetime, RequestLi
 from blender_codex_bridge.runtime import get_runtime  # noqa: E402
 from blender_codex_bridge.tools import scene_variants as domain  # noqa: E402
 from native_camera_evidence import compare_rgba8  # noqa: E402
+from native_fixture_save import serialize_owned_fixture  # noqa: E402
 
 
 def setup():
@@ -310,10 +312,10 @@ def writer(runtime, grants, bundle):
     restored = runtime.dispatch("checkpoint.undo_last", {"confirm_global_undo": True, "restore_snapshot": True})
     assert restored["snapshot_marker_verified"] and numeric() == a
     assert domain._profile(bpy, [bpy.data.objects[value["object_name"]] for value in a], protected) == profile
-    # An explicit separate SAVE_PROJECT + ACCESS_EXTERNAL_FILES grant makes
-    # persistence durable; capture/preview/apply never save implicitly.
+    # Public saving is refused even with both grants. The owned fixture
+    # serializes its own input for independent variant reopen checks.
     grants[Permission.SAVE_PROJECT.value] = grants[Permission.ACCESS_EXTERNAL_FILES.value] = True
-    runtime.dispatch("project.save", {"filepath": str(bundle/"variants.blend")})
+    fixture_save = serialize_owned_fixture(runtime, bundle/"variants.blend")
     grants[Permission.SAVE_PROJECT.value] = grants[Permission.ACCESS_EXTERNAL_FILES.value] = False
     expected = {"a": a, "b": b, "a_id": first["variant"]["variant_id"], "b_id": second["variant"]["variant_id"],
         "old_token": fresh["fingerprint"], "library": runtime.dispatch("scene.variant.inspect"),
@@ -322,7 +324,7 @@ def writer(runtime, grants, bundle):
     (bundle/"variants-expected.json").write_text(json.dumps(expected), encoding="utf-8")
     return {"phase": "writer", "blender_version": bpy.app.version_string,
         "matched_full_image_comparison": changed, "late_failure_compensated": True,
-        "native_undo_verified": True, "explicit_separate_project_save": True,
+        **fixture_save, "native_undo_verified": True, "fixture_project_serialized": True,
         "permission_denial_invalid_mode_protected_attribute_and_json_cas_verified": True,
         "protected_custom_native_reference_rejected": True,
         "camera_background_and_aov_dependencies_rejected": True,

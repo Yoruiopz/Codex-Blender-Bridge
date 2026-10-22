@@ -12,6 +12,7 @@ from pathlib import Path
 import bpy
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "addon"))
 import blender_codex_bridge  # noqa: E402
 from blender_codex_bridge.command_queue import QueuedRequest  # noqa: E402
@@ -21,6 +22,7 @@ from blender_codex_bridge.protocol import Request  # noqa: E402
 from blender_codex_bridge.request_lifecycle import ConnectionLifetime, RequestLifetime  # noqa: E402
 from blender_codex_bridge.runtime import get_runtime  # noqa: E402
 from blender_codex_bridge.tools import _rigging_edit as proof  # noqa: E402
+from native_fixture_save import serialize_owned_fixture  # noqa: E402
 
 
 def final_authority_cases(runtime, grants, rig, skin, target):
@@ -307,11 +309,11 @@ def writer(bundle=None):
         bpy.context.scene.frame_set(1)
         frozen = persistent(rig, skin)
         path = bundle / "rig-edit-boundaries.blend"
-        runtime.dispatch("project.save", {"filepath": str(path)})
+        fixture_save = serialize_owned_fixture(runtime, path)
         manifest = {"file_sha256": hashlib.sha256(path.read_bytes()).hexdigest(), "content": frozen,
                     "writer_process": os.environ["BRIDGE_TEST_PROCESS_TOKEN"]}
         (bundle / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-        result.update(project_saved=True, file_sha256=manifest["file_sha256"])
+        result.update(**fixture_save, project_saved=True, file_sha256=manifest["file_sha256"])
     blender_codex_bridge.unregister()
     return result
 

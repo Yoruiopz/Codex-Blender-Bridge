@@ -15,8 +15,10 @@ from pathlib import Path
 import bpy
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
 sys.path[:0] = [str(ROOT / "addon"), str(ROOT / "scripts")]
 from native_camera_evidence import compare_rgba8, rgba8  # noqa: E402
+from native_fixture_save import serialize_owned_fixture  # noqa: E402
 
 
 def file_hash(path):
@@ -177,7 +179,7 @@ def writer(bundle):
     deny(runtime, "PERMISSION_DENIED", "project.save", filepath=str(project))
     assert not project.exists()
     prefs.allow_save_project = True
-    assert call("project.save", {"filepath": str(project)})["saved"]
+    fixture_save = serialize_owned_fixture(runtime, project)
     for record in records:
         record["stored_path"] = bpy.data.images[record["name"]].filepath
         assert record["stored_path"].startswith("//../textures/"), record
@@ -185,7 +187,7 @@ def writer(bundle):
     manifest = {"project": "projects/asset.blend", "project_sha256": file_hash(project), "images": records,
                 "generated_input_pixels_after_reopen_certified": False}
     (bundle / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-    finish("writer", {"project_sha256": manifest["project_sha256"], "images": len(records), "saved": True})
+    finish("writer", {**fixture_save, "project_sha256": manifest["project_sha256"], "images": len(records), "saved": True})
 
 
 def reader(bundle, manifest):

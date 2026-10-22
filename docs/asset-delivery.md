@@ -1,5 +1,10 @@
 # Scoped GLB and FBX asset delivery
 
+**Save availability:** `project.save` currently refuses Save and Save As before
+native/path access; see [the safety change](project-save-safety.md). Fresh-process
+results below establish feature serialization through owned fixture setup, not a
+safe bridge project-save capability. Earlier typed-save reports are historical.
+
 Unreleased development functionality. `asset.export_preview` and `asset.export` use Blender's
 native exporters for a deliberately reviewed subset; this does not complete DELIVER-01,
 production import/export, full artist coverage or release acceptance.

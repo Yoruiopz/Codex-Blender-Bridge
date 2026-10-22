@@ -4,6 +4,13 @@ Status: active, **not release-ready**. Planning baseline: `3ad11a3`, 2026-09-27.
 This is the current execution plan; `implementation-plan.md` describes the historical MVP.
 The [readiness gates](release-1.0-readiness.md) remain the release acceptance contract.
 
+**Native-save blocker:** unreleased `project.save` now refuses both current-file
+Save and Save As. Hidden C asset-catalog callbacks and runtime save effects are
+not bounded by existing path/permission checks. Earlier typed-save results are
+historical; current feature reopen fixtures use labeled owned setup serialization.
+Safe authorized saving and portable `.blend` delivery remain mandatory open
+requirements, with no scope reduction. See [the safety contract](project-save-safety.md).
+
 ## Outcome and scope
 
 Ship a downloadable, installable, consent-first bridge that lets an agent complete full

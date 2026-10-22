@@ -185,7 +185,7 @@ CORE_REMOTE_TOOLS: tuple[tuple[str, str, bool, tuple[str, ...]], ...] = (
         (),
     ),
     ("checkpoint.list", "List checkpoint labels, operation history and conservative recovery availability.", False, ()),
-    ("project.save", "Save the current project when Blender-side permission allows it.", True, ("SAVE_PROJECT",)),
+    ("project.save", "Project saving is unavailable until native save side effects can be bounded.", True, ("SAVE_PROJECT",)),
 )
 
 LOCAL_TOOLSET_TOOLS: tuple[tuple[str, str, bool], ...] = (
