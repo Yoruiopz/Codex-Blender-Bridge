@@ -28,6 +28,18 @@ not a logical-operation restore. It clears tracking afterwards. Named labels ret
 `operation.undo_boundary_created` and `undo_boundary_finalized` describe snapshot events,
 not a promise that those snapshots will remain retained.
 
+New automatic and explicit checkpoint work uses a trusted internal safe point
+after Scene/marker/preference reads, before every bridge marker deletion or
+assignment and native undo push. Caller cancellation/expiry, lost toolsets or
+pause/stop reject the next write with the original error. If earlier checkpoint
+writes completed, `checkpoint_bookkeeping` reports their measured marker/push
+counts; no compensating writes run after authority loss. Retained labels do not
+prove that partly changed markers remain navigable. Reinspect before recovery.
+Rejected handlers do not finalize an unrelated deferred editor session. Once a
+writer has actually entered, existing failure finalization remains available to
+retain partial-work recovery evidence, even if the caller has since stopped.
+This bookkeeping is not a requested object edit, durable backup, or transaction.
+
 ## Availability states
 
 | `availability` | Meaning | Snapshot navigation |

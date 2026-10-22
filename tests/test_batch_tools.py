@@ -34,7 +34,7 @@ def batch_env(addon_package: str):
     registry.register("checkpoint.undo_last", edit, modifies=True)
     context = registry_module.ToolContext(
         state_module.BridgeState(), permissions.PermissionManager(lambda: grants), registry,
-        SimpleNamespace(before_modification=lambda label: undo.append(("before", label)) or True,
+        SimpleNamespace(before_modification=lambda label, **_kwargs: undo.append(("before", label)) or True,
                         after_modification=lambda label: undo.append(("after", label))),
     )
     return SimpleNamespace(module=batch, context=context, registry=registry, calls=calls, undo=undo,

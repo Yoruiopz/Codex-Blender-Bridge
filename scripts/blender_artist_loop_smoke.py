@@ -43,9 +43,9 @@ def main():
     protected_before = tuple(protected.location), tuple(tuple(vertex.co) for vertex in protected.data.vertices)
     checkpoints = []
     original_checkpoint = runtime.checkpoints.before_modification
-    def checkpoint(method):
+    def checkpoint(method, **kwargs):
         checkpoints.append(method)
-        return original_checkpoint(method)
+        return original_checkpoint(method, **kwargs)
     runtime.checkpoints.before_modification = checkpoint
     plan = call("task.plan.set", {"goal": "Place and revise the selected prop while preserving Cube",
         "steps": [{"id": "place", "description": "Resolve, preview, compare and correct prop placement"}],
