@@ -6,6 +6,13 @@ its packages retain 0.3.0 metadata until a qualified release is accepted. Always
 add-on and MCP server from one checkout. A matching version string alone does not identify
 an unpublished build.
 
+**Project save safety:** the legacy `project.save` backend is now unavailable for
+both current-file Save and Save As. It retains its schema and permissions but
+returns `NOT_IMPLEMENTED` before Blender/path access because hidden native
+catalog callbacks and runtime bookkeeping cannot be bounded. Fresh-process
+feature fixtures use explicitly labeled fixture-only serialization. Safe saving
+and portable `.blend` delivery remain required; see the [migration and evidence](project-save-safety.md).
+
 ## What is being developed
 
 The notes below describe increments on the development branch, not features available in

@@ -251,9 +251,12 @@ class MainThreadExecutor:
             duration_ms = (time.perf_counter() - start) * 1000.0
             # The batch wrapper can enter while every child is rejected. Its
             # measured no-execution result does not authorize finishing an old
-            # editor session; unknown legacy writers remain conservative.
+            # editor session. The known blocked-save handler similarly reports
+            # no native entry; unknown legacy writers remain conservative.
             finalize_writer = handler_entered and not (
-                request.method == "batch.execute" and error.context.get("execution_started") is False)
+                (request.method == "batch.execute" and error.context.get("execution_started") is False)
+                or (request.method == "project.save" and error.context.get("execution_started") is False
+                    and error.context.get("native_save_invoked") is False))
             execution_started = bool(error.context.get("execution_started"))
             effects = bounded_external_effects(error.context.get("external_effects"))
             recovery = bounded_recovery_evidence(error.context.get("recovery_evidence"))

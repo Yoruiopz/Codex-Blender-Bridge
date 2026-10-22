@@ -12,6 +12,7 @@ from pathlib import Path
 import bpy
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "addon"))
 import blender_codex_bridge  # noqa: E402
 from blender_codex_bridge.errors import BridgeError  # noqa: E402
@@ -19,6 +20,7 @@ from blender_codex_bridge.permissions import Permission, PermissionManager  # no
 from blender_codex_bridge.runtime import get_runtime  # noqa: E402
 from blender_codex_bridge.task_plans import SCENE_PROPERTY  # noqa: E402
 from blender_codex_bridge.tools import task_plan  # noqa: E402
+from native_fixture_save import serialize_owned_fixture  # noqa: E402
 
 
 def setup():
@@ -168,13 +170,13 @@ def writer(bundle):
     deny(runtime, "PERMISSION_DENIED", "project.save", filepath=str(project))
     assert not project.exists()
     grants[Permission.SAVE_PROJECT.value] = grants[Permission.ACCESS_EXTERNAL_FILES.value] = True
-    assert call("project.save", {"filepath": str(project)})["saved"]
+    fixture_save = serialize_owned_fixture(runtime, project)
     manifest = {"project": project.name, "sha256": digest(project), "plan": saved_plan, "protected_location": list(before)}
     (bundle / "task-plan-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     finish("writer", {"structured_plan_revision_verified": True, "advisory_change_detection_and_explicit_recovery_verified": True,
         "reconnect_retention_verified": True, "permission_pause_and_save_denial_verified": True,
         "persistence_provider_gates": persistence_gates,
-        "explicit_disposable_project_saved": True, "project_sha256": manifest["sha256"]})
+        **fixture_save, "explicit_disposable_project_saved": True, "project_sha256": manifest["sha256"]})
 
 
 def reader(bundle, manifest):

@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import Mapping
-from pathlib import Path
 from typing import Any
 
 from ..constants import ADDON_VERSION_STRING
@@ -15,31 +13,6 @@ from ..selection import inspect_selection
 from ..tool_registry import ToolContext, ToolRegistry, check_final_mutation
 from ..utils import bool_param, int_param, require_blender
 from ..viewport import capture_viewport
-
-
-def _resolve_save_as_path(raw_filepath: str) -> Path:
-    """Validate a user-approved Save As destination without implicit expansion."""
-
-    if any(ord(character) < 32 for character in raw_filepath):
-        raise invalid_argument("Project save paths cannot contain control characters.")
-    if raw_filepath.startswith(("\\\\", "//")):
-        raise invalid_argument("Network and UNC project save paths are not supported in V1.")
-    candidate = Path(raw_filepath)
-    if not candidate.is_absolute():
-        raise invalid_argument("Project Save As requires an absolute filepath.")
-    if ".." in candidate.parts:
-        raise invalid_argument("Project save paths cannot contain parent traversal segments.")
-    if candidate.is_reserved():
-        raise invalid_argument("Reserved device paths cannot be used for project saves.")
-    try:
-        target = candidate.resolve()
-    except OSError as exc:
-        raise invalid_argument("Project save path could not be resolved.", detail=str(exc)) from exc
-    if os.name != "nt" and len(target.parts) > 1 and target.parts[1] in {"dev", "proc", "sys"}:
-        raise invalid_argument("System device and process paths cannot be used for project saves.")
-    if target.suffix.lower() != ".blend":
-        raise invalid_argument("Project save paths must use the .blend extension.")
-    return target
 
 
 def bridge_status(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
@@ -99,50 +72,30 @@ def bridge_task_clear(context: ToolContext, params: Mapping[str, Any]) -> dict[s
 
 
 def save_project(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
-    bpy = require_blender()
-    raw_filepath = params.get("filepath")
-    if raw_filepath is not None and (not isinstance(raw_filepath, str) or not raw_filepath.strip()):
-        raise invalid_argument("'filepath' must be a non-empty string.")
-    current = Path(bpy.data.filepath).resolve() if bpy.data.filepath else None
-    if raw_filepath is not None:
-        # Authorize before resolving or probing any caller-supplied path.
-        context.require(Permission.ACCESS_EXTERNAL_FILES)
-    target = _resolve_save_as_path(raw_filepath) if raw_filepath else current
-    if target is None:
-        raise invalid_argument(
-            "The project has never been saved; provide a new .blend filepath.",
-            parameter="filepath",
-        )
-    if target.suffix.lower() != ".blend":
-        raise invalid_argument("Project save paths must use the .blend extension.")
-    save_as = current is None or target != current
-    if save_as:
-        if not target.parent.is_dir():
-            raise invalid_argument("The project destination directory does not exist.", directory=str(target.parent))
-        if target.exists():
-            raise invalid_argument(
-                "Refusing to overwrite a different existing project file.",
-                filepath=str(target),
-            )
+    """Refuse native saving until its external/runtime effects can be bounded."""
     try:
-        if save_as:
-            result = bpy.ops.wm.save_as_mainfile(filepath=str(target), check_existing=False, copy=False)
-        else:
-            result = bpy.ops.wm.save_mainfile()
-    except RuntimeError as exc:
+        raw_filepath = params.get("filepath")
+        if raw_filepath is not None and (not isinstance(raw_filepath, str) or not raw_filepath.strip()):
+            raise invalid_argument("'filepath' must be a non-empty string.")
+        # One final live snapshot checks all required grants together. No
+        # Blender or caller-path reader follows this provider.
+        required = [Permission.SAVE_PROJECT]
+        if raw_filepath is not None:
+            required.append(Permission.ACCESS_EXTERNAL_FILES)
+        context.require(*required)
+        check_final_mutation(context, "project.save")
         raise BridgeError(
-            ErrorCode.OPERATION_FAILED,
-            "Blender failed to save the project.",
-            {"filepath": str(target), "detail": str(exc)},
-        ) from exc
-    if "FINISHED" not in result:
-        raise BridgeError(ErrorCode.OPERATION_FAILED, "Project save did not finish.")
-    return {
-        "saved": True,
-        "filepath": bpy.data.filepath,
-        "save_as": save_as,
-        "is_dirty": bool(bpy.data.is_dirty),
-    }
+            ErrorCode.NOT_IMPLEMENTED,
+            "Project saving is unavailable until Blender's native catalog and runtime save effects can be bounded.",
+            {"reason": "UNOBSERVABLE_NATIVE_SAVE_SIDE_EFFECTS", "safe_project_save_verified": False},
+        )
+    except BridgeError as error:
+        # These facts describe this bridge handler, not arbitrary host/provider
+        # code. Keep canonical denial identity/code and never finalize an old
+        # editor session on behalf of this non-writing save request.
+        error.context.update(execution_started=False, native_save_invoked=False,
+                             project_saved=False, bridge_file_writes=False)
+        raise
 
 
 def checkpoint_create(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
@@ -296,7 +249,7 @@ def register_tools(registry: ToolRegistry) -> None:
         permissions=(Permission.SAVE_PROJECT,),
         modifies=True,
         automatic_checkpoint=False,
-        description="Save the current project or, with extra permission, a new non-overwriting path.",
+        description="Project saving is unavailable until native save side effects can be bounded.",
     )
     registry.register("toolsets.list", toolsets_list, description="List Blender-side structured toolsets and tools.")
     registry.register("toolsets.enable", toolsets_enable, description="Enable one Blender-side domain toolset.")

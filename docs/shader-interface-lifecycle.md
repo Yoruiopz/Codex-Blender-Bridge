@@ -1,5 +1,10 @@
 # Shader interface lifecycle and native evidence
 
+**Save availability:** `project.save` currently refuses Save and Save As before
+native/path access; see [the safety change](project-save-safety.md). Fresh-process
+results below establish feature serialization through owned fixture setup, not a
+safe bridge project-save capability. Earlier typed-save reports are historical.
+
 Unreleased development now includes two typed tools, following the native research
 below. `shader_group.interface_add` remains the existing structured append operation.
 Removal, conversion, panels, animated interface maintenance and broader shader
@@ -67,7 +72,7 @@ assignment may therefore remain and is reported as possible mutation requiring
 explicit fresh-authority recovery. An ordinary native verification failure can
 restore the exact owned output only while all authority remains valid.
 Recovery history is finite and is not
-a durable backup. No tool saves the project; authorized `project.save` is separate.
+a durable backup. These tools do not save; safe project saving remains separately blocked.
 
 Use preview → review every affected owner → explicit shared consent → edit →
 reinspect/compare. These operations preserve existing rendered inputs rather than
@@ -144,8 +149,8 @@ results come from a dirty development worktree, not a frozen release candidate.
 The later `shader_interface` phased interactive fixture exercises the actual typed
 tools, the two materials/World/Light nested scope, all ten supported default
 family/direction combinations, output rename/reorder and native UI selection,
-permission/mode/stale-preview/animation denials, native undo and authorized separate
-save plus fresh-process reopen. Fault cases retain real granting-provider
+permission/mode/stale-preview/animation denials, native undo and fixture-only
+serialization plus fresh-process reopen. Fault cases retain real granting-provider
 pause/stop/mode/toolset changes before initial writes and compensation, canonical
 queued cancellation/deadline expiry, RequestLifetime disconnect/rejected handoff, consumer acquisition,
 same-name ID replacement, protected late edits, injected verification failure and

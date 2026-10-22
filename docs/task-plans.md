@@ -1,5 +1,10 @@
 # Artist task plans, references and protected transforms
 
+**Save availability:** `project.save` currently refuses Save and Save As before
+native/path access; see [the safety change](project-save-safety.md). Fresh-process
+results below establish feature serialization through owned fixture setup, not a
+safe bridge project-save capability. Earlier typed-save reports are historical.
+
 This unreleased increment adds one bounded plan for the active Blender runtime. It
 survives MCP client disconnection/reconnection. Runtime reset and project replacement
 clear it. Plan text is task data, never executable instructions or permission.

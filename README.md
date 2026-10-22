@@ -141,7 +141,7 @@ Current registry: **255 MCP tools**.
 | `jobs.list` | List bounded session-local image jobs; no durable queue. |
 | `object.inspect` | Inspect one object without dumping raw vertex coordinates. |
 | `project.info` | Inspect project metadata and render settings. |
-| `project.save` | Save the current project when Blender-side permission allows it. |
+| `project.save` | Project saving is unavailable until native save side effects can be bounded. |
 | `scene.compare` | Compare current measured object fields with a session snapshot; report incomplete coverage. |
 | `scene.inspect` | Return a compact authoritative structural scene representation. |
 | `scene.snapshot` | Capture bounded structural evidence for explicitly named objects and fields. |

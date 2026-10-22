@@ -17,6 +17,14 @@ per-case execution mode, timeout/failure and native success evidence. A clean pr
 without a valid fixture marker is not a pass. Isolated scenes and config/scripts/datafiles/
 temporary recovery folders keep these tests separate from an existing user project.
 
+The small background `project_save_denial` case proves public save refusals and
+late permission/caller/stop errors without Blender/save entry. Public `project.save`
+is [unavailable](project-save-safety.md). Feature writer/reader cases that need
+`.blend` input first assert that refusal, then use explicit owned fixture-only
+native serialization. Their evidence marks `fixture_native_save=true` and
+`bridge_safe_project_save_verified=false`; a reopen pass cannot qualify safe
+production saving. Historical typed-save results belong to their older sources.
+
 ## Fresh-process phases
 
 `image_reopen`, `image_portability_probe`, `task_plans` and `asset_delivery` launch a writer
@@ -27,7 +35,7 @@ Only the owned artifact bundle is shared. PID reuse is allowed; independent issu
 tokens are required. On Windows any UI phase retains the private-desktop isolation contract.
 
 `image_reopen` exports eight small COLOR/DATA encoding variants and a complete 4096² raw DATA
-texture, binds FILE versions and explicitly saves an owned project in a child folder. Its
+texture, binds FILE versions and prepares an owned project in a child folder using labeled fixture-only native serialization. Its
 reader opens the saved project with new-profile consent, refreshes `//../textures/...` sources
 through typed tools, checks complete pixel digests, protected bindings and eight matched
 32px RGBA8 camera pairs. Missing-source relocation, revoked read consent and denied saving

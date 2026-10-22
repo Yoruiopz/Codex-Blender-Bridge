@@ -1,9 +1,14 @@
 # Character NLA persistence evidence
 
+**Save availability:** `project.save` currently refuses Save and Save As before
+native/path access; see [the safety change](project-save-safety.md). Fresh-process
+results below establish feature serialization through owned fixture setup, not a
+safe bridge project-save capability. Earlier typed-save reports are historical.
+
 The isolated, phased `character_nla` fixture exercises a bounded complete character path:
 typed two-bone rig creation, empty-group skin binding and numeric weights, layered Action
 creation/binding, pose keys and interpolation, first-track push-down, a second clip and native
-transition, a second nonempty track, track permutation, sampled deformation, authorized save,
+transition, a second nonempty track, track permutation, sampled deformation, fixture-only serialization,
 and independent fresh-process reopen. Arbitrary Python permission stays disabled. Fixture
 construction and independent observations use native APIs inside the disposable test process;
 the artist operations use registered structured tools.

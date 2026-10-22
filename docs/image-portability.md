@@ -1,5 +1,10 @@
 # Packed image versions and raw pixel snapshots
 
+**Save availability:** `project.save` currently refuses Save and Save As before
+native/path access; see [the safety change](project-save-safety.md). Fresh-process
+results below establish feature serialization through owned fixture setup, not a
+safe bridge project-save capability. Earlier typed-save reports are historical.
+
 Unreleased development tools, not included in 0.3.0. These bounded foundations
 advance texture portability and durable edited-input recovery; they do not close
 the full 1.0 delivery, recovery, compatibility or artistic acceptance gates.
@@ -7,7 +12,7 @@ the full 1.0 delivery, recovery, compatibility or artistic acceptance gates.
 The original packing/loaded restoration tools require Object Mode and **Edit Materials**. A FILE source/target also
 requires live **Access External Files**. Packing modifies project datablocks in
 memory; it does not grant save consent or write an external file. An explicit
-`project.save` still independently requires **Save Project** and its path policy.
+`project.save` retains its **Save Project** and path grants, but its native backend is unavailable.
 
 ## Choose the content being preserved
 

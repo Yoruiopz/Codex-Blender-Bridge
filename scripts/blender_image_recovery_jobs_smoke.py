@@ -24,8 +24,10 @@ from types import SimpleNamespace
 import bpy
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
 sys.path[:0] = [str(ROOT / "addon"), str(ROOT / "scripts")]
 from blender_image_delivery_smoke import Client  # noqa: E402
+from native_fixture_save import serialize_owned_fixture  # noqa: E402
 from native_resources import linux_available_memory, linux_process_memory  # noqa: E402
 
 CONTROLS, DONE, RESULT = queue.Queue(), threading.Event(), {}
@@ -158,7 +160,7 @@ def scenario(port, phase, bundle, rows, large):
                 control("unload", row=row)
                 restore(row)
             # This is explicitly separate from snapshot completion/durability.
-            client.call("project.save", filepath=str(bundle/"image-recovery-jobs.blend"))
+            control("fixture_save")
             control("manifest")
         else:
             # GENERATED getters allocate default generated pixels, never FILE reads.
@@ -171,7 +173,7 @@ def scenario(port, phase, bundle, rows, large):
             poll_median_seconds=sorted(polls)[len(polls)//2],
             typed_tools_verified=True, real_socket_timer=True, fresh_process_reader=phase == "reader",
             native_transfers_interruptible=False, constrained_memory_acceptance=False,
-            project_saved_separately=phase == "writer", automatic_external_reload=False,
+            fixture_project_serialized=phase == "writer", bridge_safe_project_save_verified=False, automatic_external_reload=False,
             reviewed_visual_acceptance=False, release_readiness="NOT_ASSESSED")
     except Exception:
         RESULT["failure"] = traceback.format_exc()
@@ -470,6 +472,8 @@ def run(*, large=False):
                     image = bpy.data.images[rows[0]["name"]]
                     assert image.source == "GENERATED"
                     assert digest(pixels(image)) != rows[0]["digest"]
+                elif action == "fixture_save":
+                    RESULT.update(serialize_owned_fixture(runtime, bundle/"image-recovery-jobs.blend"))
                 elif action == "manifest":
                     (bundle/"image-recovery-jobs-manifest.json").write_text(json.dumps({"rows": rows}, indent=2)+"\n")
                 elif action == "final":

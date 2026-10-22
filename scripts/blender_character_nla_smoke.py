@@ -18,6 +18,7 @@ import bpy
 from mathutils import Vector
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT/"addon"))
 sys.path.insert(0, str(ROOT/"scripts"))
 import blender_codex_bridge  # noqa: E402
@@ -38,6 +39,7 @@ from native_character_evidence import (  # noqa: E402
     rest,
     rig_rest,
 )
+from native_fixture_save import serialize_owned_fixture  # noqa: E402
 
 RIG, SKIN, PROTECTED, OTHER_SKIN = "Character Rig", "Character Skin", "Protected Rig", "Protected Skin"
 PATH = 'pose.bones["Deform"].rotation_euler'
@@ -389,18 +391,18 @@ def writer(bundle):
     assert bpy.data.objects[RIG].animation_data.nla_tracks["Character Motion"].strips["Character Blend"].type == "TRANSITION"
     assert max_difference(samples(profile), revised) < 2e-5
     visuals = capture_motion(runtime, bundle, "writer", profile)
-    # Saving remains a separate exact requested output with separate consent.
+    # Public saving is refused; owned fixture serialization prepares reopen input.
     path = bundle/"character-nla.blend"
     grants[Permission.SAVE_PROJECT.value] = False
     deny(runtime, "PERMISSION_DENIED", "project.save", {"filepath": str(path)})
     assert not path.exists()
     grants[Permission.SAVE_PROJECT.value] = True
-    runtime.dispatch("project.save", {"filepath": str(path)})
+    fixture_save = serialize_owned_fixture(runtime, path)
     manifest = {"writer_process": os.environ["BRIDGE_TEST_PROCESS_TOKEN"], "file_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
         "rest": profile, "semantics": semantics(), "samples": revised, "protected_samples": protected_before,
         "visuals": visuals}
     (bundle/"character-expected.json").write_text(json.dumps(manifest, allow_nan=False), encoding="utf-8")
-    return {"whole_character_typed_action_firsttrack_clip_transition_nonempty_reorder_verified": True,
+    return {**fixture_save, "whole_character_typed_action_firsttrack_clip_transition_nonempty_reorder_verified": True,
         "independent_complete_skin_and_bone_error": maximum, "overlay_skin_error": overlay_error,
         "protected_base_geometry_weights_uv_materials_rest_hierarchy_all_frames_verified": True,
         "protected_independent_animation_and_shared_armature_data_preserved": True,
@@ -409,7 +411,7 @@ def writer(bundle):
         "post_constructor_failure_measured_identity_preserving_compensation_verified": True,
         "final_provider_running_request_cancellation_prevents_legacy_and_lifecycle_rna_allocations": True,
         "matched_fixed_view_skin_images_retained_for_review": len(visuals),
-        "explicit_authorized_project_saved": True, "raw_python_permission_enabled": grants[Permission.EXECUTE_PYTHON.value],
+        "fixture_project_serialized": True, "raw_python_permission_enabled": grants[Permission.EXECUTE_PYTHON.value],
         "artist_visual_review_verified": False, "full_character_acceptance_verified": False}
 
 
