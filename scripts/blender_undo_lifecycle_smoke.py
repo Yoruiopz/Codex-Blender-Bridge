@@ -46,6 +46,8 @@ def _checkpoint_preflight_case(entry, stop):
 
     manager, state = MeasuredManager(), BridgeState()
     registry = ToolRegistry(enabled_toolsets=("objects",))
+    batch.register_tools(registry)
+    registry.enable_toolset("batch")
     lifetime = RequestLifetime(ConnectionLifetime())
     request = Request("checkpoint-native-" + entry + stop, "object.fixture", {}, _lifecycle=lifetime)
     queued = QueuedRequest(request, deadline=float("inf"))
@@ -245,6 +247,8 @@ def _handler_entry_case(route):
     calls, snapshots = [], []
     first_entered, scope_reads = [], []
     registry = ToolRegistry(enabled_toolsets=("objects",))
+    batch.register_tools(registry)
+    registry.enable_toolset("batch")
     state = BridgeState()
     lifetime = RequestLifetime(ConnectionLifetime())
     request = Request("native-last-handler-" + route, "object.fixture", {}, _lifecycle=lifetime)

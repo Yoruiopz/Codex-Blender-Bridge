@@ -250,12 +250,15 @@ class CheckpointAdmissionBinding:
             raise error from cause
 
 
-def check_final_mutation(context: ToolContext, method: str, *, allow_recovery: bool = False) -> None:
+def check_final_mutation(context: ToolContext, method: str, *, allow_recovery: bool = False,
+                         expected_spec: ToolSpec | None = None) -> None:
     """Pure final safe point after all providers and Blender content reads.
 
     The hooks are internal executor/scheduler services, never wire parameters.
     This function must not run permission providers, Blender APIs or arbitrary
     cancellation callbacks after a domain's compare-and-swap proof.
+    Lifetime, identity and toolset checks also protect readonly handler entry;
+    only an exact retained nonmodifying spec omits mutation pause/stop gates.
     """
     lifetime = getattr(context, "request_lifecycle", None)
     if lifetime is not None:
@@ -267,12 +270,22 @@ def check_final_mutation(context: ToolContext, method: str, *, allow_recovery: b
     admission = getattr(context, "checkpoint_admission", None)
     if admission is not None:
         admission.check_identity(method)
+        if expected_spec is None:
+            expected_spec = admission.spec
     registry = getattr(context, "registry", None)
+    modifies = True  # Raw mutation helpers retain conservative stop behavior.
     if registry is not None:
         spec = registry.get(method)
+        if expected_spec is not None:
+            if spec is not expected_spec:
+                raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Registered tool identity changed before handler entry.",
+                                  {"checkpoint_parameters_unchanged": False})
+            modifies = expected_spec.modifies
         if spec.toolset not in registry.enabled_toolsets:
             raise BridgeError(ErrorCode.TOOLSET_DISABLED, "Mutation toolset was disabled before its next write.",
                               {"tool": method, "toolset": spec.toolset})
+    if not modifies:
+        return
     flags = context.state.snapshot()
     recovery_override = allow_recovery and method in ToolRegistry.RECOVERY_TOOLS
     if flags.get("emergency_stopped") and not recovery_override:
@@ -418,6 +431,9 @@ class ToolRegistry:
                 {"tool": name, "toolset": spec.toolset},
             )
         context.permissions.require(spec.permissions)
+        if self.get(name) is not spec:
+            raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Registered tool identity changed during permission validation.",
+                              {"checkpoint_parameters_unchanged": False})
         if spec.toolset not in self._enabled_toolsets:
             raise BridgeError(
                 ErrorCode.TOOLSET_DISABLED,
@@ -499,7 +515,7 @@ class ToolRegistry:
         if spec.toolset not in self.enabled_toolsets:
             raise BridgeError(ErrorCode.TOOLSET_DISABLED, "Toolset is disabled before admission capture.")
         if context.checkpoint_admission is None:
-            check_final_mutation(context, spec.name, allow_recovery=allow_recovery)
+            check_final_mutation(context, spec.name, allow_recovery=allow_recovery, expected_spec=spec)
 
     def _capture_admission(self, spec: ToolSpec, params: Mapping[str, Any], context: ToolContext) -> tuple[Any, bool, BridgeError | None]:
         scope = self.checkpoint_admission(spec, params, context)
@@ -596,12 +612,11 @@ class ToolRegistry:
             self._executing_mutators += 1
             store.executing_mutators += 1
         try:
-            if spec.modifies:
-                if context.checkpoint_admission is not None:
-                    context.checkpoint_admission()
-                # All remote/direct/batch handler entries share this final pure
-                # gate, after callbacks in their params-aware preflight.
-                check_final_mutation(context, spec.name, allow_recovery=allow_recovery)
+            if spec.modifies and context.checkpoint_admission is not None:
+                context.checkpoint_admission()
+            # All remote/direct/batch handler entries retain owner, identity and
+            # toolset authority after providers. Pause/stop gates apply to writes.
+            check_final_mutation(context, spec.name, allow_recovery=allow_recovery, expected_spec=spec)
             context.handler_entries += 1
             return spec.handler(context, params)
         finally:

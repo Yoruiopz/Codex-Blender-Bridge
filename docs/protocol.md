@@ -132,7 +132,7 @@ Requirements:
 | `PERMISSION_DENIED` | Blender-side permission is disabled. | after user consent |
 | `TOOLSET_DISABLED` | Domain toolset is not enabled. | after enablement |
 | `AGENT_PAUSED` | Agent modifications are paused. | yes, after resume |
-| `EMERGENCY_STOPPED` | Emergency stop prevents execution. | after explicit reset |
+| `EMERGENCY_STOPPED` | Emergency stop prevents modifications. | after explicit reset |
 | `BLENDER_CONTEXT_ERROR` | Required area/region/context is unavailable. | context-dependent |
 | `OPERATION_FAILED` | Handler failed after validation. | context-dependent |
 | `TIMEOUT` | Deadline expired before a terminal result. | context-dependent |
@@ -152,8 +152,10 @@ Prepared internal handler invocation tracks in-flight mutators on Blender's main
 thread; protection cannot be enabled over one. Executor, direct registry dispatch
 and batch steps use that wrapper. Calling a trusted handler directly is not a
 remote protocol entry point and does not replace registered preflight.
-Each modifying handler entry has a final internal lifetime/toolset/stop check
-after preflight callbacks. Its diagnostic entry counter is runtime-only. The
+Every handler entry has a final internal lifetime/toolset/identity check after
+preflight callbacks. Pause and emergency-stop checks apply to the exact retained
+modifying ToolSpec; readonly inspection, status and nonmodifying controls remain
+available while paused or stopped. Its diagnostic entry counter is runtime-only. The
 existing explicit local recovery override permits pause/stop recovery only for
 the two canonical recovery methods; it never bypasses caller lifetime/toolsets.
 
