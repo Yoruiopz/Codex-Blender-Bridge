@@ -193,6 +193,7 @@ def apply_transform(context: ToolContext, params: Mapping[str, Any]) -> dict[str
         with bpy.context.temp_override(object=obj, active_object=obj, selected_objects=[obj], selected_editable_objects=[obj]):
             if not bpy.ops.object.transform_apply.poll():
                 raise BridgeError(ErrorCode.BLENDER_CONTEXT_ERROR, "Transform apply is unavailable in the current context.")
+            boundary.final()
             started = time.monotonic()
             try:
                 return bpy.ops.object.transform_apply(location=location, rotation=rotation, scale=scale_value, properties=False)

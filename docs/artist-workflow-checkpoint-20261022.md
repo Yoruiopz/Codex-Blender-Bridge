@@ -213,12 +213,28 @@ effects; failed observations are marked unknown, detailed history is redacted wh
 inspection is denied, and terminal scheduler cleanup releases the owner even after
 observation/history failures.
 
-Both complete SDK suites pass **3,722 tests**, with three Windows-only skips each.
-Ruff, mypy over 57 standalone files, compilation, inventory and whitespace checks pass.
-The 264-file Python inventory SHA-256 is
+Initial frozen source `91cf62279afe2d3615cc2d9388ed0f034ca3a27d` passed both complete
+SDK suites with **3,722 tests** and three Windows-only skips each. Ruff, mypy over
+57 standalone files, compilation, inventory, exact packages and installed-wheel stdio
+checks passed. All seven CI jobs passed in run `39701957370`.
+Its 264-file Python inventory SHA-256 is
 `bd334205139721e65ccd694113c98c1c7c7a62b6a04acfb6c1b5610dc71cab73`.
-Final clean combined-source native and package verification remain separate from the
-retained domain experiments until their own commit-bound receipts are recorded.
+The complete clean **79-case** inventory finished on both Linux versions, with
+**155/158 cases passing** across 196 isolated processes. The driver fixture failed
+on both versions at newly guarded pose calls. Blender 5.2's scanner workflow also
+exposed native Boolean material-binding changes. The [failed validation index](development-evidence/91cf622.json)
+retains this result separately; passing focused reruns do not replace that matrix.
+
+Follow-up changes keep generic self-driver pose editing explicitly unsupported,
+verify typed pose restoration after driver removal, and bound Boolean application
+to a demonstrated material-preserving contract. Native 5.2 can append a foreign or
+null cutter material even in INDEX mode. The guarded subset requires exactly one
+DATA-linked material on target and cutter, with the same native Material ID and
+zero polygon material indices. The scanner performs geometry with those explicit
+bindings before isolating its finish. Final pure authority checks after content
+comparisons and operator polling also block late cancellation or deadline expiry.
+Corrected combined-source suites, packages and complete native verification need
+their own commit-bound receipts; the initial results do not certify later source.
 
 The [two-bone ribbon benchmark](character-nla.md) samples complete deformation,
 rest/weights/material/UV data and protected motion after a fresh reopen. Its 24 matched

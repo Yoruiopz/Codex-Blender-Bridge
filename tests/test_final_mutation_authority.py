@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib
+from contextlib import nullcontext
 from types import SimpleNamespace as NS
 
 import pytest
@@ -276,3 +277,57 @@ def test_creation_final_gate_after_last_owned_read(addon_package, monkeypatch, o
     with pytest.raises(registry.BridgeError):
         call()
     assert not writes and owner.location == (0., 0., 0.)
+
+
+@pytest.mark.parametrize("stop", STOPS)
+@pytest.mark.parametrize("domain,function,method,operator", (
+    ("transforms", "apply_transform", "transform.apply", "transform_apply"),
+    ("modifiers", "apply_modifier", "modifier.apply", "modifier_apply"),
+))
+def test_native_apply_refuses_owner_revoked_inside_operator_poll(
+    object_env, addon_package, monkeypatch, stop, domain, function, method, operator,
+):
+    case = object_env
+    module = importlib.import_module(f"{addon_package}.tools.{domain}")
+    case.context.registry.register(method, lambda *_: None, toolset="objects", modifies=True)
+    flags = owner_flags(addon_package, case.context, method)
+    calls = []
+
+    class NativeOperator:
+        def poll(self):
+            flags.stop(stop)
+            return True
+
+        def __call__(self, **_kwargs):
+            calls.append(True)
+            raise AssertionError("Native application ran after its owner was revoked in poll")
+
+    class BoundaryStub:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def check(self):
+            pass
+
+        def final(self):
+            flags.module.check_final_mutation(case.context, method)
+
+        def native_apply(self, operation, **_kwargs):
+            return operation()
+
+    native = NativeOperator()
+    bpy = NS(context=NS(temp_override=lambda **_: nullcontext()),
+             ops=NS(object=NS(**{operator: native})))
+    monkeypatch.setattr(module, "require_blender", lambda: bpy)
+    monkeypatch.setattr(module, "require_unkeyed_object_data", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(module, "Boundary", BoundaryStub)
+    params = {"object_name": case.obj.name}
+    if domain == "transforms":
+        monkeypatch.setattr(module, "get_object", lambda *_args, **_kwargs: case.obj)
+    else:
+        monkeypatch.setattr(module, "_object", lambda _: case.obj)
+        monkeypatch.setattr(module, "_named_modifier", lambda *_: NS(name="Owned", type="TRIANGULATE"))
+        params["modifier_name"] = "Owned"
+    with pytest.raises(flags.module.BridgeError):
+        getattr(module, function)(case.context, params)
+    assert not calls

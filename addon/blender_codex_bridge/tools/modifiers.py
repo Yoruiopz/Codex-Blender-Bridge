@@ -365,6 +365,7 @@ def apply_modifier(context: ToolContext, params: Mapping[str, Any]) -> dict[str,
         with bpy.context.temp_override(object=obj, active_object=obj, selected_objects=[obj], selected_editable_objects=[obj]):
             if not bpy.ops.object.modifier_apply.poll():
                 raise BridgeError(ErrorCode.BLENDER_CONTEXT_ERROR, "Modifier apply is unavailable in the current context.")
+            boundary.final()
             started = time.monotonic()
             try:
                 return bpy.ops.object.modifier_apply(modifier=modifier.name)
