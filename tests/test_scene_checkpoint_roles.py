@@ -6,7 +6,7 @@ import importlib
 from types import SimpleNamespace as NS
 
 import pytest
-from test_scene_mutation_boundaries import NativeOwner, Properties, RNA, prop
+from test_scene_mutation_boundaries import RNA, NativeOwner, Properties, prop
 
 
 @pytest.fixture

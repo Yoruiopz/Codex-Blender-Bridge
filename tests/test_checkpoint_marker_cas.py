@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import pytest
-from test_checkpoint_authority import authority  # noqa: F401
+from test_checkpoint_authority import authority
 from test_checkpoint_snapshots import Scene
+
+assert authority  # Explicitly reuse the native-shaped checkpoint authority fixture.
 
 
 @pytest.mark.parametrize("stage,calls,writes,snapshots", [

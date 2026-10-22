@@ -6,7 +6,9 @@ import importlib
 from dataclasses import replace
 
 import pytest
-from test_checkpoint_admission_executor import guarded_executor  # noqa: F401
+from test_checkpoint_admission_executor import guarded_executor
+
+assert guarded_executor  # Explicitly reuse the guarded request/checkpoint fixture.
 
 
 @pytest.mark.parametrize("entry", ("direct", "executor_provider", "executor_callback"))

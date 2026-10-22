@@ -14,9 +14,9 @@ from ..permissions import Permission
 from ..task_plans import get_task_plans
 from ..tool_registry import check_final_mutation
 from ..utils import require_blender
+from . import _scene_checkpoint_roles as roles
 from . import _scene_evaluation_scope as evaluation
 from . import _scene_mutation as proof
-from . import _scene_checkpoint_roles as roles
 
 
 class Admission:

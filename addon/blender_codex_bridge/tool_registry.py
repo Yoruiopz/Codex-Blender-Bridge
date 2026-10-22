@@ -226,7 +226,7 @@ class CheckpointAdmissionBinding:
         try:
             self._enclosing_after_read()
         except BridgeError:
-            pass
+            return
 
     def check_identity(self, method: str) -> None:
         """Pure check, also used after domain providers/content comparisons."""
@@ -469,7 +469,7 @@ class ToolRegistry:
         dependencies = latest[2].dependencies
         if (latest[1] != guarded or (guarded and latest[2].parameters != frozen.parameters)
                 or len(dependencies) != len(frozen.dependencies)
-                or any(before is not after for before, after in zip(frozen.dependencies, dependencies))):
+                or any(before is not after for before, after in zip(frozen.dependencies, dependencies, strict=False))):
             raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Checkpoint admission parameters or guarded request scope changed during entry validation.",
                               {"checkpoint_parameters_unchanged": False})
 

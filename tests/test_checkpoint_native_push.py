@@ -5,7 +5,9 @@ from __future__ import annotations
 from types import SimpleNamespace as NS
 
 import pytest
-from test_checkpoint_authority import authority  # noqa: F401
+from test_checkpoint_authority import authority
+
+assert authority  # Explicitly reuse the native-shaped checkpoint authority fixture.
 
 
 @pytest.mark.parametrize("route", ("before", "create", "after", "editor"))

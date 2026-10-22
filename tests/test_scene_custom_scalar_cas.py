@@ -6,8 +6,9 @@ import importlib
 
 import pytest
 from test_scene_collection_scope import fixture as collection_fixture
-from test_scene_mutation_boundaries import env  # noqa: F401
+from test_scene_mutation_boundaries import env
 
+assert env  # Reuse the native-shaped Scene boundary fixture explicitly.
 
 CHANGES = ((False, 0), (0, False), (True, 1), (1, True), (0, 0.0), (0.0, 0),
            (0.0, -0.0), (-0.0, 0.0))
@@ -20,12 +21,16 @@ def test_provider_custom_type_or_signed_zero_change_refuses_before_owned_setter(
     case = env
     if projection == "scene_custom":
         custom = case.owner.custom_values
-        profile = lambda: case.proof.primitive(case.bpy, case.owner)
+
+        def profile():
+            return case.proof.primitive(case.bpy, case.owner)
     else:
         collection_scope = importlib.import_module(f"{addon_package}.tools._scene_collection_scope")
         bpy, scene, _root, _parent, child, _consumers = collection_fixture()
         custom = child.custom
-        profile = lambda: collection_scope.snapshot(bpy, scene, child, operation="collection.rename")
+
+        def profile():
+            return collection_scope.snapshot(bpy, scene, child, operation="collection.rename")
     custom["artist"] = {"nested": [before]} if nested else before
     boundary = case.proof.Boundary(case.bpy, case.context, "scene.configure", case.fields, profile)
     frozen = boundary.expected_profile
@@ -74,11 +79,15 @@ def test_custom_floats_remain_finite_and_bounded(env, addon_package, projection,
     case = env
     if projection == "scene_custom":
         case.owner.custom_values["nested"] = {"array": [value]}
-        read = lambda: case.proof.custom(case.owner)
+
+        def read():
+            return case.proof.custom(case.owner)
     else:
         scope = importlib.import_module(f"{addon_package}.tools._scene_collection_scope")
         _bpy, _scene, _root, _parent, child, _consumers = collection_fixture()
         child.custom["nested"] = {"array": [value]}
-        read = lambda: scope._custom(child)
+
+        def read():
+            return scope._custom(child)
     with pytest.raises(case.errors.BridgeError, match="finite"):
         read()

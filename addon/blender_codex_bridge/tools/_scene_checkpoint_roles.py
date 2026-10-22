@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from . import _scene_mutation as proof
 from . import _scene_evaluation_scope as evaluation
+from . import _scene_mutation as proof
 
 
 def _pointer(bpy: Any, owner: Any, name: str, fixed_type: str) -> Any:

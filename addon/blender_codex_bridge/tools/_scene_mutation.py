@@ -20,7 +20,8 @@ from ..tool_registry import check_final_mutation
 from ._object_safety import require_local_editable_id
 
 try:
-    from idprop.types import IDPropertyArray as _IDPROPERTY_ARRAY, IDPropertyGroup as _IDPROPERTY_GROUP
+    from idprop.types import IDPropertyArray as _IDPROPERTY_ARRAY
+    from idprop.types import IDPropertyGroup as _IDPROPERTY_GROUP
 except ImportError:  # Blender-free tests supply explicit canonical stand-ins.
     _IDPROPERTY_ARRAY = _IDPROPERTY_GROUP = None
 

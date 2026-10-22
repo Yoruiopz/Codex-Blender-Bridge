@@ -6,8 +6,9 @@ import importlib
 
 import pytest
 from test_scene_collection_scope import fixture as collection_fixture
-from test_scene_mutation_boundaries import env  # noqa: F401
+from test_scene_mutation_boundaries import env
 
+assert env  # Reuse the native-shaped Scene boundary fixture explicitly.
 
 IDPropertyArray = type("IDPropertyArray", (list,), {"__module__": "idprop.types"})
 IDPropertyGroup = type("IDPropertyGroup", (dict,), {"__module__": "idprop.types"})
@@ -45,12 +46,16 @@ def test_provider_container_or_array_storage_change_refuses_before_owned_setter(
     case = env
     if projection == "scene_custom":
         custom = case.owner.custom_values
-        profile = lambda: case.proof.primitive(case.bpy, case.owner)
+
+        def profile():
+            return case.proof.primitive(case.bpy, case.owner)
     else:
         scope = importlib.import_module(f"{addon_package}.tools._scene_collection_scope")
         bpy, scene, _root, _parent, child, _consumers = collection_fixture()
         custom = child.custom
-        profile = lambda: scope.snapshot(bpy, scene, child, operation="collection.rename")
+
+        def profile():
+            return scope.snapshot(bpy, scene, child, operation="collection.rename")
     original, newer = before(), after()
     custom["artist"] = {"nested": [original]} if nested else original
     boundary = case.proof.Boundary(case.bpy, case.context, "scene.configure", case.fields, profile)
@@ -75,8 +80,12 @@ def test_provider_container_or_array_storage_change_refuses_before_owned_setter(
 def test_custom_container_storage_is_explicit_and_fixed_rna_defaults_are_unchanged(env, addon_package, projection):
     case = env
     scope = importlib.import_module(f"{addon_package}.tools._scene_collection_scope")
-    encode = ((lambda raw: case.proof.value(raw, custom_scalars=True)) if projection == "scene_custom"
-              else (lambda raw: scope._primitive(raw, [4096], custom_scalars=True)))
+
+    def encode(raw):
+        if projection == "scene_custom":
+            return case.proof.value(raw, custom_scalars=True)
+        return scope._primitive(raw, [4096], custom_scalars=True)
+
     assert encode(IDPropertyGroup()) == ("group", ())
     assert encode([]) == ("array", ("list", None), ())
     assert encode(()) == ("array", ("tuple", None), ())

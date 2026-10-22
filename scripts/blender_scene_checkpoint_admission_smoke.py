@@ -239,7 +239,7 @@ def main():
                 manager = fresh()
                 gravity, fired = tuple(scene.gravity), [False]
                 newer = tuple(proof.canonical(scene.bl_rna.properties["gravity"], (1., -2., -8.)))
-                def newer_gravity():
+                def newer_gravity(*, fired=fired, newer=newer):
                     if not fired[0]:
                         fired[0] = True
                         scene.gravity = newer
