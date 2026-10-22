@@ -218,7 +218,7 @@ OBJECT_TOOL_DATA: tuple[tuple[str, str, bool, tuple[str, ...]], ...] = (
     ("transform.translate", "Apply a deterministic translation delta.", True, ("TRANSFORM_OBJECTS",)),
     ("transform.rotate", "Apply a deterministic Euler rotation delta in radians.", True, ("TRANSFORM_OBJECTS",)),
     ("transform.scale", "Apply a deterministic multiplicative scale.", True, ("TRANSFORM_OBJECTS",)),
-    ("transform.apply", "Apply selected transform components to object data.", True, ("TRANSFORM_OBJECTS",)),
+    ("transform.apply", "Apply selected transform components to object data.", True, ("TRANSFORM_OBJECTS", "EDIT_MESH")),
 )
 OBJECT_TOOL_NAMES = tuple(item[0] for item in OBJECT_TOOL_DATA)
 

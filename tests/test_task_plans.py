@@ -226,7 +226,7 @@ def test_registry_and_mcp_metadata_match_without_loading_blender(plans):
         assert definition.modifying == spec.modifies
         assert set(definition.required_permissions) == {permission.value for permission in spec.permissions}
         assert spec.batchable is False
-    assert len(TaskPlanTools(NS()).bindings()) == len(TOOL_DATA) == 8
+    assert len(TaskPlanTools(NS()).bindings()) == len(TOOL_DATA) == 12
 
 
 def test_mcp_wrapper_forwards_typed_scope_and_confirmation():

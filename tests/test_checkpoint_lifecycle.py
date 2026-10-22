@@ -12,7 +12,8 @@ def test_external_history_navigation_invalidates_markers(addon_package, monkeypa
     manager = checkpoints.CheckpointManager()
     manager._undo_steps.append(checkpoints.UndoStep("tracked", "target", 1))
     cancellations = []
-    monkeypatch.setattr(runtime, "_RUNTIME", NS(checkpoints=manager, jobs=NS(cancel_all=cancellations.append)))
+    state = importlib.import_module(f"{addon_package}.state").BridgeState()
+    monkeypatch.setattr(runtime, "_RUNTIME", NS(checkpoints=manager, jobs=NS(cancel_all=cancellations.append), state=state))
     references = []
     monkeypatch.setattr(runtime, "clear_selection_references", lambda: references.append("cleared"))
     runtime._before_external_undo_redo(None)
@@ -31,13 +32,20 @@ def test_own_undo_handler_guard_is_scoped_even_when_operator_fails(
     manager = checkpoints.CheckpointManager()
     manager._undo_steps.append(checkpoints.UndoStep("tracked", "target", 1))
     cancellations = []
-    monkeypatch.setattr(runtime, "_RUNTIME", NS(checkpoints=manager, jobs=NS(cancel_all=cancellations.append)))
+    state = importlib.import_module(f"{addon_package}.state").BridgeState()
+    plans = importlib.import_module(f"{addon_package}.task_plans").get_task_plans(state)
+    plans.references["ref_before_recovery"] = {}
+    plans.previews["preview_before_recovery"] = {}
+    generation = plans.protection_generation
+    monkeypatch.setattr(runtime, "_RUNTIME", NS(checkpoints=manager, jobs=NS(cancel_all=cancellations.append), state=state))
 
     def undo():
         assert manager.recovery_in_progress
         runtime._before_external_undo_redo(None)
         assert cancellations == ["native undo/redo"]
         assert [step.label for step in manager._undo_steps] == ["tracked"]
+        assert plans.protection_generation > generation
+        assert not plans.references and not plans.previews
         if failure:
             raise RuntimeError("fixture failure")
         return {"FINISHED"}
@@ -57,6 +65,38 @@ def test_own_undo_handler_guard_is_scoped_even_when_operator_fails(
     else:
         assert manager.restore_operation()["tracked_agent_label"] == "tracked"
     assert manager.recovery_in_progress is False
+
+
+@pytest.mark.parametrize("recovery_in_progress", [False, True])
+def test_every_native_history_callback_retains_policy_baseline_and_mutator_counter(addon_package, monkeypatch, recovery_in_progress):
+    runtime = importlib.import_module(f"{addon_package}.runtime")
+    data = importlib.import_module(f"{addon_package}.task_plans")
+    state = importlib.import_module(f"{addon_package}.state").BridgeState()
+    store = data.get_task_plans(state)
+    store.replace(data.contents("Preserve the character", [{"id": "edit", "description": "Revise prop"}], ["Protected"]), (1, (("Protected", 2),)))
+    store.protection = {"plan_id": store.plan["plan_id"], "scope": store.scope}
+    store.baseline = {"snapshot_id": "protected-baseline"}
+    store.executing_mutators = 2
+    plan, protection, baseline = store.plan, store.protection, store.baseline
+    receipt = {"policy_stamp": (store.runtime_id, store.protection_generation)}
+    store.applying_preview = receipt
+    cleared = []
+    monkeypatch.setattr(runtime, "_RUNTIME", NS(state=state, jobs=NS(cancel_all=lambda _reason: None),
+        checkpoints=NS(recovery_in_progress=recovery_in_progress, clear=lambda: cleared.append("markers"))))
+    monkeypatch.setattr(runtime, "clear_selection_references", lambda: cleared.append("selection"))
+    generation = store.protection_generation
+    for _navigation in ("undo", "redo"):
+        store.references["ref_same_ids_and_context"] = {}
+        store.previews["preview_same_authored_state"] = {}
+        runtime._before_external_undo_redo(None)
+        generation += 1
+        assert store.protection_generation == generation
+        assert data.get_task_plans(state) is store
+        assert store.plan is plan and store.protection is protection and store.baseline is baseline
+        assert store.executing_mutators == 2 and store.applying_preview is receipt
+        assert not store.references and not store.previews
+        assert receipt["policy_stamp"] != (store.runtime_id, store.protection_generation)
+    assert cleared == ([] if recovery_in_progress else ["markers", "selection", "markers", "selection"])
 
 
 def test_runtime_hooks_register_once_and_unregister(addon_package, monkeypatch):

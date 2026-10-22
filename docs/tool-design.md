@@ -88,7 +88,7 @@ This table is not a promise that every Blender operation has a structured tool. 
 | `INSPECT_SCENE` | Project, scene, object, mesh, material, node, UV, animation, rig, modifier, constraint, render reads | on |
 | `CAPTURE_VIEWPORT` | Viewport/camera capture and still-render result replacement | on |
 | `TRANSFORM_OBJECTS` | Object lifecycle/transforms, modifiers, object constraints, some rig operations | on |
-| `EDIT_MESH` | Mesh and UV mutations | on |
+| `EDIT_MESH` | Mesh and UV mutations, native modifier/transform application | on |
 | `EDIT_MATERIALS` | Material lifecycle, Principled inputs, shader nodes | on |
 | `EDIT_ANIMATION` | Frame/range, keys, armatures, bones, pose/rig constraints | on |
 | `EDIT_SCENE` | Scene, collection, camera, light, world configuration | on |
@@ -101,6 +101,7 @@ This table is not a promise that every Blender operation has a structured tool. 
 A tool may require several permissions. Examples:
 
 - `mesh.create` requires `EDIT_MESH` and `TRANSFORM_OBJECTS`;
+- `modifier.apply` and `transform.apply` require `EDIT_MESH` and `TRANSFORM_OBJECTS`; ordinary object-owned settings require only the latter;
 - `rig.create` requires `EDIT_ANIMATION` and `TRANSFORM_OBJECTS`;
 - `rig.bone_remove` requires `EDIT_ANIMATION` and `DELETE_OBJECTS`;
 - `collection.delete` requires `EDIT_SCENE` and `DELETE_OBJECTS`;

@@ -1,4 +1,4 @@
-"""Typed MCP wrappers for bounded artist plans and advisory protected scope."""
+"""Typed MCP wrappers for artist plans, references and opt-in protection."""
 
 from __future__ import annotations
 
@@ -11,6 +11,8 @@ from ._common import MCPToolBinding, params
 from .scene import EvidenceField
 
 StepStatus = Literal["pending", "in_progress", "completed", "blocked"]
+ReferenceSource = Literal["selection", "objects"]
+RotationMode = Literal["XYZ", "XZY", "YXZ", "YZX", "ZXY", "ZYX", "QUATERNION", "AXIS_ANGLE"]
 
 
 class _RequiredStep(TypedDict):
@@ -25,13 +27,17 @@ class PlanStep(_RequiredStep, total=False):
 
 TOOL_DATA = (
     ("task.plan.set", False, ("INSPECT_SCENE",), "Create/correct a bounded artist plan with advisory protected objects; replacement requires current revision."),
-    ("task.plan.inspect", False, ("INSPECT_SCENE",), "Inspect runtime plan steps, revision and advisory protected scope."),
+    ("task.plan.inspect", False, ("INSPECT_SCENE",), "Inspect runtime plan steps, revision and current protected-scope policy."),
     ("task.plan.update", False, ("INSPECT_SCENE",), "Correct an exact step's status/note at the expected plan revision."),
-    ("task.plan.capture", False, ("INSPECT_SCENE",), "Capture bounded structural evidence for exact protected scope; no mutator enforcement."),
+    ("task.plan.capture", False, ("INSPECT_SCENE",), "Capture bounded structural evidence for exact protected scope without enabling enforcement."),
     ("task.plan.compare", False, ("INSPECT_SCENE",), "Explicitly compare protected scope with its transient baseline; incomplete coverage is not preservation proof."),
     ("task.plan.persist", True, ("INSPECT_SCENE", "EDIT_SCENE"), "Explicitly store validated plan JSON in a scene property; never saves the project."),
     ("task.plan.load", False, ("INSPECT_SCENE",), "Explicitly validate/load saved scene JSON as plan data; never executes text or restores session baselines."),
     ("task.plan.clear", False, ("INSPECT_SCENE",), "Clear runtime plan only; scene-stored JSON remains until explicitly replaced."),
+    ("task.plan.enforce", False, ("INSPECT_SCENE",), "Explicitly enable/disable runtime protected scope; unreviewed modifying tools fail closed while enabled."),
+    ("task.reference.resolve", False, ("INSPECT_SCENE",), "Resolve exact object names/current selection to bounded runtime references without granting authority."),
+    ("task.plan.preview_transform", False, ("INSPECT_SCENE",), "Preview exact transform channels and reviewed affected consumers without editing or acquiring edit authority."),
+    ("task.plan.apply_preview", True, ("INSPECT_SCENE", "TRANSFORM_OBJECTS"), "Apply an exact runtime transform preview once after renewed permission, identity, context and consumer checks."),
 )
 
 
@@ -75,5 +81,24 @@ class TaskPlanTools:
         """Clear the current runtime plan at its expected revision; the stored scene property is retained."""
         return await self.registry.call("task.plan.clear", {"expected_revision": expected_revision})
 
+    async def task_plan_enforce(self, enabled: bool, expected_revision: int) -> Any:
+        """Explicitly enable/disable live protected scope. Enabled plans deny unreviewed modifying tools; saved plans never restore enforcement."""
+        return await self.registry.call("task.plan.enforce", {"enabled": enabled, "expected_revision": expected_revision})
+
+    async def task_reference_resolve(self, source: ReferenceSource, object_names: list[str] | None = None) -> Any:
+        """Resolve current selection or exact object names to a bounded runtime token; visual/pronoun intent is never guessed and no edit authority is granted."""
+        return await self.registry.call("task.reference.resolve", params(source=source, object_names=object_names))
+
+    async def task_plan_preview_transform(self, reference_id: str, expected_revision: int, object_name: str | None = None,
+                                          location: list[float] | None = None, rotation: list[float] | None = None,
+                                          scale: list[float] | None = None, rotation_mode: RotationMode | None = None) -> Any:
+        """Preview one referenced object's exact transform.set channels and affected-consumer scope. Read-only; never grants or requires transform authority."""
+        return await self.registry.call("task.plan.preview_transform", params(reference_id=reference_id, expected_revision=expected_revision,
+                                        object_name=object_name, location=location, rotation=rotation, scale=scale, rotation_mode=rotation_mode))
+
+    async def task_plan_apply_preview(self, preview_id: str, expected_revision: int) -> Any:
+        """Consume and apply one current preview after live permission and exact authored/context/consumer checks; stale previews fail closed."""
+        return await self.registry.call("task.plan.apply_preview", {"preview_id": preview_id, "expected_revision": expected_revision})
+
     def bindings(self) -> tuple[MCPToolBinding, ...]:
-        return tuple(MCPToolBinding(name, getattr(self, "task_plan_" + name.rsplit(".", 1)[1]), getattr(self, "task_plan_" + name.rsplit(".", 1)[1]).__doc__ or "") for name, _modifies, _permissions, _description in TOOL_DATA)
+        return tuple(MCPToolBinding(name, getattr(self, name.replace(".", "_")), getattr(self, name.replace(".", "_")).__doc__ or "") for name, _modifies, _permissions, _description in TOOL_DATA)

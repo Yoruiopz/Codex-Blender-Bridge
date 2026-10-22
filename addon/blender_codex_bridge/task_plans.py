@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import uuid
+from collections import OrderedDict
 from collections.abc import Mapping
 from copy import deepcopy
 from typing import Any
@@ -117,6 +118,27 @@ class TaskPlanStore:
         self.plan: dict[str, Any] | None = None
         self.scope: Any = None
         self.baseline: dict[str, Any] | None = None
+        # Operational state is runtime-only. None of these fields is accepted
+        # by the saved schema, including after an explicit project-plan load.
+        self.runtime_id = uuid.uuid4().hex
+        self.protection_generation = 0
+        self.protection: dict[str, Any] | None = None
+        self.references: OrderedDict[str, dict[str, Any]] = OrderedDict()
+        self.previews: OrderedDict[str, dict[str, Any]] = OrderedDict()
+        self.applying_preview: dict[str, Any] | None = None
+        self.executing_mutators = 0
+
+    def require_advisory(self, action: str) -> None:
+        if self.protection is not None:
+            raise invalid_argument(
+                f"Explicitly disable task-plan enforcement before {action}; protected constraints are retained.",
+                protected_scope_enforced=True,
+            )
+
+    def invalidate_handles(self) -> None:
+        self.protection_generation += 1
+        self.references.clear()
+        self.previews.clear()
 
     def require_plan(self) -> dict[str, Any]:
         if self.plan is None:
@@ -128,6 +150,7 @@ class TaskPlanStore:
             raise invalid_argument("Task plan changed; inspect it and supply the current revision.", current_revision=self.plan["revision"])
 
     def replace(self, parsed: dict[str, Any], scope: Any, expected: Any = None) -> None:
+        self.require_advisory("replacing a plan")
         if self.plan is not None:
             self.check_revision(expected)
             plan_id = self.plan["plan_id"]
@@ -140,19 +163,25 @@ class TaskPlanStore:
         encode_saved(candidate)
         self.plan = candidate
         self.scope, self.baseline = scope, None
+        self.invalidate_handles()
 
     def inspect(self) -> dict[str, Any]:
         return {
             "active": self.plan is not None,
             "plan": deepcopy(self.plan),
-            "protected_scope_enforced": False,
-            "scope_policy": "advisory; compare measured protected data explicitly",
+            "protected_scope_enforced": self.protection is not None,
+            "scope_policy": ("reviewed bridge-owned transform writes; unreviewed modifying tools fail closed"
+                             if self.protection is not None else "advisory; compare measured protected data explicitly"),
+            "protection_generation": self.protection_generation,
             "baseline": deepcopy(self.baseline),
             "project_saved": False,
         }
 
     def clear(self) -> None:
         self.plan = self.scope = self.baseline = None
+        self.protection = None
+        self.applying_preview = None
+        self.invalidate_handles()
 
 
 def get_task_plans(state: Any) -> TaskPlanStore:

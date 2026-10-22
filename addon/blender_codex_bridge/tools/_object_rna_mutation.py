@@ -163,8 +163,11 @@ def _data_state(obj: Any) -> Any:
     return base
 
 
-def _object_state(obj: Any, *, transform: bool = False, omit: str | None = None) -> Any:
+def _object_state(obj: Any, *, transform: bool = False, omit: str | None = None, artist_profile: bool = False) -> Any:
     exclude = DERIVED | (TRANSFORMS if transform else frozenset())
+    if artist_profile:
+        from ._artist_scope_profile import IGNORED_OBJECT_RUNTIME
+        exclude |= IGNORED_OBJECT_RUNTIME
     # The channels are included separately, including non-current rotation modes.
     return (scope.action_token(obj), str(obj.name), scope.action_token(getattr(obj, "data", None)),
             scope.rna_state(obj, exclude=exclude | TRANSFORMS), () if transform else _channels(obj),
@@ -296,14 +299,23 @@ def _predicted_delta(before: Any, predicted: Any, observed: Any) -> bool:
 
 class Boundary:
     """Compare-and-swap proof with live authority before every owned write."""
-    def __init__(self, bpy: Any, context: Any, method: str, obj: Any, *, kind: str | None = None, transform: bool = False):
+    def __init__(self, bpy: Any, context: Any, method: str, obj: Any, *, kind: str | None = None, transform: bool = False, artist_profile: bool = False):
         require_local_object(obj, operation=method)
         if context is None or not all(hasattr(context, name) for name in ("require", "state", "check_cancelled")):
             raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Object mutation requires a live permission/state context.")
         self.bpy, self.context, self.method, self.obj = bpy, context, method, obj
         self.kind, self.transform = kind, transform
+        from . import artist_loop
+        self.artist_stamp = artist_loop.policy_stamp(context)
+        self.artist_review = artist_profile or artist_loop.needs_review(context)
+        if self.artist_review:
+            artist_loop.require_reviewed_mutator(context, method, reviewed=transform and method in artist_loop.TRANSFORM_METHODS)
+            artist_loop.pre_closure(bpy)
         self.session = self._session()
         self.objects, self.references = _closure(bpy, obj)
+        if self.artist_review:
+            artist_loop.require_profile(bpy, self.objects)
+            artist_loop.check_affected(context, bpy, self.objects, stamp=self.artist_stamp)
         self.protected = self._protected()
         self.expected = self._owned()
         self.original = self.expected
@@ -312,6 +324,8 @@ class Boundary:
         self.stopped: BridgeError | None = None
         self.native_seconds: float | None = None
         self.extra: list[tuple[Any, Any, Any]] = []
+        if self.artist_review:
+            artist_loop.check_preview_origin(self)
 
     def _session(self) -> Any:
         ctx = self.bpy.context
@@ -320,7 +334,8 @@ class Boundary:
                 scope.action_token(ctx.view_layer.objects.active), getattr(ctx.scene, "frame_current", None), getattr(ctx.scene, "frame_subframe", None))
 
     def _protected(self) -> Any:
-        return tuple(_object_state(item, transform=self.transform and item == self.obj, omit=self.kind if item == self.obj else None) for item in self.objects)
+        return tuple(_object_state(item, transform=self.transform and item == self.obj, omit=self.kind if item == self.obj else None,
+                                   artist_profile=self.artist_review) for item in self.objects)
 
     def _owned(self) -> Any:
         return _channels(self.obj) if self.transform else _components(self.obj, self.kind) if self.kind else ()
@@ -332,7 +347,11 @@ class Boundary:
             callback = self.context.check_cancelled
             if callback:
                 callback()
-            self.context.require(Permission.TRANSFORM_OBJECTS)
+            required = (Permission.TRANSFORM_OBJECTS, Permission.EDIT_MESH) if self.method in {"transform.apply", "modifier.apply"} else (Permission.TRANSFORM_OBJECTS,)
+            # Native application writes the base Mesh as well as object-owned
+            # settings. Keep both grants coherent even for direct contexts
+            # without a registry; ordinary object settings do not write Mesh.
+            self.context.require(*required)
             registry = getattr(self.context, "registry", None)
             if registry is not None:
                 registry.prepare(self.method, self.context)
@@ -353,8 +372,15 @@ class Boundary:
 
     def check(self) -> None:
         self._authority()
+        from . import artist_loop
+        review = self.artist_review or artist_loop.needs_review(self.context)
         try:
+            if review:
+                artist_loop.pre_closure(self.bpy)
             objects, references = _closure(self.bpy, self.obj)
+            if review:
+                artist_loop.require_profile(self.bpy, objects)
+                artist_loop.check_affected(self.context, self.bpy, objects, stamp=self.artist_stamp)
             stable = (self._session() == self.session and tuple(scope.action_token(item) for item in objects) == tuple(scope.action_token(item) for item in self.objects)
                       and references == self.references and self._protected() == self.protected and self._owned() == self.expected
                       and self.bpy.data.objects.get(self.obj.name) == self.obj)

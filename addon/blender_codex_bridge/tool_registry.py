@@ -10,8 +10,10 @@ from .errors import BridgeError, ErrorCode
 from .permissions import Permission, PermissionManager
 from .request_lifecycle import RequestLifetime
 from .state import BridgeState
+from .task_plans import get_task_plans
 
 ToolHandler = Callable[["ToolContext", Mapping[str, Any]], Any]
+ProtectedScopeResolver = Callable[["ToolContext", Mapping[str, Any]], Mapping[str, Any]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,6 +28,7 @@ class ToolSpec:
     remote: bool = True
     batchable: bool = True
     record_history: bool = True
+    protected_scope_resolver: ProtectedScopeResolver | None = None
 
     def metadata(self, *, enabled: bool) -> dict[str, Any]:
         return {
@@ -36,6 +39,7 @@ class ToolSpec:
             "modifies": self.modifies,
             "enabled": enabled,
             "remote": self.remote,
+            "protected_scope_reviewed": self.protected_scope_resolver is not None,
         }
 
 
@@ -58,12 +62,15 @@ class ToolContext:
     # Set only for the canonical queued-request safe point by the executor.
     # Arbitrary check_cancelled callbacks may call providers and are not pure.
     check_final_request: Callable[[], None] | None = None
+    # Per-context diagnostic receipt. Only actual handler entry increments it;
+    # it is never a wire parameter or an authorization grant.
+    handler_entries: int = 0
 
     def require(self, *permissions: Permission) -> None:
         self.permissions.require(permissions)
 
 
-def check_final_mutation(context: ToolContext, method: str) -> None:
+def check_final_mutation(context: ToolContext, method: str, *, allow_recovery: bool = False) -> None:
     """Pure final safe point after all providers and Blender content reads.
 
     The hooks are internal executor/scheduler services, never wire parameters.
@@ -84,9 +91,10 @@ def check_final_mutation(context: ToolContext, method: str) -> None:
             raise BridgeError(ErrorCode.TOOLSET_DISABLED, "Mutation toolset was disabled before its next write.",
                               {"tool": method, "toolset": spec.toolset})
     flags = context.state.snapshot()
-    if flags.get("emergency_stopped"):
+    recovery_override = allow_recovery and method in ToolRegistry.RECOVERY_TOOLS
+    if flags.get("emergency_stopped") and not recovery_override:
         raise BridgeError(ErrorCode.EMERGENCY_STOPPED, "Mutation emergency-stopped before its next write.")
-    if flags.get("paused"):
+    if flags.get("paused") and not recovery_override:
         raise BridgeError(ErrorCode.AGENT_PAUSED, "Mutation paused before its next write.")
 
 
@@ -100,6 +108,13 @@ class ToolRegistry:
         self._tools: dict[str, ToolSpec] = {}
         self._toolsets: set[str] = {self.CORE_TOOLSET}
         self._enabled_toolsets: set[str] = {self.CORE_TOOLSET, *enabled_toolsets}
+        # Registry lifetime spans project/state replacement. A new plan store
+        # must not hide a handler that is still unwinding on Blender's thread.
+        self._executing_mutators = 0
+
+    @property
+    def executing_mutators(self) -> int:
+        return self._executing_mutators
 
     def register(
         self,
@@ -114,6 +129,7 @@ class ToolRegistry:
         remote: bool = True,
         batchable: bool = True,
         record_history: bool = True,
+        protected_scope_resolver: ProtectedScopeResolver | None = None,
     ) -> ToolSpec:
         if not name or "." not in name:
             raise ValueError("Tool names must be non-empty dotted identifiers.")
@@ -131,6 +147,7 @@ class ToolRegistry:
             remote=remote,
             batchable=batchable,
             record_history=record_history,
+            protected_scope_resolver=protected_scope_resolver,
         )
         self._tools[name] = spec
         self._toolsets.add(toolset)
@@ -148,6 +165,7 @@ class ToolRegistry:
         remote: bool = True,
         batchable: bool = True,
         record_history: bool = True,
+        protected_scope_resolver: ProtectedScopeResolver | None = None,
     ) -> Callable[[ToolHandler], ToolHandler]:
         def decorator(handler: ToolHandler) -> ToolHandler:
             self.register(
@@ -161,6 +179,7 @@ class ToolRegistry:
                 remote=remote,
                 batchable=batchable,
                 record_history=record_history,
+                protected_scope_resolver=protected_scope_resolver,
             )
             return handler
 
@@ -208,11 +227,44 @@ class ToolRegistry:
             raise BridgeError(ErrorCode.EMERGENCY_STOPPED, "Agent modifications are emergency-stopped.")
         if spec.modifies and runtime_state["paused"] and not recovery_override:
             raise BridgeError(ErrorCode.AGENT_PAUSED, "Agent modifications are paused in Blender.")
+        if spec.modifies and get_task_plans(context.state).protection is not None and spec.protected_scope_resolver is None:
+            raise BridgeError(ErrorCode.NOT_IMPLEMENTED,
+                              "This modifying tool has no reviewed protected-scope resolver; enforcement remains active.",
+                              {"tool": name, "protected_scope_enforced": True, "scope_complete": False})
+        return spec
+
+    def prepare_call(self, name: str, params: Mapping[str, Any], context: ToolContext, *, allow_recovery: bool = False) -> ToolSpec:
+        """Resolve reviewed live effects before checkpoints/handler entry."""
+        spec = self.prepare(name, context, allow_recovery=allow_recovery)
+        if spec.modifies and get_task_plans(context.state).protection is not None:
+            assert spec.protected_scope_resolver is not None  # prepare fails closed
+            resolved = spec.protected_scope_resolver(context, params)
+            if resolved.get("scope_complete") is not True:
+                raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Protected mutation scope is incomplete; no handler is entered.",
+                                  {"tool": name, "scope_complete": False, "protected_scope_enforced": True})
         return spec
 
     def dispatch(self, name: str, params: Mapping[str, Any], context: ToolContext) -> Any:
-        spec = self.prepare(name, context)
-        return spec.handler(context, params)
+        spec = self.prepare_call(name, params, context)
+        return self.invoke(spec, params, context)
+
+    def invoke(self, spec: ToolSpec, params: Mapping[str, Any], context: ToolContext, *, allow_recovery: bool = False) -> Any:
+        """Enter a prepared handler without arming over an in-flight writer."""
+        store = get_task_plans(context.state)
+        if spec.modifies:
+            self._executing_mutators += 1
+            store.executing_mutators += 1
+        try:
+            if spec.modifies:
+                # All remote/direct/batch handler entries share this final pure
+                # gate, after callbacks in their params-aware preflight.
+                check_final_mutation(context, spec.name, allow_recovery=allow_recovery)
+            context.handler_entries += 1
+            return spec.handler(context, params)
+        finally:
+            if spec.modifies:
+                store.executing_mutators -= 1
+                self._executing_mutators -= 1
 
     def enable_toolset(self, name: str) -> None:
         normalized = name.strip().lower()

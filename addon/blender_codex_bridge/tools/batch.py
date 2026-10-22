@@ -14,7 +14,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from ..errors import BridgeError, ErrorCode, invalid_argument
-from ..tool_registry import ToolContext, ToolRegistry, ToolSpec
+from ..tool_registry import ToolContext, ToolRegistry, ToolSpec, check_final_mutation
 from ..utils import affected_objects_from_result, float_param
 
 LOGGER = logging.getLogger(__name__)
@@ -61,7 +61,7 @@ def _preflight(context: ToolContext, params: Mapping[str, Any]) -> list[tuple[st
                 step_index=index, method=method,
             )
         # Preflight *every* gate before creating the first undo marker.
-        context.registry.prepare(method, context)
+        context.registry.prepare_call(method, arguments, context)
         ids.add(identifier)
         prepared.append((identifier, spec, arguments))
     return prepared
@@ -125,14 +125,31 @@ def batch_execute(context: ToolContext, params: Mapping[str, Any]) -> dict[str, 
             if time.monotonic() >= deadline:
                 raise BridgeError(ErrorCode.TIMEOUT, "Batch time budget expired before the next step.")
             # Authoritative gates are repeated immediately before every step.
-            context.registry.prepare(spec.name, context)
+            context.registry.prepare_call(spec.name, arguments, context)
+
+            def step_write_gate(method=spec.name):
+                if time.monotonic() >= deadline:
+                    raise BridgeError(ErrorCode.TIMEOUT, "Batch time budget expired before its next write.")
+                check_final_mutation(context, method)
+
+            if time.monotonic() >= deadline:
+                raise BridgeError(ErrorCode.TIMEOUT, "Batch time budget expired during step preflight.")
             if spec.modifies and not mutation_started:
-                undo_boundary = context.checkpoints.before_modification(f"Batch: {label}")
-            mutation_started = mutation_started or spec.modifies
-            current_started = True
+                step_write_gate()
+                undo_boundary = context.checkpoints.before_modification(
+                    f"Batch: {label}", before_write=step_write_gate)
+            if spec.modifies:
+                step_write_gate()
+            elif time.monotonic() >= deadline:
+                raise BridgeError(ErrorCode.TIMEOUT, "Batch time budget expired before handler entry.")
             start = time.perf_counter()
+            entries_before = context.handler_entries
             try:
-                result = spec.handler(context, arguments)
+                try:
+                    result = context.registry.invoke(spec, arguments, context)
+                finally:
+                    current_started = context.handler_entries > entries_before
+                    mutation_started = mutation_started or (current_started and spec.modifies)
             except Exception as exc:
                 error_code = exc.code if isinstance(exc, BridgeError) else ErrorCode.OPERATION_FAILED.value
                 context.state.record_operation(
@@ -159,17 +176,20 @@ def batch_execute(context: ToolContext, params: Mapping[str, Any]) -> dict[str, 
             error = BridgeError(ErrorCode.OPERATION_FAILED, "A structured batch step failed.",
                                 {"exception_type": type(exc).__name__})
         affected.update(affected_objects_from_result(error.context))
+        bookkeeping_started = undo_boundary or bool(error.context.get("checkpoint_authority_rejected") and error.context.get("execution_started"))
         context_data = {
             "batch_label": label, "atomic": False, "completed_steps": len(results),
             "failed_step_index": index, "failed_method": current_spec.name,
             "failed_step_started": current_started, "total_steps": len(prepared),
             "results": results, "cause": _bounded_result(error.context),
-            "execution_started": mutation_started, "mutation_outcome_unknown": mutation_started,
+            "execution_started": mutation_started or bookkeeping_started, "mutation_outcome_unknown": mutation_started,
             "affected_objects": sorted(affected)[:128], "affected_objects_truncated": len(affected) > 128,
-            "verification_required": mutation_started, "undo_boundary_created": undo_boundary,
+            "verification_required": mutation_started or bookkeeping_started, "undo_boundary_created": undo_boundary,
             "undo_boundary_finalized": undo_finalized,
             "rollback_performed": False,
         }
+        if error.context.get("checkpoint_bookkeeping") is not None:
+            context_data["checkpoint_bookkeeping"] = error.context["checkpoint_bookkeeping"]
         raise BridgeError(error.code, f"Batch stopped at step {index + 1}: {error.message}", context_data) from exc
     finally:
         if mutation_started and undo_boundary and not finalization_attempted:

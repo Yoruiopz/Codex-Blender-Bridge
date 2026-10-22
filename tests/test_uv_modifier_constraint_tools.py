@@ -184,6 +184,8 @@ def test_addon_domain_metadata_is_permissioned_and_checkpointed(
             )
         elif name.startswith("uv."):
             assert spec.permissions == frozenset({permission_module.Permission.EDIT_MESH})
+        elif name == "modifier.apply":
+            assert spec.permissions == frozenset({permission_module.Permission.TRANSFORM_OBJECTS, permission_module.Permission.EDIT_MESH})
         else:
             assert spec.permissions == frozenset(
                 {permission_module.Permission.TRANSFORM_OBJECTS}
@@ -203,7 +205,8 @@ def test_loader_friendly_mcp_definitions_match_declared_names() -> None:
         assert tuple(item.name for item in definitions) == module.TOOL_NAMES
         assert all(item.toolset == toolset for item in definitions)
         for item in definitions:
-            expected = (("INSPECT_SCENE", "CAPTURE_VIEWPORT") if item.name == "uv.capture_layout" else
+            expected = (("TRANSFORM_OBJECTS", "EDIT_MESH") if item.name == "modifier.apply" else
+                        ("INSPECT_SCENE", "CAPTURE_VIEWPORT") if item.name == "uv.capture_layout" else
                         ((permission,) if item.modifying else ("INSPECT_SCENE",)))
             assert item.required_permissions == expected
     assert {

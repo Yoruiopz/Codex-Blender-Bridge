@@ -16,7 +16,8 @@ from .permissions import PermissionManager
 from .protocol import PROTOCOL_VERSION, Request, Response
 from .scene_evidence import SceneEvidenceStore
 from .state import BridgeState, bounded_external_effects, bounded_recovery_evidence
-from .tool_registry import ToolContext, ToolRegistry
+from .task_plans import get_task_plans
+from .tool_registry import ToolContext, ToolRegistry, check_final_mutation
 from .utils import affected_objects_from_result, require_blender
 
 LOGGER = logging.getLogger(__name__)
@@ -154,9 +155,9 @@ class MainThreadExecutor:
         except BridgeError as error:
             return Response.failure(request.id, error)
 
-    def _editor_recovery_metadata(self) -> Mapping[str, Any] | None:
+    def _editor_recovery_metadata(self, *, finalize: bool = True) -> Mapping[str, Any] | None:
         finish = getattr(self.checkpoints, "finish_editor_session", None)
-        result = finish() if callable(finish) else None
+        result = finish() if finalize and callable(finish) else None
         if result is not None:
             return result
         status = getattr(self.checkpoints, "editor_session_status", None)
@@ -175,6 +176,7 @@ class MainThreadExecutor:
         undo_boundary = False
         undo_finalized = False
         undo_group = None
+        handler_entered = False
         context = self.context
         context.check_cancelled = check_cancelled
         context.request_lifecycle = request._lifecycle
@@ -187,16 +189,29 @@ class MainThreadExecutor:
         try:
             if check_cancelled is not None:
                 check_cancelled()
-            spec = self.registry.prepare(
+            spec = self.registry.prepare_call(
                 request.method,
+                request.params,
                 context,
                 allow_recovery=allow_recovery,
             )
             if spec.modifies and spec.automatic_checkpoint:
-                undo_boundary = self.checkpoints.before_modification(request.method)
+                # Providers/scope resolution can outlive the caller. Check the
+                # canonical lifetime before writing even an undo marker.
+                check_final_mutation(context, request.method)
+                undo_boundary = self.checkpoints.before_modification(
+                    request.method, before_write=lambda: check_final_mutation(context, request.method))
             if check_cancelled is not None:
                 check_cancelled()
-            result = spec.handler(context, request.params)
+            if get_task_plans(context.state).protection is not None:
+                # A checkpoint/cancellation callback can change policy, context
+                # or consumers. Re-resolve after it, before handler entry.
+                spec = self.registry.prepare_call(request.method, request.params, context, allow_recovery=allow_recovery)
+            entries_before = context.handler_entries
+            try:
+                result = self.registry.invoke(spec, request.params, context, allow_recovery=allow_recovery)
+            finally:
+                handler_entered = context.handler_entries > entries_before
             if spec.modifies and undo_boundary:
                 undo_finalized = bool(self.checkpoints.after_modification(request.method))
             if spec.modifies:
@@ -234,6 +249,11 @@ class MainThreadExecutor:
             return result
         except BridgeError as error:
             duration_ms = (time.perf_counter() - start) * 1000.0
+            # The batch wrapper can enter while every child is rejected. Its
+            # measured no-execution result does not authorize finishing an old
+            # editor session; unknown legacy writers remain conservative.
+            finalize_writer = handler_entered and not (
+                request.method == "batch.execute" and error.context.get("execution_started") is False)
             execution_started = bool(error.context.get("execution_started"))
             effects = bounded_external_effects(error.context.get("external_effects"))
             recovery = bounded_recovery_evidence(error.context.get("recovery_evidence"))
@@ -248,7 +268,7 @@ class MainThreadExecutor:
                 # or establish that a publication attempt had no filesystem effect.
                 execution_started = True
                 error.context.update(execution_started=True, possible_mutation=True, verification_required=True)
-            if spec is not None and spec.modifies and undo_boundary:
+            if spec is not None and spec.modifies and undo_boundary and handler_entered:
                 # Handler errors may follow a partial edit, even if not explicitly annotated.
                 execution_started = True
                 error.context["execution_started"] = True
@@ -256,8 +276,15 @@ class MainThreadExecutor:
                 error.context["undo_boundary_finalized"] = bool(
                     self.checkpoints.after_modification(f"{request.method} (failed; verify state)")
                 )
+            elif spec is not None and spec.modifies and undo_boundary:
+                # The requested writer never entered; an existing BEFORE
+                # snapshot is evidence, not permission for a new AFTER write.
+                error.context.update(undo_boundary_created=True, undo_boundary_finalized=False,
+                                     requested_edit_started=False, checkpoint_bookkeeping_changed=True,
+                                     execution_started=True, possible_mutation=True, verification_required=True)
+                execution_started = True
             if spec is not None and spec.modifies:
-                undo_group = self._editor_recovery_metadata()
+                undo_group = self._editor_recovery_metadata(finalize=finalize_writer)
                 if undo_group is not None:
                     error.context["undo_group"] = dict(undo_group)
                     if undo_group["state"] == "finalized":
@@ -288,16 +315,16 @@ class MainThreadExecutor:
         except Exception as exc:
             duration_ms = (time.perf_counter() - start) * 1000.0
             LOGGER.exception("Unhandled Blender tool failure in %s", request.method)
-            if spec is not None and spec.modifies and undo_boundary:
+            if spec is not None and spec.modifies and undo_boundary and handler_entered:
                 undo_finalized = bool(self.checkpoints.after_modification(f"{request.method} (failed; verify state)"))
             if spec is not None and spec.modifies:
-                undo_group = self._editor_recovery_metadata()
+                undo_group = self._editor_recovery_metadata(finalize=handler_entered)
                 undo_finalized = undo_finalized or (undo_group is not None and undo_group["state"] == "finalized")
             error = BridgeError(
                 ErrorCode.OPERATION_FAILED,
                 f"Blender operation '{request.method}' failed.",
                 {"exception_type": type(exc).__name__, "detail": str(exc)[:400],
-                 "execution_started": bool(spec is not None and spec.modifies),
+                 "execution_started": bool(spec is not None and spec.modifies and handler_entered),
                  "verification_required": True, "undo_boundary_finalized": undo_finalized},
             )
             if undo_group is not None:

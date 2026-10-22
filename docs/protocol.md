@@ -141,6 +141,22 @@ Requirements:
 
 Public codes should remain stable. Method-specific context may include missing permission names, supported modes/options, similar object names, safe limits, or a local diagnostic ID.
 
+Blender tool metadata may additionally expose `protected_scope_reviewed`. This states
+that the registered modifying tool has a reviewed live affected-scope resolver for
+opt-in task-plan protection; it grants no permission and is not whole-scene or visual
+preservation certification. Under active protection, unreviewed modifying tools return
+`NOT_IMPLEMENTED` before handler/checkpoint entry. Existing V1 envelopes are unchanged.
+Runtime references, previews and policy generations are not serialized plan authority;
+see [task plans](task-plans.md) for the bounded static-prop contract.
+Prepared internal handler invocation tracks in-flight mutators on Blender's main
+thread; protection cannot be enabled over one. Executor, direct registry dispatch
+and batch steps use that wrapper. Calling a trusted handler directly is not a
+remote protocol entry point and does not replace registered preflight.
+Each modifying handler entry has a final internal lifetime/toolset/stop check
+after preflight callbacks. Its diagnostic entry counter is runtime-only. The
+existing explicit local recovery override permits pause/stop recovery only for
+the two canonical recovery methods; it never bypasses caller lifetime/toolsets.
+
 ## Events
 
 Events reserve a V1-compatible path for progress and lifecycle information. They are non-terminal and correlated where applicable.
@@ -205,6 +221,10 @@ The 0.3.0 implementation adds cooperative safe points for `batch.execute`.
 Disconnect/timeout signals a running request without attempting to interrupt its current
 Blender call. Before each subsequent child step, the batch checks that signal, the queue
 deadline, its own bounded budget, and live toolset/permission/pause/emergency gates.
+The local batch budget is rechecked after live step preflight, at each initial
+checkpoint write, and immediately before child handler entry. A slow provider
+cannot consume that budget and still start the next child. The budget is
+cooperative: a native call already running remains non-preemptible.
 Failure returns bounded completed-step evidence with `rollback_performed: false` and
 retains the logical recovery marker. No subsequent child is started after a stop is
 observed. A C operation already started may still finish after caller timeout. Batch

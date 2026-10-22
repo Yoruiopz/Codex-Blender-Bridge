@@ -43,6 +43,33 @@ animated GLB/FBX files by hashes and sampled evaluated geometry in a fresh proce
 the [reviewed export subset](asset-delivery.md). These are separate development checks, not
 installed-package, Windows-version or full 1.0 acceptance.
 
+`artist_loop` is a small background fixture for opt-in static-prop protection. It resolves
+references, previews/applies/corrects transforms, compares protected structure, and exercises
+denial before checkpoints, stale previews, permission-provider context/identity changes,
+partial interruptions and audited explicit disablement. Runtime-getter/handler probes must
+remain uninvoked. It neither renders nor saves and does not accept visual intent, protected
+delivery or the full UX-01 benchmark. The two-process `task_plans` fixture separately covers
+saved schema-v1 persistence/reopen without imported operational authority.
+
+The interactive `undo_lifecycle` fixture additionally exercises real manual undo/redo and
+known bridge recovery while a protected plan remains active. It records whether native
+identities/context and authored pre-states match, requires stale artist references/previews
+to fail without applying, and checks that a pre-undo write boundary cannot cross the new
+generation. Baselines and protection remain intact. The trusted fixture recovery does not
+add an exception to the public armed whole-scene undo restriction.
+It also stops queued/lifetime cancellation, expiry, disconnect, disabled toolsets,
+pause and emergency stop during new-request preflight, before automatic checkpoint
+entry. Executor and batch probes require unchanged native Scene markers and no
+checkpoint snapshot/undo push or requested edit. These checks do not establish
+interruptibility during an already running native undo push.
+Fault-injected native marker and preference readers exercise cancellation and
+expiry inside initial automatic/explicit checkpoint work. Each following marker
+write and undo push must stop; rejection after one marker deletion reports that
+partial bookkeeping without compensation. Existing checkpoints remain listed.
+Direct dispatch, protected re-preflight after checkpoint creation, and a later
+batch child also exercise the shared final handler-entry gate; the earlier batch
+writer retains measured native recovery while rejected handlers never run.
+
 ## Installed add-on development probe
 
 `installed_addon_probe` installs actual pinned ZIP bytes into the runner's disposable

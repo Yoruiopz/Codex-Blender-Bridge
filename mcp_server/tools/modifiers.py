@@ -25,7 +25,8 @@ def load_definitions() -> tuple[ToolDefinition, ...]:
             toolset="modifiers",
             description=description,
             modifying=modifying,
-            required_permissions=("TRANSFORM_OBJECTS",) if modifying else ("INSPECT_SCENE",),
+            required_permissions=(("TRANSFORM_OBJECTS", "EDIT_MESH") if name == "modifier.apply" else
+                                  ("TRANSFORM_OBJECTS",) if modifying else ("INSPECT_SCENE",)),
         )
         for name, description, modifying in TOOL_DATA
     )

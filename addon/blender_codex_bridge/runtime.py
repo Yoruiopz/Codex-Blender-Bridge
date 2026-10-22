@@ -15,6 +15,7 @@ from .permissions import PermissionManager, permission_snapshot
 from .selection import clear_selection_references
 from .server import LocalBridgeServer
 from .state import BridgeState, get_state
+from .task_plans import get_task_plans
 from .tool_registry import ToolRegistry
 from .tools import register_all
 
@@ -38,8 +39,9 @@ def _before_file_load(_unused: Any) -> None:
 
 @persistent
 def _before_external_undo_redo(_unused: Any) -> None:
-    """Native history navigation invalidates our process-local marker bookkeeping."""
+    """Invalidate live handles on every native history move, including recovery."""
     if _RUNTIME is not None:
+        get_task_plans(_RUNTIME.state).invalidate_handles()
         _RUNTIME.jobs.cancel_all("native undo/redo")
         if not _RUNTIME.checkpoints.recovery_in_progress:
             _RUNTIME.checkpoints.clear()
