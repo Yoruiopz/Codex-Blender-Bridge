@@ -18,7 +18,7 @@
     "SAFE-01": {
       "status": "open",
       "evidence": [],
-      "progress": "New checkpoint marker/native-push writes and every modifying handler entry have canonical final lifetime/toolset/stop checks after preflight. Complete per-tool dependency/ownership/permission/recovery audit remains open, including scene, render and legacy project-save findings."
+      "progress": "Checkpoint admission retains request identity and bounded authored expectations before callbacks through marker/native-push/handler finalization; newer markers and custom scalar/container values are compared literally. Unreviewed guarded batch composition refuses. Scene reports incomplete bundled runtime preservation; exact reviewed Blender 5.2 render mutations refuse because supported read-only SYSTEM comparison is unproven. Public project.save refuses before Blender/path access. Complete per-tool dependency/ownership/permission/recovery and Windows acceptance remain open."
     },
     "SAFE-02": {
       "status": "open",
@@ -63,7 +63,7 @@
     "SIM-01": {
       "status": "open",
       "evidence": [],
-      "progress": "Reviewed nested GN instances/copies, typed modifier constants, identifier-preserving zone/interface edits and guarded cloth cache lifecycle implemented; broader zone/solver/cache/bake jobs and production simulation remain."
+      "progress": "Reviewed nested GN instances/copies, typed modifier constants, identifier-preserving zone/interface edits and guarded cloth cache lifecycle are joined by three bounded whole-world BOX rigid-body inspect/preview/cache tools. Ordinary startup Scene consumers remain unsupported; private Mesh/UV and native-role research is unwired. Setup, broader zone/solver/cache/bake jobs and production simulation remain."
     },
     "UX-01": {
       "status": "open",
@@ -73,7 +73,7 @@
     "DELIVER-01": {
       "status": "open",
       "evidence": [],
-      "progress": "Stored-relative/fresh-process textures, bounded packed image recovery, reviewed GLB/FBX export and approved-source static GLB/material-free FBX import implemented. General textured FBX, skinning/animation import, full packaging and production acceptance remain."
+      "progress": "Stored-relative/fresh-process textures, bounded packed image recovery, reviewed GLB/FBX export and approved-source static GLB/material-free FBX import implemented. Public project.save is unavailable while native side effects remain unbounded. A tiny fresh-worker static-asset probe restores fake-user flags and discloses native camera conversion; it is not production saving or containment. Safe project save, general textured FBX, skinning/animation import, full packaging and production acceptance remain."
     },
     "RC-01": {
       "status": "open",
