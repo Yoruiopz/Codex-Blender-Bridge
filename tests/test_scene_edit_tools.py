@@ -19,6 +19,86 @@ class RecordingRegistry:
         return values
 
 
+def _install_field_boundary(module, monkeypatch):
+    """Keep fake-setter ordering tests over the real CAS/authorization engine.
+
+    These legacy Python objects cannot prove native ownership. Native Scene
+    profiles are covered by the isolated Blender boundary fixture instead.
+    """
+    from dataclasses import fields
+    proof = module.proof
+    package = module.__package__.rsplit(".", 1)[0]
+    registry = importlib.import_module(f"{package}.tool_registry")
+    permissions = importlib.import_module(f"{package}.permissions")
+    state = importlib.import_module(f"{package}.state")
+    context = registry.ToolContext(state.BridgeState(), permissions.PermissionManager(
+        lambda: {p.value: True for p in permissions.Permission}), None, None)
+
+    def identity(owner):
+        if owner is not None and hasattr(owner, "__dict__") and not hasattr(owner, "as_pointer"):
+            owner.as_pointer = lambda: id(owner)
+            owner.session_uid = id(owner)
+        return owner
+
+    class Proxy:
+        def __init__(self, target, name):
+            object.__setattr__(self, "target", target)
+            object.__setattr__(self, "bl_rna", SimpleNamespace(properties={name: SimpleNamespace(type="POINTER", array_length=0)}))
+
+        def __setattr__(self, name, value):
+            setattr(self.target, name, value)
+
+    class Field:
+        def __init__(self, getter, name):
+            self.getter, self.name = getter, name
+
+        def owner(self):
+            return Proxy(self.getter(), self.name)
+
+        def raw(self, _bpy):
+            owner = self.getter()
+            raw = None if owner is None else getattr(owner, self.name)
+            identity(raw)
+            return tuple(raw) if isinstance(raw, list) else raw
+
+        def read(self, bpy):
+            return proof.value(self.raw(bpy))
+
+    def settings(_context, method, prepared):
+        for field in fields(prepared):
+            identity(getattr(prepared, field.name))
+        if method == "scene.configure":
+            scene = prepared.scene
+            watched = {name: Field(lambda: scene, name) for name in ("camera", "use_gravity", "gravity")}
+            watched.update({"units." + name: Field(lambda: scene.unit_settings, name) for name in ("system", "scale_length")})
+        elif method == "camera.configure":
+            camera = prepared.camera
+            watched = {name: Field(lambda: camera, name) for name in module.profile.CAMERA_FIELDS}
+            watched.update({"dof." + name: Field(lambda: camera.dof, name) for name in module.profile.DOF_FIELDS})
+            if prepared.active_scene is not None:
+                watched["active_camera"] = Field(lambda: prepared.active_scene, "camera")
+        else:
+            light = prepared.light
+            watched = {name: Field(lambda: light, name) for name in module.profile.LIGHT_FIELDS if hasattr(light, name)}
+        return proof.Boundary(None, context, method, watched, lambda: ())
+
+    def world(_context, prepared, holder):
+        scene = prepared.scene
+        identity(holder[0])
+        def socket(name):
+            node = module.profile.background(holder[0])
+            return None if node is None else node.inputs.get(name)
+        watched = {"scene_world": Field(lambda: scene, "world"), "world_nodes": Field(lambda: holder[0], "use_nodes"),
+                   "world_color": Field(lambda: holder[0], "color"), "background_color": Field(lambda: socket("Color"), "default_value"),
+                   "background_strength": Field(lambda: socket("Strength"), "default_value")}
+        return proof.Boundary(None, context, "world.configure", watched, lambda: ())
+
+    monkeypatch.setattr(module, "_settings_boundary", settings)
+    monkeypatch.setattr(module, "_world_boundary", world)
+    monkeypatch.setattr(module.profile, "background", lambda owner: next((node for node in owner.node_tree.nodes if node.type == "BACKGROUND"), None)
+                        if owner is not None and owner.node_tree is not None else None)
+
+
 def test_scene_edit_registration_is_permissioned(addon_package: str) -> None:
     module = importlib.import_module(f"{addon_package}.tools.scene_edit")
     permissions = importlib.import_module(f"{addon_package}.permissions")
@@ -328,6 +408,7 @@ def test_scene_configure_rolls_back_when_late_rna_setter_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module = importlib.import_module(f"{addon_package}.tools.scene_edit")
+    _install_field_boundary(module, monkeypatch)
     old_camera = SimpleNamespace(name="Old Camera", type="CAMERA")
     new_camera = SimpleNamespace(name="New Camera", type="CAMERA")
 
@@ -362,7 +443,7 @@ def test_scene_configure_rolls_back_when_late_rna_setter_fails(
     monkeypatch.setattr(module, "_scene", lambda _: scene)
     monkeypatch.setattr(module, "get_object", lambda *_args, **_kwargs: new_camera)
 
-    with pytest.raises(RuntimeError, match="read-only"):
+    with pytest.raises(module.BridgeError) as caught:
         module.configure_scene(
             object(),
             {
@@ -374,6 +455,9 @@ def test_scene_configure_rolls_back_when_late_rna_setter_fails(
                 "gravity": [1.0, 2.0, 3.0],
             },
         )
+
+    assert caught.value.code == "OPERATION_FAILED"
+    assert caught.value.context["rollback_verified"] is True
 
     assert (
         scene.camera,
@@ -389,6 +473,7 @@ def test_camera_configure_rolls_back_when_dof_setter_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module = importlib.import_module(f"{addon_package}.tools.scene_edit")
+    _install_field_boundary(module, monkeypatch)
     old_focus = SimpleNamespace(name="Old Focus")
     new_focus = SimpleNamespace(name="New Focus")
 
@@ -433,7 +518,7 @@ def test_camera_configure_rolls_back_when_dof_setter_fails(
 
     monkeypatch.setattr(module, "get_object", fake_object)
 
-    with pytest.raises(RuntimeError, match="aperture setter failed"):
+    with pytest.raises(module.BridgeError) as caught:
         module.configure_camera(
             object(),
             {
@@ -446,6 +531,9 @@ def test_camera_configure_rolls_back_when_dof_setter_fails(
                 "aperture_fstop": 1.4,
             },
         )
+
+    assert caught.value.code == "OPERATION_FAILED"
+    assert caught.value.context["rollback_verified"] is True
 
     assert (
         camera.type,
@@ -462,6 +550,7 @@ def test_light_configure_rolls_back_when_shape_setter_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module = importlib.import_module(f"{addon_package}.tools.scene_edit")
+    _install_field_boundary(module, monkeypatch)
 
     class FailingLight:
         def __init__(self) -> None:
@@ -495,7 +584,7 @@ def test_light_configure_rolls_back_when_shape_setter_fails(
     )
     monkeypatch.setattr(module, "get_object", lambda *_args, **_kwargs: obj)
 
-    with pytest.raises(RuntimeError, match="spot blend setter failed"):
+    with pytest.raises(module.BridgeError) as caught:
         module.configure_light(
             object(),
             {
@@ -507,6 +596,9 @@ def test_light_configure_rolls_back_when_shape_setter_fails(
                 "spot_blend": 0.75,
             },
         )
+
+    assert caught.value.code == "OPERATION_FAILED"
+    assert caught.value.context["rollback_verified"] is True
 
     assert (
         light.type,
@@ -568,6 +660,7 @@ class _FakeNodes:
 def _fake_world(name: str, nodes: _FakeNodes, *, use_nodes: bool = True) -> Any:
     return SimpleNamespace(
         name=name,
+        users=1, use_fake_user=False,
         use_nodes=use_nodes,
         color=(0.01, 0.02, 0.03),
         node_tree=SimpleNamespace(nodes=nodes),
@@ -579,6 +672,7 @@ def test_world_configure_restores_existing_properties_and_background_sockets(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module = importlib.import_module(f"{addon_package}.tools.scene_edit")
+    _install_field_boundary(module, monkeypatch)
     background = _FakeNode("BACKGROUND", reject_strength=2.0)
     nodes = _FakeNodes([background])
     world = _fake_world("World", nodes)
@@ -595,7 +689,7 @@ def test_world_configure_restores_existing_properties_and_background_sockets(
     monkeypatch.setattr(module, "require_blender", lambda: bpy)
     monkeypatch.setattr(module, "_scene", lambda _: scene)
 
-    with pytest.raises(RuntimeError, match="background socket setter failed"):
+    with pytest.raises(module.BridgeError) as caught:
         module.configure_world(
             object(),
             {
@@ -605,6 +699,9 @@ def test_world_configure_restores_existing_properties_and_background_sockets(
                 "strength": 2.0,
             },
         )
+
+    assert caught.value.code == "OPERATION_FAILED"
+    assert caught.value.context["rollback_verified"] is True
 
     assert (
         scene.world,
@@ -616,7 +713,7 @@ def test_world_configure_restores_existing_properties_and_background_sockets(
     ) == before
 
 
-def test_world_configure_removes_background_created_before_socket_failure(
+def test_world_configure_refuses_unreviewed_node_profile_before_allocation(
     addon_package: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -629,7 +726,7 @@ def test_world_configure_removes_background_created_before_socket_failure(
     monkeypatch.setattr(module, "require_blender", lambda: bpy)
     monkeypatch.setattr(module, "_scene", lambda _: scene)
 
-    with pytest.raises(RuntimeError, match="background socket setter failed"):
+    with pytest.raises(module.BridgeError) as caught:
         module.configure_world(
             object(),
             {
@@ -640,13 +737,15 @@ def test_world_configure_removes_background_created_before_socket_failure(
             },
         )
 
+    assert caught.value.code == "NOT_IMPLEMENTED"
+
     assert scene.world is world
     assert world.use_nodes is False
     assert tuple(world.color) == (0.01, 0.02, 0.03)
     assert nodes.items == [output]
 
 
-def test_world_configure_removes_new_world_after_late_socket_failure(
+def test_world_configure_requires_native_allocation_profile_before_creation(
     addon_package: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -677,7 +776,7 @@ def test_world_configure_removes_new_world_after_late_socket_failure(
     monkeypatch.setattr(module, "require_blender", lambda: bpy)
     monkeypatch.setattr(module, "_scene", lambda _: scene)
 
-    with pytest.raises(RuntimeError, match="background socket setter failed"):
+    with pytest.raises(module.BridgeError) as caught:
         module.configure_world(
             object(),
             {
@@ -690,6 +789,8 @@ def test_world_configure_removes_new_world_after_late_socket_failure(
             },
         )
 
+    assert caught.value.code == "NOT_IMPLEMENTED"
+
     assert scene.world is previous_world
-    assert worlds.created is not None
-    assert worlds.removed is worlds.created
+    assert worlds.created is None
+    assert worlds.removed is None

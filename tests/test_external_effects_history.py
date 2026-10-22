@@ -65,6 +65,7 @@ def test_failed_or_cancelled_export_retains_effects_and_requires_reinspection(hi
 
 @pytest.mark.parametrize("field,value", [("file_published", True),
     ("publication_outcome_unknown", True), ("publication_attempted", True),
+    ("render_result_replacement_possible", True),
     ("retained_staging_path", "/approved/.staging")])
 def test_known_or_uncertain_external_effect_is_possible_mutation(history_env, field, value):
     env = history_env
@@ -75,6 +76,14 @@ def test_known_or_uncertain_external_effect_is_possible_mutation(history_env, fi
     response = invoke(env, fail)
     assert response.error["context"]["possible_mutation"] is True
     assert env.state.history(1)[0]["external_effects"] == effects
+
+
+@pytest.mark.parametrize("value", [True, False, 1, "true", None])
+def test_uncertain_render_result_is_strict_boolean_history_evidence(history_env, value):
+    env = history_env
+    supplied = {"render_result_replacement_possible": value, "render_result_replaced": None}
+    facts = env.state_mod.bounded_external_effects(supplied)
+    assert facts == ({"render_result_replacement_possible": value} if type(value) is bool else None)
 
 
 def test_rejected_export_without_effects_does_not_acquire_mutation_claim(history_env):

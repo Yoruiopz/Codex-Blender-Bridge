@@ -27,7 +27,7 @@ def _bounded_single_effect(value: Any) -> dict[str, Any] | None:
     for key in (
         "publication_attempted", "file_published", "publication_outcome_unknown",
         "published_bytes_verified", "native_undo_removes_external_file", "crash_durability_verified",
-        "render_result_replaced",
+        "render_result_replaced", "render_result_replacement_possible",
     ):
         field = value.get(key)
         if type(field) is bool:
@@ -56,16 +56,56 @@ def _bounded_single_effect(value: Any) -> dict[str, Any] | None:
 
 
 MAX_EXTERNAL_ARTIFACTS = 4
+SCENE_RECOVERY_KINDS = frozenset({"collection_allocation_attempt", "collection_allocation", "collection_removal_attempt",
+                                  "world_allocation_attempt", "world_allocation", "embedded_world_graph_allocation"})
+
+
+def _bounded_scene_recovery(value: Mapping[str, Any]) -> dict[str, Any] | None:
+    count, restored, supplied = value.get("owned_write_attempts"), value.get("restoration_verified"), value.get("retained_effects")
+    if type(count) is not int or not 0 <= count <= 64 or type(restored) is not bool or not isinstance(supplied, list):
+        return None
+    effects: list[dict[str, Any]] = []
+    incomplete = value.get("retained_effects_incomplete") is True
+    for item in supplied[:16]:
+        if not isinstance(item, Mapping) or not isinstance(item.get("kind"), str) or item.get("kind") not in SCENE_RECOVERY_KINDS:
+            incomplete = True
+            continue
+        effect: dict[str, Any] = {"kind": item["kind"]}
+        key = "world" if item["kind"] == "embedded_world_graph_allocation" else "name"
+        name = item.get(key)
+        if isinstance(name, str) and name and len(name) <= 63 and not any(ord(char) < 32 for char in name):
+            try:
+                if len(name.encode("utf-8")) <= 63:
+                    effect[key] = name
+            except UnicodeError:
+                pass
+        incomplete = incomplete or key not in effect
+        if item["kind"] == "collection_allocation":
+            if type(item.get("linked")) is bool:
+                effect["linked"] = item["linked"]
+            else:
+                incomplete = True
+        if item["kind"] == "embedded_world_graph_allocation":
+            if item.get("automatic_identity_restoration_available") is False:
+                effect["automatic_identity_restoration_available"] = False
+            else:
+                incomplete = True
+        effects.append(effect)
+    return {"kind": "scene_mutation", "owned_write_attempts": count, "restoration_verified": restored,
+            "retained_effects": effects, "retained_effects_truncated": len(supplied) > 16 or value.get("retained_effects_truncated") is True,
+            "retained_effects_incomplete": bool(incomplete)}
 
 
 def bounded_recovery_evidence(value: Any) -> dict[str, Any] | None:
-    """Retain only bounded packed-image facts, separately from file effects.
+    """Retain typed bounded recovery facts, separately from external file effects.
 
     A retained in-memory snapshot is not a saved project or an external backup.
     Unknown fields and invalid values never become recovery proof in history.
     """
     if not isinstance(value, Mapping):
         return None
+    if value.get("kind") == "scene_mutation":
+        return _bounded_scene_recovery(value)
     result: dict[str, Any] = {}
     mode = value.get("mode")
     if isinstance(mode, str) and mode in {"CURRENT_PIXELS_SNAPSHOT", "LOADED_BUFFER", "PACKED_RECONSTRUCTION"}:

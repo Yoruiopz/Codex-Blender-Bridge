@@ -24,6 +24,8 @@ def test_authority_lost_in_preflight_never_enters_checkpoint(addon_package, entr
     calls = []
     state = state_mod.BridgeState()
     registry = registry_mod.ToolRegistry(enabled_toolsets=("objects",))
+    batch.register_tools(registry)
+    registry.enable_toolset("batch")
     lifetime = lifecycle.RequestLifetime(lifecycle.ConnectionLifetime())
     request = protocol.Request(id="stopped-preflight", method="object.fixture", params={}, _lifecycle=lifetime)
     queued = queue_mod.QueuedRequest(request, deadline=float("inf"))

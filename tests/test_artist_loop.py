@@ -370,6 +370,8 @@ def test_synchronous_unknown_mutator_cannot_enable_protection_mid_handler(loop):
 
 def test_direct_batch_cannot_arm_during_unreviewed_child_and_counter_unwinds(loop, addon_package):
     batch = importlib.import_module(f"{addon_package}.tools.batch")
+    batch.register_tools(loop.context.registry)
+    loop.context.registry.enable_toolset("batch")
     calls = []
     def handler(context, _params):
         loop.loop.enforce_plan(context, {"enabled": True, "expected_revision": 1})

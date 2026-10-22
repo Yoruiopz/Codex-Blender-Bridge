@@ -9,6 +9,7 @@ from collections import deque
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
+from itertools import islice
 from typing import Any
 
 from .errors import BridgeError, ErrorCode
@@ -59,16 +60,39 @@ class _CheckpointGuard:
     """Trusted pure safe point for new bookkeeping, never failed-writer cleanup."""
 
     before_write: Callable[[], None]
+    after_read: Callable[[], None] | None = None
+    after_native_push: Callable[[], None] | None = None
     marker_writes: int = 0
     native_snapshots: int = 0
+    stopped: BridgeError | None = None
 
     def check(self, next_write: str) -> None:
+        self._run(next_write, self.before_write)
+
+    def complete(self, next_write: str, compare: Callable[[], None] | None = None) -> None:
+        def prove() -> None:
+            if compare is not None:
+                compare()
+            if self.after_read is not None:
+                self.after_read()
+        self._run(next_write, prove)
+
+    def _run(self, next_write: str, callback: Callable[[], None]) -> None:
+        if self.stopped is not None:
+            raise self.stopped
         try:
-            self.before_write()
-        except BridgeError as error:
+            callback()
+        except Exception as cause:
+            if isinstance(cause, BridgeError):
+                error = cause
+            else:
+                LOGGER.exception("Checkpoint write guard failed")
+                error = BridgeError(ErrorCode.OPERATION_FAILED, "Checkpoint write admission could not be verified.",
+                                    {"verification_required": True})
             # Preserve the exact primary denial and measured partial state.
             # Owner loss never authorizes compensating marker writes.
-            error.context.update(checkpoint_authority_rejected=True, checkpoint_bookkeeping={
+            error.context["checkpoint_authority_rejected"] = True
+            error.context.setdefault("checkpoint_bookkeeping", {
                 "marker_writes_completed": self.marker_writes,
                 "native_snapshots_completed": self.native_snapshots,
                 "next_write_rejected": next_write,
@@ -76,7 +100,10 @@ class _CheckpointGuard:
             })
             if self.marker_writes or self.native_snapshots:
                 error.context.update(execution_started=True, possible_mutation=True, verification_required=True)
-            raise
+            self.stopped = error
+            if error is cause:
+                raise
+            raise error from cause
 
 
 class CheckpointManager:
@@ -117,6 +144,7 @@ class CheckpointManager:
 
     def _stamp(self, blender: Any, *, guard: _CheckpointGuard | None = None) -> str:
         scene = blender.context.scene
+        expected = self._marker_evidence(blender) if guard is not None else None
         if scene.library is not None or scene.override_library is not None or not scene.is_editable:
             raise BridgeError(
                 ErrorCode.NOT_IMPLEMENTED, "Recovery requires a local editable scene."
@@ -145,16 +173,50 @@ class CheckpointManager:
         for item in owned:
             if guard is not None:
                 guard.check("delete_marker")
+                guard.complete("delete_marker", lambda expected=expected: self._compare_markers(blender, expected))
             del item[MARKER_KEY]
             if guard is not None:
                 guard.marker_writes += 1
+                expected = self._marker_delta(expected, item, None)
         token = self._prefix + uuid.uuid4().hex
         if guard is not None:
             guard.check("set_marker")
+            guard.complete("set_marker", lambda: self._compare_markers(blender, expected))
         scene[MARKER_KEY] = token
         if guard is not None:
             guard.marker_writes += 1
+            expected = self._marker_delta(expected, scene, token)
+            guard.complete("verify_marker", lambda: self._compare_markers(blender, expected))
         return token
+
+    @staticmethod
+    def _identity(owner: Any) -> Any:
+        if owner is None:
+            return None
+        pointer = getattr(owner, "as_pointer", None)
+        return (int(pointer()), getattr(owner, "session_uid", None)) if callable(pointer) else (id(owner), None)
+
+    def _marker_evidence(self, blender: Any) -> Any:
+        scenes = tuple(islice(blender.data.scenes, MAX_SCENES + 1))
+        if len(scenes) > MAX_SCENES:
+            raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Checkpoint marker inventory exceeds its bounded Scene profile.")
+        records = []
+        for scene in scenes:
+            value = scene.get(MARKER_KEY)
+            if value is not None and (type(value) is not str or len(value) > 4096):
+                raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Reserved checkpoint metadata requires a bounded literal value.")
+            records.append((self._identity(scene), self._identity(scene.library), self._identity(scene.override_library),
+                            bool(scene.is_editable), MARKER_KEY in scene, value))
+        return self._identity(blender.context.scene), tuple(sorted(records))
+
+    def _compare_markers(self, blender: Any, expected: Any) -> None:
+        if self._marker_evidence(blender) != expected:
+            raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Checkpoint Scene ownership or reserved metadata changed; newer values are preserved.",
+                              {"checkpoint_marker_unchanged": False, "verification_required": True})
+
+    def _marker_delta(self, expected: Any, scene: Any, value: str | None) -> Any:
+        identity = self._identity(scene)
+        return expected[0], tuple((*record[:4], value is not None, value) if record[0] == identity else record for record in expected[1])
 
     def _marker(self, blender: Any) -> str | None:
         values = {
@@ -171,11 +233,13 @@ class CheckpointManager:
 
     def _snapshot(self, blender: Any, label: str, *, guard: _CheckpointGuard | None = None) -> str:
         token = self._stamp(blender, guard=guard) if guard is not None else self._stamp(blender)
+        expected = self._marker_evidence(blender) if guard is not None else None
         # Resolve readers/operator wrappers before the final trusted safe point.
         undo_push, message = blender.ops.ed.undo_push, label[:120]
         step_limit = self._step_limit(blender)
         if guard is not None:
             guard.check("native_undo_push")
+            guard.complete("native_undo_push", lambda: self._compare_markers(blender, expected))
         if "FINISHED" not in undo_push(message=message):
             raise BridgeError(
                 ErrorCode.OPERATION_FAILED, "Blender did not create the native snapshot."
@@ -183,6 +247,8 @@ class CheckpointManager:
         self._window.pushed(step_limit)
         if guard is not None:
             guard.native_snapshots += 1
+            if guard.after_native_push is not None:
+                guard._run("after_native_undo_push", guard.after_native_push)
         self._prune_expired_operations()
         return token
 
@@ -247,8 +313,9 @@ class CheckpointManager:
             "warning": "Only bridge pushes are counted. Manual/operator snapshots, memory limits, preference changes and editor stacks can expire other targets. Global recovery can undo interleaved work; labels are not durable backups.",
         }
 
-    def create(self, description: str = "Agent checkpoint", *, before_write: Callable[[], None] | None = None) -> dict[str, Any]:
-        guard = _CheckpointGuard(before_write) if before_write is not None else None
+    def create(self, description: str = "Agent checkpoint", *, before_write: Callable[[], None] | None = None,
+               after_read: Callable[[], None] | None = None, after_native_push: Callable[[], None] | None = None) -> dict[str, Any]:
+        guard = _CheckpointGuard(before_write, after_read, after_native_push) if before_write is not None else None
         blender = self._ensure_undo_enabled()
         description = (description or "Agent checkpoint").strip()[:120]
         token = self._snapshot(blender, f"Codex Checkpoint: {description}", guard=guard) if guard is not None else self._snapshot(blender, f"Codex Checkpoint: {description}")
@@ -267,8 +334,9 @@ class CheckpointManager:
         self._retain_targets()
         return checkpoint.to_dict()
 
-    def before_modification(self, tool_name: str, *, before_write: Callable[[], None] | None = None) -> bool:
-        guard = _CheckpointGuard(before_write) if before_write is not None else None
+    def before_modification(self, tool_name: str, *, before_write: Callable[[], None] | None = None,
+                            after_read: Callable[[], None] | None = None, after_native_push: Callable[[], None] | None = None) -> bool:
+        guard = _CheckpointGuard(before_write, after_read, after_native_push) if before_write is not None else None
         try:
             blender = self._ensure_undo_enabled(require_object_mode=False)
             invalid_editor = False
@@ -301,17 +369,22 @@ class CheckpointManager:
         except BridgeError as error:
             if error.context.get("checkpoint_authority_rejected"):
                 raise
-            self.clear()
+            if guard is None:
+                self.clear()
             return False
         except RuntimeError:
-            self.clear()
+            if guard is None:
+                self.clear()
             return False
 
-    def after_modification(self, tool_name: str) -> bool:
+    def after_modification(self, tool_name: str, *, before_write: Callable[[], None] | None = None,
+                           after_read: Callable[[], None] | None = None, after_native_push: Callable[[], None] | None = None) -> bool:
+        guard = _CheckpointGuard(before_write, after_read, after_native_push) if before_write is not None else None
         pending = self._pending
-        self._pending = None
         if pending is None:
             return False
+        if guard is None:
+            self._pending = None
         try:
             blender = self._ensure_undo_enabled(require_object_mode=False)
             if blender.context.mode != "OBJECT":
@@ -324,6 +397,8 @@ class CheckpointManager:
                     and scene_uid is not None
                     and len(blender.context.objects_in_mode) == 1
                 ):
+                    if guard is not None:
+                        guard.check("defer_editor_session")
                     self._editor_session = MeshEditSession(
                         pending,
                         f"edit_{uuid.uuid4().hex}",
@@ -332,14 +407,29 @@ class CheckpointManager:
                         active.name,
                     )
                 else:
+                    if guard is not None:
+                        guard.check("invalidate_editor_session")
                     self._editor_session = None
                     self._undo_steps.clear()
+                self._pending = None
                 return False
-            self._snapshot(blender, f"Codex After: {tool_name}")
-        except (BridgeError, RuntimeError):
+            if guard is not None:
+                self._snapshot(blender, f"Codex After: {tool_name}", guard=guard)
+            else:
+                self._snapshot(blender, f"Codex After: {tool_name}")
+        except BridgeError as error:
+            if error.context.get("checkpoint_authority_rejected"):
+                raise
             LOGGER.exception("Could not finalize the native recovery snapshot")
-            self.clear()
+            if guard is None:
+                self.clear()
             return False
+        except RuntimeError:
+            LOGGER.exception("Could not finalize the native recovery snapshot")
+            if guard is None:
+                self.clear()
+            return False
+        self._pending = None
         self._undo_steps.appendleft(UndoStep(tool_name, pending.before_marker, pending.sequence))
         self._prune_expired_operations()
         self._retain_targets()
@@ -373,8 +463,9 @@ class CheckpointManager:
             "state": "deferred",
         }
 
-    def finish_editor_session(self, *, before_write: Callable[[], None] | None = None) -> dict[str, Any] | None:
-        guard = _CheckpointGuard(before_write) if before_write is not None else None
+    def finish_editor_session(self, *, before_write: Callable[[], None] | None = None,
+                              after_read: Callable[[], None] | None = None, after_native_push: Callable[[], None] | None = None) -> dict[str, Any] | None:
+        guard = _CheckpointGuard(before_write, after_read, after_native_push) if before_write is not None else None
         return self._finish_editor_session(guard)
 
     def _finish_editor_session(self, guard: _CheckpointGuard | None) -> dict[str, Any] | None:
@@ -385,12 +476,15 @@ class CheckpointManager:
             blender = self._ensure_undo_enabled(require_object_mode=False)
         except (BridgeError, RuntimeError):
             LOGGER.exception("Native recovery is unavailable for the mesh edit session")
-            self.clear()
+            if guard is None:
+                self.clear()
             return {**status, "state": "unavailable"}
         if blender.context.mode != "OBJECT":
             return None
         session = self._editor_session
         if not self._editor_matches_session(blender, session):
+            if guard is not None:
+                guard.check("invalidate_editor_session")
             self._editor_session = None
             self._undo_steps.clear()
             return {**status, "state": "invalidated"}
@@ -403,11 +497,13 @@ class CheckpointManager:
             if error.context.get("checkpoint_authority_rejected"):
                 raise
             LOGGER.exception("Could not finalize the mesh edit session")
-            self.clear()
+            if guard is None:
+                self.clear()
             return {**status, "state": "unavailable"}
         except RuntimeError:
             LOGGER.exception("Could not finalize the mesh edit session")
-            self.clear()
+            if guard is None:
+                self.clear()
             return {**status, "state": "unavailable"}
         self._editor_session = None
         self._undo_steps.appendleft(

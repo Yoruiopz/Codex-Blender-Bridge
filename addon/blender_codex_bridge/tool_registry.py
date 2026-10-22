@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping
+import logging
+import math
+from collections.abc import Callable, Iterable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol
 
 from .errors import BridgeError, ErrorCode
 from .permissions import Permission, PermissionManager
@@ -14,6 +17,59 @@ from .task_plans import get_task_plans
 
 ToolHandler = Callable[["ToolContext", Mapping[str, Any]], Any]
 ProtectedScopeResolver = Callable[["ToolContext", Mapping[str, Any]], Mapping[str, Any]]
+class CheckpointAdmissionGuard(Protocol):
+    def __call__(self) -> None: ...
+    def check_after_read(self) -> None:
+        """Read only static native evidence, then pure final; no providers."""
+        ...
+
+
+CheckpointAdmissionFactory = Callable[["ToolContext", Mapping[str, Any]], CheckpointAdmissionGuard]
+CheckpointParameterScope = Callable[["ToolRegistry", Mapping[str, Any]], bool]
+CheckpointParameterDependencies = Callable[["ToolRegistry", Mapping[str, Any]], tuple["ToolSpec | None", ...]]
+LOGGER = logging.getLogger(__name__)
+
+
+def _checkpoint_parameters(raw: Any) -> Any:
+    """Freeze bounded plain request data without custom Mapping/getter calls."""
+    remaining = [4096, 65536]
+
+    def visit(item: Any, depth: int = 0) -> Any:
+        remaining[0] -= 1
+        if remaining[0] < 0 or depth > 8:
+            raise ValueError
+        kind = type(item)
+        if item is None:
+            return ("none",)
+        if kind is bool:
+            return ("bool", item)
+        if kind is int:
+            if item.bit_length() > 4096:
+                raise ValueError
+            return ("int", item)
+        if kind is float:
+            if not math.isfinite(item):
+                raise ValueError
+            return ("float", item.hex())
+        if kind is str:
+            remaining[1] -= len(item.encode("utf-8"))
+            if len(item) > 4096 or remaining[1] < 0:
+                raise ValueError
+            return ("str", item)
+        if kind is dict:
+            if len(item) > remaining[0] or any(type(key) is not str for key in item):
+                raise ValueError
+            return ("dict", tuple((visit(key, depth + 1), visit(item[key], depth + 1)) for key in sorted(item)))
+        if kind is list or kind is tuple:
+            if len(item) > remaining[0]:
+                raise ValueError
+            return (kind.__name__, tuple(visit(child, depth + 1) for child in item))
+        raise ValueError
+    try:
+        return visit(raw)
+    except (ValueError, UnicodeError) as error:
+        raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Checkpoint admission requires bounded plain request parameters.",
+                          {"checkpoint_parameters_bounded": False}) from error
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,6 +85,11 @@ class ToolSpec:
     batchable: bool = True
     record_history: bool = True
     protected_scope_resolver: ProtectedScopeResolver | None = None
+    checkpoint_admission_factory: CheckpointAdmissionFactory | None = None
+    checkpoint_parameter_scope: CheckpointParameterScope | None = None
+    checkpoint_parameter_dependencies: CheckpointParameterDependencies | None = None
+    checkpoint_owns_finalization: bool = False
+    checkpoint_batch_reviewed: bool = False
 
     def metadata(self, *, enabled: bool) -> dict[str, Any]:
         return {
@@ -41,6 +102,12 @@ class ToolSpec:
             "remote": self.remote,
             "protected_scope_reviewed": self.protected_scope_resolver is not None,
         }
+
+
+@dataclass(frozen=True, slots=True)
+class _CheckpointEntryEvidence:
+    parameters: Any
+    dependencies: tuple[ToolSpec | None, ...]
 
 
 @dataclass(slots=True)
@@ -65,9 +132,122 @@ class ToolContext:
     # Per-context diagnostic receipt. Only actual handler entry increments it;
     # it is never a wire parameter or an authorization grant.
     handler_entries: int = 0
+    checkpoint_admission: CheckpointAdmissionBinding | None = None
+    checkpoint_call_id: object | None = None
+    checkpoint_method: str | None = None
+    checkpoint_params: Mapping[str, Any] | None = None
+    checkpoint_finalization_owner: object | None = None
 
     def require(self, *permissions: Permission) -> None:
         self.permissions.require(permissions)
+
+
+@dataclass(slots=True)
+class CheckpointAdmissionBinding:
+    """Internal call identity; never a permission or wire-supplied profile."""
+
+    context: ToolContext
+    method: str
+    params: Mapping[str, Any]
+    call_id: object
+    callback: Callable[[], None]
+    frozen_params: Any = None
+    readonly_callback: Callable[[], None] | None = None
+    native_push_callback: Callable[[], None] | None = None
+    registry: ToolRegistry | None = None
+    spec: ToolSpec | None = None
+    enclosing: tuple[Any, ...] | None = None
+    active: bool = True
+    stopped: BridgeError | None = None
+
+    def matches(self, spec: ToolSpec, params: Mapping[str, Any], context: ToolContext) -> bool:
+        return (self.active and self.context is context and self.registry is context.registry and self.spec is spec
+                and self.method == spec.name and self.params is params
+                and context.checkpoint_admission is self and context.checkpoint_call_id is self.call_id
+                and context.checkpoint_method == self.method and context.checkpoint_params is self.params)
+
+    def __call__(self) -> None:
+        self._check(self.callback)
+
+    def check_after_read(self) -> None:
+        if self.readonly_callback is None:
+            error = BridgeError(ErrorCode.NOT_IMPLEMENTED, "Checkpoint admission has no reviewed read-only proof.",
+                                {"checkpoint_admission_valid": False})
+            self.stopped = error
+            raise error
+        self._check(self.readonly_callback)
+
+    def after_native_push(self) -> None:
+        """Trusted completion notification; no providers or adopted readback."""
+        def completed() -> None:
+            if self.native_push_callback is not None:
+                self.native_push_callback()
+            if self.readonly_callback is not None:
+                self.readonly_callback()
+        self._check(completed)
+
+    def _enclosing_after_read(self) -> None:
+        if self.enclosing is None or self.enclosing[0] is None:
+            return
+        context = self.context
+        current = (context.checkpoint_admission, context.checkpoint_call_id, context.checkpoint_method,
+                   context.checkpoint_params, context.checkpoint_finalization_owner)
+        try:
+            (context.checkpoint_admission, context.checkpoint_call_id, context.checkpoint_method,
+             context.checkpoint_params, context.checkpoint_finalization_owner) = self.enclosing
+            self.enclosing[0].check_after_read()
+        finally:
+            (context.checkpoint_admission, context.checkpoint_call_id, context.checkpoint_method,
+             context.checkpoint_params, context.checkpoint_finalization_owner) = current
+
+    def _check(self, callback: Callable[[], None]) -> None:
+        try:
+            self.check_identity(self.method)
+            callback()
+            self.check_identity(self.method)
+            self._enclosing_after_read()
+            self.check_identity(self.method)
+        except BridgeError as error:
+            self._retain_enclosing_stop()
+            self.stopped = error
+            raise
+        except Exception as cause:
+            LOGGER.exception("Checkpoint admission callback failed")
+            error = BridgeError(ErrorCode.OPERATION_FAILED, "Checkpoint admission could not be verified.",
+                                {"checkpoint_admission_valid": False, "verification_required": True})
+            self._retain_enclosing_stop()
+            self.stopped = error
+            raise error from cause
+
+    def _retain_enclosing_stop(self) -> None:
+        # A child provider can change the parent's closure and then deny the
+        # child before its normal enclosing proof. Latch that parent drift
+        # without replacing the child's exact primary authorization failure.
+        try:
+            self._enclosing_after_read()
+        except BridgeError:
+            pass
+
+    def check_identity(self, method: str) -> None:
+        """Pure check, also used after domain providers/content comparisons."""
+        if self.stopped is not None:
+            raise self.stopped
+        try:
+            if method != self.method or not self.matches(self.context.registry.get(self.method), self.params, self.context):
+                raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Checkpoint admission belongs to a different or completed call.",
+                                  {"checkpoint_admission_valid": False})
+            if _checkpoint_parameters(self.params) != self.frozen_params:
+                raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Checkpoint admission parameters changed during the call.",
+                                  {"checkpoint_parameters_unchanged": False})
+        except BridgeError as error:
+            self.stopped = error
+            raise
+        except Exception as cause:
+            LOGGER.exception("Checkpoint admission identity could not be verified")
+            error = BridgeError(ErrorCode.OPERATION_FAILED, "Checkpoint admission could not be verified.",
+                                {"checkpoint_admission_valid": False, "verification_required": True})
+            self.stopped = error
+            raise error from cause
 
 
 def check_final_mutation(context: ToolContext, method: str, *, allow_recovery: bool = False) -> None:
@@ -84,6 +264,9 @@ def check_final_mutation(context: ToolContext, method: str, *, allow_recovery: b
         hook = getattr(context, name, None)
         if hook is not None:
             hook()
+    admission = getattr(context, "checkpoint_admission", None)
+    if admission is not None:
+        admission.check_identity(method)
     registry = getattr(context, "registry", None)
     if registry is not None:
         spec = registry.get(method)
@@ -130,6 +313,11 @@ class ToolRegistry:
         batchable: bool = True,
         record_history: bool = True,
         protected_scope_resolver: ProtectedScopeResolver | None = None,
+        checkpoint_admission_factory: CheckpointAdmissionFactory | None = None,
+        checkpoint_parameter_scope: CheckpointParameterScope | None = None,
+        checkpoint_parameter_dependencies: CheckpointParameterDependencies | None = None,
+        checkpoint_owns_finalization: bool = False,
+        checkpoint_batch_reviewed: bool = False,
     ) -> ToolSpec:
         if not name or "." not in name:
             raise ValueError("Tool names must be non-empty dotted identifiers.")
@@ -148,6 +336,11 @@ class ToolRegistry:
             batchable=batchable,
             record_history=record_history,
             protected_scope_resolver=protected_scope_resolver,
+            checkpoint_admission_factory=checkpoint_admission_factory,
+            checkpoint_parameter_scope=checkpoint_parameter_scope,
+            checkpoint_parameter_dependencies=checkpoint_parameter_dependencies,
+            checkpoint_owns_finalization=checkpoint_owns_finalization,
+            checkpoint_batch_reviewed=checkpoint_batch_reviewed,
         )
         self._tools[name] = spec
         self._toolsets.add(toolset)
@@ -166,6 +359,11 @@ class ToolRegistry:
         batchable: bool = True,
         record_history: bool = True,
         protected_scope_resolver: ProtectedScopeResolver | None = None,
+        checkpoint_admission_factory: CheckpointAdmissionFactory | None = None,
+        checkpoint_parameter_scope: CheckpointParameterScope | None = None,
+        checkpoint_parameter_dependencies: CheckpointParameterDependencies | None = None,
+        checkpoint_owns_finalization: bool = False,
+        checkpoint_batch_reviewed: bool = False,
     ) -> Callable[[ToolHandler], ToolHandler]:
         def decorator(handler: ToolHandler) -> ToolHandler:
             self.register(
@@ -180,6 +378,11 @@ class ToolRegistry:
                 batchable=batchable,
                 record_history=record_history,
                 protected_scope_resolver=protected_scope_resolver,
+                checkpoint_admission_factory=checkpoint_admission_factory,
+                checkpoint_parameter_scope=checkpoint_parameter_scope,
+                checkpoint_parameter_dependencies=checkpoint_parameter_dependencies,
+                checkpoint_owns_finalization=checkpoint_owns_finalization,
+                checkpoint_batch_reviewed=checkpoint_batch_reviewed,
             )
             return handler
 
@@ -244,18 +447,158 @@ class ToolRegistry:
                                   {"tool": name, "scope_complete": False, "protected_scope_enforced": True})
         return spec
 
+    def checkpoint_parameter_entry(self, spec: ToolSpec, params: Mapping[str, Any]) -> tuple[ToolSpec, bool, _CheckpointEntryEvidence]:
+        """Trusted pure classification before any entry callback or provider."""
+        guarded = spec.checkpoint_admission_factory is not None or (
+            spec.checkpoint_parameter_scope is not None and spec.checkpoint_parameter_scope(self, params))
+        if type(guarded) is not bool:
+            raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Checkpoint request scope did not provide a literal classification.")
+        dependencies = () if spec.checkpoint_parameter_dependencies is None else spec.checkpoint_parameter_dependencies(self, params)
+        if (type(dependencies) is not tuple or len(dependencies) > 4096
+                or any(item is not None and not isinstance(item, ToolSpec) for item in dependencies)):
+            raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Checkpoint request dependencies did not provide bounded registered tool identities.")
+        return spec, guarded, _CheckpointEntryEvidence(_checkpoint_parameters(params) if guarded else None, dependencies)
+
+    def check_checkpoint_parameter_entry(self, entry: tuple[ToolSpec, bool, _CheckpointEntryEvidence], params: Mapping[str, Any]) -> None:
+        initial, guarded, frozen = entry
+        current = self.get(initial.name)
+        if current is not initial:
+            raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Checkpoint admission parameters or guarded request scope changed during entry validation.",
+                              {"checkpoint_parameters_unchanged": False})
+        latest = self.checkpoint_parameter_entry(current, params)
+        dependencies = latest[2].dependencies
+        if (latest[1] != guarded or (guarded and latest[2].parameters != frozen.parameters)
+                or len(dependencies) != len(frozen.dependencies)
+                or any(before is not after for before, after in zip(frozen.dependencies, dependencies))):
+            raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Checkpoint admission parameters or guarded request scope changed during entry validation.",
+                              {"checkpoint_parameters_unchanged": False})
+
     def dispatch(self, name: str, params: Mapping[str, Any], context: ToolContext) -> Any:
-        spec = self.prepare_call(name, params, context)
-        return self.invoke(spec, params, context)
+        entry = self.checkpoint_parameter_entry(self.get(name), params)
+        enclosing = context.checkpoint_admission
+        if enclosing is not None:
+            enclosing.check_after_read()
+        self.check_admission_entry(entry[0], context)
+        scope, captured, deferred = self._capture_admission(entry[0], params, context)
+        try:
+            spec = self.prepare_call(name, params, context)
+            self.check_checkpoint_parameter_entry(entry, params)
+            if deferred is not None:
+                if enclosing is not None:
+                    enclosing.check_after_read()
+                raise deferred
+            return self.invoke(spec, params, context)
+        finally:
+            if captured:
+                scope.__exit__(None, None, None)
+
+    def check_admission_entry(self, spec: ToolSpec, context: ToolContext, *, allow_recovery: bool = False) -> None:
+        """Pure spec/lifetime/pause gate before readonly factory capture."""
+        if not spec.remote and not allow_recovery:
+            raise BridgeError(ErrorCode.METHOD_NOT_FOUND, "This tool is available only from Blender's local recovery UI.")
+        if spec.toolset not in self.enabled_toolsets:
+            raise BridgeError(ErrorCode.TOOLSET_DISABLED, "Toolset is disabled before admission capture.")
+        if context.checkpoint_admission is None:
+            check_final_mutation(context, spec.name, allow_recovery=allow_recovery)
+
+    def _capture_admission(self, spec: ToolSpec, params: Mapping[str, Any], context: ToolContext) -> tuple[Any, bool, BridgeError | None]:
+        scope = self.checkpoint_admission(spec, params, context)
+        try:
+            scope.__enter__()
+        except BridgeError as error:
+            # Readonly factory diagnostics must not bypass coherent live
+            # permission/cancellation denial precedence or expose private data.
+            return scope, False, error
+        return scope, True, None
+
+    @contextmanager
+    def checkpoint_admission(self, spec: ToolSpec, params: Mapping[str, Any], context: ToolContext) -> Iterator[CheckpointAdmissionBinding | None]:
+        """Capture before entry providers; restore the enclosing call in all exits.
+
+        A factory must only capture reviewed native static evidence. It must not
+        call providers between a batch transition proof and its new baseline.
+        The returned callback resolves providers and compares that frozen state.
+        """
+        previous = (context.checkpoint_admission, context.checkpoint_call_id, context.checkpoint_method,
+                    context.checkpoint_params, context.checkpoint_finalization_owner)
+        try:
+            frozen_params = _checkpoint_parameters(params) if spec.checkpoint_admission_factory is not None else None
+        except BridgeError as error:
+            error.context["execution_started"] = False  # Factory/handler not entered.
+            raise
+        try:
+            callback = spec.checkpoint_admission_factory(context, params) if spec.checkpoint_admission_factory is not None else None
+        except BridgeError:
+            raise
+        except Exception as cause:
+            LOGGER.exception("Checkpoint admission factory failed")
+            raise BridgeError(ErrorCode.OPERATION_FAILED, "Checkpoint admission could not be prepared.",
+                              {"execution_started": False, "checkpoint_admission_valid": False,
+                               "verification_required": True}) from cause
+        if spec.checkpoint_admission_factory is not None and not callable(callback):
+            raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Checkpoint admission factory did not provide a reviewed guard.",
+                              {"checkpoint_admission_valid": False, "execution_started": False})
+        try:
+            readonly = None if callback is None else getattr(callback, "check_after_read", None)
+            native_push = None if callback is None else getattr(callback, "after_native_push", None)
+        except Exception as cause:
+            LOGGER.exception("Checkpoint read-only admission descriptor failed")
+            raise BridgeError(ErrorCode.OPERATION_FAILED, "Checkpoint read-only admission could not be prepared.",
+                              {"execution_started": False, "checkpoint_admission_valid": False,
+                               "verification_required": True}) from cause
+        if callback is not None and not callable(readonly):
+            raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Checkpoint admission factory did not provide a reviewed read-only proof.",
+                              {"checkpoint_admission_valid": False, "execution_started": False})
+        if native_push is not None and not callable(native_push):
+            raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Checkpoint native completion hook is not callable.",
+                              {"checkpoint_admission_valid": False, "execution_started": False})
+        call_id = object()
+        predecessor = previous[0]
+        enclosing = previous if (isinstance(predecessor, CheckpointAdmissionBinding)
+                                 and predecessor.active and predecessor.context is context) else None
+        binding = None if callback is None else CheckpointAdmissionBinding(
+            context, spec.name, params, call_id, callback, frozen_params, readonly,
+            native_push, self, spec, enclosing)
+        context.checkpoint_admission, context.checkpoint_call_id = binding, call_id
+        context.checkpoint_method, context.checkpoint_params = spec.name, params
+        try:
+            yield binding
+        finally:
+            if binding is not None:
+                binding.active = False
+            (context.checkpoint_admission, context.checkpoint_call_id, context.checkpoint_method,
+             context.checkpoint_params, context.checkpoint_finalization_owner) = previous
 
     def invoke(self, spec: ToolSpec, params: Mapping[str, Any], context: ToolContext, *, allow_recovery: bool = False) -> Any:
         """Enter a prepared handler without arming over an in-flight writer."""
+        binding = context.checkpoint_admission
+        entry = self.checkpoint_parameter_entry(spec, params)
+        exact_call = context.checkpoint_call_id is not None and context.checkpoint_method == spec.name and context.checkpoint_params is params
+        if exact_call and ((spec.checkpoint_admission_factory is None and binding is None)
+                           or (spec.checkpoint_admission_factory is not None and binding is not None and binding.matches(spec, params, context))):
+            return self._invoke_admitted(spec, params, context, allow_recovery=allow_recovery)
+        if binding is not None and binding.active:
+            # Verify the enclosing live call before a nested factory can bind
+            # another baseline. Drift is a stopped call, not a new request.
+            binding.check_after_read()
+            self.check_checkpoint_parameter_entry(entry, params)
+            if binding.method == spec.name and binding.params is params:
+                binding.check_identity(spec.name)
+        elif spec.checkpoint_admission_factory is not None and context.checkpoint_method == spec.name and context.checkpoint_params is params:
+            raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "An active checkpoint admission call lost its binding.",
+                              {"checkpoint_admission_valid": False})
+        with self.checkpoint_admission(spec, params, context):
+            return self._invoke_admitted(spec, params, context, allow_recovery=allow_recovery)
+
+    def _invoke_admitted(self, spec: ToolSpec, params: Mapping[str, Any], context: ToolContext, *, allow_recovery: bool) -> Any:
         store = get_task_plans(context.state)
         if spec.modifies:
             self._executing_mutators += 1
             store.executing_mutators += 1
         try:
             if spec.modifies:
+                if context.checkpoint_admission is not None:
+                    context.checkpoint_admission()
                 # All remote/direct/batch handler entries share this final pure
                 # gate, after callbacks in their params-aware preflight.
                 check_final_mutation(context, spec.name, allow_recovery=allow_recovery)

@@ -11,10 +11,17 @@ import json
 import logging
 import time
 from collections.abc import Mapping
+from contextlib import ExitStack
 from typing import Any
 
 from ..errors import BridgeError, ErrorCode, invalid_argument
-from ..tool_registry import ToolContext, ToolRegistry, ToolSpec, check_final_mutation
+from ..tool_registry import (
+    ToolContext,
+    ToolRegistry,
+    ToolSpec,
+    _checkpoint_parameters,
+    check_final_mutation,
+)
 from ..utils import affected_objects_from_result, float_param
 
 LOGGER = logging.getLogger(__name__)
@@ -31,7 +38,40 @@ def is_batch_supported(spec: ToolSpec) -> bool:
     return spec.remote and spec.batchable and (spec.toolset in SAFE_TOOLSETS or spec.name in SAFE_CORE)
 
 
-def _preflight(context: ToolContext, params: Mapping[str, Any]) -> list[tuple[str, ToolSpec, dict[str, Any]]]:
+def _checkpoint_parameter_dependencies(registry: ToolRegistry, params: Mapping[str, Any]) -> tuple[ToolSpec | None, ...]:
+    """Retain exact child identities by position before outer callbacks.
+
+    Invalid shapes retain their ordinary handler validation. No child provider,
+    custom mapping or Blender descriptor is invoked by this classifier.
+    """
+    if type(params) is not dict:
+        return ()
+    steps = params.get("steps")
+    if type(steps) is not list or not 1 <= len(steps) <= MAX_STEPS:
+        return ()
+    dependencies = []
+    for step in tuple(steps):
+        if type(step) is not dict or type(step.get("method")) is not str:
+            dependencies.append(None)
+            continue
+        method = step["method"]
+        if not 1 <= len(method) <= 128:
+            dependencies.append(None)
+            continue
+        try:
+            spec = registry.get(method)
+        except BridgeError:
+            spec = None
+        dependencies.append(spec)
+    return tuple(dependencies)
+
+
+def _checkpoint_parameter_scope(registry: ToolRegistry, params: Mapping[str, Any]) -> bool:
+    return any(spec is not None and spec.checkpoint_admission_factory is not None
+               for spec in _checkpoint_parameter_dependencies(registry, params))
+
+
+def _shape(context: ToolContext, params: Mapping[str, Any]) -> list[tuple[str, ToolSpec, dict[str, Any]]]:
     unknown = set(params) - {"steps", "label", "time_limit_seconds"}
     if unknown:
         raise invalid_argument("Unknown batch parameters.", parameters=sorted(unknown))
@@ -44,7 +84,7 @@ def _preflight(context: ToolContext, params: Mapping[str, Any]) -> list[tuple[st
         raise invalid_argument(f"'steps' must contain 1-{MAX_STEPS} objects.")
     prepared = []
     ids: set[str] = set()
-    for index, step in enumerate(steps):
+    for index, step in enumerate(tuple(steps)):
         if not isinstance(step, dict) or set(step) - {"id", "method", "params"}:
             raise invalid_argument("Each step accepts only id, method, and params.", step_index=index)
         identifier = step.get("id", str(index + 1))
@@ -60,10 +100,18 @@ def _preflight(context: ToolContext, params: Mapping[str, Any]) -> list[tuple[st
                 "This method is not batch-supported. Python, render/capture, save, recovery, and lifecycle tools must be separate calls.",
                 step_index=index, method=method,
             )
-        # Preflight *every* gate before creating the first undo marker.
-        context.registry.prepare_call(method, arguments, context)
+        if spec.checkpoint_admission_factory is not None and not spec.checkpoint_batch_reviewed:
+            raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "This guarded tool has no reviewed batch authored-state composition; use separate registered calls.",
+                              {"execution_started": False, "checkpoint_batch_composition_reviewed": False, "step_index": index})
         ids.add(identifier)
         prepared.append((identifier, spec, arguments))
+    return prepared
+
+
+def _preflight(context: ToolContext, params: Mapping[str, Any]) -> list[tuple[str, ToolSpec, dict[str, Any]]]:
+    prepared = _shape(context, params)
+    for _identifier, spec, arguments in prepared:
+        context.registry.prepare_call(spec.name, arguments, context)
     return prepared
 
 
@@ -104,7 +152,36 @@ def _bounded_result(result: Any) -> Any:
 
 
 def batch_execute(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
-    prepared = _preflight(context, params)
+    prepared = _shape(context, params)
+    parameter_entry = context.registry.checkpoint_parameter_entry(context.registry.get("batch.execute"), params)
+    guarded = any(spec.modifies and spec.checkpoint_admission_factory is not None for _identifier, spec, _arguments in prepared)
+    if guarded and any(spec.modifies and spec.checkpoint_admission_factory is None for _identifier, spec, _arguments in prepared):
+        raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "A batch with static checkpoint admission requires a reviewed admission factory for every modifying step.",
+                          {"execution_started": False, "checkpoint_admission_complete": False})
+    if guarded:
+        # Internal call token, never a result/wire flag. The outer executor
+        # must not add an unguarded editor push after this batch owns it.
+        context.checkpoint_finalization_owner = context.checkpoint_call_id
+    finalization_owner = context.checkpoint_call_id if guarded else None
+    original_plan = _checkpoint_parameters(params) if guarded else None
+
+    def plan_unchanged() -> None:
+        if guarded and getattr(context, "checkpoint_finalization_owner", None) is not finalization_owner:
+            raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Guarded batch finalization ownership changed; no legacy fallback is authorized.",
+                              {"checkpoint_finalization_owner_valid": False})
+        context.registry.check_checkpoint_parameter_entry(parameter_entry, params)
+        if guarded and _checkpoint_parameters(params) != original_plan:
+            raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Guarded batch request changed during preflight or execution; later values are not adopted.",
+                              {"checkpoint_parameters_unchanged": False})
+
+    # Shape/spec lookup and bounded plan capture precede every child provider.
+    for _identifier, spec, arguments in prepared:
+        context.registry.prepare_call(spec.name, arguments, context)
+        try:
+            plan_unchanged()
+        except BridgeError as error:
+            error.context["execution_started"] = False
+            raise
     deadline = time.monotonic() + float_param(params, "time_limit_seconds", 10.0, minimum=0.1, maximum=30.0)
     label = params.get("label", "Structured edit")
     results: list[dict[str, Any]] = []
@@ -115,6 +192,11 @@ def batch_execute(context: ToolContext, params: Mapping[str, Any]) -> dict[str, 
     finalization_attempted = False
     current_started = False
     current_spec = prepared[0][1]
+    admission_stack = ExitStack()
+    current_admission = None
+    finalization_gate = None
+    finalization_after_read = None
+    finalization_native_push = None
     index = 0
     try:
         for index, (identifier, spec, arguments) in enumerate(prepared):
@@ -126,18 +208,55 @@ def batch_execute(context: ToolContext, params: Mapping[str, Any]) -> dict[str, 
                 raise BridgeError(ErrorCode.TIMEOUT, "Batch time budget expired before the next step.")
             # Authoritative gates are repeated immediately before every step.
             context.registry.prepare_call(spec.name, arguments, context)
+            plan_unchanged()
 
-            def step_write_gate(method=spec.name):
+            # New-step providers run first. The previous frozen closure must
+            # still match before a next factory can capture a new baseline.
+            if current_admission is not None:
+                current_admission()
+            plan_unchanged()
+            if spec.modifies and spec.checkpoint_admission_factory is not None:
+                # The proved previous step is a transition predecessor, not a
+                # live enclosing writer. Retire it before the next readonly
+                # capture; its authored expectations must never be rebased to
+                # include this later step's owned effects.
+                admission_stack.close()
+                current_admission = admission_stack.enter_context(context.registry.checkpoint_admission(spec, arguments, context))
+
+            def step_write_gate(method=spec.name, admission=current_admission):
+                if admission is not None:
+                    admission()
+                plan_unchanged()
                 if time.monotonic() >= deadline:
                     raise BridgeError(ErrorCode.TIMEOUT, "Batch time budget expired before its next write.")
                 check_final_mutation(context, method)
+
+            def step_after_read(method=spec.name, admission=current_admission):
+                if admission is not None:
+                    admission.check_after_read()
+                plan_unchanged()
+                if time.monotonic() >= deadline:
+                    raise BridgeError(ErrorCode.TIMEOUT, "Batch time budget expired before its next write.")
+                check_final_mutation(context, method)
+
+            def step_native_push(method=spec.name, admission=current_admission):
+                if admission is not None:
+                    admission.after_native_push()
+                plan_unchanged()
+                check_final_mutation(context, method)
+
+            if spec.modifies:
+                finalization_gate = step_write_gate
+                finalization_after_read = step_after_read
+                finalization_native_push = step_native_push
 
             if time.monotonic() >= deadline:
                 raise BridgeError(ErrorCode.TIMEOUT, "Batch time budget expired during step preflight.")
             if spec.modifies and not mutation_started:
                 step_write_gate()
                 undo_boundary = context.checkpoints.before_modification(
-                    f"Batch: {label}", before_write=step_write_gate)
+                    f"Batch: {label}", before_write=step_write_gate, after_read=step_after_read,
+                    after_native_push=step_native_push if current_admission is not None else None)
             if spec.modifies:
                 step_write_gate()
             elif time.monotonic() >= deadline:
@@ -157,6 +276,9 @@ def batch_execute(context: ToolContext, params: Mapping[str, Any]) -> dict[str, 
                     success=False, duration_ms=(time.perf_counter() - start) * 1000, error_code=error_code,
                 )
                 raise
+            if current_admission is not None:
+                current_admission()
+            plan_unchanged()
             names = affected_objects_from_result(result)
             affected.update(names)
             record = context.state.record_operation(
@@ -165,10 +287,19 @@ def batch_execute(context: ToolContext, params: Mapping[str, Any]) -> dict[str, 
             )
             results.append({"id": identifier, "method": spec.name, "ok": True,
                             "operation_id": record.operation_id, "result": _bounded_result(result)})
-    except Exception as exc:
         if mutation_started and undo_boundary:
             finalization_attempted = True
-            undo_finalized = bool(context.checkpoints.after_modification(f"Batch: {label}"))
+            undo_finalized = bool(context.checkpoints.after_modification(f"Batch: {label}", before_write=finalization_gate, after_read=finalization_after_read, after_native_push=finalization_native_push)
+                if current_admission is not None else context.checkpoints.after_modification(f"Batch: {label}"))
+    except Exception as exc:
+        finalization_denial = None
+        if mutation_started and undo_boundary and not finalization_attempted:
+            finalization_attempted = True
+            try:
+                undo_finalized = bool(context.checkpoints.after_modification(f"Batch: {label}", before_write=finalization_gate, after_read=finalization_after_read, after_native_push=finalization_native_push)
+                    if current_admission is not None else context.checkpoints.after_modification(f"Batch: {label}"))
+            except BridgeError as secondary:
+                finalization_denial = secondary
         if isinstance(exc, BridgeError):
             error = exc
         else:
@@ -190,10 +321,12 @@ def batch_execute(context: ToolContext, params: Mapping[str, Any]) -> dict[str, 
         }
         if error.context.get("checkpoint_bookkeeping") is not None:
             context_data["checkpoint_bookkeeping"] = error.context["checkpoint_bookkeeping"]
+        if finalization_denial is not None:
+            context_data["checkpoint_finalization_refused"] = {"code": finalization_denial.code,
+                "bookkeeping": finalization_denial.context.get("checkpoint_bookkeeping"), "primary_error_preserved": True}
         raise BridgeError(error.code, f"Batch stopped at step {index + 1}: {error.message}", context_data) from exc
     finally:
-        if mutation_started and undo_boundary and not finalization_attempted:
-            undo_finalized = bool(context.checkpoints.after_modification(f"Batch: {label}"))
+        admission_stack.close()
     return {
         "batch_label": label, "atomic": False, "completed_steps": len(results),
         "total_steps": len(prepared), "results": results,
@@ -205,6 +338,11 @@ def batch_execute(context: ToolContext, params: Mapping[str, Any]) -> dict[str, 
 
 def register_tools(registry: ToolRegistry) -> None:
     registry.register("batch.plan", batch_plan, toolset="batch",
+                      checkpoint_parameter_scope=_checkpoint_parameter_scope,
+                      checkpoint_parameter_dependencies=_checkpoint_parameter_dependencies,
                       description="Preflight batch shape and permissions, not scene state or handler arguments.")
     registry.register("batch.execute", batch_execute, toolset="batch", modifies=True, automatic_checkpoint=False,
+                      checkpoint_parameter_scope=_checkpoint_parameter_scope,
+                      checkpoint_parameter_dependencies=_checkpoint_parameter_dependencies,
+                      checkpoint_owns_finalization=True,
                       description="Run up to 32 structured steps serially with one logical undo marker; stop on first error.")

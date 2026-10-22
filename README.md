@@ -491,9 +491,9 @@ Current registry: **258 MCP tools**.
 | --- | --- |
 | `camera.configure` | Configure camera optics, clipping, depth of field, and active-scene assignment. |
 | `collection.create` | Create and link a collection under an explicit scene or parent. |
-| `collection.delete` | Remove an explicitly confirmed collection and report unlinked contents. |
+| `collection.delete` | Remove an explicitly confirmed empty collection within the current Scene. |
 | `collection.rename` | Rename an explicit collection without collisions. |
-| `light.configure` | Configure a named Blender light's type, energy, color, and shape settings. |
+| `light.configure` | Configure a named Blender light's energy, color, and supported settings within its current subtype. |
 | `scene.configure` | Configure an explicit scene's camera, units, and gravity. |
 | `scene.variant.apply` | Apply an exact fresh preview with live consent, ownership and protected-state CAS checks. |
 | `scene.variant.capture` | Store exact current camera/light controls and protected static scene proof as Scene JSON without saving. |
