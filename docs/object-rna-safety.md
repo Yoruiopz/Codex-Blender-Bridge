@@ -48,6 +48,27 @@ and checkpoint recovery, never successful Mesh rollback. Mesh ID/ownership,
 metadata, bindings, group metadata and other objects remain compared separately
 from the allowed topology result.
 
+Boolean application accepts one exact static, local Mesh Object cutter using
+the EXACT solver and INDEX material mode. Target and cutter must each have one
+nonnull DATA-linked slot containing the **same Material ID**, and every polygon
+must have material index zero. Collection/empty operands, parented, animated, constrained,
+modifier-bearing, shape-keyed, instanced or physics-driven cutters are refused
+before the native apply call. The existing cutter's full bounded stored state,
+exact identity and outside reference counts are frozen before live permission
+callbacks and rechecked immediately before application. A changed cutter is
+retained for inspection; it is never adopted as a new baseline.
+
+Blender 5.2 native Boolean application can append a cutter's Material binding,
+or a null slot for a cutter with no slots, even with `material_mode=INDEX`.
+The researched 4.5 case retains the target bindings. The shared single-slot
+profile preserves the target bindings on both runtimes; zero slots, multiple
+slots, null slots, Object-linked overrides and broader material transfer remain
+unsupported until their conversion semantics have direct evidence. No materials
+are silently remapped, removed or accepted by name. The scanner benchmark assigns
+its private cutters the shell's current DATA-bound material through explicit typed
+calls, completes geometry, then isolates and edits the final shell finish.
+Broader Boolean material transfer remains an open 1.0 requirement.
+
 `verified` refers to these structural comparisons. It does not establish visual
 acceptance, arbitrary nested RNA/profile/NodeTree/material dependency preservation,
 all modifier-specific conversion semantics, durable topology recovery, large-scene

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Mapping
+from itertools import chain
 from typing import Any
 
 from ..errors import BridgeError, ErrorCode, invalid_argument
@@ -12,8 +13,13 @@ from ..selection import clear_selection_references
 from ..tool_registry import ToolContext, ToolRegistry
 from ..utils import get_object, reject_unknown_params, require_blender
 from ._object_rna_mutation import Boundary
-from ._object_safety import require_local_object, require_unkeyed_object_data
+from ._object_safety import (
+    require_local_editable_id,
+    require_local_object,
+    require_unkeyed_object_data,
+)
 from ._rna import (
+    RNAAssignment,
     apply_assignments,
     bounded_name,
     prepare_assignments,
@@ -304,6 +310,40 @@ def remove_modifier(context: ToolContext, params: Mapping[str, Any]) -> dict[str
             "modifier_count_after": len(obj.modifiers), "verified": True}
 
 
+def _boolean_apply_operand(obj: Any, modifier: Any) -> Any:
+    """Admit only the demonstrated one-slot, same-ID material profile."""
+    operand = getattr(modifier, "object", None)
+    if getattr(modifier, "operand_type", None) != "OBJECT" or operand is None or getattr(operand, "type", None) != "MESH":
+        raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Boolean application requires one exact Mesh Object operand; collection and empty operands are unsupported.")
+    require_local_object(operand, operation="Boolean operand application")
+    require_local_editable_id(operand.data, operation="Boolean operand application")
+    if (getattr(modifier, "material_mode", None) != "INDEX" or getattr(modifier, "solver", None) != "EXACT"
+            or len(obj.material_slots) != 1 or len(obj.data.materials) != 1
+            or len(operand.material_slots) != 1 or len(operand.data.materials) != 1):
+        # 5.2 appends a null binding even when the cutter has no slots. Only the
+        # explicitly demonstrated shared single-slot profile is admitted.
+        raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Boolean application requires EXACT/INDEX and one matching nonnull DATA-linked material slot on both target and cutter; broader material conversion is not qualified.",
+                          {"operand": operand.name})
+    target_slot, source_slot = obj.material_slots[0], operand.material_slots[0]
+    material = obj.data.materials[0]
+    if (material is None or target_slot.link != "DATA" or source_slot.link != "DATA"
+            or target_slot.material != material or source_slot.material != material
+            or operand.data.materials[0] != material):
+        raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Boolean target and cutter must share the exact nonnull Material ID through DATA-linked slots; names do not establish identity.",
+                          {"operand": operand.name})
+    if len(operand.data.polygons) > 131072 or any(poly.material_index != 0 for poly in chain(obj.data.polygons, operand.data.polygons)):
+        raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Boolean application requires the bounded single-slot profile with every polygon material index equal to zero.",
+                          {"operand": operand.name})
+    if (len(operand.modifiers) or len(operand.constraints) or operand.parent is not None
+            or operand.animation_data is not None or operand.data.animation_data is not None
+            or operand.data.shape_keys is not None or getattr(operand, "instance_type", "NONE") != "NONE"
+            or getattr(operand, "rigid_body", None) is not None
+            or getattr(getattr(operand, "field", None), "type", "NONE") != "NONE"):
+        raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Boolean application requires a static, unparented cutter without modifiers, constraints, animation, shape keys, instances or physics dependencies.",
+                          {"operand": operand.name})
+    return operand
+
+
 def apply_modifier(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
     bpy = require_blender()
     obj = _object(params)
@@ -312,6 +352,11 @@ def apply_modifier(context: ToolContext, params: Mapping[str, Any]) -> dict[str,
     modifier = _named_modifier(obj, params.get("modifier_name"))
     _allowed(str(modifier.type))
     boundary = Boundary(bpy, context, "modifier.apply", obj, kind="modifiers")
+    if modifier.type == "BOOLEAN":
+        operand = _boolean_apply_operand(obj, modifier)
+        # A newly constructed boundary has no remembered pointer assignments.
+        # Freeze the existing cutter before the final live provider callbacks.
+        boundary.sources((RNAAssignment("object", operand),))
     applied = {"name": modifier.name, "type": modifier.type}
     def operation():
         # Context overrides avoid persistent selection/active-object writes and

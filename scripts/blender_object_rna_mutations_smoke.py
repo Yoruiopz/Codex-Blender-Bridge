@@ -6,6 +6,7 @@ import math
 import sys
 from pathlib import Path
 
+import bmesh
 import bpy
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -15,6 +16,143 @@ from blender_codex_bridge.errors import BridgeError  # noqa: E402
 from blender_codex_bridge.permissions import Permission, PermissionManager  # noqa: E402
 from blender_codex_bridge.runtime import get_runtime  # noqa: E402
 from blender_codex_bridge.tools import _object_rna_mutation as proof  # noqa: E402
+
+
+def boolean_material_boundaries(runtime, scene, grants):
+    """Native source snapshots and exact shared-slot preserving application."""
+    original_sources, original_native = proof.Boundary.sources, proof.Boundary.native_apply
+    operator_entries, cases = [], []
+
+    def cube(name, offset=0.):
+        mesh = bpy.data.meshes.new(name + " Mesh")
+        geometry = bmesh.new()
+        try:
+            bmesh.ops.create_cube(geometry, size=2.)
+            geometry.to_mesh(mesh)
+        finally:
+            geometry.free()
+        obj = bpy.data.objects.new(name, mesh)
+        scene.collection.objects.link(obj)
+        obj.location.x = offset
+        return obj
+
+    def fixture(label):
+        target, cutter = cube(label + " Target"), cube(label + " Cutter", 1.)
+        target.data.materials.append(bpy.data.materials.new(label + " Target Finish"))
+        cutter.data.materials.append(target.data.materials[0])
+        runtime.dispatch("modifier.add", {"object_name": target.name, "modifier_type": "BOOLEAN", "modifier_name": "Owned Cut",
+                         "settings": {"object": cutter.name, "operation": "DIFFERENCE", "solver": "EXACT"}})
+        return target, cutter
+
+    native_profiles = []
+    for target_count, cutter_kind in ((0, "ZERO"), (1, "ZERO"), (2, "ZERO"), (1, "SAME"), (2, "SAME"), (1, "FOREIGN")):
+        raw_target, raw_cutter = cube(f"Raw {target_count} {cutter_kind} Target"), cube(f"Raw {target_count} {cutter_kind} Cutter", 1.)
+        for material_index in range(target_count):
+            raw_target.data.materials.append(bpy.data.materials.new(f"Raw Material {target_count} {cutter_kind} {material_index}"))
+        if cutter_kind == "SAME":
+            raw_cutter.data.materials.append(raw_target.data.materials[0])
+        elif cutter_kind == "FOREIGN":
+            raw_cutter.data.materials.append(bpy.data.materials.new("Raw Foreign Cutter"))
+        raw_modifier = raw_target.modifiers.new("Raw Native Boolean", "BOOLEAN")
+        raw_modifier.object, raw_modifier.operation, raw_modifier.solver = raw_cutter, "DIFFERENCE", "EXACT"
+        raw_modifier.material_mode = "INDEX"
+        raw_before = [None if mat is None else (mat.name, mat.as_pointer()) for mat in raw_target.data.materials]
+        with bpy.context.temp_override(object=raw_target, active_object=raw_target, selected_objects=[raw_target], selected_editable_objects=[raw_target]):
+            raw_result = bpy.ops.object.modifier_apply(modifier=raw_modifier.name)
+        profile = {"blender": bpy.app.version_string, "target_count": target_count, "cutter_kind": cutter_kind,
+              "result": sorted(raw_result), "before": raw_before,
+              "after": [None if mat is None else (mat.name, mat.as_pointer()) for mat in raw_target.data.materials],
+              "face_indices": [int(poly.material_index) for poly in raw_target.data.polygons]}
+        native_profiles.append(profile)
+        print("BOOLEAN_MATERIAL_PROFILE_PROBE " + json.dumps(profile))
+
+    def counted(self, operation, **kwargs):
+        def enter():
+            operator_entries.append(self.obj.name)
+            return operation()
+        return original_native(self, enter, **kwargs)
+
+    proof.Boundary.native_apply = counted
+    try:
+        target, cutter = fixture("Material Denial")
+        cutter.data.materials.clear()
+        cutter.data.materials.append(bpy.data.materials.new("Unreviewed Cutter Finish"))
+        before = (proof._object_state(target), proof._object_state(cutter))
+        try:
+            runtime.dispatch("modifier.apply", {"object_name": target.name, "modifier_name": "Owned Cut"})
+        except BridgeError as error:
+            assert error.code == "NOT_IMPLEMENTED" and "exact nonnull Material ID" in error.message
+        else:
+            raise AssertionError("Material-bearing cutter reached native apply")
+        assert not operator_entries and before == (proof._object_state(target), proof._object_state(cutter))
+        cases.append("material_denial_before_native_apply")
+        target, cutter = fixture("Zero Slot Denial")
+        cutter.data.materials.clear()
+        before = (proof._object_state(target), proof._object_state(cutter))
+        try:
+            runtime.dispatch("modifier.apply", {"object_name": target.name, "modifier_name": "Owned Cut"})
+        except BridgeError as error:
+            assert error.code == "NOT_IMPLEMENTED" and "one matching nonnull" in error.message
+        else:
+            raise AssertionError("Zero-slot cutter reached native apply")
+        assert not operator_entries and before == (proof._object_state(target), proof._object_state(cutter))
+        cases.append("zero_slot_denial_before_native_apply")
+
+        for change in ("binding", "data_replacement", "same_name_replacement"):
+            target, cutter = fixture("Final Cutter " + change)
+            before_target = proof._object_state(target)
+            armed, retained = [], []
+            old_manager = runtime.permissions
+
+            def remember(self, assignments, *, target=target, armed=armed):
+                original_sources(self, assignments)
+                if self.obj == target and self.method == "modifier.apply":
+                    armed.append(True)
+
+            def provider(*, change=change, cutter=cutter, armed=armed, retained=retained):
+                if armed and not retained:
+                    if change == "binding":
+                        cutter.data.materials.append(bpy.data.materials.new("Manual Cutter Finish"))
+                    elif change == "data_replacement":
+                        cutter.data = cutter.data.copy()
+                    else:
+                        old_name = cutter.name
+                        cutter.name += " Retained Original"
+                        replacement = bpy.data.objects.new(old_name, cutter.data.copy())
+                        scene.collection.objects.link(replacement)
+                    retained.append((proof._object_state(cutter), tuple(obj.as_pointer() for obj in bpy.data.objects)))
+                return grants
+
+            proof.Boundary.sources = remember
+            manager = PermissionManager(provider)
+            runtime.permissions = runtime.executor.permissions = manager
+            try:
+                runtime.dispatch("modifier.apply", {"object_name": target.name, "modifier_name": "Owned Cut"})
+            except BridgeError:
+                pass
+            else:
+                raise AssertionError("Final provider's cutter edit was adopted")
+            finally:
+                proof.Boundary.sources = original_sources
+                runtime.permissions = runtime.executor.permissions = old_manager
+            assert retained and retained[0] == (proof._object_state(cutter), tuple(obj.as_pointer() for obj in bpy.data.objects))
+            assert before_target == proof._object_state(target) and not operator_entries
+            cases.append(change + "_retained_before_native_apply")
+
+        target, cutter = fixture("Shared Slot Success")
+        target_before, cutter_before = proof._object_state(target), proof._object_state(cutter)
+        modifier_identity = target.modifiers["Owned Cut"].as_pointer()
+        result = runtime.dispatch("modifier.apply", {"object_name": target.name, "modifier_name": "Owned Cut"})
+        assert result["verified"] and operator_entries == [target.name]
+        assert not target.modifiers and proof._object_state(cutter) == cutter_before
+        assert tuple(target.data.materials) == (bpy.data.materials["Shared Slot Success Target Finish"],)
+        assert all(poly.material_index == 0 for poly in target.data.polygons)
+        assert len(target.data.vertices) != 0 and proof._object_state(target)[11][1] != target_before[11][1]
+        return {"cases": cases, "shared_slot_same_material_id_success": True, "native_operation_entries": len(operator_entries),
+                "removed_modifier_identity": modifier_identity, "target_bindings_unchanged": True,
+                "cutter_full_stored_state_preserved": True, "native_material_research_profiles": native_profiles}
+    finally:
+        proof.Boundary.sources, proof.Boundary.native_apply = original_sources, original_native
 
 
 def main():
@@ -181,12 +319,14 @@ def main():
     target.scale = (2., 3., 1.)
     transform_applied = call("transform.apply", target, scale=True)
     assert tuple(target.scale) == (1., 1., 1.) and not target.modifiers
+    boolean_evidence = boolean_material_boundaries(runtime, scene, grants)
     assert protected.location.x == 41.
     assert tuple(obj.as_pointer() for obj in bpy.context.selected_objects) == selection
     assert bpy.context.view_layer.objects.active == active
     print("BLENDER_CODEX_OBJECT_RNA_MUTATIONS_OK " + json.dumps({"blender": bpy.app.version_string, "stops": stops, "measured_rna_recovery": True,
           "native_apply_context_preserved": True, "protected_object_preserved": True, "windows_qualified": False,
           "native_apply_rollback_claimed": False, "manual_interleavings": adversarial, "activation_probe": activation_probe, "rotation_mode_alias_recovery": True,
+          "boolean_material_boundaries": boolean_evidence,
           "native_blocking_seconds": {"modifier": modifier_applied["native_blocking_seconds"], "transform": transform_applied["native_blocking_seconds"]}}, sort_keys=True))
     blender_codex_bridge.unregister()
 

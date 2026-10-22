@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib
+from contextlib import nullcontext
 from types import SimpleNamespace as NS
 
 import pytest
@@ -335,3 +336,165 @@ def test_last_permission_provider_cannot_disable_the_toolset_then_write(env):
         guard.apply(owned, (env.rna.RNAAssignment("width", 2.),))
     assert caught.value.code == "TOOLSET_DISABLED" and owned.width == 1.
     assert not caught.value.context["execution_started"]
+
+
+@pytest.fixture
+def boolean_apply(env, addon_package, monkeypatch):
+    module = importlib.import_module(f"{addon_package}.tools.modifiers")
+    _mesh(env)
+    material = RNA(name="Shared Finish", users=2, session_uid=101)
+    env.obj.data.materials = [material]
+    env.obj.material_slots = [NS(link="DATA", material=material)]
+    cutter_data = RNA(**vars(env.obj.data))
+    cutter_data.name, cutter_data.session_uid = "Cutter Mesh", 11
+    cutter_data.materials, cutter_data.animation_data = [material], None
+    cutter_data.polygons = []
+    cutter = RNA(**vars(env.obj))
+    cutter.name, cutter.session_uid, cutter.data = "Cutter", 2, cutter_data
+    cutter.users, cutter.parent = 1, None
+    cutter.material_slots, cutter.modifiers, cutter.constraints = [NS(link="DATA", material=material)], Components(), Components()
+    cutter.instance_type, cutter.rigid_body = "NONE", None
+    env.bpy.data.objects.append(cutter)
+    modifier = env.obj.modifiers.new(name="Owned Boolean", type="BOOLEAN")
+    modifier.operand_type, modifier.object = "OBJECT", cutter
+    modifier.material_mode, modifier.solver = "INDEX", "EXACT"
+    modifier.bl_rna.properties["operand_type"] = prop("operand_type", "ENUM")
+    modifier.bl_rna.properties["object"] = prop("object", "POINTER")
+    modifier.bl_rna.properties["material_mode"] = prop("material_mode", "ENUM")
+    modifier.bl_rna.properties["solver"] = prop("solver", "ENUM")
+    env.context.registry.register("modifier.apply", lambda *_: None, permissions=("TRANSFORM_OBJECTS",), toolset="objects", modifies=True)
+    calls = []
+
+    class Apply:
+        def poll(self):
+            return True
+
+        def __call__(self, **params):
+            calls.append(params)
+            env.obj.modifiers.remove(modifier)
+            return {"FINISHED"}
+
+    env.bpy.ops = NS(object=NS(modifier_apply=Apply()))
+    env.bpy.context.temp_override = lambda **_: nullcontext()
+    monkeypatch.setattr(module, "require_blender", lambda: env.bpy)
+    monkeypatch.setattr(module, "_object", lambda _: env.obj)
+    monkeypatch.setattr(module, "clear_selection_references", lambda _: None)
+    env.modifiers_module, env.cutter, env.modifier, env.native_calls = module, cutter, modifier, calls
+    return env
+
+
+@pytest.mark.parametrize("bindings", ["foreign", "zero", "same_name", "null", "duplicate"])
+def test_boolean_material_conversion_is_refused_before_native_apply(boolean_apply, bindings):
+    case = boolean_apply
+    material = RNA(name="Finish", users=1, session_uid=101)
+    case.obj.data.materials = [material]
+    case.obj.material_slots = [NS(link="DATA", material=material)]
+    other = RNA(name="Finish", users=1, session_uid=102)
+    chosen = {"foreign": [other], "zero": [], "same_name": [other], "null": [None], "duplicate": [material, material]}[bindings]
+    case.cutter.data.materials = chosen
+    case.cutter.material_slots = [NS(link="DATA", material=item) for item in chosen]
+    before = case.module._object_state(case.obj)
+    with pytest.raises(case.module.BridgeError) as error:
+        case.modifiers_module.apply_modifier(case.context, {"object_name": case.obj.name, "modifier_name": case.modifier.name})
+    assert error.value.code == "NOT_IMPLEMENTED"
+    assert not case.native_calls and case.obj.modifiers.get(case.modifier.name) is case.modifier
+    assert case.module._object_state(case.obj) == before
+    assert case.cutter.data.materials == chosen
+
+
+@pytest.mark.parametrize("dependency", ["collection", "empty", "missing", "modifier", "constraint", "parent", "animation", "data_animation", "shape_keys", "instance", "rigid_body", "field"])
+def test_boolean_unreviewed_operand_dependencies_are_refused_before_native_apply(boolean_apply, dependency):
+    case = boolean_apply
+    if dependency == "collection":
+        case.modifier.operand_type = "COLLECTION"
+    elif dependency == "empty":
+        case.cutter.type = "EMPTY"
+    elif dependency == "missing":
+        case.modifier.object = None
+    elif dependency == "modifier":
+        case.cutter.modifiers.new()
+    elif dependency == "constraint":
+        case.cutter.constraints.new()
+    elif dependency == "parent":
+        case.cutter.parent = case.obj
+    elif dependency == "animation":
+        case.cutter.animation_data = object()
+    elif dependency == "data_animation":
+        case.cutter.data.animation_data = object()
+    elif dependency == "shape_keys":
+        case.cutter.data.shape_keys = object()
+    elif dependency == "instance":
+        case.cutter.instance_type = "FACES"
+    elif dependency == "rigid_body":
+        case.cutter.rigid_body = object()
+    else:
+        case.cutter.field = NS(type="FORCE")
+    with pytest.raises(case.module.BridgeError) as error:
+        case.modifiers_module.apply_modifier(case.context, {"object_name": case.obj.name, "modifier_name": case.modifier.name})
+    assert error.value.code == "NOT_IMPLEMENTED"
+    assert not case.native_calls and case.obj.modifiers.get(case.modifier.name) is case.modifier
+
+
+def test_boolean_exact_shared_material_id_static_operand_can_apply(boolean_apply):
+    case = boolean_apply
+    result = case.modifiers_module.apply_modifier(case.context, {"object_name": case.obj.name, "modifier_name": case.modifier.name})
+    assert result["verified"] and len(case.native_calls) == 1
+    assert not case.obj.modifiers and case.cutter.data.materials == case.obj.data.materials
+
+
+@pytest.mark.parametrize("change", ["target_object_link", "source_object_link", "source_index", "target_index", "material_mode", "solver", "target_zero", "target_multiple", "target_null"])
+def test_boolean_unreviewed_binding_profiles_are_refused_before_native_apply(boolean_apply, change):
+    case = boolean_apply
+    if change == "target_object_link":
+        case.obj.material_slots[0].link = "OBJECT"
+    elif change == "source_object_link":
+        case.cutter.material_slots[0].link = "OBJECT"
+    elif change == "source_index":
+        case.cutter.data.polygons.append(NS(material_index=1, vertices=(), loop_start=0, loop_total=0))
+    elif change == "target_index":
+        case.obj.data.polygons.append(NS(material_index=1, vertices=(), loop_start=0, loop_total=0))
+    elif change == "material_mode":
+        case.modifier.material_mode = "TRANSFER"
+    elif change == "solver":
+        case.modifier.solver = "FAST"
+    elif change == "target_zero":
+        case.obj.data.materials, case.obj.material_slots = [], []
+    elif change == "target_multiple":
+        case.obj.data.materials *= 2
+        case.obj.material_slots *= 2
+    else:
+        case.obj.data.materials[0], case.obj.material_slots[0].material = None, None
+    with pytest.raises(case.module.BridgeError) as error:
+        case.modifiers_module.apply_modifier(case.context, {"object_name": case.obj.name, "modifier_name": case.modifier.name})
+    assert error.value.code == "NOT_IMPLEMENTED"
+    assert not case.native_calls and case.obj.modifiers.get(case.modifier.name) is case.modifier
+
+
+@pytest.mark.parametrize("change", ["binding", "data", "replacement"])
+def test_final_boolean_provider_cannot_replace_or_rebind_frozen_operand(boolean_apply, change):
+    case = boolean_apply
+    retained = []
+
+    def manual():
+        if retained:
+            return
+        if change == "binding":
+            material = RNA(name="Manual Material", users=1, session_uid=103)
+            case.cutter.data.materials.append(material)
+        elif change == "data":
+            replacement = RNA(**vars(case.cutter.data))
+            replacement.session_uid = 12
+            case.cutter.data = replacement
+        else:
+            replacement = RNA(**vars(case.cutter))
+            replacement.session_uid = 3
+            case.bpy.data.objects.remove(case.cutter)
+            case.bpy.data.objects.append(replacement)
+        retained.append((case.cutter.data, tuple(case.cutter.data.materials), tuple(case.bpy.data.objects)))
+
+    case.provider[0] = manual
+    with pytest.raises(case.module.BridgeError):
+        case.modifiers_module.apply_modifier(case.context, {"object_name": case.obj.name, "modifier_name": case.modifier.name})
+    assert retained and not case.native_calls
+    assert (case.cutter.data, tuple(case.cutter.data.materials), tuple(case.bpy.data.objects)) == retained[0]
+    assert case.obj.modifiers.get(case.modifier.name) is case.modifier
