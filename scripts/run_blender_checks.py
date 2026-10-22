@@ -110,6 +110,8 @@ CASES = {
     "portable_blend_writer_probe": ("blender_portable_blend_worker_probe_smoke.py", "BLENDER_PORTABLE_BLEND_WORKER_WRITER_OK "),
     "portable_blend_worker_probe": ("blender_portable_blend_worker_probe_smoke.py", "BLENDER_PORTABLE_BLEND_WORKER_WORKER_OK "),
     "portable_blend_reader_probe": ("blender_portable_blend_worker_probe_smoke.py", "BLENDER_PORTABLE_BLEND_WORKER_READER_OK "),
+    "rigid_startup_defaults_probe": ("blender_rigid_startup_defaults_probe_smoke.py", "BLENDER_RIGID_STARTUP_DEFAULTS_PROBE_OK "),
+    "rigid_scope_profile_probe": ("blender_rigid_scope_profile_probe_smoke.py", "BLENDER_RIGID_SCOPE_PROFILE_PROBE_OK "),
 }
 # Each phase must exit successfully before a new process can consume its artifacts.
 PHASED_CASES = {
@@ -154,6 +156,8 @@ PORTABLE_BLEND_RESEARCH_PHASES = {
     "portable_blend_reader_probe": "reader",
 }
 OPT_IN_CASES.update(PORTABLE_BLEND_RESEARCH_PHASES)
+OPT_IN_CASES.add("rigid_startup_defaults_probe")
+OPT_IN_CASES.add("rigid_scope_profile_probe")
 INTERACTIVE_CASES = {"undo_lifecycle", "mesh_edit_recovery", "mesh_repair", "uv_authoring", "prop_workflow", "uv_analysis", "mesh_analysis", "image_assets", "shader_groups", "undo_capacity", "shader_settings", "image_revisions", "field_scanner", "texture_paint"}
 
 
@@ -175,6 +179,8 @@ INTERACTIVE_CASES.add("shader_interface")
 INTERACTIVE_CASES.add("image_recovery_jobs")
 INTERACTIVE_CASES.add("image_recovery_jobs_large")
 INTERACTIVE_CASES.update({"portable_blend_writer_probe", "portable_blend_reader_probe"})
+INTERACTIVE_CASES.add("rigid_startup_defaults_probe")
+INTERACTIVE_CASES.add("rigid_scope_profile_probe")
 
 
 def success_payload(output: str, marker: str) -> dict | None:
