@@ -1664,3 +1664,32 @@ disconnect partials without illegal compensation, and native handler/getter reje
 invocation. It neither renders nor saves. The full UX-01 benchmark, visual reference understanding,
 wider protected authoring, protected authorized save/delivery, Windows and all release acceptance
 remain open. No version, release, package publication or requirement acceptance changes here.
+
+
+### 2026-10-22 — Retained checkpoint admission and bounded delivery research
+
+Scene and render increments retain request identity and one authored comparison plan
+before callbacks, through native checkpoint pushes and handler finalization. Marker
+updates compare exact ownership and preserve newer values. Custom-property evidence
+retains exposed scalar types and finite float signs. Production guarded batches
+require reviewed composition; current Scene/render composition refuses before writes.
+See [Scene scope](scene-edit-safety.md) and [render scope](render-boundaries.md).
+Scene success still reports unread bundled runtime settings; the exact reviewed
+Blender 5.2 render profile refuses because a supported read-only hidden-storage
+reader is not proven. These changes advance safety without closing the mutator audit.
+
+Three typed rigid-body inspect/preview/cache tools remain bounded to their documented
+whole-world profile. Private Mesh/UV and external WindowManager-role projections are
+comparison research and do not expand production admission or provide backups.
+The [fresh-worker serialization probe](portable-blend-worker-research.md) restores
+original per-ID fake-user flags and compares a tiny static asset with packed 2×2
+images after a fresh reopen. Blender 4.5 camera serialization's compatibility
+conversion is reported explicitly. This is neither complete-project preservation nor
+an OS/network-contained production save backend; public project.save stays unavailable.
+
+The combined development registry has 258 tools. Per-increment receipts retain their
+own source fingerprints, failures and selected Linux results. Combined clean-source,
+package and CI checks require separate receipts; previous source passes are not
+combined into a current full native verdict. All fourteen release requirements remain
+open, including Windows 11, installed scenarios A–F, safe saving, production delivery,
+memory-pressure recovery and visual artist acceptance. No release date or 1.0 publication.
