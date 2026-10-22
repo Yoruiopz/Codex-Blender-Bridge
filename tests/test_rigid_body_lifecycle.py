@@ -22,7 +22,8 @@ def rigid_case(addon_package, monkeypatch):
                is_outdated=False, is_frame_skip=False, use_disk_cache=False, use_external=False,
                use_library_path=True, filepath="", name="", index=-1, info="")
     physics = NS(samples={}, resets=0, writes=[], intervals=[], native_calls=[], frame_calls=[],
-                 after_native=None, poll_hook=None, frame_hook=None, incomplete=False, fail_native=False)
+                 after_native=None, poll_hook=None, frame_hook=None, incomplete=False, fail_native=False,
+                 view_layer_updates=0, graph_gets=0)
 
     class World:
         point_cache = cache
@@ -89,9 +90,16 @@ def rigid_case(addon_package, monkeypatch):
                 raise RuntimeError("native bake failed after partial work")
             return {"FINISHED"}
 
-    view_layer = NS(objects=NS(active="SENTINEL"), update=lambda: None)
+    def update_view_layer():
+        physics.view_layer_updates += 1
+
+    def get_graph():
+        physics.graph_gets += 1
+        return object()
+
+    view_layer = NS(objects=NS(active="SENTINEL"), update=update_view_layer)
     ctx = NS(scene=scene, view_layer=view_layer, active_object="SENTINEL", selected_objects=["SENTINEL"],
-             mode="OBJECT", evaluated_depsgraph_get=lambda: object())
+             mode="OBJECT", evaluated_depsgraph_get=get_graph)
 
     @contextmanager
     def override(**kwargs):
@@ -533,3 +541,90 @@ def test_canonical_pure_queue_hook_rechecks_after_expensive_scope_read(rigid_cas
     assert caught.value.code == "TIMEOUT" and not caught.value.context["execution_started"]
     assert not case.physics.resets and not case.physics.frame_calls and not case.physics.native_calls
     assert caught.value.context["primary_error"]["context"]["cancellation_requested" if stop == "queued_cancel" else "deadline_expired"]
+
+
+@pytest.mark.parametrize("stage", ["scene_frame_set", "view_layer_update", "evaluated_depsgraph_get",
+                                   "cache_range_setter", "same_value_world_reset", "native_bake"])
+@pytest.mark.parametrize("when", ["before", "after"])
+@pytest.mark.parametrize("stop", ["queued_cancel", "queued_expiry", "disconnect", "pause", "emergency", "toolset", "job_cancel"])
+def test_every_native_tail_stops_at_its_own_boundary_without_late_readback(
+    rigid_case, monkeypatch, addon_package, stage, when, stop,
+):
+    case = rigid_case
+    queue_module = importlib.import_module(f"{addon_package}.command_queue")
+    protocol = importlib.import_module(f"{addon_package}.protocol")
+    params = case.proposal()
+    queued = queue_module.QueuedRequest(protocol.Request(id="native-stage-owner", method="rigid_body.cache", params=params))
+    assert queued.try_start()
+    case.context.check_cancelled = case.context.check_final_request = queued.check_active
+    canceled = [False]
+
+    def final_job():
+        if canceled[0]:
+            raise case.errors.BridgeError(case.errors.ErrorCode.TIMEOUT, "Canceled inside a native tail")
+
+    case.context.check_final_job = final_job
+    original = case.module._Boundary._native_interval
+    capture = case.module.scope.snapshot
+    reads = []
+    fired = []
+    entries = []
+
+    def snapshot(*args):
+        reads.append(True)
+        return capture(*args)
+
+    def revoke():
+        if stop == "queued_cancel":
+            queued.cancel_pending(case.errors.BridgeError(case.errors.ErrorCode.TIMEOUT, "Canceled inside a native tail"))
+        elif stop == "queued_expiry":
+            queued.deadline = 0.
+        elif stop == "disconnect":
+            owner = case.lifecycle.ConnectionLifetime()
+            owner.disconnected.set()
+            case.context.request_lifecycle.connection = owner
+        elif stop == "pause":
+            case.context.state.set_paused(True)
+        elif stop == "emergency":
+            case.context.state.set_emergency_stopped(True)
+        elif stop == "toolset":
+            case.registry.disable_toolset("simulation")
+        else:
+            canceled[0] = True
+        fired.append(len(reads))
+
+    def interval(self, current, callback):
+        if current == stage and when == "before" and not fired:
+            revoke()
+
+        def observed():
+            entries.append(current)
+            result = callback()
+            if current == stage and when == "after" and not fired:
+                revoke()
+            return result
+
+        return original(self, current, observed)
+
+    monkeypatch.setattr(case.module.scope, "snapshot", snapshot)
+    monkeypatch.setattr(case.module._Boundary, "_native_interval", interval)
+    with pytest.raises(case.errors.BridgeError) as caught:
+        case.module.cache(case.context, params)
+    assert fired and len(reads) == fired[0]  # No readback/recovery capture after owner/stop latch.
+    assert entries.count(stage) == (when == "after")
+    assert not caught.value.context["frame_recovery"]["attempted"]
+    assert not caught.value.context["frame_recovery"]["verified"]
+    assert caught.value.context["possible_mutation"] == (stage != "cache_range_setter" or when == "after")
+    assert caught.value.context["cache_operation_started"] == (stage == "native_bake" and when == "after")
+    expected_code = {"pause": "AGENT_PAUSED", "emergency": "EMERGENCY_STOPPED", "toolset": "TOOLSET_DISABLED"}.get(stop, "TIMEOUT")
+    assert caught.value.code == expected_code
+    if stage == "scene_frame_set":
+        assert case.physics.view_layer_updates == case.physics.graph_gets == 0
+        assert not case.physics.native_calls
+        assert (case.scene.frame_current, case.scene.frame_subframe) == ((1, 0.) if when == "after" else (7, .25))
+    elif stage == "view_layer_update":
+        assert case.physics.view_layer_updates == (when == "after")
+        assert case.physics.graph_gets == 0 and not case.physics.native_calls
+    elif stage == "evaluated_depsgraph_get":
+        assert case.physics.view_layer_updates == 1 and case.physics.graph_gets == (when == "after")
+        assert not case.physics.native_calls

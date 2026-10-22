@@ -257,3 +257,38 @@ The reports from earlier attempts remain separate, including corrections to
 getter-only readonly test properties and the inapplicable RNA requirement for
 the bundled Python `users_collection` property. This is bounded development
 evidence; setup authoring, installed qualification and Windows remain open.
+
+## Native evaluation boundaries
+
+Frame evaluation contains three separate native calls: `Scene.frame_set`,
+`ViewLayer.update` and `evaluated_depsgraph_get`. Each now checks canonical
+request/job lifetime and local pause/stop/toolset state immediately before and
+after its own nonpreemptible tail. Cancellation during the first call blocks
+entry to the next call. Cache setters, world invalidation and native bake/free
+invocations use the same guarded interval. Their exact native targets are
+resolved before the last full scope comparison; no permission provider is run
+after that comparison. The execution flags are set only inside the guarded
+callback, so refusal before native entry does not claim the call started.
+
+A stopped owner leaves already published frame/cache effects in place. The
+domain avoids another heavy publication snapshot when its final pure guard
+already refuses further work, reports possible partial effects and refuses
+compensation. It does not claim that stopping a request rolls back a completed
+native call or restores the caller's time.
+
+The registered native fixture injects canonical queued cancellation and expiry
+before and after actual frame-set and view-layer-update calls. Eight controls
+per runtime measure native stage entries, retained frame/cache state and zero
+subsequent evaluation, bake or recovery entries. Complete detailed evidence is
+written in the runner's owned directory; the bounded success marker carries a
+compact summary and that file's SHA-256. The outer `frame_evaluation` timing is
+retained alongside its three substage timings; nested records are not additive.
+
+Report `build/rigid-native-boundaries-20261022-3/report.json` passes all four
+selected cases on both Linux versions, including the earlier getter and driver
+controls and the fresh-process lifecycle probe. Its 273-file source fingerprint
+is `3b7a22782a0bbe89ab574c76562a8cf36852f5b10f5a7f276de645dcfe9a9176`.
+The first two attempts remain retained as negative runner evidence: expanded
+timings exceeded the bounded marker extraction/fixture marker budget before the
+complete-evidence file and compact marker were introduced. Runner limits were
+not relaxed. Windows and installed release acceptance remain open.

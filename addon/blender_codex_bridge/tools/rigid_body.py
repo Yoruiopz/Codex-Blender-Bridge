@@ -174,29 +174,52 @@ class _Boundary:
         # exact authored/protected readback permits subsequent gated recovery.
         # A failed comparison retains the old CAS and the original exception.
         try:
+            # An expired/stopped owner cannot authorize further recovery. Avoid
+            # another expensive Blender capture merely to reject it afterward.
+            self._final()
             self._accept(owned)
         except Exception:
             LOGGER.exception("Failed native rigid-body call has an unowned or incomplete publication")
 
+    def _native_interval(self, stage: str, callback: Any) -> Any:
+        """One nonpreemptible native tail, guarded independently on both sides."""
+        def checked() -> Any:
+            self._final()
+            return callback()
+
+        result = self._timed(stage, checked)
+        self._final()
+        return result
+
     def range_field(self, field: str, value: int) -> None:
+        cache = self.scene.rigidbody_world.point_cache
         self.check()
         expected = dict(self.expected["owned"])
         old = expected["range"]
         expected["range"] = (value, old[1]) if field == "frame_start" else (old[0], value)
-        self.started = True
+
+        def write() -> None:
+            self.started = True
+            setattr(cache, field, value)
+
         try:
-            setattr(self.scene.rigidbody_world.point_cache, field, value)
+            self._native_interval("cache_range_setter", write)
         except Exception:
             self._failed_publication(expected)
             raise
         self._accept(expected)
 
     def reset(self) -> None:
-        self.check()
-        self.started = True
         world = self.scene.rigidbody_world
+        self.check()
+        value = self.expected["owned"]["time_scale"]
+
+        def write() -> None:
+            self.started = True
+            world.time_scale = value
+
         try:
-            self._timed("same_value_world_reset", lambda: setattr(world, "time_scale", self.expected["owned"]["time_scale"]))
+            self._native_interval("same_value_world_reset", write)
         except Exception:
             self._failed_publication(self.expected["owned"])
             raise
@@ -205,17 +228,24 @@ class _Boundary:
             raise RuntimeError("Native invalidation retained a baked cache")
 
     def frame(self, frame: int, subframe: float = 0.) -> Any:
+        frame_set = self.scene.frame_set
+        update = self.bpy.context.view_layer.update
+        get_graph = self.bpy.context.evaluated_depsgraph_get
         self.check()
         expected = {**self.expected["owned"], "frame": (frame, subframe)}
-        self.started = True
+
+        def set_frame() -> None:
+            self.started = True
+            frame_set(frame, subframe=subframe)
 
         def evaluate() -> Any:
-            self.scene.frame_set(frame, subframe=subframe)
-            self.bpy.context.view_layer.update()
-            return self.bpy.context.evaluated_depsgraph_get()
+            self._native_interval("scene_frame_set", set_frame)
+            self._native_interval("view_layer_update", update)
+            return self._native_interval("evaluated_depsgraph_get", get_graph)
 
         try:
             graph = self._timed("frame_evaluation", evaluate)
+            self._final()
         except Exception:
             self._failed_publication(expected)
             raise
@@ -232,9 +262,13 @@ class _Boundary:
             if not operator.poll():
                 raise BridgeError(ErrorCode.BLENDER_CONTEXT_ERROR, "Native rigid-body point-cache operator is unavailable in the exact cache context.")
             self.check()
-            self.started = self.native_started = True
+
+            def invoke() -> Any:
+                self.started = self.native_started = True
+                return operator("EXEC_DEFAULT", **({"bake": True} if operation == "BAKE" else {}))
+
             try:
-                status = self._timed(f"native_{operation.lower()}", lambda: operator("EXEC_DEFAULT", **({"bake": True} if operation == "BAKE" else {})))
+                status = self._native_interval(f"native_{operation.lower()}", invoke)
             except Exception:
                 self._failed_publication(self.expected["owned"])
                 raise
@@ -250,7 +284,9 @@ class _Boundary:
             matrices = {}
             for object_name in self.expected["body_names"]:
                 obj = self.bpy.data.objects[object_name]
+                self._final()
                 values = tuple(float(value) for row in obj.evaluated_get(graph).matrix_world for value in row)
+                self._final()
                 if len(values) != 16 or not all(math.isfinite(value) for value in values):
                     raise RuntimeError("Rigid-body evaluation returned a nonfinite or incomplete matrix")
                 matrices[object_name] = values

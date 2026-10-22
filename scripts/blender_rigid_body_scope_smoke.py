@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -214,6 +216,84 @@ def main():
                 finally:
                     scope.snapshot = capture
 
+    # Each inner stage invokes a real native call. Cancellation is injected only
+    # after that call returns (or just before its guarded invocation), without
+    # replacing Blender's Scene/ViewLayer/dependency-graph implementations.
+    native_stage_stops = []
+    original_interval = rigid_body._Boundary._native_interval
+    capture = scope.snapshot
+    for signal in ("cancel", "expiry"):
+        for target_stage in ("scene_frame_set", "view_layer_update"):
+            for when in ("before", "after"):
+                proposal = prepared("BAKE")
+                protected_before = scope.snapshot(bpy, scene, params)["protected"]
+                cache_before = scope.cache_state(scene.rigidbody_world.point_cache)
+                request = Request(id=f"rigid-native-{signal}-{target_stage}-{when}",
+                                  method="rigid_body.cache", params=proposal, _lifecycle=RequestLifetime.local())
+                queued = QueuedRequest(request)
+                assert queued.try_start()
+                entries, stopped, reads = [], [], []
+                cache_at_stop = []
+
+                def counted_capture(*args, reads=reads):
+                    reads.append(True)
+                    return capture(*args)
+
+                def revoke(*, signal=signal, queued=queued, stopped=stopped, reads=reads, cache_at_stop=cache_at_stop):
+                    if signal == "cancel":
+                        queued.cancel_pending(BridgeError("TIMEOUT", "Injected canonical cancellation between native evaluations"))
+                    else:
+                        queued.deadline = 0.
+                    stopped.append(len(reads))
+                    cache_at_stop.append(scope.cache_state(scene.rigidbody_world.point_cache))
+
+                def guarded_interval(self, stage, callback, *, target_stage=target_stage, when=when,
+                                     stopped=stopped, entries=entries, revoke=revoke):
+                    if stage == target_stage and when == "before" and not stopped:
+                        revoke()
+
+                    def observed():
+                        entries.append(stage)
+                        result = callback()  # Actual bounded native setter/evaluation.
+                        if stage == target_stage and when == "after" and not stopped:
+                            revoke()
+                        return result
+
+                    return original_interval(self, stage, observed)
+
+                scope.snapshot = counted_capture
+                rigid_body._Boundary._native_interval = guarded_interval
+                try:
+                    response = runtime.executor.execute_request(request, check_cancelled=queued.check_active)
+                    assert not response.ok and response.error["code"] == "TIMEOUT", response
+                    details = response.error["context"]
+                    assert stopped and len(reads) == stopped[0]
+                    assert entries.count(target_stage) == (when == "after")
+                    assert not details["cache_operation_started"] and details["possible_mutation"]
+                    assert not details["frame_recovery"]["attempted"] and not details["frame_recovery"]["verified"]
+                    assert "native_bake" not in entries and "evaluated_depsgraph_get" not in entries
+                    if target_stage == "scene_frame_set":
+                        assert "view_layer_update" not in entries
+                    expected_frame = (7, .25) if target_stage == "scene_frame_set" and when == "before" else (1, 0.)
+                    assert (scene.frame_current, scene.frame_subframe) == expected_frame
+                    assert not scene.rigidbody_world.point_cache.is_baked
+                    cache_after = scope.cache_state(scene.rigidbody_world.point_cache)
+                    assert cache_after == cache_at_stop[0]
+                    assert capture(bpy, scene, params)["protected"] == protected_before
+                    native_stage_stops.append({"signal": signal, "stage": target_stage, "when": when,
+                        "canonical_queued_request": True, "actual_native_stage_entries": entries,
+                        "domain_scope_readbacks_after_stop": len(reads)-stopped[0],
+                        "retained_frame": list(expected_frame), "cache_before": cache_before,
+                        "cache_at_stop": cache_at_stop[0], "cache_after_response": cache_after,
+                        "protected_authored_state_preserved": True, "error": response.error})
+                finally:
+                    scope.snapshot = capture
+                    rigid_body._Boundary._native_interval = original_interval
+                # This is an explicit fixture repair after the stopped request
+                # ended, not an authorized production compensation.
+                scene.frame_set(7, subframe=.25)
+                assert context_state() == before
+
     # The real registered executor/history path above is separate from the
     # following domain fault harness, which injects a custom live context.
     def call(method, proposal):
@@ -368,7 +448,7 @@ def main():
         rigid_body._Boundary._timed = original_timed
     assert context_state() == before and scene.rigidbody_world.point_cache.is_baked
     execute("FREE")
-    print("BLENDER_RIGID_BODY_SCOPE_OK " + json.dumps({"blender_version": bpy.app.version_string,
+    complete_evidence = {"blender_version": bpy.app.version_string,
           "inventory": inventory, "base_vertices": snapshot["base_vertices"],
           "whole_world_names_verified": True, "protected_mesh_change_detected": True,
           "scope_reads_preserved_context": True, "rejections": rejections,
@@ -376,13 +456,35 @@ def main():
           "native_checkpoint_scene_reference": native_checkpoint_reference,
           "canonical_queue_final_hook_available": queue_final_hook_available,
           "canonical_queue_scope_stop_evidence": queued_scope_stops,
+          "canonical_queue_native_stage_stops": native_stage_stops,
           "typed_cache_lifecycle": {"first_bake": first_bake, "first_free": first_free,
                                     "changed_gravity_bake": zero_bake, "second_free": second_free,
                                     "invalidation": invalidated},
           "permission_denied_before_writes": True, "live_stop_evidence": live_stops,
           "owner_revocation_inside_live_provider": owner_failures,
           "post_native_failure": post_native_failure,
-          "release_readiness": "NOT_ASSESSED"}), flush=True)
+          "release_readiness": "NOT_ASSESSED"}
+    full_path = Path(tempfile.gettempdir()) / "rigid-body-scope-complete-evidence.json"
+    full_bytes = (json.dumps(complete_evidence, indent=2)+"\n").encode()
+    full_path.write_bytes(full_bytes)
+
+    def compact(raw):
+        if isinstance(raw, dict):
+            result = {key: compact(value) for key, value in raw.items() if key != "native_intervals"}
+            if "native_intervals" in raw:
+                intervals = raw["native_intervals"]
+                result["native_interval_summary"] = {"records": len(intervals),
+                    "maximum_record_seconds": max((row["seconds"] for row in intervals), default=0.),
+                    "complete_records_retained_in_evidence_file": True,
+                    "nested_timing_records_are_not_additive": True}
+            return result
+        return [compact(value) for value in raw] if isinstance(raw, list) else raw
+
+    evidence = {**compact(complete_evidence), "complete_evidence_file": str(full_path),
+                "complete_evidence_file_sha256": hashlib.sha256(full_bytes).hexdigest()}
+    payload = json.dumps(evidence, separators=(",", ":"))
+    assert len(payload.encode()) < 60000, "Keep the runner's bounded marker extraction intact"
+    print("BLENDER_RIGID_BODY_SCOPE_OK " + payload, flush=True)
 
 
 if __name__ == "__main__":
