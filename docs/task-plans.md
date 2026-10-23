@@ -57,8 +57,9 @@ an explicit protected comparison can add a new observation without making that o
 current. Replacing/loading/clearing/resetting a plan discards the journal entirely.
 Saved schema-v1 stays passive and never includes receipts or observation IDs.
 
-The sidebar separates claimed step marks, execution outcomes and protected-only
-observation validity. No operation or comparison implicitly completes a step.
+The sidebar separates claimed step marks, execution outcomes, protected-only
+observation validity and historical target core-channel results. No operation or
+comparison implicitly completes a step.
 Portable tests cover the receipt and invalidation boundaries. The extended native
 `artist_loop` fixture passed on Linux Blender 4.5.14 and 5.2.2 at frozen source
 `cdbc1c5`; real manual undo/redo and known recovery are exercised separately by
@@ -85,9 +86,16 @@ its existing failure audit. The existing journal's top-level
 observations; `target_observation_scope=authored_core_transform_channels`
 labels the separate target evidence, and the target record has its own scope.
 Both kinds of observation remain historical and report
-`current_scene_verified=false` during inspection. Sidebar protected-observation
-displays do not imply target or artistic
-acceptance.
+`current_scene_verified=false` during inspection. The sidebar puts the **Target
+core channels:** heading and its status on separate lines, formatting the latest
+public receipt: a recorded match, difference, missing target or replacement
+remains historical. Stale evidence
+takes priority; unavailable expectations, not-yet-verified targets and absent
+legacy expectations receive distinct labels, while malformed or unknown records
+show unavailable evidence. This presentation adds no plan inspection,
+native/context read, verification, capture or save, and does not change protected
+observations or claimed completion. See the
+[sidebar evidence boundary](artist-target-verification.md#sidebar-evidence).
 
 The first target profile requires an unchanged rotation mode and compares only
 location, rotation mode, Euler/quaternion/axis-angle channels and scale. Unsupported

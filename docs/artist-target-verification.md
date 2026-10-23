@@ -116,6 +116,45 @@ observation is a historical fact, not a fresh native read. Manual edits require
 another explicit verification. Saved schema-v1 plan text includes none of this
 runtime evidence or authority.
 
+## Sidebar evidence
+
+For each displayed step with an execution receipt, the artist sidebar formats the
+latest receipt's existing public target evidence under a **Target core channels:**
+heading, with the status on the next line. The protected-object comparison and
+claimed step mark remain separate. The four recorded target statuses describe a
+historical match, difference, missing target or replaced target at explicit
+verification; none certifies the current scene, completes a step or accepts an
+artistic goal.
+
+The fixed reminders also use two lines each: `Step marks are claims;` followed by
+`receipts do not verify the goal`, and `Target records are historical;` followed by
+`verify after manual edits`. These line breaks change presentation only.
+
+The labels describe the retained receipt:
+
+| Receipt evidence | Target core channels label |
+| --- | --- |
+| Recorded `channels_match` | Matched at verification |
+| Recorded `channels_differ` | Differences at verification |
+| Recorded `target_missing` | Target missing at verification |
+| Recorded `target_replaced` | Target replaced at verification |
+| Stale observation or explicitly historical receipt | Stale; verify again |
+| No observation, available expectation | Not verified |
+| No observation, unavailable expectation | Expectation unavailable |
+| No observation and no retained expectation, including older receipts | No retained expectation |
+| Unknown validity, wrong scope or unsupported/malformed record contents | Observation unavailable |
+
+Stale evidence takes priority over a previous recorded result. A recorded outcome
+requires the `authored_core_transform_channels` scope. The display does not
+refresh `current_scene_verified=false`; manual changes require another explicit
+verification.
+
+This display formats the public receipt already available to the sidebar.
+Drawing it does not request another plan inspection, read native target channels
+or context, invoke verification, capture an image or save the project. Portable
+formatter and sidebar-wiring checks establish presentation behavior; they do not
+establish native, visual or installed workflow acceptance.
+
 ## Permissions and acceptance boundary
 
 The method is a read-only `core` tool requiring live `INSPECT_SCENE` permission.

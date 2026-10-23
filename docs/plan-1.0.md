@@ -2011,3 +2011,26 @@ This advances UX-01 while retaining **266 MCP tools**, component versions
 **0.3.0 alpha**, all fourteen requirements OPEN and Windows testing paused.
 Broader target/dependency/visual evidence, protected save, native undo/durable
 recovery, whole artist scenarios and installed A–F remain mandatory.
+
+### 2026-10-23 — Historical target evidence in the artist sidebar
+
+The artist sidebar presents the latest displayed step receipt's existing public
+target observation under a **Target core channels:** heading, with the status on
+the next line. The fixed historical and step-claim reminders each use two short
+lines. These line breaks change presentation only. Recorded matches, differences,
+missing targets and replacements remain historical;
+protected comparison and claimed completion retain their separate meanings.
+Stale evidence takes priority over a previous recorded result. Unavailable
+expectations and targets not yet verified remain distinct, while missing legacy
+fields or unsupported record contents display uncertainty rather than success.
+
+The presentation formats the receipt already available to the sidebar. It adds
+no plan inspection, native/context read, verification, capture, mutation or save.
+Portable formatter and sidebar-wiring checks are the completion gate for this
+bounded UI increment; they do not establish current-scene, visual, installed or
+full artist-workflow acceptance. See [the display boundary](artist-target-verification.md#sidebar-evidence).
+
+This advances UX-01 with **266 MCP tools**, components **0.3.0 alpha**, all fourteen
+release requirements OPEN and Windows testing paused. Protected save, durable
+recovery, broader target/dependency/visual evidence and installed A–F remain
+required.

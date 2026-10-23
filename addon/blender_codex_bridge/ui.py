@@ -1,5 +1,7 @@
 """Codex Bridge 3D View N-panel and explicit user-control operators."""
 
+from typing import TypeGuard
+
 try:
     import bpy  # type: ignore
 except ImportError:  # pragma: no cover
@@ -11,6 +13,60 @@ from .preferences import get_preferences
 from .protocol import PROTOCOL_VERSION
 from .runtime import get_runtime
 from .serialization import dumps
+
+
+def _target_channels_label(receipt: object) -> str:
+    """Format cached public facts without inspecting or refreshing scene state."""
+    def plain_fields(value: object) -> TypeGuard[dict[str, object]]:
+        return (type(value) is dict and len(value) <= 64
+                and all(type(key) is str and len(key) <= 128 for key in value))
+
+    unavailable = "Observation unavailable"
+    if not plain_fields(receipt):
+        return unavailable
+    history = receipt.get("history_state")
+    if history is not None and (type(history) is not str or len(history) > 64):
+        return unavailable
+    if history == "historical_after_generation_change":
+        return "Stale; verify again"
+    if history not in {None, "current_runtime_generation"}:
+        return unavailable
+    observation = receipt.get("target_observation")
+    if observation is not None:
+        if not plain_fields(observation):
+            return unavailable
+        validity = observation.get("validity")
+        if type(validity) is not str or len(validity) > 64:
+            return unavailable
+        if validity == "stale":
+            return "Stale; verify again"
+        scope = observation.get("scope")
+        if validity != "recorded" or type(scope) is not str or scope != "authored_core_transform_channels":
+            return unavailable
+        status = observation.get("status")
+        if type(status) is not str or len(status) > 64:
+            return unavailable
+        if (observation.get("current_scene_verified") is not False
+                or observation.get("user_goal_verified") is not False
+                or observation.get("comparison_complete") is not (status in {"channels_match", "channels_differ"})):
+            return unavailable
+        return {"channels_match": "Matched at verification",
+                "channels_differ": "Differences at verification",
+                "target_missing": "Target missing at verification",
+                "target_replaced": "Target replaced at verification"}.get(status, unavailable)
+    expectation = receipt.get("target_expectation")
+    if expectation is None:
+        return "No retained expectation"
+    if not plain_fields(expectation):
+        return unavailable
+    availability = expectation.get("availability")
+    if type(availability) is not str or len(availability) > 64:
+        return unavailable
+    if availability == "available":
+        return "Not verified"
+    if availability == "unavailable":
+        return "Expectation unavailable"
+    return unavailable
 
 
 def _draw_job(jobs, job):
@@ -370,6 +426,8 @@ if bpy is not None:
                         receipt = receipts[-1]
                         earlier = " (earlier scene state)" if receipt["history_state"] == "historical_after_generation_change" else ""
                         task_box.label(text=f"Last edit: {receipt['outcome'].capitalize()}{earlier}")
+                        task_box.label(text="Target core channels:")
+                        task_box.label(text=_target_channels_label(receipt))
                         observation = receipt["protected_observation"]
                         label = "Not compared"
                         if observation:
@@ -385,7 +443,10 @@ if bpy is not None:
                     task_box.label(text=f"{len(plan['steps']) - 8} more steps; inspect the plan")
                 policy = "enforced" if plan_info["protected_scope_enforced"] else "advisory"
                 task_box.label(text=f"Protected scope: {len(plan['protected_objects'])} objects ({policy})")
-                task_box.label(text="Step marks are claims; receipts do not verify the goal", icon="INFO")
+                task_box.label(text="Step marks are claims;", icon="INFO")
+                task_box.label(text="receipts do not verify the goal")
+                task_box.label(text="Target records are historical;", icon="INFO")
+                task_box.label(text="verify after manual edits")
                 if plan_info["step_evidence"]["incomplete"]:
                     task_box.label(text="Execution receipts incomplete; inspect history", icon="ERROR")
 
