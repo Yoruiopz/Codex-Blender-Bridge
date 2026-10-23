@@ -22,6 +22,7 @@ HELPERS = (
     "scripts.blender_simulation_cache_probe_smoke",
     "scripts.blender_camera_focus_smoke",
     "scripts.blender_animation_curve_sampling_smoke",
+    "scripts.blender_surface_publication_probe",
     "scripts.native_cache_evidence",
 )
 
@@ -55,7 +56,7 @@ def fixture_imports(addon_package, monkeypatch):
     module("blender_codex_bridge.scene_job_reservations", TURN_METHOD="jobs._scene_turn")
     module("blender_codex_bridge.tool_registry", check_final_mutation=forbidden("mutation gate"))
     tools = module("blender_codex_bridge.tools", __path__=[])
-    for name in ("_rigid_body_scope", "_scene_checkpoint_roles"):
+    for name in ("_rigid_body_scope", "_scene_checkpoint_roles", "surface_brushes"):
         setattr(tools, name, module(f"blender_codex_bridge.tools.{name}"))
     tools.rigid_body = module("blender_codex_bridge.tools.rigid_body", _Boundary=type("Boundary", (), {}),
                               PERMISSIONS=(permissions.Permission.EDIT_SCENE,))
@@ -97,6 +98,7 @@ def fixture_imports(addon_package, monkeypatch):
     ("scripts.blender_simulation_cache_probe_smoke", "values"),
     ("scripts.blender_camera_focus_smoke", "main"),
     ("scripts.blender_animation_curve_sampling_smoke", "main"),
+    ("scripts.blender_surface_publication_probe", "main"),
 ])
 def test_importing_helper_fixture_does_not_start_experiment(fixture_imports, name, helper):
     imported = importlib.import_module(name)

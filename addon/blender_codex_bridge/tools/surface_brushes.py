@@ -19,6 +19,7 @@ from typing import Any
 
 from ..errors import BridgeError, ErrorCode, invalid_argument
 from ..permissions import Permission
+from ..tool_registry import check_final_mutation
 from ..utils import bool_param, float_param, int_param, reject_unknown_params, require_blender
 from ._object_safety import require_unkeyed_object_data
 
@@ -27,6 +28,8 @@ MAX_VERTICES, MAX_EDGES, MAX_LOOPS = 100_000, 200_000, 300_000
 MAX_COMPONENTS, MAX_STROKES, MAX_TESTS = 10_000, 32, 500_000
 MAX_ATTRIBUTE_ITEMS, MAX_ATTRIBUTES = 500_000, 16
 MAX_ADJACENCY_TESTS = 2_000_000
+_AUTHORITY_ERRORS = frozenset({ErrorCode.PERMISSION_DENIED.value, ErrorCode.TOOLSET_DISABLED.value,
+                              ErrorCode.TIMEOUT.value, ErrorCode.AGENT_PAUSED.value, ErrorCode.EMERGENCY_STOPPED.value})
 
 
 def _name(raw: Any, label: str) -> str:
@@ -57,30 +60,31 @@ def _vector(raw: Any, label: str, length: int, *, low=-1e9, high=1e9) -> tuple[f
     return tuple(result)
 
 
-def _gate(context: Any, *, modifying=True, deleting=False) -> None:
+def _gate(context: Any, method: str, *, modifying=True, deleting=False) -> None:
     required = [Permission.EDIT_MESH] if modifying else [Permission.INSPECT_SCENE]
     if deleting:
         required.append(Permission.DELETE_OBJECTS)
     context.require(*required)
     if context.check_cancelled:
         context.check_cancelled()
-    if modifying and getattr(context, "state", None) is not None:
-        flags = context.state.snapshot()
-        if flags.get("emergency_stopped"):
-            raise BridgeError(ErrorCode.EMERGENCY_STOPPED, "Surface brush mutation is emergency-stopped.")
-        if flags.get("paused"):
-            raise BridgeError(ErrorCode.AGENT_PAUSED, "Surface brush mutation is paused.")
     context.require(*required)
+    if modifying:
+        check_final_mutation(context, method)
 
 
 def _identity(value: Any) -> int:
     return value.as_pointer() if hasattr(value, "as_pointer") else id(value)
 
 
-def _target(context: Any, raw: Any, *, modifying=True):
+def _target(context: Any, raw: Any, method: str, *, modifying=True):
     name = _name(raw, "object_name")
-    _gate(context, modifying=modifying)
+    _gate(context, method, modifying=modifying)
     bpy = require_blender()
+    return bpy, _target_read(bpy, name, modifying=modifying)
+
+
+def _target_read(bpy: Any, name: str, *, modifying=True):
+    """Revalidate the exact native target without live providers or callbacks."""
     matches = list(islice((obj for obj in bpy.data.objects if obj.name == name), 2))
     if len(matches) != 1:
         raise invalid_argument("Object name is missing or ambiguous; no surface edit attempted.", object_name=name)
@@ -100,7 +104,7 @@ def _target(context: Any, raw: Any, *, modifying=True):
             raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Surface brushes do not guess evaluated/modifier correspondence; use an explicit unmodified base mesh.")
         if getattr(obj, "hide_viewport", False) or (hasattr(obj, "hide_get") and obj.hide_get()):
             raise BridgeError(ErrorCode.INVALID_SELECTION, "Reveal the explicit mesh before surface editing.")
-    return bpy, obj
+    return obj
 
 
 def _digest(values: Any) -> str:
@@ -112,6 +116,11 @@ def _float_digest(values: Any) -> str:
     for value in values:
         digest.update(struct.pack("<f", value))
     return digest.hexdigest()
+
+
+def _same_float_rows(left: list[tuple], right: list[tuple]) -> bool:
+    """Compare native Float32 storage, including the sign of zero."""
+    return len(left) == len(right) and _float_digest(value for row in left for value in row) == _float_digest(value for row in right for value in row)
 
 
 def _positions(obj: Any) -> list[tuple[float, ...]]:
@@ -138,7 +147,7 @@ def _attribute(mesh: Any, raw: Any):
 def _frozen_attribute(mesh: Any, name: str, identity: int, domain: str, data_type: str, colors: list[tuple]):
     current = _attribute(mesh, name)
     if (_identity(current) != identity or current.domain != domain or current.data_type != data_type
-            or _colors(current) != colors):
+            or not _same_float_rows(_colors(current), colors)):
         raise BridgeError(ErrorCode.OPERATION_FAILED, "Target attribute identity/domain/complete values changed before publication; no edit attempted.")
     return current
 
@@ -305,18 +314,21 @@ def _space(obj: Any, positions: list[tuple], space: str):
             lambda result: [_vector(tuple(inverse @ Vector(position)), "local sculpt result", 3) for position in result])
 
 
-def _publication(context: Any, bpy: Any, obj: Any, before: dict, before_positions: list[tuple], *, object_name: str, exclude_color=None, deleting=False, color_ui=True) -> None:
-    _gate(context, deleting=deleting)
+def _publication(context: Any, bpy: Any, obj: Any, before: dict, before_positions: list[tuple], *, method: str, object_name: str, exclude_color=None, deleting=False, color_ui=True) -> None:
+    _gate(context, method, deleting=deleting)
+    # Retain the preliminary live target check, then resolve one coherent final
+    # grant set. Every authoritative native comparison follows these callbacks.
+    _target(context, object_name, method)
+    context.require(Permission.EDIT_MESH, *([Permission.DELETE_OBJECTS] if deleting else []))
+    check_final_mutation(context, method)
     try:
-        _bpy, current = _target(context, object_name)
-        stale = current != obj or _preservation(bpy, obj, exclude_color=exclude_color, color_ui=color_ui) != before or _positions(obj) != before_positions
+        current = _target_read(bpy, object_name)
+        stale = current != obj or _preservation(bpy, obj, exclude_color=exclude_color, color_ui=color_ui) != before or not _same_float_rows(_positions(obj), before_positions)
     except ReferenceError as exc:
         raise BridgeError(ErrorCode.OPERATION_FAILED, "Native surface ID disappeared before publication; reinspect.") from exc
     if stale:
         raise BridgeError(ErrorCode.OPERATION_FAILED, "Surface/context/preservation scope changed before publication; reinspect.")
-    # No callback between these authoritative final permissions and publication.
-    # _target's callback above can itself revoke deletion or alter scope.
-    context.require(Permission.EDIT_MESH, *([Permission.DELETE_OBJECTS] if deleting else []))
+    check_final_mutation(context, method)
 
 
 def _named_consumers(obj: Any, name: str, acknowledged: bool) -> dict:
@@ -362,11 +374,11 @@ def _failure(exc: Exception, object_name: str, started: bool, **extra):
 def sculpt_brush(context: Any, params: Mapping[str, Any]) -> dict:
     reject_unknown_params(params, {"object_name", "vertex_indices", "mask_weights", "strokes", "space"})
     strokes = _strokes(params.get("strokes"))
-    bpy, obj = _target(context, params.get("object_name"))
+    bpy, obj = _target(context, params.get("object_name"), "mesh.sculpt_brush")
     indices, masks, space = _mask(params, obj)
     before_positions, before = _positions(obj), _preservation(bpy, obj)
     positions, to_local = _space(obj, before_positions, space)
-    brushed = sculpt_values(positions, [tuple(edge.vertices) for edge in obj.data.edges], indices, masks, strokes, lambda: _gate(context))
+    brushed = sculpt_values(positions, [tuple(edge.vertices) for edge in obj.data.edges], indices, masks, strokes, lambda: _gate(context, "mesh.sculpt_brush"))
     result = to_local(brushed)
     # Round to the native storage before comparing any protected components.
     expected = array("f", [component for position in result for component in position])
@@ -374,13 +386,14 @@ def sculpt_brush(context: Any, params: Mapping[str, Any]) -> dict:
     for index, position in enumerate(before_positions):
         if index not in allowed:
             expected[index * 3:index * 3 + 3] = array("f", position)
-    _publication(context, bpy, obj, before, before_positions, object_name=params["object_name"])
+    _publication(context, bpy, obj, before, before_positions, method="mesh.sculpt_brush", object_name=params["object_name"])
     started = False
     try:
         started = True
         obj.data.vertices.foreach_set("co", expected)
+        check_final_mutation(context, "mesh.sculpt_brush")
         obj.data.update()
-        _gate(context)
+        _gate(context, "mesh.sculpt_brush")
         actual = array("f", [component for position in _positions(obj) for component in position])
         if actual.tobytes() != expected.tobytes() or _preservation(bpy, obj) != before:
             raise RuntimeError("Sculpt coordinates or protected topology/attributes/context differ from expected")
@@ -402,7 +415,7 @@ def color_create(context: Any, params: Mapping[str, Any]) -> dict:
     if not isinstance(domain, str) or domain not in {"POINT", "CORNER"}:
         raise invalid_argument("Color attribute domain must be POINT or CORNER.")
     color = _vector(params.get("initial_color", [0., 0., 0., 1.]), "initial_color", 4, low=0., high=1.)
-    bpy, obj = _target(context, params.get("object_name"))
+    bpy, obj = _target(context, params.get("object_name"), "color_attribute.create")
     attrs = obj.data.color_attributes
     if obj.data.attributes.get(name) is not None or len(attrs) >= MAX_ATTRIBUTES:
         raise invalid_argument("Attribute name exists or the 16-color-attribute limit is reached.")
@@ -412,34 +425,67 @@ def color_create(context: Any, params: Mapping[str, Any]) -> dict:
     before_positions, before = _positions(obj), _preservation(bpy, obj, color_ui=False)
     existing_count = len(attrs)
     old_active, old_render = attrs.active_color_index, attrs.render_color_index
-    _publication(context, bpy, obj, before, before_positions, object_name=params["object_name"], color_ui=False)
+    _publication(context, bpy, obj, before, before_positions, method="color_attribute.create", object_name=params["object_name"], color_ui=False)
+    # Generic (non-color) attributes share this namespace too. They are not
+    # represented by the color preservation projection.
+    if obj.data.attributes.get(name) is not None or len(attrs) >= MAX_ATTRIBUTES:
+        raise invalid_argument("Attribute destination changed before creation; no allocation attempted.")
+    if (attrs.active_color_index, attrs.render_color_index) != (old_active, old_render):
+        raise BridgeError(ErrorCode.OPERATION_FAILED, "Active/render color roles changed before creation; no allocation attempted.")
+    check_final_mutation(context, "color_attribute.create")
     created, started, created_name = None, False, None
+    created_identity, owned_colors = None, None
+    # The first color may become active; otherwise the promised post-state is
+    # the original roles. Cleanup never adopts a provider-selected newer role.
+    owned_roles = (old_active, old_render) if existing_count else (0, 0)
     try:
         started = True
         created = attrs.new(name=name, type="FLOAT_COLOR", domain=domain)
         created_name = created.name
+        created_identity = _identity(created)
+        # Reviewed native POINT/CORNER FLOAT_COLOR allocation is opaque white.
+        # Accept only that literal owned state; unknown initialization is retained.
+        allocation_colors = [(1., 1., 1., 1.)] * count
+        _frozen_attribute(obj.data, name, created_identity, domain, "FLOAT_COLOR", allocation_colors)
+        owned_colors = allocation_colors
+        check_final_mutation(context, "color_attribute.create")
         created.data.foreach_set("color", array("f", color) * count)
+        initialized_colors = [tuple(array("f", color))] * count
+        _frozen_attribute(obj.data, name, created_identity, domain, "FLOAT_COLOR", initialized_colors)
+        owned_colors = initialized_colors
         if old_active >= 0:
+            check_final_mutation(context, "color_attribute.create")
             attrs.active_color_index = old_active
         if old_render >= 0:
+            check_final_mutation(context, "color_attribute.create")
             attrs.render_color_index = old_render
+        check_final_mutation(context, "color_attribute.create")
         obj.data.update()
-        _gate(context)
-        if created.name != name or _colors(created) != [tuple(array("f", color))] * count:
+        _gate(context, "color_attribute.create")
+        if created.name != name or not _same_float_rows(_colors(created), [tuple(array("f", color))] * count):
             raise RuntimeError("Created color attribute name/full color readback differs")
         if existing_count and (attrs.active_color_index, attrs.render_color_index) != (old_active, old_render):
             raise RuntimeError("Attribute creation changed existing active/render color roles")
-        if _positions(obj) != before_positions or _preservation(bpy, obj, exclude_color=created.name, color_ui=False) != before:
+        if not _same_float_rows(_positions(obj), before_positions) or _preservation(bpy, obj, exclude_color=created.name, color_ui=False) != before:
             raise RuntimeError("Attribute creation changed protected geometry/UV/material/context")
     except Exception as exc:
         cleanup_denied, cleanup_blocked, removed = False, None, False
+        authority_lost = isinstance(exc, BridgeError) and exc.code in _AUTHORITY_ERRORS
         if created is not None:
             with suppress(ReferenceError):
                 created_name = created.name
             try:
-                _publication(context, bpy, obj, before, before_positions, object_name=params["object_name"], exclude_color=created_name, deleting=True, color_ui=False)
+                if authority_lost:
+                    raise exc
+                if owned_colors is None or created_identity is None:
+                    raise BridgeError(ErrorCode.OPERATION_FAILED, "Owned allocation has no verified initialization state; retain it for inspection.")
+                _publication(context, bpy, obj, before, before_positions, method="color_attribute.create", object_name=params["object_name"], exclude_color=created_name, deleting=True, color_ui=False)
                 if attrs.get(created_name) != created:
                     raise BridgeError(ErrorCode.OPERATION_FAILED, "Owned created attribute changed identity before cleanup.")
+                _frozen_attribute(obj.data, name, created_identity, domain, "FLOAT_COLOR", owned_colors)
+                if (attrs.active_color_index, attrs.render_color_index) != owned_roles:
+                    raise BridgeError(ErrorCode.OPERATION_FAILED, "Color roles changed before owned-allocation cleanup; retain the attribute.")
+                check_final_mutation(context, "color_attribute.create")
                 attrs.remove(created)
                 removed = True
             except BridgeError as error:
@@ -453,7 +499,9 @@ def color_create(context: Any, params: Mapping[str, Any]) -> dict:
                     created_name = created.name
         raise _failure(exc, params["object_name"], started, retained_attribute=created_name if created is not None and not removed else None,
                        retained_name_is_last_observed=created is not None and not removed,
-                       cleanup_permission_denied=cleanup_denied, cleanup_blocked_code=cleanup_blocked) from exc
+                       cleanup_permission_denied=cleanup_denied, cleanup_blocked_code=cleanup_blocked,
+                       cleanup_authority_loss_latched=authority_lost,
+                       cleanup_last_verified_owned_state_available=owned_colors is not None) from exc
     return {"object": obj.name, "attribute_name": created.name, "domain": domain, "data_type": "FLOAT_COLOR",
             "entries": count, "complete_color_readback_verified": True, "protected_geometry_uv_materials_context_preserved": True,
             "first_attribute_may_become_active": not existing_count, "verification_required": True}
@@ -461,20 +509,20 @@ def color_create(context: Any, params: Mapping[str, Any]) -> dict:
 
 def color_inspect(context: Any, params: Mapping[str, Any]) -> dict:
     reject_unknown_params(params, {"object_name", "attribute_name", "offset", "max_entries"})
-    _bpy, obj = _target(context, params.get("object_name"), modifying=False)
+    _bpy, obj = _target(context, params.get("object_name"), "color_attribute.inspect", modifying=False)
     attr = _attribute(obj.data, params.get("attribute_name"))
     identity, mesh_identity, object_identity = _identity(attr), _identity(obj.data), _identity(obj)
     frozen_name, frozen_domain, frozen_type, object_name = attr.name, attr.domain, attr.data_type, obj.name
     offset = int_param(params, "offset", 0, minimum=0, maximum=MAX_LOOPS)
     maximum = int_param(params, "max_entries", 32, minimum=1, maximum=64)
     values = _colors(attr)
-    _gate(context, modifying=False)
+    _gate(context, "color_attribute.inspect", modifying=False)
     try:
-        _bpy, current = _target(context, object_name, modifying=False)
+        _bpy, current = _target(context, object_name, "color_attribute.inspect", modifying=False)
         checked = _attribute(current.data, frozen_name)
         stale = (_identity(current) != object_identity or _identity(current.data) != mesh_identity
                  or _identity(checked) != identity or checked.domain != frozen_domain
-                 or checked.data_type != frozen_type or _colors(checked) != values)
+                 or checked.data_type != frozen_type or not _same_float_rows(_colors(checked), values))
     except (BridgeError, ReferenceError) as exc:
         raise BridgeError(ErrorCode.OPERATION_FAILED, "Color inspection scope changed; request a fresh page/digest.", {"stale_evidence": True}) from exc
     if stale:
@@ -490,7 +538,7 @@ def color_inspect(context: Any, params: Mapping[str, Any]) -> dict:
 def color_paint(context: Any, params: Mapping[str, Any]) -> dict:
     reject_unknown_params(params, {"object_name", "attribute_name", "vertex_indices", "mask_weights", "strokes", "space"})
     strokes = _strokes(params.get("strokes"), color=True)
-    bpy, obj = _target(context, params.get("object_name"))
+    bpy, obj = _target(context, params.get("object_name"), "color_attribute.paint")
     attr = _attribute(obj.data, params.get("attribute_name"))
     attribute_name = attr.name
     indices, masks, space = _mask(params, obj)
@@ -499,18 +547,20 @@ def color_paint(context: Any, params: Mapping[str, Any]) -> dict:
     attribute_identity, domain, data_type = _identity(attr), attr.domain, attr.data_type
     positions, _to_local = _space(obj, before_positions, space)
     vertices = list(range(len(obj.data.vertices))) if attr.domain == "POINT" else [loop.vertex_index for loop in obj.data.loops]
-    result = paint_values(colors, vertices, positions, indices, masks, strokes, lambda: _gate(context))
+    result = paint_values(colors, vertices, positions, indices, masks, strokes, lambda: _gate(context, "color_attribute.paint"))
     expected = array("f", [component for color in result for component in color])
-    _publication(context, bpy, obj, before, before_positions, object_name=params["object_name"], exclude_color=attribute_name)
+    _publication(context, bpy, obj, before, before_positions, method="color_attribute.paint", object_name=params["object_name"], exclude_color=attribute_name)
     attr = _frozen_attribute(obj.data, params["attribute_name"], attribute_identity, domain, data_type, colors)
+    check_final_mutation(context, "color_attribute.paint")
     started = False
     try:
         started = True
         attr.data.foreach_set("color", expected)
+        check_final_mutation(context, "color_attribute.paint")
         obj.data.update()
-        _gate(context)
+        _gate(context, "color_attribute.paint")
         actual = array("f", [component for color in _colors(attr) for component in color])
-        if actual.tobytes() != expected.tobytes() or _positions(obj) != before_positions or _preservation(bpy, obj, exclude_color=attribute_name) != before:
+        if actual.tobytes() != expected.tobytes() or not _same_float_rows(_positions(obj), before_positions) or _preservation(bpy, obj, exclude_color=attribute_name) != before:
             raise RuntimeError("Painted colors or protected geometry/attributes/context differ")
     except Exception as exc:
         raise _failure(exc, params["object_name"], started, attribute_name=attribute_name) from exc
@@ -527,7 +577,7 @@ def color_rename(context: Any, params: Mapping[str, Any]) -> dict:
     reject_unknown_params(params, {"object_name", "attribute_name", "new_name", "acknowledge_named_consumers"})
     acknowledged = bool_param(params, "acknowledge_named_consumers", False)
     new_name = _name(params.get("new_name"), "new_name")
-    bpy, obj = _target(context, params.get("object_name"))
+    bpy, obj = _target(context, params.get("object_name"), "color_attribute.rename")
     attr = _attribute(obj.data, params.get("attribute_name"))
     old_name = attr.name
     consumers = _named_consumers(obj, old_name, acknowledged)
@@ -536,12 +586,15 @@ def color_rename(context: Any, params: Mapping[str, Any]) -> dict:
     before_positions, before = _positions(obj), _preservation(bpy, obj, exclude_color=old_name)
     colors = _colors(attr)
     attribute_identity, domain, data_type = _identity(attr), attr.domain, attr.data_type
-    _publication(context, bpy, obj, before, before_positions, object_name=params["object_name"], exclude_color=old_name)
+    _publication(context, bpy, obj, before, before_positions, method="color_attribute.rename", object_name=params["object_name"], exclude_color=old_name)
     attr = _frozen_attribute(obj.data, old_name, attribute_identity, domain, data_type, colors)
+    if obj.data.attributes.get(new_name) is not None:
+        raise invalid_argument("Attribute destination changed before rename; no name changed.")
+    check_final_mutation(context, "color_attribute.rename")
     try:
         attr.name = new_name
-        _gate(context)
-        if attr.name != new_name or _colors(attr) != colors or _positions(obj) != before_positions or _preservation(bpy, obj, exclude_color=new_name) != before:
+        _gate(context, "color_attribute.rename")
+        if attr.name != new_name or not _same_float_rows(_colors(attr), colors) or not _same_float_rows(_positions(obj), before_positions) or _preservation(bpy, obj, exclude_color=new_name) != before:
             raise RuntimeError("Attribute rename/readback or protected fields differ")
     except Exception as exc:
         last_name = old_name
@@ -557,8 +610,8 @@ def color_remove(context: Any, params: Mapping[str, Any]) -> dict:
     acknowledged = bool_param(params, "acknowledge_named_consumers", False)
     if not bool_param(params, "confirm_remove", False):
         raise invalid_argument("confirm_remove=true is required for explicit attribute data loss; named consumers are not rewritten.")
-    _gate(context, deleting=True)
-    bpy, obj = _target(context, params.get("object_name"))
+    _gate(context, "color_attribute.remove", deleting=True)
+    bpy, obj = _target(context, params.get("object_name"), "color_attribute.remove")
     attr = _attribute(obj.data, params.get("attribute_name"))
     name = attr.name
     consumers = _named_consumers(obj, name, acknowledged)
@@ -566,12 +619,13 @@ def color_remove(context: Any, params: Mapping[str, Any]) -> dict:
     colors = _colors(attr)
     attribute_identity, domain, data_type = _identity(attr), attr.domain, attr.data_type
     removed_digest = _float_digest(component for color in colors for component in color)
-    _publication(context, bpy, obj, before, before_positions, object_name=params["object_name"], exclude_color=name, deleting=True, color_ui=False)
+    _publication(context, bpy, obj, before, before_positions, method="color_attribute.remove", object_name=params["object_name"], exclude_color=name, deleting=True, color_ui=False)
     attr = _frozen_attribute(obj.data, name, attribute_identity, domain, data_type, colors)
+    check_final_mutation(context, "color_attribute.remove")
     try:
         obj.data.color_attributes.remove(attr)
-        _gate(context)
-        if obj.data.attributes.get(name) is not None or _positions(obj) != before_positions or _preservation(bpy, obj, color_ui=False) != before:
+        _gate(context, "color_attribute.remove")
+        if obj.data.attributes.get(name) is not None or not _same_float_rows(_positions(obj), before_positions) or _preservation(bpy, obj, color_ui=False) != before:
             raise RuntimeError("Color removal or protected fields differ")
     except Exception as exc:
         raise _failure(exc, params["object_name"], True, removed_attribute=name) from exc

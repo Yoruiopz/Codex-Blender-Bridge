@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import math
+import time
 from types import SimpleNamespace as NS
 from typing import get_type_hints
 
@@ -25,8 +27,11 @@ class Vertices(list):
 
 
 class Colors(list):
+    writes = 0
+
     def foreach_set(self, name, values):
         assert name == "color"
+        self.writes += 1
         for index, item in enumerate(self):
             item.color = tuple(values[index * 4:index * 4 + 4])
 
@@ -36,6 +41,7 @@ class Attributes(list):
 
     def __init__(self, mesh):
         self.mesh = mesh
+        self.allocations = self.removals = 0
         super().__init__()
 
     def get(self, name):
@@ -43,11 +49,16 @@ class Attributes(list):
 
     def new(self, *, name, type, domain):
         count = len(self.mesh.vertices) if domain == "POINT" else len(self.mesh.loops)
-        attribute = NS(name=name, domain=domain, data_type=type, data=Colors(NS(color=(0., 0., 0., 0.)) for _ in range(count)))
+        attribute = NS(name=name, domain=domain, data_type=type, data=Colors(NS(color=(1., 1., 1., 1.)) for _ in range(count)))
         self.append(attribute)
+        self.allocations += 1
         if self.active_color_index < 0:
             self.active_color_index = self.render_color_index = 0
         return attribute
+
+    def remove(self, attribute):
+        super().remove(attribute)
+        self.removals += 1
 
 
 class UVLayers(list):
@@ -460,3 +471,362 @@ def test_removed_native_attribute_after_write_keeps_stable_name_evidence(surface
     with pytest.raises(surface.module.BridgeError) as caught:
         paint(surface)
     assert caught.value.context["attribute_name"] == "Paint" and caught.value.context["possible_mutation"]
+
+
+def publication_provider(surface, monkeypatch, action, *, publication_number=1):
+    """Trigger the provider after preliminary target reads, before final proof."""
+    phase = NS(active=False, number=0, target_reads=0, fired=False)
+    original_publication = surface.module._publication
+    original_target_read = surface.module._target_read
+    original_require = surface.context.require
+
+    def publication(*args, **kwargs):
+        phase.number += 1
+        phase.active, phase.target_reads = True, 0
+        try:
+            return original_publication(*args, **kwargs)
+        finally:
+            phase.active = False
+
+    def target_read(*args, **kwargs):
+        result = original_target_read(*args, **kwargs)
+        if phase.active:
+            phase.target_reads += 1
+        return result
+
+    def require(*permissions):
+        if phase.active and phase.number == publication_number and phase.target_reads and not phase.fired:
+            phase.fired = True
+            action()
+        return original_require(*permissions)
+
+    monkeypatch.setattr(surface.module, "_publication", publication)
+    monkeypatch.setattr(surface.module, "_target_read", target_read)
+    surface.context.require = require
+    return phase
+
+
+def surface_operation(surface, operation):
+    if operation == "sculpt":
+        return lambda: sculpt(surface)
+    if operation == "create":
+        return lambda: create(surface)
+    create(surface)
+    if operation == "paint":
+        return lambda: paint(surface)
+    if operation == "rename":
+        return lambda: surface.module.color_rename(surface.context, {
+            "object_name": "Sculpt", "attribute_name": "Paint", "new_name": "Reviewed",
+            "acknowledge_named_consumers": True})
+    return lambda: surface.module.color_remove(surface.context, {
+        "object_name": "Sculpt", "attribute_name": "Paint", "confirm_remove": True,
+        "acknowledge_named_consumers": True})
+
+
+def publication_counts(surface):
+    return (surface.mesh.vertices.writes, surface.mesh.color_attributes.allocations,
+            surface.mesh.color_attributes.removals,
+            [(attr.name, attr.data.writes) for attr in surface.mesh.color_attributes])
+
+
+@pytest.mark.parametrize("operation", ["sculpt", "create", "paint", "rename", "remove"])
+@pytest.mark.parametrize("change,code", [
+    ("pause", "AGENT_PAUSED"), ("stop", "EMERGENCY_STOPPED"),
+    ("permission", "PERMISSION_DENIED"), ("coordinates", "OPERATION_FAILED"),
+    ("sharing", "NOT_IMPLEMENTED"), ("context", "OPERATION_FAILED"),
+])
+def test_final_provider_changes_refuse_all_surface_mutators_without_writes(surface, monkeypatch, operation, change, code):
+    call = surface_operation(surface, operation)
+    before = publication_counts(surface)
+
+    def provider_change():
+        if change == "pause":
+            surface.flags["paused"] = True
+        elif change == "stop":
+            surface.flags["emergency_stopped"] = True
+        elif change == "permission":
+            surface.grants["EDIT_MESH"] = False
+        elif change == "coordinates":
+            surface.mesh.vertices[1].co = (9., 8., 7.)
+        elif change == "sharing":
+            surface.mesh.users = 2
+        else:
+            surface.bpy.context.view_layer.objects.active = None
+
+    phase = publication_provider(surface, monkeypatch, provider_change)
+    with pytest.raises(surface.module.BridgeError) as caught:
+        call()
+    assert phase.fired and caught.value.code == code
+    assert publication_counts(surface) == before
+    if change == "coordinates":
+        assert surface.mesh.vertices[1].co == (9., 8., 7.)
+    if change == "sharing":
+        assert surface.mesh.users == 2
+    if change == "context":
+        assert surface.bpy.context.view_layer.objects.active is None
+
+
+@pytest.mark.parametrize("operation", ["create", "rename"])
+def test_final_provider_generic_attribute_collision_preserves_destination(surface, monkeypatch, operation):
+    call = surface_operation(surface, operation)
+    attrs, generic = surface.mesh.color_attributes, {}
+    surface.mesh.attributes = NS(get=lambda name: generic.get(name) or attrs.get(name))
+    destination = "Paint" if operation == "create" else "Reviewed"
+    inserted = NS(name=destination, domain="POINT", data_type="FLOAT", values=[.25, .5, .75, 1.])
+    before = publication_counts(surface)
+    phase = publication_provider(surface, monkeypatch, lambda: generic.update({destination: inserted}))
+    with pytest.raises(surface.module.BridgeError) as caught:
+        call()
+    assert phase.fired and caught.value.code == "INVALID_ARGUMENT"
+    assert generic[destination] is inserted and inserted.values == [.25, .5, .75, 1.]
+    assert publication_counts(surface) == before
+
+
+@pytest.mark.parametrize("operation", ["paint", "rename", "remove"])
+def test_final_provider_target_color_changes_are_retained(surface, monkeypatch, operation):
+    call = surface_operation(surface, operation)
+    attr = surface.mesh.color_attributes.get("Paint")
+    before = publication_counts(surface)
+    changed = (.5, .25, .125, 1.)
+    phase = publication_provider(surface, monkeypatch, lambda: setattr(attr.data[0], "color", changed))
+    with pytest.raises(surface.module.BridgeError, match="attribute identity"):
+        call()
+    assert phase.fired and attr.data[0].color == changed
+    assert surface.mesh.color_attributes.get("Paint") is attr
+    assert publication_counts(surface) == before
+
+
+@pytest.mark.parametrize("change", ["cancel", "deadline", "disconnect"])
+def test_final_provider_caller_loss_is_checked_without_another_callback(surface, monkeypatch, change):
+    queue_module = importlib.import_module(surface.module.__package__.rsplit(".", 1)[0] + ".command_queue")
+    protocol = importlib.import_module(surface.module.__package__.rsplit(".", 1)[0] + ".protocol")
+    lifecycle = importlib.import_module(surface.module.__package__.rsplit(".", 1)[0] + ".request_lifecycle")
+    queued = queue_module.QueuedRequest(protocol.Request("surface-owner", "mesh.sculpt_brush", {}), deadline=float("inf"))
+    assert queued.try_start()
+    surface.context.check_final_request = queued.check_active
+    connection = lifecycle.ConnectionLifetime()
+    surface.context.request_lifecycle = lifecycle.RequestLifetime(connection=connection)
+
+    def lose_owner():
+        if change == "cancel":
+            assert not queued.cancel_pending(surface.module.BridgeError("TIMEOUT", "Fixture cancellation"))
+        elif change == "deadline":
+            queued.deadline = time.monotonic() - 1.
+        else:
+            connection.disconnected.set()
+
+    phase = publication_provider(surface, monkeypatch, lose_owner)
+    with pytest.raises(surface.module.BridgeError) as caught:
+        sculpt(surface)
+    assert phase.fired and caught.value.code == "TIMEOUT" and surface.mesh.vertices.writes == 0
+
+
+@pytest.mark.parametrize("operation", ["paint", "rename", "remove"])
+def test_deadline_during_final_attribute_read_prevents_the_write(surface, monkeypatch, operation):
+    call = surface_operation(surface, operation)
+    before = publication_counts(surface)
+    expired = [False]
+    original = surface.module._frozen_attribute
+
+    def frozen(*args, **kwargs):
+        result = original(*args, **kwargs)
+        expired[0] = True
+        return result
+
+    def check_final_request():
+        if expired[0]:
+            raise surface.module.BridgeError("TIMEOUT", "Fixture deadline after attribute validation")
+
+    surface.context.check_final_request = check_final_request
+    monkeypatch.setattr(surface.module, "_frozen_attribute", frozen)
+    with pytest.raises(surface.module.BridgeError) as caught:
+        call()
+    assert expired[0] and caught.value.code == "TIMEOUT" and publication_counts(surface) == before
+
+
+def test_known_post_initialization_failure_can_clean_exact_verified_owned_attribute(surface, monkeypatch):
+    failure = RuntimeError("Known update failure after verified pixels")
+
+    def fail_update():
+        raise failure
+
+    monkeypatch.setattr(surface.mesh, "update", fail_update)
+    with pytest.raises(surface.module.BridgeError) as caught:
+        create(surface)
+    assert caught.value.__cause__ is failure
+    assert surface.mesh.color_attributes.removals == 1 and not surface.mesh.color_attributes
+    assert caught.value.context["retained_attribute"] is None
+
+
+def test_cleanup_final_provider_pixel_edit_is_retained_with_primary_failure(surface, monkeypatch):
+    failure = RuntimeError("Known update failure")
+
+    def fail_update():
+        raise failure
+
+    monkeypatch.setattr(surface.mesh, "update", fail_update)
+    changed = (.5, .25, .125, 1.)
+    phase = publication_provider(surface, monkeypatch,
+                                 lambda: setattr(surface.mesh.color_attributes.get("Paint").data[0], "color", changed),
+                                 publication_number=2)
+    with pytest.raises(surface.module.BridgeError) as caught:
+        create(surface)
+    assert phase.fired and caught.value.__cause__ is failure
+    assert surface.mesh.color_attributes.get("Paint").data[0].color == changed
+    assert surface.mesh.color_attributes.removals == 0
+    assert caught.value.context["retained_attribute"] == "Paint"
+    assert caught.value.context["cleanup_blocked_code"] == "OPERATION_FAILED"
+
+
+def test_partial_initialization_does_not_adopt_unknown_pixels_for_cleanup(surface, monkeypatch):
+    original_new = surface.mesh.color_attributes.new
+    failure = RuntimeError("Partial initialization")
+
+    def new(**kwargs):
+        attr = original_new(**kwargs)
+
+        def partial(*_):
+            attr.data[0].color = (1., 0., 0., 1.)
+            raise failure
+
+        attr.data.foreach_set = partial
+        return attr
+
+    monkeypatch.setattr(surface.mesh.color_attributes, "new", new)
+    with pytest.raises(surface.module.BridgeError) as caught:
+        create(surface)
+    attr = surface.mesh.color_attributes.get("Paint")
+    assert caught.value.__cause__ is failure and surface.mesh.color_attributes.removals == 0
+    assert attr.data[0].color == (1., 0., 0., 1.) and attr.data[1].color == (1., 1., 1., 1.)
+    assert caught.value.context["retained_attribute"] == "Paint" and caught.value.context["possible_mutation"]
+
+
+def test_primary_permission_loss_latches_cleanup_even_after_regrant(surface, monkeypatch):
+    original_gate = surface.module._gate
+    fired = [False]
+
+    def gate(*args, **kwargs):
+        result = original_gate(*args, **kwargs)
+        attr = surface.mesh.color_attributes.get("Paint")
+        if attr is not None and not fired[0]:
+            fired[0] = True
+            surface.grants["EDIT_MESH"] = False
+            try:
+                original_gate(*args, **kwargs)
+            except surface.module.BridgeError:
+                surface.grants["EDIT_MESH"] = True
+                raise
+        return result
+
+    monkeypatch.setattr(surface.module, "_gate", gate)
+    with pytest.raises(surface.module.BridgeError) as caught:
+        create(surface)
+    assert fired[0] and caught.value.code == "PERMISSION_DENIED" and surface.grants["EDIT_MESH"]
+    assert surface.mesh.color_attributes.removals == 0 and surface.mesh.color_attributes.get("Paint") is not None
+    assert caught.value.context["cleanup_authority_loss_latched"]
+    assert caught.value.context["cleanup_blocked_code"] == "PERMISSION_DENIED"
+
+
+def test_final_provider_signed_zero_coordinate_edit_is_not_overwritten(surface, monkeypatch):
+    phase = publication_provider(surface, monkeypatch,
+                                 lambda: setattr(surface.mesh.vertices[1], "co", (1., -0., 0.)))
+    with pytest.raises(surface.module.BridgeError) as caught:
+        sculpt(surface)
+    assert phase.fired and caught.value.code == "OPERATION_FAILED" and surface.mesh.vertices.writes == 0
+    assert math.copysign(1., surface.mesh.vertices[1].co[1]) == -1.
+
+
+@pytest.mark.parametrize("operation", ["paint", "rename", "remove"])
+def test_final_provider_signed_zero_color_edit_is_retained(surface, monkeypatch, operation):
+    call = surface_operation(surface, operation)
+    attr = surface.mesh.color_attributes.get("Paint")
+    before = publication_counts(surface)
+    phase = publication_provider(surface, monkeypatch, lambda: setattr(attr.data[0], "color", (-0., 0., 0., 1.)))
+    with pytest.raises(surface.module.BridgeError, match="attribute identity"):
+        call()
+    assert phase.fired and publication_counts(surface) == before
+    assert surface.mesh.color_attributes.get("Paint") is attr and math.copysign(1., attr.data[0].color[0]) == -1.
+
+
+def test_cleanup_signed_zero_color_edit_is_retained(surface, monkeypatch):
+    failure = RuntimeError("Known update failure")
+
+    def fail_update():
+        raise failure
+
+    monkeypatch.setattr(surface.mesh, "update", fail_update)
+    phase = publication_provider(surface, monkeypatch,
+                                 lambda: setattr(surface.mesh.color_attributes.get("Paint").data[0], "color", (-0., 0., 0., 1.)),
+                                 publication_number=2)
+    with pytest.raises(surface.module.BridgeError) as caught:
+        create(surface)
+    attr = surface.mesh.color_attributes.get("Paint")
+    assert phase.fired and caught.value.__cause__ is failure and surface.mesh.color_attributes.removals == 0
+    assert attr is not None and math.copysign(1., attr.data[0].color[0]) == -1.
+
+
+def test_final_provider_color_role_revision_is_preserved_before_allocation(surface, monkeypatch):
+    create(surface, name="Protected A")
+    create(surface, name="Protected B")
+    attrs = surface.mesh.color_attributes
+    before = publication_counts(surface)
+
+    def select_roles():
+        attrs.active_color_index = attrs.render_color_index = 1
+
+    phase = publication_provider(surface, monkeypatch, select_roles)
+    with pytest.raises(surface.module.BridgeError) as caught:
+        create(surface)
+    assert phase.fired and caught.value.code == "OPERATION_FAILED" and publication_counts(surface) == before
+    assert (attrs.active_color_index, attrs.render_color_index) == (1, 1)
+
+
+def test_cleanup_provider_color_role_revision_retains_owned_attribute(surface, monkeypatch):
+    create(surface, name="Protected A")
+    create(surface, name="Protected B")
+    attrs = surface.mesh.color_attributes
+    failure = RuntimeError("Known update failure")
+
+    def fail_update():
+        raise failure
+
+    def select_roles():
+        attrs.active_color_index = attrs.render_color_index = 2
+
+    monkeypatch.setattr(surface.mesh, "update", fail_update)
+    phase = publication_provider(surface, monkeypatch, select_roles, publication_number=2)
+    with pytest.raises(surface.module.BridgeError) as caught:
+        create(surface)
+    assert phase.fired and caught.value.__cause__ is failure and attrs.removals == 0
+    assert attrs.get("Paint") is not None and (attrs.active_color_index, attrs.render_color_index) == (2, 2)
+    assert caught.value.context["cleanup_blocked_code"] == "OPERATION_FAILED"
+
+
+@pytest.mark.parametrize("flag", ["paused", "emergency_stopped"])
+def test_color_inspection_remains_available_while_mutations_are_stopped(surface, flag):
+    create(surface)
+    surface.flags[flag] = True
+    result = surface.module.color_inspect(surface.context, {"object_name": "Sculpt", "attribute_name": "Paint"})
+    assert result["entry_count"] == 4 and len(result["entries"]) == 4 and not result["truncated"]
+
+
+def test_deadline_during_final_coordinate_read_prevents_publication(surface, monkeypatch):
+    expired = [False]
+    phase = publication_provider(surface, monkeypatch, lambda: None)
+    original = surface.module._positions
+
+    def positions(*args, **kwargs):
+        result = original(*args, **kwargs)
+        if phase.active and phase.fired:
+            expired[0] = True
+        return result
+
+    def check_final_request():
+        if expired[0]:
+            raise surface.module.BridgeError("TIMEOUT", "Fixture deadline during coordinate proof")
+
+    surface.context.check_final_request = check_final_request
+    monkeypatch.setattr(surface.module, "_positions", positions)
+    with pytest.raises(surface.module.BridgeError) as caught:
+        sculpt(surface)
+    assert phase.fired and expired[0] and caught.value.code == "TIMEOUT" and surface.mesh.vertices.writes == 0

@@ -62,6 +62,7 @@ CASES = {
     "image_portability_probe": ("blender_image_portability_smoke.py", "BLENDER_IMAGE_PORTABILITY_PROBE_READER_OK "),
     "animation_curves": ("blender_animation_curves_smoke.py", "BLENDER_CODEX_ANIMATION_CURVES_SMOKE_OK "),
     "curve_sampling": ("blender_animation_curve_sampling_smoke.py", "BLENDER_ANIMATION_CURVE_SAMPLING_OK "),
+    "surface_publication_probe": ("blender_surface_publication_probe.py", "BLENDER_SURFACE_PUBLICATION_PROBE_OK "),
     "geometry_node_groups": ("blender_geometry_node_groups_smoke.py", "BLENDER_GEOMETRY_NODE_GROUPS_OK "),
     "task_plans": ("blender_task_plans_smoke.py", "BLENDER_TASK_PLANS_READER_OK "),
     "artist_loop": ("blender_artist_loop_smoke.py", "BLENDER_ARTIST_LOOP_OK "),
@@ -191,6 +192,7 @@ OPT_IN_CASES.add("scene_collection_scope")
 OPT_IN_CASES.add("scene_edit_boundaries")
 OPT_IN_CASES.add("camera_focus")
 OPT_IN_CASES.add("curve_sampling")
+OPT_IN_CASES.add("surface_publication_probe")
 OPT_IN_CASES.add("scene_checkpoint_admission")
 OPT_IN_CASES.add("render_scope_probe")
 OPT_IN_CASES.add("render_boundaries")

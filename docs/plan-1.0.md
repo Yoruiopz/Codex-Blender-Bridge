@@ -1904,3 +1904,28 @@ claiming complete sampled character motion. The development registry contains
 **264 MCP tools**; component versions remain **0.3.0 alpha**. Exact-source native
 and installed-package qualification remain separate evidence requirements. All
 fourteen release requirements remain OPEN and Windows testing remains paused.
+
+### 2026-10-23 — Surface publication callbacks and protected scope
+
+A source-matched negative probe at local `13668d2` reproduced a surface-brush
+ordering gap on Linux Blender 4.5.14 and 5.2.2: the last permission provider ran
+after the final preservation comparison. Five measured cases per build published
+sculpt/color effects after pause or changed coordinates/ownership; sculpting
+overwrote a newer coordinate and color removal affected a newly shared consumer.
+The research reports explicitly keep `production_guard_accepted=false`.
+
+The first corrected-source native run at `ec821d8` failed because its allocation
+prediction assumed zeroed color layers. Complete native captures on both Linux
+builds instead measured white RGBA for new POINT and CORNER `FLOAT_COLOR` layers.
+That failed run remains separate evidence. The prediction and portable test
+doubles were corrected to the measured literal state before further acceptance.
+
+The bounded correction finishes callbacks before callback-free scope/content
+validation and the canonical pure caller/stop gate. Exact operation names,
+attribute checks and create/rename destination checks remain part of admission.
+Source-matched positive native proof, portable regressions and full validation
+are required before accepting that correction. This advances SAFE-01 and base
+sculpt/color workflows without claiming complete mutator recovery, durable
+backups, visual artist acceptance or any closed release requirement. The public
+surface remains **264 MCP tools**, components **0.3.0 alpha**, with all fourteen
+requirements OPEN and Windows testing paused.

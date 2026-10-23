@@ -74,6 +74,28 @@ datablocks. Removal can change active color selection.
 
 ## Bounds, failure and recovery
 
+Publication finishes live permission providers and cancellation callbacks before
+the final target, ownership, context and protected-state comparisons. A
+callback-free caller/deadline, toolset and pause/stop check then runs immediately
+before writing. Sculpt and color operations use their exact registered method;
+attribute identity/content and create/rename destinations are checked again at
+the same boundary. A provider's newer coordinates, changed mesh consumers or occupied
+destination cause refusal rather than a stale write or automatic overwrite.
+
+The negative `surface_publication_probe` at local source `13668d2` reproduced
+the previous ordering gap on Linux Blender 4.5.14 and 5.2.2. Four controls and five
+provider probes per build showed writes after pause or changed input/scope,
+including an overwritten coordinate and removal from a newly shared consumer.
+Those reports explicitly reject guard acceptance. Corrected source requires its
+own positive, source-matched results; the historical negative probe is retained.
+
+Initial corrected-source testing at `ec821d8` exposed an incorrect allocation
+prediction despite passing portable tests. Both Linux builds directly measured
+new POINT and CORNER `FLOAT_COLOR` layers as white RGBA `(1, 1, 1, 1)`. The failed
+native reports and early complete-value captures are retained. Allocation
+verification and the test doubles now use that measured literal state; an
+unexpected allocation remains an explicit failure with retained-state evidence.
+
 The current synchronous limits are 100,000 vertices, 200,000 edges, 300,000 corners,
 16 color attributes, 500,000 combined UV/color entries, 10,000 scoped vertices,
 32 strokes, 500,000 brush candidate tests and 2,000,000 smoothing-neighbor tests.
@@ -84,9 +106,16 @@ scope as safe.
 Permission, stop/pause, ownership, original ID/data, context and complete input
 evidence are rechecked before publication. Final deletion checks run before the
 last frozen-scope validation, so callbacks cannot expand a deletion onto newly
-shared data. Failed attribute initialization removes only the exact owned
-attribute when live deletion/edit consent and original single-user scope still
-allow it; otherwise its actual last-observed retained name is reported.
+shared data. Coordinate and owned-color comparisons preserve Float32 bytes,
+including signed zero. Creation also checks the prior active/render color roles
+after callbacks, before restoring any captured role.
+
+Failed creation attempts cleanup only with a previously verified owned attribute
+state, matching complete colors/roles, live deletion/edit consent and the original
+single-user scope. Unknown partial initialization or a newer manual edit retains
+the allocation with its last-observed name. Permission, toolset, caller-lifetime,
+pause or stop loss latches cleanup off for that failed operation, including after
+a later regrant. Errors retain the original failure and explicit cleanup evidence.
 
 Native `foreach_set`/update/readback is synchronous. Cancellation, revocation or
 an exception can arrive after part or all of a write. Such errors explicitly
@@ -95,6 +124,8 @@ verification requirements. They do not perform a compensating edit after stop or
 revocation and do not equate a canceled call with rollback. Reinspect and use
 confirmed checkpoint recovery only when its actual availability is established.
 No tool saves the project or claims native global undo has been accepted here.
+CustomData wrapper addresses are session-local and can change during allocation;
+these bounded checks do not establish durable identity across undo or reload.
 
 ## Native development evidence
 

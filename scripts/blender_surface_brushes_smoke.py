@@ -154,7 +154,7 @@ def main():
     # Direct handler fault injection proves cancellation truthfulness after a
     # native publication; it is not a claim of native global-undo restoration.
     initial = coordinates(obj)
-    context = SimpleNamespace(require=lambda *required: manager.require(required), state=None, check_cancelled=None)
+    context = SimpleNamespace(require=lambda *required: manager.require(required), state=runtime.state, check_cancelled=None)
     def late_cancel():
         if coordinates(obj) != initial:
             raise BridgeError("TIMEOUT", "Injected late surface cancellation")
