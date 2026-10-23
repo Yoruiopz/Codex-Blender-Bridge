@@ -1,4 +1,4 @@
-# Explicit sculpt and vertex-color brushes
+# Explicit sculpt masks and vertex-color brushes
 
 Unreleased development tools, not in 0.3.0. These tools perform actual bounded
 geometry/color edits through typed APIs. They do not claim complete sculpting,
@@ -41,6 +41,40 @@ strength. Stroke order is explicit. Full float32 coordinate readback verifies th
 result, including all protected vertices. Topology, UV coordinates/pins and active
 UV layer, material bindings, other color attributes, component flags, active/render
 color roles and mode/selection/active-object context are checked independently.
+
+## Sample a painted UV image into a sculpt mask
+
+`mesh.sculpt_mask_sample(object_name, uv_layer, vertex_indices, image_name,
+corner_reduction, channel="R", invert=false)` reads an explicit base mesh and UV
+layer into ordered numeric `mask_weights`. It requires **Inspect Scene** and
+Object Mode. Inspection can read shared or library meshes; the later sculpt edit
+still applies its own local, single-user ownership checks.
+
+The image must be local, loaded, unanimated **GENERATED** four-channel RGBA data,
+with each dimension from 1 to 4,096 and at most 1,048,576 total pixels. The complete
+chosen raw R/G/B/A channel must be finite in `[0,1]`. File images, UDIMs, sequences and evaluated image animation are
+outside this bounded contract; no file is loaded and no external path is read.
+Stored channel values receive no color-space or alpha conversion.
+
+Name the UV layer and provide 1–1,024 distinct vertex indices in the desired
+output order. Each requested vertex must have at least one UV corner, and every
+relevant stored UV must be finite in `[0,1]`. Sampling aligns UVs with image pixel
+centres, interpolates bilinearly and clamps at the edges. At seams, the tool
+samples every corner separately and applies optional inversion before the
+required `corner_reduction`: **MIN**, **MAX** or **MEAN**. This makes the choice of
+protecting or including a split UV vertex explicit.
+
+The result returns the matching `vertex_indices` and `mask_weights`, corner/seam
+observations and image/UV/topology fingerprints. Pass these lists explicitly to
+`mesh.sculpt_brush` to use the sampled region. Weights are a snapshot of that
+read, not a live image binding or a backup: resample after image, UV or topology
+changes. A later sculpt call does not revalidate the earlier image fingerprint.
+
+Sampling changes no image, geometry, selection, frame or checkpoint. It refuses
+changed input/context rather than returning a mixture of old pixels and newer
+UVs. Mesh inspection is bounded to 100,000 vertices, 200,000 edges and 300,000
+corners. This adds a bounded painted-mask workflow; 4K masks, production sculpt
+quality and complete artist/recovery acceptance remain open release work.
 
 ## Color attribute lifecycle and painting
 
@@ -138,5 +172,6 @@ production artistic-quality review.
 
 Linux Blender 4.3.2 development evidence does not qualify Windows 4.5/5.x. Native
 UI undo/redo and manual interleaving, pressure/production-scale acceptance,
-viewport projection, sculpt masks from painted textures, multires and the full
-artist workflow remain open in the release ledger.
+viewport projection, production-scale painted sculpt masks, multires and the full
+artist workflow remain open in the release ledger. The generated-image mask
+sampler requires its own source-matched native workflow evidence before acceptance.

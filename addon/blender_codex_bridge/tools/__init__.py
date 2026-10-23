@@ -58,6 +58,7 @@ def register_all(registry: ToolRegistry) -> None:
         rigid_body_jobs,
         scene_edit,
         scene_variants,
+        sculpt_masks,
         shader_groups,
         shader_interface,
         shader_settings,
@@ -106,6 +107,7 @@ def register_all(registry: ToolRegistry) -> None:
     mesh_slide.register_tools(registry)
     mesh_surface.register_tools(registry)
     surface_brushes.register_tools(registry)
+    sculpt_masks.register_tools(registry)
     materials.register_tools(registry)
     images.register_tools(registry)
     image_paint.register_tools(registry)

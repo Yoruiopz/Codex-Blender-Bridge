@@ -1929,3 +1929,29 @@ sculpt/color workflows without claiming complete mutator recovery, durable
 backups, visual artist acceptance or any closed release requirement. The public
 surface remains **264 MCP tools**, components **0.3.0 alpha**, with all fourteen
 requirements OPEN and Windows testing paused.
+
+### 2026-10-23 — Generated UV-image sculpt mask sampling
+
+`mesh.sculpt_mask_sample` connects a painted local generated image to the existing
+explicit sculpt brush without adding an image dependency to the mutation
+boundary. Under `INSPECT_SCENE`, it reads a named Object Mode base mesh/UV layer,
+samples a raw R/G/B/A channel at each requested vertex's UV corners and returns
+ordered numeric weights. The caller explicitly chooses MIN, MAX or MEAN for UV
+seams; inversion applies to each corner sample before reduction. The bounded
+profile supports 1–1,024 distinct vertices, finite `[0,1]` UVs and a loaded,
+unanimated four-channel generated image with each dimension from 1 to 4,096 and
+at most 1,048,576 total pixels. It performs no
+color/alpha conversion or image, geometry, selection, frame or checkpoint write.
+
+The returned image/UV/topology fingerprints describe a snapshot, not a live
+binding or durable backup. Resample after image, UV or topology changes, then
+pass the resulting `vertex_indices` and `mask_weights` explicitly to
+`mesh.sculpt_brush`, whose independent edit/ownership gate remains authoritative.
+Portable analytical/schema tests and exact-source native paint → sample → sculpt
+preservation/visual evidence are separate completion requirements.
+
+This advances the painted-mask portion of PAINT-01 and the asset workflow. The
+development registry contains **265 MCP tools**, component versions remain
+**0.3.0 alpha**, and all fourteen release requirements remain OPEN. Production
+sculpting, 4K/constrained-memory masks, durable recovery, Windows and installed
+A–F acceptance remain required; Windows testing remains paused.

@@ -123,7 +123,7 @@ It is checked against the registry in CI. It does not describe the 108-tool 0.3.
 The local recovery UI also has an add-on-only action, not an extra MCP tool.
 
 <!-- BEGIN GENERATED MCP TOOLS -->
-Current registry: **264 MCP tools**.
+Current registry: **265 MCP tools**.
 
 <details>
 <summary>core — 33 tools</summary>
@@ -345,7 +345,7 @@ Current registry: **264 MCP tools**.
 </details>
 
 <details>
-<summary>mesh — 30 tools</summary>
+<summary>mesh — 31 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
@@ -374,6 +374,7 @@ Current registry: **264 MCP tools**.
 | `mesh.project_to_surface` | Apply an exact current bounded base-surface projection preview, preserving supported custom data. |
 | `mesh.recalculate_normals` | Recalculate normals for the selected mesh region. |
 | `mesh.sculpt_brush` | Apply explicit-mask base-mesh PUSH/SMOOTH strokes with protected topology/UV/material evidence. |
+| `mesh.sculpt_mask_sample` | Sample a generated UV image into explicit sculpt-mask weights without changing mesh or image data. |
 | `mesh.set_face_attributes` | Set smooth shading and/or an existing material-slot index on bounded referenced faces; material changes additionally require EDIT_MATERIALS. |
 | `mesh.slide_preview` | Preview bounded selected vertex/edge slides along explicit topology rails. |
 | `mesh.subdivide_selected` | Subdivide selected edges without smoothing under a conservative growth budget. |
