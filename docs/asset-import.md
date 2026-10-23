@@ -66,6 +66,18 @@ unfinished 1.0 work. These tools do not silently discard those capabilities.
 
 ## Ownership, execution and recovery
 
+`asset.import` owns an exclusive structured-mutation lease before admission,
+permission providers and checkpoint creation, retaining it through native import,
+compensation and finalization. Reentrant bridge mutators are refused before their
+own providers/checkpoints, even when a callback reuses the same context or requests
+local recovery. Read-only inspection/status and pause/stop controls remain available.
+Live write gates also verify exact lease ownership after callbacks and final content
+checks; lost ownership retains resources rather than authorizing cleanup. Only the
+owning scope releases its exact lease after native work returns. Ordinary batches,
+artist transform composition and painting-job interleaving keep their existing
+contracts. The lease does not constrain direct native/Python behavior, preempt a
+native call, remove the known-build quarantine or implement safe project saving.
+
 The native importer reopens a private complete input copy, created in a task-owned temporary
 directory outside the approved READ folder. On POSIX its directory/file modes are 0700/0600.
 Identity and full-byte checks protect that input across callbacks. Original approved source

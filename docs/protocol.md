@@ -274,6 +274,23 @@ Render Result effects separately from scene restoration; native scene undo does 
 remove them. They do not grant file access or certify crash durability. Inspection denial
 redacts the whole external-effects record, including all nested paths and hashes.
 
+`asset.import` holds an internal exclusive mutation lease from entry admission
+through native work, cleanup and checkpoint finalization. Reentrant modifying
+calls from permission providers, checkpoint/native callbacks or finalizers fail
+before their providers and checkpoints with `OPERATION_FAILED` and
+`reason: REENTRANT_MUTATION_BLOCKED`. Reusing a context, request ID or local
+recovery override grants no entry. Read-only status/inspection and pause/stop
+controls remain callable; nested status retains the outer execution display.
+The canonical executor-to-handler continuation uses a local single-use permit,
+never a wire field or context-held grant. Exact lease loss stops subsequent
+guarded writes; a primary error retains its identity and receives optional
+`exclusive_mutation_lease_drift` evidence. Lifecycle reset cannot unlock an
+active native call; only its owning scope can release its exact lease when it
+unwinds. Ordinary batch/artist composition and image-job interleaving retain
+their existing behavior. This is a structured-entry interlock, not a sandbox
+for native handlers or arbitrary Python, a cancellation/preemption guarantee,
+or a solution to whole-project serialization.
+
 - Multiple requests may be in flight at the transport/client layer.
 - Writes on each socket are serialized so NDJSON frames never interleave.
 - The Blender main-thread executor processes one command at a time in queue order in 0.2.0.

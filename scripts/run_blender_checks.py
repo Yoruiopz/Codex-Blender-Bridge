@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 CASES = {
+    "exclusive_mutation": ("blender_exclusive_mutation_smoke.py", "BLENDER_EXCLUSIVE_MUTATION_OK "),
     "project_save_denial": ("blender_project_save_denial_smoke.py", "BLENDER_PROJECT_SAVE_DENIAL_OK "),
     "core": ("blender_smoke.py", "BLENDER_CODEX_SMOKE_OK "),
     "extended": ("blender_extended_smoke.py", "BRIDGE_EXTENDED_SMOKE "),
@@ -181,6 +182,8 @@ OPT_IN_CASES.add("render_checkpoint_probe")
 INTERACTIVE_CASES = {"undo_lifecycle", "mesh_edit_recovery", "mesh_repair", "uv_authoring", "prop_workflow", "uv_analysis", "mesh_analysis", "image_assets", "shader_groups", "undo_capacity", "shader_settings", "image_revisions", "field_scanner", "texture_paint"}
 
 
+INTERACTIVE_CASES.add("exclusive_mutation")
+OPT_IN_CASES.add("exclusive_mutation")
 INTERACTIVE_CASES.add("paint_jobs")
 INTERACTIVE_CASES.add("large_paint")
 INTERACTIVE_CASES.add("image_masks")

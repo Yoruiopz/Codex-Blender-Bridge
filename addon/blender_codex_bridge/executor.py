@@ -12,6 +12,7 @@ from typing import Any
 from .checkpoints import CheckpointManager
 from .command_queue import CommandQueue, QueuedRequest
 from .errors import BridgeError, ErrorCode
+from .operation_lease import InvocationPermit
 from .permissions import PermissionManager
 from .protocol import PROTOCOL_VERSION, Request, Response
 from .scene_evidence import SceneEvidenceStore
@@ -169,11 +170,34 @@ class MainThreadExecutor:
         self, request: Request, *, allow_recovery: bool = False,
         check_cancelled: Callable[[], None] | None = None,
     ) -> Any:
+        context = self.context
+        try:
+            spec = self.registry.get(request.method)
+        except BridgeError:
+            # Preserve the existing unknown-method error/history path. A
+            # callback cannot erase an exclusive parent's execution display.
+            return self._invoke_owned(request, allow_recovery=allow_recovery, check_cancelled=check_cancelled,
+                                      _context=context, _permit=None,
+                                      preserve_execution=self.registry.active_exclusive_mutation)
+        preserve_execution = self.registry.active_exclusive_mutation and not spec.modifies
+        # Reject new reentrant writers before begin_execution, admission
+        # factories, permission providers or checkpoint bookkeeping.
+        with self.registry.mutation_entry(spec, request.params, context) as permit:
+            return self._invoke_owned(request, allow_recovery=allow_recovery, check_cancelled=check_cancelled,
+                                      _context=context, _permit=permit, preserve_execution=preserve_execution)
+
+    def _invoke_owned(
+        self, request: Request, *, allow_recovery: bool,
+        check_cancelled: Callable[[], None] | None,
+        _context: ToolContext, _permit: InvocationPermit | None,
+        preserve_execution: bool = False,
+    ) -> Any:
         start = time.perf_counter()
         task = request.params.get("_task", request.params.get("task_description"))
         if task is not None and not isinstance(task, str):
             task = None
-        self.state.begin_execution(request.method, task)
+        if not preserve_execution:
+            self.state.begin_execution(request.method, task)
         spec = None
         undo_boundary = False
         undo_finalized = False
@@ -186,7 +210,7 @@ class MainThreadExecutor:
         editor_finalization_attempted = False
         owns_finalization = False
         finalization_token = None
-        context = self.context
+        context = _context
         context.check_cancelled = check_cancelled
         context.request_lifecycle = request._lifecycle
         context.request_id = request.id
@@ -269,7 +293,7 @@ class MainThreadExecutor:
             self.registry.check_checkpoint_parameter_entry(entry, request.params)
             entries_before = context.handler_entries
             try:
-                result = self.registry.invoke(spec, request.params, context, allow_recovery=allow_recovery)
+                result = self.registry.invoke(spec, request.params, context, allow_recovery=allow_recovery, _permit=_permit)
                 handler_completed = True
             finally:
                 handler_entered = context.handler_entries > entries_before
@@ -286,6 +310,7 @@ class MainThreadExecutor:
                     after_native_push=checkpoint_native_push if admission is not None else None)
                 if undo_group is not None and undo_group["state"] == "finalized":
                     undo_finalized = True
+            self.registry.check_mutation_owner(spec, context)
             duration_ms = (time.perf_counter() - start) * 1000.0
             record = self.state.record_operation(
                 tool=request.method,
@@ -313,7 +338,8 @@ class MainThreadExecutor:
                 operation["operation_id"] = record.operation_id if record else None
                 result["operation"] = operation
             LOGGER.info("Completed %s in %.1f ms", request.method, duration_ms)
-            self.state.end_execution()
+            if not preserve_execution:
+                self.state.end_execution()
             return result
         except BridgeError as error:
             duration_ms = (time.perf_counter() - start) * 1000.0
@@ -400,7 +426,8 @@ class MainThreadExecutor:
                 external_effects=effects,
                 recovery_evidence=recovery,
             )
-            self.state.end_execution(error.message)
+            if not preserve_execution:
+                self.state.end_execution(error.message)
             if error.code == ErrorCode.PERMISSION_DENIED.value:
                 LOGGER.warning("Permission denied for %s: %s", request.method, error.context)
             else:
@@ -448,7 +475,8 @@ class MainThreadExecutor:
                 duration_ms=duration_ms,
                 error_code=error.code,
             )
-            self.state.end_execution(error.message)
+            if not preserve_execution:
+                self.state.end_execution(error.message)
             raise error from exc
         finally:
             if admission_scope is not None:

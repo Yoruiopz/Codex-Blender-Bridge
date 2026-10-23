@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from .errors import BridgeError, ErrorCode
+from .operation_lease import ExclusiveMutationLease, InvocationPermit, MutationInterlock
 from .permissions import Permission, PermissionManager
 from .request_lifecycle import RequestLifetime
 from .state import BridgeState
@@ -90,6 +91,7 @@ class ToolSpec:
     checkpoint_parameter_dependencies: CheckpointParameterDependencies | None = None
     checkpoint_owns_finalization: bool = False
     checkpoint_batch_reviewed: bool = False
+    exclusive_mutation: bool = False
 
     def metadata(self, *, enabled: bool) -> dict[str, Any]:
         return {
@@ -137,6 +139,8 @@ class ToolContext:
     checkpoint_method: str | None = None
     checkpoint_params: Mapping[str, Any] | None = None
     checkpoint_finalization_owner: object | None = None
+    # A final-gate binding, never authority for a new registry/executor entry.
+    exclusive_mutation_lease: ExclusiveMutationLease | None = None
 
     def require(self, *permissions: Permission) -> None:
         self.permissions.require(permissions)
@@ -284,6 +288,9 @@ def check_final_mutation(context: ToolContext, method: str, *, allow_recovery: b
         if spec.toolset not in registry.enabled_toolsets:
             raise BridgeError(ErrorCode.TOOLSET_DISABLED, "Mutation toolset was disabled before its next write.",
                               {"tool": method, "toolset": spec.toolset})
+        check_owner = getattr(registry, "check_mutation_owner", None)
+        if check_owner is not None:
+            check_owner(spec, context)
     if not modifies:
         return
     flags = context.state.snapshot()
@@ -307,6 +314,25 @@ class ToolRegistry:
         # Registry lifetime spans project/state replacement. A new plan store
         # must not hide a handler that is still unwinding on Blender's thread.
         self._executing_mutators = 0
+        self._mutation_interlock = MutationInterlock()
+
+    @property
+    def _exclusive_mutation_lease(self) -> ExclusiveMutationLease | None:
+        return self._mutation_interlock.owner
+
+    @_exclusive_mutation_lease.setter
+    def _exclusive_mutation_lease(self, value: ExclusiveMutationLease | None) -> None:
+        self._mutation_interlock.owner = value
+
+    @property
+    def active_exclusive_mutation(self) -> bool:
+        return self._mutation_interlock.owner is not None or self._mutation_interlock.invocation is not None
+
+    def mutation_entry(self, spec: ToolSpec, params: Mapping[str, Any], context: ToolContext):
+        return self._mutation_interlock.entry(self, spec, params, context)
+
+    def check_mutation_owner(self, spec: ToolSpec, context: ToolContext) -> None:
+        self._mutation_interlock.check_owner(self, spec, context)
 
     @property
     def executing_mutators(self) -> int:
@@ -331,11 +357,14 @@ class ToolRegistry:
         checkpoint_parameter_dependencies: CheckpointParameterDependencies | None = None,
         checkpoint_owns_finalization: bool = False,
         checkpoint_batch_reviewed: bool = False,
+        exclusive_mutation: bool = False,
     ) -> ToolSpec:
         if not name or "." not in name:
             raise ValueError("Tool names must be non-empty dotted identifiers.")
         if name in self._tools:
             raise ValueError(f"Tool already registered: {name}")
+        if exclusive_mutation and not modifies:
+            raise ValueError("Only modifying tools can request exclusive mutation ownership.")
         toolset = toolset.strip().lower()
         spec = ToolSpec(
             name=name,
@@ -354,6 +383,7 @@ class ToolRegistry:
             checkpoint_parameter_dependencies=checkpoint_parameter_dependencies,
             checkpoint_owns_finalization=checkpoint_owns_finalization,
             checkpoint_batch_reviewed=checkpoint_batch_reviewed,
+            exclusive_mutation=exclusive_mutation,
         )
         self._tools[name] = spec
         self._toolsets.add(toolset)
@@ -377,6 +407,7 @@ class ToolRegistry:
         checkpoint_parameter_dependencies: CheckpointParameterDependencies | None = None,
         checkpoint_owns_finalization: bool = False,
         checkpoint_batch_reviewed: bool = False,
+        exclusive_mutation: bool = False,
     ) -> Callable[[ToolHandler], ToolHandler]:
         def decorator(handler: ToolHandler) -> ToolHandler:
             self.register(
@@ -396,6 +427,7 @@ class ToolRegistry:
                 checkpoint_parameter_dependencies=checkpoint_parameter_dependencies,
                 checkpoint_owns_finalization=checkpoint_owns_finalization,
                 checkpoint_batch_reviewed=checkpoint_batch_reviewed,
+                exclusive_mutation=exclusive_mutation,
             )
             return handler
 
@@ -490,6 +522,11 @@ class ToolRegistry:
                               {"checkpoint_parameters_unchanged": False})
 
     def dispatch(self, name: str, params: Mapping[str, Any], context: ToolContext) -> Any:
+        with self.mutation_entry(self.get(name), params, context) as permit:
+            return self._dispatch_owned(name, params, context, permit)
+
+    def _dispatch_owned(self, name: str, params: Mapping[str, Any], context: ToolContext,
+                        permit: InvocationPermit) -> Any:
         entry = self.checkpoint_parameter_entry(self.get(name), params)
         enclosing = context.checkpoint_admission
         if enclosing is not None:
@@ -503,7 +540,7 @@ class ToolRegistry:
                 if enclosing is not None:
                     enclosing.check_after_read()
                 raise deferred
-            return self.invoke(spec, params, context)
+            return self.invoke(spec, params, context, _permit=permit)
         finally:
             if captured:
                 scope.__exit__(None, None, None)
@@ -585,7 +622,15 @@ class ToolRegistry:
             (context.checkpoint_admission, context.checkpoint_call_id, context.checkpoint_method,
              context.checkpoint_params, context.checkpoint_finalization_owner) = previous
 
-    def invoke(self, spec: ToolSpec, params: Mapping[str, Any], context: ToolContext, *, allow_recovery: bool = False) -> Any:
+    def invoke(self, spec: ToolSpec, params: Mapping[str, Any], context: ToolContext, *, allow_recovery: bool = False,
+               _permit: InvocationPermit | None = None) -> Any:
+        if _permit is None:
+            with self.mutation_entry(spec, params, context) as permit:
+                return self.invoke(spec, params, context, allow_recovery=allow_recovery, _permit=permit)
+        self._mutation_interlock.consume(self, spec, params, context, _permit)
+        return self._invoke_owned(spec, params, context, allow_recovery=allow_recovery)
+
+    def _invoke_owned(self, spec: ToolSpec, params: Mapping[str, Any], context: ToolContext, *, allow_recovery: bool = False) -> Any:
         """Enter a prepared handler without arming over an in-flight writer."""
         binding = context.checkpoint_admission
         entry = self.checkpoint_parameter_entry(spec, params)

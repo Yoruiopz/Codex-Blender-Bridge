@@ -18,7 +18,7 @@
     "SAFE-01": {
       "status": "open",
       "evidence": [],
-      "progress": "Checkpoint admission retains request identity and bounded authored expectations before callbacks through marker/native-push/handler finalization; newer markers and custom scalar/container values are compared literally. Unreviewed guarded batch composition refuses. Scene reports incomplete bundled runtime preservation; exact reviewed Blender 5.2 render mutations refuse because supported read-only SYSTEM comparison is unproven. Public project.save refuses before Blender/path access. Complete per-tool dependency/ownership/permission/recovery and Windows acceptance remain open."
+      "progress": "Checkpoint admission retains request identity and bounded authored expectations before callbacks through marker/native-push/handler finalization; newer markers and custom scalar/container values are compared literally. Unreviewed guarded batch composition refuses. Scene reports incomplete bundled runtime preservation; exact reviewed Blender 5.2 render mutations refuse because supported read-only SYSTEM comparison is unproven. Public project.save refuses before Blender/path access. Complete per-tool dependency/ownership/permission/recovery and Windows acceptance remain open. Typed asset.import now owns an exclusive structured-entry lease before admission/providers/checkpoints through native cleanup/finalization, with pure final ownership checks; focused Linux checks prove reentry rejection and native recovery. This does not constrain arbitrary native/Python callbacks or preempt native calls."
     },
     "SAFE-02": {
       "status": "open",

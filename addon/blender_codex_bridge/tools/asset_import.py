@@ -24,7 +24,7 @@ from ..asset_import_source import OwnedInput, read_source
 from ..errors import BridgeError, ErrorCode, invalid_argument
 from ..permissions import Permission
 from ..preferences import get_preferences
-from ..tool_registry import ToolContext, ToolRegistry
+from ..tool_registry import ToolContext, ToolRegistry, check_final_mutation
 from ..utils import bool_param, reject_unknown_params, require_blender
 from ._object_safety import require_local_editable_id
 
@@ -149,6 +149,8 @@ def _gate(context: ToolContext, *, writing=False) -> None:
         raise BridgeError(ErrorCode.EMERGENCY_STOPPED, "Asset import was emergency-stopped.")
     if writing and flags.get("paused"):
         raise BridgeError(ErrorCode.AGENT_PAUSED, "Asset import is paused.")
+    if writing:
+        check_final_mutation(context, "asset.import")
 
 
 def _unsupported(message: str) -> None:
@@ -720,6 +722,7 @@ def _restore_import_selection(
     _selection_restore_guard(
         bpy, before, protected, owned, signature, stage, collection, destination
     )
+    check_final_mutation(context, "asset.import")
     _restore_selection(bpy, selected, active, layer)
 
 
@@ -732,6 +735,8 @@ def _rehome_owned(
     stage: Any,
     collection: Any,
     destination: Any,
+    *,
+    context: ToolContext | None = None,
 ) -> dict:
     # All source/permission callbacks have finished. Recheck the whole protected
     # context and exact owned closure before touching any collection membership.
@@ -741,6 +746,8 @@ def _rehome_owned(
     if _guard(bpy, before) != protected or _owned_signature(bpy, owned) != signature:
         raise invalid_argument("Imported definitions changed before owned rehoming.")
     _closure(bpy, owned, stage, collection, destination)
+    if context is not None:
+        check_final_mutation(context, "asset.import")
     for obj in objects:
         if obj.name not in collection.objects:
             collection.objects.link(obj)
@@ -827,6 +834,7 @@ def _cleanup(
         # Check the full closure once, then callback-free explicit unlink/removal.
         # Pre-existing consumers are never implicitly severed. Only the empty
         # private Scene's proven sole internal extra user needs do_unlink=True.
+        check_final_mutation(context, "asset.import")
         for obj in owned["objects"].values():
             obj.parent = None
         for obj in owned["objects"].values():
@@ -918,6 +926,7 @@ def import_asset(context: ToolContext, params: Mapping[str, Any]) -> dict:
             raise invalid_argument(
                 "Destination or collection availability changed before native import."
             )
+        check_final_mutation(context, "asset.import")
         stage = bpy.data.scenes.new("Bridge Private Asset Import")
         allocated["scenes"][_uid(stage)] = stage
         collection = bpy.data.collections.new(collection_name)
@@ -927,6 +936,7 @@ def import_asset(context: ToolContext, params: Mapping[str, Any]) -> dict:
             destination.render.fps,
             destination.render.fps_base,
         )
+        check_final_mutation(context, "asset.import")
         native_started = True
         native_start = time.monotonic()
         try:
@@ -967,7 +977,7 @@ def import_asset(context: ToolContext, params: Mapping[str, Any]) -> dict:
         # Native glTF honors private scene, but not collection override. Move only
         # its frozen owned objects; no callback between final guard and writes.
         signature = _rehome_owned(
-            bpy, before, protected, owned, signature, stage, collection, destination
+            bpy, before, protected, owned, signature, stage, collection, destination, context=context
         )
         _gate(context, writing=True)
         _runtime_admission(bpy)
@@ -978,6 +988,7 @@ def import_asset(context: ToolContext, params: Mapping[str, Any]) -> dict:
         _closure(bpy, owned, stage, collection, destination)
         # Publication is intentionally one native main-thread boundary. Retain
         # published resources on cancellation; never perform a late blind undo.
+        check_final_mutation(context, "asset.import")
         stage.collection.children.unlink(collection)
         destination.collection.children.link(collection)
         published = True
@@ -986,6 +997,7 @@ def import_asset(context: ToolContext, params: Mapping[str, Any]) -> dict:
         # Update its native membership before restoring per-view-layer selection.
         membership_started = time.monotonic()
         try:
+            check_final_mutation(context, "asset.import")
             layer.update()
         finally:
             blocking["publication_view_layer_update_seconds"] = (
@@ -1028,6 +1040,7 @@ def import_asset(context: ToolContext, params: Mapping[str, Any]) -> dict:
                 "Owned imported definitions changed at final private-scene cleanup boundary."
             )
         stage_key = _uid(stage)
+        check_final_mutation(context, "asset.import")
         _remove_private_scene(bpy, stage)
         owned["scenes"].pop(stage_key, None)
         cleanup = "published_private_scene_removed"
@@ -1118,6 +1131,7 @@ def register_tools(registry: ToolRegistry) -> None:
         permissions=REQUIRED,
         modifies=True,
         batchable=False,
+        exclusive_mutation=True,
         checkpoint_admission_factory=_native_import_admission,
         description="Import a fingerprinted bounded static GLB/FBX over frozen private source bytes into one new owned collection, preserving measured destination state; no project save.",
     )

@@ -25,6 +25,16 @@ native serialization. Their evidence marks `fixture_native_save=true` and
 `bridge_safe_project_save_verified=false`; a reopen pass cannot qualify safe
 production saving. Historical typed-save results belong to their older sources.
 
+`exclusive_mutation` is an opt-in interactive fixture for the structured-entry
+interlock used by `asset.import`. It attempts nested writes through executor,
+registry dispatch and prepared invocation from admission, permission, checkpoint,
+handler and actual Python-finalizer callbacks. It verifies rejection before the
+nested providers/checkpoints, read-only execution-display preservation, release
+on success/failure, measured native edits and actual native undo after the owned
+scope unwinds. It does not import assets, constrain arbitrary native/Python
+callbacks, preempt a native call or qualify whole-project recovery. Run the
+separate `asset_import` fixture on admitted builds for the actual import path.
+
 ## Fresh-process phases
 
 `image_reopen`, `image_portability_probe`, `task_plans` and `asset_delivery` launch a writer

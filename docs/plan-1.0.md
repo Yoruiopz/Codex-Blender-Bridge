@@ -1721,3 +1721,35 @@ installed-package acceptance. Failed source variants remain retained independent
 Windows compatibility work is paused at the user's request while implementation proceeds.
 All fourteen release gates remain open, including whole-project safe saving and production
 import/recovery. Component versions remain 0.3.0; no release is published by this increment.
+
+
+### 2026-10-23 — Exclusive native-import mutation ownership (development)
+
+`asset.import` now acquires an internal registry-owned lease before admission,
+permission callbacks and automatic checkpoints. It retains ownership through native
+work, compensation and finalization. New nested mutators cannot borrow its context,
+request identity or recovery flag; the canonical handler continuation is single-use.
+Read-only inspection/status retains the outer execution display. Guarded import writes
+and cleanup prove exact ownership after callbacks, and only the owning scope releases
+its own lease. Other batch, artist-transform and painting-job composition is unchanged.
+This interlock neither constrains arbitrary Python/native callbacks nor preempts native
+calls, implements safe project saving, or removes the known 5.2 import quarantine.
+
+Validation: 68 focused and 5,438 full non-Blender tests pass with three Windows-only
+skips; Ruff, mypy, compilation, generated inventory and whitespace checks pass. The
+native fixture at `526ec0e` passes on Linux Blender 4.5.14 and 5.2.2, proving 36 nested
+rejections per runtime across admission/provider/checkpoint/handler/finalizer callbacks,
+actual edits and undo, scope release on success/failure, and a subsequent admitted edit.
+The separate existing 4.5.14 GLB/FBX import writer/reader fixture passes with injected
+failure cleanup and fresh reopen; its serialization remains explicitly fixture-only.
+An earlier `ff60d6c` fixture failure is retained: its final control operation returned no
+reviewed checkpoint guard. The correction changes only the fixture, not production code.
+
+The 308-file native source fingerprint is
+`e3d2b08083d61525bd082c8ea4af6e4f7752efeb4b4fe2c09eb2839cd77ce13c`.
+Local source, logs, reports, unit receipt and negative evidence are retained in
+`build/exclusive-mutation-evidence-20261023.tar.gz` (SHA-256
+`c7a4340cdd9d7755333757e339bf8673bc183f9f37b75800c263e4ec66a3c61c`).
+These focused checks do not establish a complete current native matrix, Windows,
+installed-package or full workflow acceptance. Windows work stays paused; all fourteen
+release gates remain open and component versions remain 0.3.0.
