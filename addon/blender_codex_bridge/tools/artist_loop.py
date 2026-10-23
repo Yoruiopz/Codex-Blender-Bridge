@@ -13,6 +13,7 @@ from collections.abc import Mapping
 from copy import deepcopy
 from typing import Any
 
+from ..artist_step_evidence import associate, check_apply, matches
 from ..errors import BridgeError, ErrorCode, invalid_argument
 from ..permissions import Permission
 from ..request_lifecycle import RequestLifetime
@@ -146,7 +147,7 @@ def enforce_plan(context: ToolContext, params: Mapping[str, Any]) -> dict[str, A
     record = context.state.record_operation(tool="task.plan.enforce",
         description=("Enabled" if enabled else "Explicitly disabled") + " runtime protected task-plan scope",
         success=True, duration_ms=0.)
-    return {**store.inspect(), "enforcement_changed_explicitly": True,
+    return {**store.inspect(context.evidence), "enforcement_changed_explicitly": True,
             "protection_audit_operation_id": record.operation_id,
             "reviewed_transform_methods": sorted(TRANSFORM_METHODS),
             "host_python_sandbox": False}
@@ -230,6 +231,13 @@ def check_preview_origin(boundary: Boundary) -> None:
     preview = store.applying_preview
     if preview is None:
         return
+    from ._artist_checkpoint_admission import current
+    admission = current(boundary.context)
+    roles = admission.roles if admission is not None and admission.roles is not None else preview["checkpoint_roles"].fork()
+    roles.check_after_read()
+    association = preview.get("step_association")
+    if association is not None and not matches(store, association):
+        raise invalid_argument("The preview's retained plan step changed before its write boundary.")
     if (boundary.method != "transform.set" or boundary.obj.name != preview["params"]["object_name"]
             or policy_stamp(boundary.context) != preview["policy_stamp"] or _profile(boundary) != preview["profile"]):
         raise invalid_argument("The preview's authored pre-state changed before its write boundary; no edit is allowed.")
@@ -255,9 +263,10 @@ def _preview_params(params: Mapping[str, Any], obj: Any) -> dict[str, Any]:
 
 
 def preview_transform(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
-    reject_unknown_params(params, {"reference_id", "expected_revision", "object_name", "location", "rotation", "scale", "rotation_mode"})
+    reject_unknown_params(params, {"reference_id", "expected_revision", "object_name", "location", "rotation", "scale", "rotation_mode", "step_id"})
     store = get_task_plans(context.state)
     store.check_revision(params.get("expected_revision"))
+    association = associate(store, params["step_id"]) if "step_id" in params else None
     bpy = require_blender()
     _inspect_gate(context)
     store.check_revision(params.get("expected_revision"))
@@ -289,10 +298,14 @@ def preview_transform(context: ToolContext, params: Mapping[str, Any]) -> dict[s
             raise invalid_argument("Preview does not bypass locked transform components.", property=field)
     changes = [{"field": field, "before": before[field], "requested": desired[field]} for field in before if before[field] != desired[field]]
     preview = {"reference_id": params["reference_id"], "params": parsed, "profile": _profile(boundary),
-               "policy_stamp": policy_stamp(context), "plan_id": store.require_plan()["plan_id"]}
+               "policy_stamp": policy_stamp(context), "plan_id": store.require_plan()["plan_id"], "step_association": association,
+               "checkpoint_roles": boundary.checkpoint_roles.origin()}
+    if association is not None and not matches(store, association):
+        raise invalid_argument("The plan step changed during preview; resolve it again.")
     final_lifetime_gate(context)
     identifier = _keep(store.previews, "preview_", preview, MAX_PREVIEWS)
-    return {"preview_id": identifier, "method": "transform.set", "object": obj.name, "changes": changes,
+    return {"preview_id": identifier, "step_id": association.step_id if association is not None else None,
+            "method": "transform.set", "object": obj.name, "changes": changes,
             "affected_objects": boundary.affected, "scope_complete": True,
             "protected_scope_enforced": store.protection is not None,
             "authority_granted": False, "scene_edited": False, "project_saved": False,
@@ -312,7 +325,7 @@ def prepare_transform_scope(context: ToolContext, params: Mapping[str, Any]) -> 
     return {"scope_complete": True, "affected_objects": [obj.name for obj in objects]}
 
 
-def prepare_preview_scope(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
+def preview_boundary(context: ToolContext, params: Mapping[str, Any], *, checkpoint_roles: Any = None) -> Boundary:
     store = get_task_plans(context.state)
     store.check_revision(params.get("expected_revision"))
     identifier = params.get("preview_id")
@@ -323,6 +336,7 @@ def prepare_preview_scope(context: ToolContext, params: Mapping[str, Any]) -> di
         raise BridgeError(ErrorCode.TOOLSET_DISABLED, "The preview's transform toolset is disabled.",
                           {"tool": "transform.set", "toolset": transform_spec.toolset})
     preview = store.previews[identifier]
+    check_apply(context, identifier, preview, params)
     bpy = require_blender()
     if preview["policy_stamp"] != policy_stamp(context) or preview["plan_id"] != store.require_plan()["plan_id"]:
         raise invalid_argument("Preview protection or plan changed; preview again.")
@@ -330,14 +344,28 @@ def prepare_preview_scope(context: ToolContext, params: Mapping[str, Any]) -> di
     obj = next((obj for obj in objects if obj.name == preview["params"]["object_name"]), None)
     if obj is None:
         raise invalid_argument("Preview target identity changed.")
+    # Preserve the stale-reference contract before consulting a native role
+    # origin. These reads validate existing identities; they adopt no baseline.
+    if checkpoint_roles is None:
+        from ._artist_checkpoint_admission import current
+        admission = current(context)
+        checkpoint_roles = admission.roles if admission is not None and admission.preview is preview else preview["checkpoint_roles"].fork()
+    checkpoint_roles.check_after_read()
     pre_closure(bpy)
     affected, _references = _closure(bpy, obj)
     require_profile(bpy, affected)
-    boundary = Boundary(bpy, context, "transform.set", obj, transform=True, artist_profile=True)
+    boundary = Boundary(bpy, context, "transform.set", obj, transform=True, artist_profile=True,
+                        checkpoint_roles=checkpoint_roles)
     require_profile(bpy, boundary.objects)
     check_affected(context, bpy, boundary.objects, stamp=preview["policy_stamp"])
     if _profile(boundary) != preview["profile"]:
         raise invalid_argument("Authored channels, context or consumers changed after preview; preview again.")
+    check_apply(context, identifier, preview, params)
+    return boundary
+
+
+def prepare_preview_scope(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
+    boundary = preview_boundary(context, params)
     return {"scope_complete": True, "affected_objects": boundary.affected}
 
 
@@ -353,10 +381,13 @@ def apply_preview(context: ToolContext, params: Mapping[str, Any]) -> dict[str, 
     final_lifetime_gate(context)
     store = get_task_plans(context.state)
     preview = store.previews.pop(params["preview_id"])
+    check_apply(context, params["preview_id"], preview, params)
     if store.applying_preview is not None:
         raise invalid_argument("A preview is already being applied; nested application is unsupported.")
     store.applying_preview = preview
     try:
+        from ._artist_checkpoint_admission import consumed
+        consumed(context, preview)
         result = context.registry.dispatch("transform.set", deepcopy(preview["params"]), context)
     finally:
         if store.applying_preview is preview:
@@ -365,6 +396,7 @@ def apply_preview(context: ToolContext, params: Mapping[str, Any]) -> dict[str, 
 
 
 def register_tools(registry: ToolRegistry) -> None:
+    from ._artist_checkpoint_admission import factory
     for name, handler, description in (
         ("task.plan.enforce", enforce_plan, "Explicitly enable/disable runtime plan protection; unknown modifying tools fail closed."),
         ("task.reference.resolve", resolve_reference, "Resolve bounded exact object names/current selection to runtime-only references; never infers visual intent."),
@@ -375,4 +407,6 @@ def register_tools(registry: ToolRegistry) -> None:
     registry.register("task.plan.apply_preview", apply_preview,
                       permissions=(Permission.INSPECT_SCENE, Permission.TRANSFORM_OBJECTS), modifies=True,
                       description="Apply one exact live transform preview once after renewed permission and context checks.", batchable=False,
-                      protected_scope_resolver=prepare_preview_scope)
+                      protected_scope_resolver=prepare_preview_scope,
+                      checkpoint_admission_factory=lambda context, params: factory("task.plan.apply_preview", context, params),
+                      checkpoint_parameter_dependencies=lambda registry, _params: (registry.get("transform.set"),))

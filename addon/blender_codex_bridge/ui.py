@@ -311,17 +311,37 @@ if bpy is not None:
                 error_row.label(text=f"Last error: {state['last_error'][:96]}", icon="ERROR")
 
             plan_store = getattr(runtime.state, "_artist_task_plans", None)
-            plan = plan_store.inspect()["plan"] if plan_store is not None else None
+            plan_info = plan_store.inspect(runtime.executor.evidence) if plan_store is not None else None
+            plan = plan_info["plan"] if plan_info is not None else None
             if plan is not None:
                 completed = sum(step["status"] == "completed" for step in plan["steps"])
                 task_box.label(text=f"Plan: {completed}/{len(plan['steps'])} marked complete")
                 icons = {"pending": "DOT", "in_progress": "PLAY", "completed": "CHECKMARK", "blocked": "ERROR"}
                 for step in plan["steps"][:8]:
                     task_box.label(text=step["description"][:80], icon=icons[step["status"]])
+                    receipts = [item for item in plan_info["step_evidence"]["receipts"] if item["step_id"] == step["id"]]
+                    if receipts:
+                        receipt = receipts[-1]
+                        earlier = " (earlier scene state)" if receipt["history_state"] == "historical_after_generation_change" else ""
+                        task_box.label(text=f"Last edit: {receipt['outcome'].capitalize()}{earlier}")
+                        observation = receipt["protected_observation"]
+                        label = "Not compared"
+                        if observation:
+                            if observation["validity"] == "stale":
+                                label = "Stale; compare again"
+                            elif observation["validity"] == "unknown":
+                                label = "Snapshot unavailable"
+                            else:
+                                label = {"unchanged_within_scope": "Unchanged at comparison", "changed": "Changes found",
+                                         "unknown": "Comparison incomplete"}.get(observation["status"], "Comparison incomplete")
+                        task_box.label(text=f"Protected objects only: {label}")
                 if len(plan["steps"]) > 8:
                     task_box.label(text=f"{len(plan['steps']) - 8} more steps; inspect the plan")
-                task_box.label(text=f"Protected scope: {len(plan['protected_objects'])} objects (advisory)")
-                task_box.label(text="Compare evidence before marking work verified", icon="INFO")
+                policy = "enforced" if plan_info["protected_scope_enforced"] else "advisory"
+                task_box.label(text=f"Protected scope: {len(plan['protected_objects'])} objects ({policy})")
+                task_box.label(text="Step marks are claims; receipts do not verify the goal", icon="INFO")
+                if plan_info["step_evidence"]["incomplete"]:
+                    task_box.label(text="Execution receipts incomplete; inspect history", icon="ERROR")
 
             toolsets = layout.box()
             toolsets.label(text="Capability Toolsets", icon="MODIFIER")

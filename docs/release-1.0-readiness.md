@@ -104,6 +104,15 @@ current-source adversarial proof and the remaining per-tool/dependency audit are
 
 ## Delivery sequence
 
+The current UX-01 increment adds optional immutable step links to existing transform
+previews, bounded runtime receipts from the actual finalized outer operations, and
+explicit protected-only comparison observations. Reconnect retains them; undo/redo
+invalidates observation currency, and plan replacement/load/reset discards them.
+Sidebar execution evidence remains separate from claimed completion. The saved-v1
+document stays passive. Portable boundary tests and the extended native artist-loop
+fixture are described in [task plans](task-plans.md); native execution of this
+increment is pending. This does not close UX-01 or any full-artist release gate.
+
 1. **Safety baseline:** close ownership/context gaps, add regression fixtures, strengthen failure evidence.
 2. **Daily workflows:** finish targeted structured editing gaps and add whole-task acceptance scenarios.
 3. **Compatibility and usability:** exercise installation/upgrades and Blender/platform matrix; align UI and docs.

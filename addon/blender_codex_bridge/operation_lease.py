@@ -66,10 +66,15 @@ class MutationInterlock:
         self._entries: list[_InvocationRecord] = []
         self._consumed: set[int] = set()
 
+    @property
+    def has_retained_exclusive_entry(self) -> bool:
+        """Keep the scope fence when diagnostic owner slots are lost."""
+        return any(entry.lease is not None for entry in self._entries)
+
     def _reject_entry(self, spec: Any) -> None:
         if not spec.modifies:
             return
-        if self.owner is not None or self.invocation is not None or (
+        if self.owner is not None or self.invocation is not None or self.has_retained_exclusive_entry or (
             spec.exclusive_mutation and any(entry.spec.modifies for entry in self._entries)
         ):
             details = {"reason": "REENTRANT_MUTATION_BLOCKED", "execution_started": False,
@@ -84,7 +89,8 @@ class MutationInterlock:
         if not spec.modifies:
             return
         permit = self.invocation
-        if self.owner is None and permit is None and not spec.exclusive_mutation:
+        if (self.owner is None and permit is None and not spec.exclusive_mutation
+                and not self.has_retained_exclusive_entry):
             return
         if (not isinstance(permit, _InvocationRecord) or not any(entry is permit for entry in self._entries)
                 or permit.registry is not registry or permit.spec is not spec or permit.context is not context

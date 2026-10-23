@@ -12,6 +12,11 @@ from datetime import datetime, timezone
 from itertools import islice
 from typing import Any
 
+from .checkpoint_completion import (
+    authenticated_checkpoint,
+    bind_native_push_guard,
+    issue_native_push_completion,
+)
 from .errors import BridgeError, ErrorCode
 from .selection import clear_selection_references
 from .undo_window import UndoWindow
@@ -119,6 +124,7 @@ class CheckpointManager:
         self._window = UndoWindow()
         self._expired_operations = 0
         self.recovery_in_progress = False
+        self._native_push_pending: dict[int, Any] = {}
 
     @staticmethod
     def _ensure_undo_enabled(*, require_object_mode: bool = True) -> Any:
@@ -239,7 +245,17 @@ class CheckpointManager:
         step_limit = self._step_limit(blender)
         if guard is not None:
             guard.check("native_undo_push")
-            guard.complete("native_undo_push", lambda: self._compare_markers(blender, expected))
+            # Providers can change preferences after the entry check. Read the
+            # retained native settings, then finish with provider-free proof.
+            edit = getattr(getattr(blender.context, "preferences", None), "edit", None)
+            enabled = getattr(edit, "use_global_undo", True)
+            step_limit = self._step_limit(blender)
+            def compare() -> None:
+                if not enabled or step_limit == 0:
+                    raise BridgeError(ErrorCode.BLENDER_CONTEXT_ERROR,
+                                      "Native undo was disabled before the snapshot.")
+                self._compare_markers(blender, expected)
+            guard.complete("native_undo_push", compare)
         if "FINISHED" not in undo_push(message=message):
             raise BridgeError(
                 ErrorCode.OPERATION_FAILED, "Blender did not create the native snapshot."
@@ -248,7 +264,7 @@ class CheckpointManager:
         if guard is not None:
             guard.native_snapshots += 1
             if guard.after_native_push is not None:
-                guard._run("after_native_undo_push", guard.after_native_push)
+                guard._run("after_native_undo_push", lambda: issue_native_push_completion(self, guard))
         self._prune_expired_operations()
         return token
 
@@ -313,9 +329,12 @@ class CheckpointManager:
             "warning": "Only bridge pushes are counted. Manual/operator snapshots, memory limits, preference changes and editor stacks can expire other targets. Global recovery can undo interleaved work; labels are not durable backups.",
         }
 
+    @authenticated_checkpoint
     def create(self, description: str = "Agent checkpoint", *, before_write: Callable[[], None] | None = None,
                after_read: Callable[[], None] | None = None, after_native_push: Callable[[], None] | None = None) -> dict[str, Any]:
         guard = _CheckpointGuard(before_write, after_read, after_native_push) if before_write is not None else None
+        if guard is not None:
+            bind_native_push_guard(self, guard)
         blender = self._ensure_undo_enabled()
         description = (description or "Agent checkpoint").strip()[:120]
         token = self._snapshot(blender, f"Codex Checkpoint: {description}", guard=guard) if guard is not None else self._snapshot(blender, f"Codex Checkpoint: {description}")
@@ -334,9 +353,12 @@ class CheckpointManager:
         self._retain_targets()
         return checkpoint.to_dict()
 
+    @authenticated_checkpoint
     def before_modification(self, tool_name: str, *, before_write: Callable[[], None] | None = None,
                             after_read: Callable[[], None] | None = None, after_native_push: Callable[[], None] | None = None) -> bool:
         guard = _CheckpointGuard(before_write, after_read, after_native_push) if before_write is not None else None
+        if guard is not None:
+            bind_native_push_guard(self, guard)
         try:
             blender = self._ensure_undo_enabled(require_object_mode=False)
             invalid_editor = False
@@ -377,9 +399,12 @@ class CheckpointManager:
                 self.clear()
             return False
 
+    @authenticated_checkpoint
     def after_modification(self, tool_name: str, *, before_write: Callable[[], None] | None = None,
                            after_read: Callable[[], None] | None = None, after_native_push: Callable[[], None] | None = None) -> bool:
         guard = _CheckpointGuard(before_write, after_read, after_native_push) if before_write is not None else None
+        if guard is not None:
+            bind_native_push_guard(self, guard)
         pending = self._pending
         if pending is None:
             return False
@@ -463,9 +488,12 @@ class CheckpointManager:
             "state": "deferred",
         }
 
+    @authenticated_checkpoint
     def finish_editor_session(self, *, before_write: Callable[[], None] | None = None,
                               after_read: Callable[[], None] | None = None, after_native_push: Callable[[], None] | None = None) -> dict[str, Any] | None:
         guard = _CheckpointGuard(before_write, after_read, after_native_push) if before_write is not None else None
+        if guard is not None:
+            bind_native_push_guard(self, guard)
         return self._finish_editor_session(guard)
 
     def _finish_editor_session(self, guard: _CheckpointGuard | None) -> dict[str, Any] | None:

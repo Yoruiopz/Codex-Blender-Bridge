@@ -6,11 +6,12 @@ import importlib
 from types import SimpleNamespace as NS
 
 import pytest
+from checkpoint_completion_support import complete_plan_push
 from test_scene_mutation_boundaries import RNA, NativeOwner, Properties, prop
 
 
 @pytest.fixture
-def roles(addon_package):
+def roles(addon_package, monkeypatch):
     module = importlib.import_module(f"{addon_package}.tools._scene_checkpoint_roles")
     classes = {}
     for kind, fields in {
@@ -41,8 +42,12 @@ def roles(addon_package):
     def push():
         counts["self"] = 1
         particle._values["object"] = active
-    return NS(module=module, bpy=bpy, scene=scene, particle=particle, settings=settings,
+    case = NS(module=module, bpy=bpy, scene=scene, particle=particle, settings=settings,
               active=active, other=other, counts=counts, push=push)
+    def complete(plan, *, effect=push):
+        return complete_plan_push(addon_package, monkeypatch, plan, effect=effect)
+    case.complete = complete
+    return case
 
 
 def test_only_trusted_completion_advances_the_exact_predicted_roles(roles):
@@ -54,27 +59,51 @@ def test_only_trusted_completion_advances_the_exact_predicted_roles(roles):
         plan.check_after_read()
     assert caught.value.context["checkpoint_roles_valid"] is False
     assert plan.expected == (0, (None, None))
-    plan.after_native_push()
+    native_effects = []
+    with pytest.raises(case.module.proof.BridgeError):
+        case.complete(plan, effect=lambda: native_effects.append("must not run"))
+    assert native_effects == [] and plan.expected == (0, (None, None))
+    # Restore the unchanged retained origin, then earn the one allowed transition.
+    case.counts["self"] = 0
+    case.particle._values["object"] = None
+    delivered = case.complete(plan)
+    assert delivered.stack.cursor == 1
     plan.check_after_read()
     assert plan.references() == before
     assert plan.expected == (1, case.module.proof.token(case.active))
-    plan.after_native_push()  # Later legitimate AFTER pushes retain fixed roles.
+    case.complete(plan)  # Later legitimate pushes retain the same fixed roles.
     assert plan.references() == before
 
 
 def test_hook_never_adopts_a_different_live_object_or_original(roles):
     case = roles
     plan = case.module.Plan(case.bpy, case.scene)
-    case.push()
-    case.particle._values["object"] = case.other
-    plan.after_native_push()
-    with pytest.raises(case.module.proof.BridgeError):
-        plan.check_after_read()
+    def wrong_owner_push():
+        case.push()
+        case.particle._values["object"] = case.other
+    with pytest.raises(case.module.proof.BridgeError) as caught:
+        case.complete(plan, effect=wrong_owner_push)
+    assert caught.value.context["checkpoint_roles_valid"] is False
+    assert caught.value.context["checkpoint_bookkeeping"]["native_snapshots_completed"] == 1
     assert plan.expected == (1, case.module.proof.token(case.active))
     case.particle._values["object"] = case.active
     case.scene._values["original"] = case.other
     with pytest.raises(case.module.proof.BridgeError):
         plan.check_after_read()
+
+
+@pytest.mark.parametrize("initialized", [False, True])
+def test_direct_hook_cannot_claim_a_completed_native_push(roles, initialized):
+    case = roles
+    if initialized:
+        case.push()
+    plan = case.module.Plan(case.bpy, case.scene)
+    expected = plan.expected
+    with pytest.raises(case.module.proof.BridgeError) as caught:
+        plan.after_native_push()
+    assert caught.value.context["native_push_completion_valid"] is False
+    assert plan.expected == expected
+    plan.check_after_read()
 
 
 @pytest.mark.parametrize("count,target", [(0, "active"), (1, "none"), (1, "other"), (2, "active"), (-1, "none")])

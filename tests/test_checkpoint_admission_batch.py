@@ -6,60 +6,17 @@ import importlib
 from types import SimpleNamespace as NS
 
 import pytest
-
-
-class NativeCheckpoints:
-    """Count actual marker/snapshot publications after trusted write hooks."""
-
-    def __init__(self, events):
-        self.events = events
-        self.before_hook = self.after_hook = None
-        self.before_pushes = self.after_pushes = 0
-
-    def before_modification(self, label, *, before_write=None, after_read=None, after_native_push=None):
-        if self.before_hook is not None:
-            self.before_hook()
-        if before_write is not None:
-            before_write()
-        if after_read is not None:
-            after_read()
-        self.before_pushes += 1
-        if after_native_push is not None:
-            after_native_push()
-        self.events.append(("native_before", label))
-        return True
-
-    def after_modification(self, label, *, before_write=None, after_read=None, after_native_push=None):
-        if self.after_hook is not None:
-            self.after_hook()
-        if before_write is not None:
-            before_write()
-        if after_read is not None:
-            after_read()
-        self.after_pushes += 1
-        if after_native_push is not None:
-            after_native_push()
-        self.events.append(("native_after", label))
-        return True
-
-    def finish_editor_session(self, *, before_write=None, after_read=None, after_native_push=None):
-        if before_write is not None:
-            before_write()
-        if after_read is not None:
-            after_read()
-        return None
-
-    def editor_session_status(self):
-        return None
+from test_checkpoint_authority import NativeStack
 
 
 @pytest.fixture
-def env(addon_package):
+def env(addon_package, monkeypatch):
     batch = importlib.import_module(f"{addon_package}.tools.batch")
     registry_module = importlib.import_module(f"{addon_package}.tool_registry")
     permissions = importlib.import_module(f"{addon_package}.permissions")
     state_module = importlib.import_module(f"{addon_package}.state")
     errors = importlib.import_module(f"{addon_package}.errors")
+    checkpoint_module = importlib.import_module(f"{addon_package}.checkpoints")
     events, factories, handlers, bindings = [], [], [], []
     state = {"owned": 0, "protected": "original"}
     grants = {permission.value: True for permission in permissions.Permission}
@@ -73,7 +30,43 @@ def env(addon_package):
             provider_hook[0]()
         return dict(grants)
 
-    checkpoints = NativeCheckpoints(events)
+    stack = NativeStack()
+    monkeypatch.setattr(checkpoint_module, "require_blender", lambda: stack.bpy)
+
+    class NativeCheckpoints(checkpoint_module.CheckpointManager):
+        """Observe real mocked native pushes without manufacturing completions."""
+
+        def __init__(self):
+            super().__init__()
+            self.before_hook = self.after_hook = None
+            self.before_pushes = self.after_pushes = 0
+
+        def before_modification(self, label, **kwargs):
+            if self.before_hook is not None:
+                self.before_hook()
+            return super().before_modification(label, **kwargs)
+
+        def after_modification(self, label, **kwargs):
+            if self.after_hook is not None:
+                self.after_hook()
+            return super().after_modification(label, **kwargs)
+
+    checkpoints = NativeCheckpoints()
+    native_push = stack.bpy.ops.ed.undo_push
+
+    def traced_push(**kwargs):
+        result = native_push(**kwargs)
+        if "FINISHED" in result:
+            message = kwargs["message"]
+            if message.startswith("Codex Before: "):
+                checkpoints.before_pushes += 1
+                events.append(("native_before", message.removeprefix("Codex Before: ")))
+            elif message.startswith("Codex After: "):
+                checkpoints.after_pushes += 1
+                events.append(("native_after", message.removeprefix("Codex After: ")))
+        return result
+
+    monkeypatch.setattr(stack.bpy.ops.ed, "undo_push", traced_push)
     context = registry_module.ToolContext(state_module.BridgeState(), permissions.PermissionManager(provider),
                                           registry, checkpoints)
     prepare_call = registry.prepare_call

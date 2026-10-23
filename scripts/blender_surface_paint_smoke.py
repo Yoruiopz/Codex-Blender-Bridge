@@ -36,6 +36,31 @@ def control(action):
     assert result == [True], result
 
 
+def capture_state():
+    """Independent native context/UI fields, excluding the allowed Render Result."""
+    views = []
+    for area in bpy.context.screen.areas:
+        if area.type == "VIEW_3D":
+            space = area.spaces.active
+            region = space.region_3d
+            views.append((area.as_pointer(), space.lens, space.clip_start, space.clip_end,
+                          region.view_distance, tuple(region.view_location), tuple(region.view_rotation),
+                          region.view_perspective, tuple(region.view_camera_offset), region.view_camera_zoom,
+                          space.shading.type, space.overlay.show_overlays))
+    render = bpy.context.scene.render
+    image = render.image_settings
+    active = bpy.context.view_layer.objects.active
+    return (bpy.context.scene.as_pointer(), bpy.context.view_layer.as_pointer(), bpy.context.mode,
+            None if active is None else active.as_pointer(),
+            tuple(sorted(obj.as_pointer() for obj in bpy.context.selected_objects)), tuple(views),
+            tuple((obj.as_pointer(), obj.hide_get(), obj.hide_viewport, obj.hide_render, obj.hide_select)
+                  for obj in bpy.context.scene.objects),
+            (render.filepath, render.resolution_x, render.resolution_y, render.resolution_percentage,
+             render.pixel_aspect_x, render.pixel_aspect_y, render.film_transparent,
+             image.file_format, image.color_mode, image.color_depth, image.compression,
+             image.exr_codec, image.quality))
+
+
 def scenario(port, captures, source_digest, stencil_digest, reference_digest):
     client = None
     try:
@@ -59,8 +84,15 @@ def scenario(port, captures, source_digest, stencil_digest, reference_digest):
         def pixels(name):
             return client.call("image.inspect_pixels", image_name=name)
         def capture(name):
-            return client.call("viewport.capture", object_name=name, shading="material", view="current",
-                               include_overlays=False, resolution=[768, 512])["path"]
+            control("capture_before")
+            try:
+                result = client.call("viewport.capture", object_name=name, frame_object=True,
+                                     shading="material", view="current",
+                                     include_overlays=False, resolution=[768, 512])
+            finally:
+                control("capture_after")
+            assert result["frame_object"] and result["framing"]["object_name"] == name
+            return result["path"]
         def undo():
             value = client.call("checkpoint.undo_last", confirm_global_undo=True, restore_snapshot=True)
             assert value["snapshot_marker_verified"], value
@@ -155,7 +187,15 @@ def setup():
                 area.spaces.active.region_3d.view_rotation = Vector((0, 0, 1)).to_track_quat("Z", "Y")
                 area.spaces.active.region_3d.view_distance = 2.5
         def capture(name):
-            return call("viewport.capture", object_name=name, shading="material", view="current", include_overlays=False, resolution=[768, 512])["path"]
+            before = capture_state()
+            try:
+                result = call("viewport.capture", object_name=name, frame_object=True, shading="material",
+                              view="current", include_overlays=False, resolution=[768, 512])
+            finally:
+                assert capture_state() == before
+            assert result["frame_object"] and result["framing"]["object_name"] == name
+            RESULT["framed_capture_context_restorations"] = RESULT.get("framed_capture_context_restorations", 0) + 1
+            return result["path"]
         captures = {"before": capture(target.name), "protected_before": capture(protected.name)}
         from blender_codex_bridge.tools import image_paint
         original_new, acquired = image_paint._new, {}
@@ -201,8 +241,15 @@ def setup():
         sync = call("image.paint_surface_version", **PARAMS, new_name="Surface Sync")
         assert sync["source_pixels_unchanged"] and sync["geometry_and_uv_inputs_unchanged"]
         assert sync["painted_pixels"] > 0 and not sync["bound_to_nodes"]
+        pending_capture = []
         def apply(action):
-            if action == "change_uv":
+            if action == "capture_before":
+                assert not pending_capture
+                pending_capture.append(capture_state())
+            elif action == "capture_after":
+                assert len(pending_capture) == 1 and capture_state() == pending_capture.pop()
+                RESULT["framed_capture_context_restorations"] += 1
+            elif action == "change_uv":
                 bpy.data.objects["Surface Panel"].data.uv_layers["UV"].data[0].uv.x = .02
             elif action == "restore_uv":
                 bpy.data.objects["Surface Panel"].data.uv_layers["UV"].data[0].uv.x = 0.

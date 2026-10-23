@@ -193,6 +193,7 @@ def batch_execute(context: ToolContext, params: Mapping[str, Any]) -> dict[str, 
     current_started = False
     current_spec = prepared[0][1]
     admission_stack = ExitStack()
+    invocation_stack = ExitStack()
     current_admission = None
     finalization_gate = None
     finalization_after_read = None
@@ -202,6 +203,7 @@ def batch_execute(context: ToolContext, params: Mapping[str, Any]) -> dict[str, 
         for index, (identifier, spec, arguments) in enumerate(prepared):
             current_spec = spec
             current_started = False
+            child_permit = invocation_stack.enter_context(context.registry.mutation_entry(spec, arguments, context))
             if context.check_cancelled is not None:
                 context.check_cancelled()
             if time.monotonic() >= deadline:
@@ -239,11 +241,13 @@ def batch_execute(context: ToolContext, params: Mapping[str, Any]) -> dict[str, 
                     raise BridgeError(ErrorCode.TIMEOUT, "Batch time budget expired before its next write.")
                 check_final_mutation(context, method)
 
-            def step_native_push(method=spec.name, admission=current_admission):
-                if admission is not None:
-                    admission.after_native_push()
+            def native_push_final(method=spec.name):
                 plan_unchanged()
                 check_final_mutation(context, method)
+
+            step_native_push = (admission_stack.enter_context(context.registry.native_push_completion(
+                child_permit, current_admission, context.checkpoints, final_check=native_push_final))
+                if spec.modifies and current_admission is not None else None)
 
             if spec.modifies:
                 finalization_gate = step_write_gate
@@ -265,7 +269,7 @@ def batch_execute(context: ToolContext, params: Mapping[str, Any]) -> dict[str, 
             entries_before = context.handler_entries
             try:
                 try:
-                    result = context.registry.invoke(spec, arguments, context)
+                    result = context.registry.invoke(spec, arguments, context, _permit=child_permit)
                 finally:
                     current_started = context.handler_entries > entries_before
                     mutation_started = mutation_started or (current_started and spec.modifies)
@@ -326,7 +330,10 @@ def batch_execute(context: ToolContext, params: Mapping[str, Any]) -> dict[str, 
                 "bookkeeping": finalization_denial.context.get("checkpoint_bookkeeping"), "primary_error_preserved": True}
         raise BridgeError(error.code, f"Batch stopped at step {index + 1}: {error.message}", context_data) from exc
     finally:
-        admission_stack.close()
+        try:
+            admission_stack.close()
+        finally:
+            invocation_stack.close()
     return {
         "batch_label": label, "atomic": False, "completed_steps": len(results),
         "total_steps": len(prepared), "results": results,

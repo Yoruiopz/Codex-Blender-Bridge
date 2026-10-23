@@ -119,6 +119,54 @@ def main():
         cases.append({"case": "ordinary-before-after", "succeeded": True,
                       "weak_role_transition": "0+None to 1+exact-frozen-active", "original_identity_preserved": True})
 
+        # Providers may observe a diagnostic binding, but cannot manufacture a
+        # completed native checkpoint through that binding or its domain hooks.
+        guarded_spec = runtime.registry.get("light.configure")
+        captured = []
+        def capture_factory(context, params):
+            guard = guarded_spec.checkpoint_admission_factory(context, params)
+            captured.append(guard)
+            return guard
+        runtime.registry._tools["light.configure"] = replace(
+            guarded_spec, checkpoint_admission_factory=capture_factory)
+        try:
+            for route in ("binding", "domain", "role-plan"):
+                manager = fresh()
+                marker = scene[checkpoint.MARKER_KEY]
+                captured.clear()
+                attempted = []
+                def forged_completion(*, route=route, attempted=attempted, marker=marker, manager=manager):
+                    if attempted:
+                        return
+                    assert len(captured) == 1
+                    guard = captured[0]
+                    binding = guard.context.checkpoint_admission
+                    expected = guard.roles.expected
+                    callback = {"binding": binding.after_native_push,
+                                "domain": guard.after_native_push,
+                                "role-plan": guard.roles.after_native_push}[route]
+                    try:
+                        callback()
+                    except BridgeError as error:
+                        assert error.context["native_push_completion_valid"] is False, error.to_dict()
+                    else:
+                        raise AssertionError("A provider forged a completed native push")
+                    assert guard.roles.expected == expected
+                    assert scene[checkpoint.MARKER_KEY] == marker
+                    assert manager._window.position == 0 and light.data.energy == initial_energy
+                    attempted.append(True)
+                provider_hook[0] = forged_completion
+                result = runtime.dispatch("light.configure", {"object_name": light.name, "energy": 416.})
+                assert attempted == [True] and result["preservation_scope"]["complete"] is False
+                assert light.data.energy == 416. and manager._window.position == 2 and manager._pending is None
+                cases.append({"case": "forged-completion-" + route,
+                              "provider_completion_rejected_before_native_or_requested_writes": True,
+                              "real_before_after_pushes_accepted": 2})
+                provider_hook[0] = None
+        finally:
+            provider_hook[0] = None
+            runtime.registry._tools["light.configure"] = guarded_spec
+
         for stage in ("before", "after", "old-editor"):
             manager = fresh()
             retained = None
@@ -137,13 +185,12 @@ def main():
 
             manager._window.pushed = observe_push
             step_limit = manager._step_limit
-            reads = [0]
             installed = [False]
             label = "late-" + stage
 
-            def late_reader(blender, *, reads=reads, stage=stage, installed=installed, label=label, step_limit=step_limit):
-                reads[0] += 1
-                if reads[0] == (2 if stage == "after" else 1):
+            def late_reader(blender, *, stage=stage, installed=installed, label=label, step_limit=step_limit, pushes=pushes):
+                # Choose the native boundary, not an internal getter count.
+                if not installed[0] and pushes[0] == (1 if stage == "after" else 0):
                     installed[0] = True
                     add_driver(label)
                 return step_limit(blender)
@@ -181,7 +228,7 @@ def main():
                 shadow = light.data.use_shadow
                 original = getattr(light.data, field)
                 newer = 913. if field == "energy" else not original
-                fired, reads = [False], [0]
+                fired = [False]
                 pushes_before = manager._window.position
                 read_limit = manager._step_limit
 
@@ -190,9 +237,9 @@ def main():
                         fired[0] = True
                         setattr(light.data, field, newer)
 
-                def authored_reader(blender, *, reads=reads, stage=stage, change=change, read_limit=read_limit):
-                    reads[0] += 1
-                    if (stage == "before-reader" and reads[0] == 1) or (stage == "after-reader" and reads[0] == 2):
+                def authored_reader(blender, *, stage=stage, change=change, read_limit=read_limit, manager=manager, pushes_before=pushes_before):
+                    completed = manager._window.position - pushes_before
+                    if (stage == "before-reader" and completed == 0) or (stage == "after-reader" and completed == 1):
                         change()
                     return read_limit(blender)
 

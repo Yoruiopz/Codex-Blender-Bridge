@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import importlib
 import json
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from types import SimpleNamespace as NS
 
 import pytest
@@ -29,6 +29,38 @@ def loop(rna_env, addon_package, monkeypatch):
     monkeypatch.setattr(plans, "require_blender", lambda: env.bpy)
     monkeypatch.setattr(module, "pre_closure", lambda _bpy: None)
     monkeypatch.setattr(module, "require_profile", lambda _bpy, _objects: None)
+    roles = importlib.import_module(f"{addon_package}.tools._scene_checkpoint_roles")
+    admission = importlib.import_module(f"{addon_package}.tools._artist_checkpoint_admission")
+    monkeypatch.setattr(admission, "require_blender", lambda: env.bpy)
+
+    @dataclass(frozen=True)
+    class Origin:
+        expected: int
+        def fork(self):
+            clone = Roles()
+            clone.expected = self.expected
+            return clone
+
+    class Roles:
+        # Native descriptor/weak-role proofs have their own adapter tests. This
+        # object-RNA fixture has no native Scene/ParticleEdit descriptor types.
+        def __init__(self, _bpy=None, _scene=None, **_kwargs):
+            self.expected = 0
+        def check_after_read(self):
+            return None
+        def authored(self):
+            return ()
+        def object_references(self, references):
+            return references
+        def fork(self):
+            return self.origin().fork()
+        def origin(self):
+            return Origin(self.expected)
+        def after_native_push(self):
+            self.expected = 1
+        def retained(self):
+            return self, self.after_native_push
+    monkeypatch.setattr(roles, "Plan", Roles)
     protected = RNA(**vars(env.obj))
     protected.name, protected.session_uid = "Protected", 2
     protected.modifiers, protected.constraints = Components(), Components()
@@ -38,12 +70,13 @@ def loop(rna_env, addon_package, monkeypatch):
 
     def transform(context, params):
         target = scene.objects.get(params["object_name"])
-        guard = env.module.Boundary(env.bpy, context, "transform.set", target, transform=True)
+        guard = admission.cached(context, "transform.set", target) or env.module.Boundary(env.bpy, context, "transform.set", target, transform=True)
         assignments = tuple(env.rna.RNAAssignment(field, tuple(params[field])) for field in ("location", "scale") if field in params)
         guard.apply(target, assignments)
         return {"changed": True, "affected_objects": guard.affected}
     spec = env.context.registry.get("transform.set")
-    env.context.registry._tools["transform.set"] = replace(spec, handler=transform, protected_scope_resolver=module.prepare_transform_scope)
+    env.context.registry._tools["transform.set"] = replace(spec, handler=transform, protected_scope_resolver=module.prepare_transform_scope,
+        checkpoint_admission_factory=lambda context, params: admission.factory("transform.set", context, params), checkpoint_batch_reviewed=True)
     env.loop, env.plans, env.data, env.protected = module, plans, data, protected
     plans.set_plan(env.context, {"goal": "Revise the working prop while preserving Protected",
                                "steps": [{"id": "revise", "description": "Preview and revise prop placement"}],
@@ -275,7 +308,7 @@ def test_final_nested_dispatch_provider_cannot_replace_preview_baseline(loop):
             fired.append(True)
             loop.obj.location = (9., 8., 7.)
     loop.provider[0] = provider
-    with pytest.raises(loop.module.BridgeError, match="authored pre-state"):
+    with pytest.raises(loop.module.BridgeError, match="Object identity, content, context or consumers changed"):
         loop.loop.apply_preview(loop.context, {"preview_id": result["preview_id"], "expected_revision": 1})
     assert fired and loop.obj.location == (9., 8., 7.)
     assert loop.data.get_task_plans(loop.context.state).applying_preview is None

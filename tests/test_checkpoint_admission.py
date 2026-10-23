@@ -8,6 +8,9 @@ from types import SimpleNamespace as NS
 from typing import Any
 
 import pytest
+from test_checkpoint_authority import authority
+
+assert authority  # Reuse actual native-shaped manager completion, never a fabricated event.
 
 
 @pytest.fixture
@@ -788,7 +791,7 @@ def test_readonly_bound_method_is_resolved_once_before_any_live_provider(admissi
     assert_clean(case)
 
 
-def test_native_push_hook_is_resolved_once_and_finishes_with_provider_free_cached_readonly(admission: Any) -> None:
+def test_native_push_hook_is_resolved_once_and_finishes_with_provider_free_cached_readonly(admission: Any, authority: Any, monkeypatch: Any) -> None:
     case, params, stages = admission, {"value": 1}, []
     actual, expected = [0], [0]
 
@@ -824,37 +827,59 @@ def test_native_push_hook_is_resolved_once_and_finishes_with_provider_free_cache
     guard = Guard()
     spec = case.registry.register("scene.resolved_native_hook", lambda *_: None, modifies=True,
                                   checkpoint_admission_factory=lambda *_: guard)
-    with case.registry.checkpoint_admission(spec, params, case.context) as binding:
+    push = authority.stack.bpy.ops.ed.undo_push
+    def actual_push(**kwargs: Any) -> Any:
+        result = push(**kwargs)
+        actual[0] = 1
+        return result
+    monkeypatch.setattr(authority.stack.bpy.ops.ed, "undo_push", actual_push)
+    with (case.registry.mutation_entry(spec, params, case.context) as permit,
+          case.registry.checkpoint_admission(spec, params, case.context) as binding):
         assert stages == ["resolve readonly", "resolve native hook"]
         guard.native_hook = lambda: stages.append("replacement native hook must not run")
         guard.readonly = lambda: stages.append("replacement readonly must not run")
-        binding()
-        actual[0] = 1
-        binding.after_native_push()
-        assert stages == ["resolve readonly", "resolve native hook", "provider", "native hook", "readonly"]
+        with case.registry.native_push_completion(permit, binding, authority.manager, final_check=lambda: None) as consumer:
+            assert authority.manager.before_modification(spec.name, before_write=binding,
+                after_read=binding.check_after_read, after_native_push=consumer)
+        assert stages.count("native hook") == 1
+        native_index = stages.index("native hook")
+        assert stages[native_index + 1] == "readonly"
+        assert all("replacement" not in stage for stage in stages)
 
     assert_clean(case)
 
 
-def test_absent_native_push_hook_still_requires_readonly_and_latches_its_denial(admission: Any) -> None:
+def test_absent_native_push_hook_still_requires_readonly_and_latches_its_denial(admission: Any, authority: Any, monkeypatch: Any) -> None:
     case, params = admission, {"value": 1}
     primary = case.errors.BridgeError(case.errors.ErrorCode.NOT_IMPLEMENTED, "Readonly native completion refused")
 
+    pushed = [False]
+    push = authority.stack.bpy.ops.ed.undo_push
+    def actual_push(**kwargs: Any) -> Any:
+        result = push(**kwargs)
+        pushed[0] = True
+        return result
+    monkeypatch.setattr(authority.stack.bpy.ops.ed, "undo_push", actual_push)
     def deny(_context: Any, _params: Any) -> None:
-        raise primary
+        if pushed[0]:
+            raise primary
 
     case.readonly_hooks["scene.one"] = deny
-    with case.registry.checkpoint_admission(case.specs["scene.one"], params, case.context) as binding:
+    spec = case.specs["scene.one"]
+    with (case.registry.mutation_entry(spec, params, case.context) as permit,
+          case.registry.checkpoint_admission(spec, params, case.context) as binding):
         assert binding.native_push_callback is None
-        with pytest.raises(case.errors.BridgeError) as first:
-            binding.after_native_push()
+        with (case.registry.native_push_completion(permit, binding, authority.manager, final_check=lambda: None) as consumer,
+              pytest.raises(case.errors.BridgeError) as first):
+            authority.manager.before_modification(spec.name, before_write=binding,
+                after_read=binding.check_after_read, after_native_push=consumer)
         assert first.value is primary and binding.stopped is primary
         for callback in (binding.after_native_push, binding, binding.check_after_read):
             with pytest.raises(case.errors.BridgeError) as retry:
                 callback()
             assert retry.value is primary
-        assert case.readonly_checks == [binding]
-        assert case.checks == case.handlers == []
+        assert case.readonly_checks and all(item is binding for item in case.readonly_checks)
+        assert case.handlers == []
 
     assert_clean(case)
 

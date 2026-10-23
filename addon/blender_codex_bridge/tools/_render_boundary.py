@@ -98,6 +98,8 @@ class Boundary:
 
     def after_native_push(self) -> None:
         """Advance only to candidates frozen before any entry providers."""
+        from ..checkpoint_completion import claim_native_push_delegate
+        claim_native_push_delegate(self)
         if self.native_sealed_protected is not None:
             self.native_sealed_protected = (
                 self.checkpoint_protected

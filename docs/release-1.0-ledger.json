@@ -18,7 +18,7 @@
     "SAFE-01": {
       "status": "open",
       "evidence": [],
-      "progress": "Checkpoint admission retains request identity and bounded authored expectations before callbacks through marker/native-push/handler finalization; newer markers and custom scalar/container values are compared literally. Unreviewed guarded batch composition refuses. Scene reports incomplete bundled runtime preservation; exact reviewed Blender 5.2 render mutations refuse because supported read-only SYSTEM comparison is unproven. Public project.save refuses before Blender/path access. Complete per-tool dependency/ownership/permission/recovery and Windows acceptance remain open. Typed asset.import now owns an exclusive structured-entry lease before admission/providers/checkpoints through native cleanup/finalization, with pure final ownership checks; focused Linux checks prove reentry rejection and native recovery. This does not constrain arbitrary native/Python callbacks or preempt native calls."
+      "progress": "Checkpoint admission retains request identity and bounded authored expectations before callbacks through marker/native-push/handler finalization; newer markers and custom scalar/container values are compared literally. Unreviewed guarded batch composition refuses. Scene reports incomplete bundled runtime preservation; exact reviewed Blender 5.2 render mutations refuse because supported read-only SYSTEM comparison is unproven. Public project.save refuses before Blender/path access. Complete per-tool dependency/ownership/permission/recovery and Windows acceptance remain open. Typed asset.import now owns an exclusive structured-entry lease before admission/providers/checkpoints through native cleanup/finalization, with pure final ownership checks; focused Linux checks prove reentry rejection and native recovery. This does not constrain arbitrary native/Python callbacks or preempt native calls. Native checkpoint completion now uses scheduler-local, one-use events tied to the exact pending invocation and consumer; forged/replayed callbacks cannot advance authored expectations. Focused Linux Scene and artist fixtures verify real push completion and failures. Retained exclusive entries remain authoritative if diagnostic owner slots are lost."
     },
     "SAFE-02": {
       "status": "open",
@@ -33,7 +33,7 @@
     "JOB-01": {
       "status": "open",
       "evidence": [],
-      "progress": "One image scheduler now handles paint, delivery and packed recovery with pure final owner/deadline/cancellation checks after grant providers. Native tails remain non-preemptible; general simulation/bake jobs and production latency/memory acceptance remain."
+      "progress": "The existing image paint, delivery and packed-recovery scheduler now shares a domain-neutral cooperative controller while retaining its image adapters and runtime identity. Focused Linux image, 4K delivery and fresh-process recovery checks pass; polling/native tails remain non-preemptible. Production Scene reservations, owned multi-turn checkpoints and simulation/bake jobs are still in development and are not included in this increment. General production latency/memory and Windows acceptance remain."
     },
     "EVID-02": {
       "status": "open",
@@ -63,12 +63,12 @@
     "SIM-01": {
       "status": "open",
       "evidence": [],
-      "progress": "Reviewed nested GN instances/copies, typed modifier constants, identifier-preserving zone/interface edits and guarded cloth cache lifecycle are joined by three bounded whole-world BOX rigid-body inspect/preview/cache tools. Ordinary startup Scene consumers remain unsupported; private Mesh/UV and native-role research is unwired. Setup, broader zone/solver/cache/bake jobs and production simulation remain."
+      "progress": "Reviewed nested GN instances/copies, typed modifier constants, identifier-preserving zone/interface edits and guarded cloth cache lifecycle are joined by three bounded whole-world BOX rigid-body inspect/preview/cache tools. Ordinary startup Scene consumers remain unsupported; private Mesh/UV and native-role research is unwired. Setup, broader zone/solver/cache/bake jobs and production simulation remain. Tiny-world Linux timer-separated memory-cache research now matches full sampled matrices with independent moving/incomplete controls and stop/rebake scenarios; production cooperative jobs, owned checkpoint/reservation and transport/recovery lifecycle remain unimplemented."
     },
     "UX-01": {
       "status": "open",
       "evidence": [],
-      "progress": "Revisioned saved plans, exact references, reviewed transform previews/corrections and opt-in runtime protected static-prop transforms implemented. Undo/redo invalidates handles while preserving policy. Visual references, wider protected authoring, protected save/delivery and full artist acceptance remain."
+      "progress": "Revisioned saved plans, exact references, reviewed transform previews/corrections and opt-in runtime protected static-prop transforms implemented. Optional step-linked finalized outer operation receipts and protected-only observations are runtime bounded. Both Linux builds pass actual multi-target native pushes with a protected previous-owner witness, material-drift denial and interactive manual undo/redo with stale observation/reference invalidation. Optional object framing passes sixteen axis/aspect captures, restored context and independent pixel bounds; capture while protection is armed still refuses. Saved v1 remains passive; visual references, wider protected authoring, protected save/delivery and full artist acceptance remain."
     },
     "DELIVER-01": {
       "status": "open",

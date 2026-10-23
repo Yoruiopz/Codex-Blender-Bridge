@@ -65,8 +65,13 @@ class Admission:
         check_final_mutation(self.context, self.method)
 
     def after_native_push(self) -> None:
+        from ..checkpoint_completion import claim_native_push_completion
+        claim_native_push_completion(self.context, self.method, self)
         if self.roles is not None:
             self.roles.after_native_push()
+
+    def native_push_delegates(self) -> tuple[Any, ...]:
+        return () if self.roles is None else (self.roles,)
 
     def allocated(self, kind: str, owner: Any) -> None:
         """Called only for a constructor validated by the domain boundary."""

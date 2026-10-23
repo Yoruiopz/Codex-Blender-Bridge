@@ -65,9 +65,9 @@ class TaskPlanTools:
         """Capture exact current protected objects for explicit structural comparison; scope is advisory and evidence can be incomplete."""
         return await self.registry.call("task.plan.capture", params(fields=fields, max_elements=max_elements))
 
-    async def task_plan_compare(self, max_elements: int | None = None) -> Any:
-        """Compare the plan's protected baseline; user goal/appearance and unmeasured data remain unverified."""
-        return await self.registry.call("task.plan.compare", params(max_elements=max_elements))
+    async def task_plan_compare(self, max_elements: int | None = None, step_id: str | None = None, expected_revision: int | None = None) -> Any:
+        """Compare the plan's protected baseline. Optional step_id plus current expected_revision attaches this protected-objects-only observation to that step's latest retained outer operation receipt. Receipt observations are historical facts, may become stale/unknown, and never verify target edits, appearance or completion."""
+        return await self.registry.call("task.plan.compare", params(max_elements=max_elements, step_id=step_id, expected_revision=expected_revision))
 
     async def task_plan_persist(self, expected_revision: int, confirm: bool = False) -> Any:
         """With explicit confirmation and EDIT_SCENE, store validated JSON in the scene for a later authorized save. Does not save or write external files."""
@@ -91,10 +91,10 @@ class TaskPlanTools:
 
     async def task_plan_preview_transform(self, reference_id: str, expected_revision: int, object_name: str | None = None,
                                           location: list[float] | None = None, rotation: list[float] | None = None,
-                                          scale: list[float] | None = None, rotation_mode: RotationMode | None = None) -> Any:
-        """Preview one referenced object's exact transform.set channels and affected-consumer scope. Read-only; never grants or requires transform authority."""
+                                          scale: list[float] | None = None, rotation_mode: RotationMode | None = None, step_id: str | None = None) -> Any:
+        """Preview one referenced object's exact transform.set channels and affected-consumer scope. Optional step_id freezes provenance for this exact current step/runtime generation; apply cannot retarget it. Status/note corrections do not imply completion. Read-only; never grants or requires transform authority."""
         return await self.registry.call("task.plan.preview_transform", params(reference_id=reference_id, expected_revision=expected_revision,
-                                        object_name=object_name, location=location, rotation=rotation, scale=scale, rotation_mode=rotation_mode))
+                                        object_name=object_name, location=location, rotation=rotation, scale=scale, rotation_mode=rotation_mode, step_id=step_id))
 
     async def task_plan_apply_preview(self, preview_id: str, expected_revision: int) -> Any:
         """Consume and apply one current preview after live permission and exact authored/context/consumer checks; stale previews fail closed."""

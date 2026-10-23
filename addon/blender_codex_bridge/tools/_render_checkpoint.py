@@ -45,12 +45,17 @@ class Admission:
 
     def after_native_push(self) -> None:
         """Provider-free successful-push notification; never adopt readback."""
+        from ..checkpoint_completion import claim_native_push_completion
+        claim_native_push_completion(self.context, self.method, self)
         if self.stopped is not None:
             raise self.stopped
         self.baseline = self.after_push_baseline
         if self.boundary is not None:
             self.boundary.after_native_push()
         self.check_after_read()
+
+    def native_push_delegates(self) -> tuple[Any, ...]:
+        return () if self.boundary is None else (self.boundary,)
 
     def __call__(self) -> None:
         if self.stopped is not None:

@@ -9,6 +9,7 @@ import uuid
 from collections.abc import Callable, Mapping
 from typing import Any
 
+from .artist_step_evidence import capture_call, record_terminal
 from .checkpoints import CheckpointManager
 from .command_queue import CommandQueue, QueuedRequest
 from .errors import BridgeError, ErrorCode
@@ -205,6 +206,8 @@ class MainThreadExecutor:
         handler_entered = False
         handler_completed = False
         admission_scope = None
+        completion_scope = None
+        checkpoint_native_push = None
         admission = None
         checkpoint_finalization_attempted = False
         editor_finalization_attempted = False
@@ -214,6 +217,7 @@ class MainThreadExecutor:
         context.check_cancelled = check_cancelled
         context.request_lifecycle = request._lifecycle
         context.request_id = request.id
+        step_entry = None
         queued_owner = getattr(check_cancelled, "__self__", None)
         if isinstance(queued_owner, QueuedRequest) and getattr(check_cancelled, "__func__", None) is QueuedRequest.check_active:
             # Bind the known class implementation, not an arbitrary callback or
@@ -228,11 +232,6 @@ class MainThreadExecutor:
         def checkpoint_after_read() -> None:
             if admission is not None:
                 admission.check_after_read()
-            check_final_mutation(context, request.method, allow_recovery=allow_recovery)
-
-        def checkpoint_native_push() -> None:
-            if admission is not None:
-                admission.after_native_push()
             check_final_mutation(context, request.method, allow_recovery=allow_recovery)
 
         def finalization_owned() -> bool:
@@ -254,6 +253,7 @@ class MainThreadExecutor:
                                        possible_mutation=True, verification_required=True)
 
         try:
+            step_entry = capture_call(context, request)
             entry = self.registry.checkpoint_parameter_entry(self.registry.get(request.method), request.params)
             owns_finalization = entry[0].checkpoint_owns_finalization and entry[1]
             self.registry.check_admission_entry(entry[0], context, allow_recovery=allow_recovery)
@@ -262,6 +262,11 @@ class MainThreadExecutor:
                 admission_scope = scope
                 admission = context.checkpoint_admission
                 finalization_token = context.checkpoint_call_id
+                if admission is not None:
+                    completion_scope = self.registry.native_push_completion(
+                        _permit, admission, self.checkpoints,
+                        final_check=lambda: check_final_mutation(context, request.method, allow_recovery=allow_recovery))
+                    checkpoint_native_push = completion_scope.__enter__()
             if check_cancelled is not None:
                 check_cancelled()
             spec = self.registry.prepare_call(
@@ -337,6 +342,10 @@ class MainThreadExecutor:
                         operation["undo_boundary_finalized"] = True
                 operation["operation_id"] = record.operation_id if record else None
                 result["operation"] = operation
+            receipt_id = record_terminal(context, request, record, result, entry=step_entry, modifying=spec.modifies,
+                handler_entered=handler_entered, undo_created=undo_boundary, undo_finalized=undo_finalized)
+            if receipt_id is not None and isinstance(result, Mapping):
+                result = {**result, "step_receipt_id": receipt_id}
             LOGGER.info("Completed %s in %.1f ms", request.method, duration_ms)
             if not preserve_execution:
                 self.state.end_execution()
@@ -383,8 +392,9 @@ class MainThreadExecutor:
                 checkpoint_finalization_attempted = True
                 try:
                     label = f"{request.method} (failed; verify state)"
-                    error.context["undo_boundary_finalized"] = bool(self.checkpoints.after_modification(label, before_write=checkpoint_write_gate, after_read=checkpoint_after_read, after_native_push=checkpoint_native_push)
+                    undo_finalized = bool(self.checkpoints.after_modification(label, before_write=checkpoint_write_gate, after_read=checkpoint_after_read, after_native_push=checkpoint_native_push)
                         if admission is not None else self.checkpoints.after_modification(label))
+                    error.context["undo_boundary_finalized"] = undo_finalized
                 except BridgeError as secondary:
                     retain_finalization_denial(error, secondary)
                     finalize_writer = False
@@ -408,10 +418,11 @@ class MainThreadExecutor:
                 if undo_group is not None:
                     error.context["undo_group"] = dict(undo_group)
                     if undo_group["state"] == "finalized":
+                        undo_finalized = True
                         execution_started = True
                         error.context.update({"execution_started": True, "verification_required": True,
                                               "undo_boundary_finalized": True})
-            self.state.record_operation(
+            record = self.state.record_operation(
                 tool=request.method,
                 description=_history_description(
                     request,
@@ -426,6 +437,10 @@ class MainThreadExecutor:
                 external_effects=effects,
                 recovery_evidence=recovery,
             )
+            receipt_id = record_terminal(context, request, record, error.context, entry=step_entry, modifying=bool(spec is not None and spec.modifies),
+                handler_entered=handler_entered, undo_created=undo_boundary, undo_finalized=undo_finalized)
+            if receipt_id is not None:
+                error.context.update(step_receipt_id=receipt_id, operation_id=record.operation_id)
             if not preserve_execution:
                 self.state.end_execution(error.message)
             if error.code == ErrorCode.PERMISSION_DENIED.value:
@@ -468,19 +483,27 @@ class MainThreadExecutor:
                 error.context["undo_group"] = dict(undo_group)
             if finalization_denial is not None:
                 retain_finalization_denial(error, finalization_denial)
-            self.state.record_operation(
+            record = self.state.record_operation(
                 tool=request.method,
                 description=error.message,
                 success=False,
                 duration_ms=duration_ms,
                 error_code=error.code,
             )
+            receipt_id = record_terminal(context, request, record, error.context, entry=step_entry, modifying=bool(spec is not None and spec.modifies),
+                handler_entered=handler_entered, undo_created=undo_boundary, undo_finalized=undo_finalized)
+            if receipt_id is not None:
+                error.context.update(step_receipt_id=receipt_id, operation_id=record.operation_id)
             if not preserve_execution:
                 self.state.end_execution(error.message)
             raise error from exc
         finally:
-            if admission_scope is not None:
-                admission_scope.__exit__(None, None, None)
+            try:
+                if completion_scope is not None:
+                    completion_scope.__exit__(None, None, None)
+            finally:
+                if admission_scope is not None:
+                    admission_scope.__exit__(None, None, None)
 
     def _drain_timer(self) -> float | None:
         if not self._running:

@@ -127,6 +127,18 @@ class TaskPlanStore:
         self.previews: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self.applying_preview: dict[str, Any] | None = None
         self.executing_mutators = 0
+        self.evidence_epoch = 0
+        self.evidence_revision = 0
+        self.step_receipts: list[dict[str, Any]] = []
+        self.receipts_truncated = False
+        self.receipts_incomplete = False
+
+    def reset_step_evidence(self) -> None:
+        self.evidence_epoch += 1
+        self.evidence_revision += 1
+        self.step_receipts.clear()
+        self.receipts_truncated = False
+        self.receipts_incomplete = False
 
     def require_advisory(self, action: str) -> None:
         if self.protection is not None:
@@ -163,9 +175,11 @@ class TaskPlanStore:
         encode_saved(candidate)
         self.plan = candidate
         self.scope, self.baseline = scope, None
+        self.reset_step_evidence()
         self.invalidate_handles()
 
-    def inspect(self) -> dict[str, Any]:
+    def inspect(self, evidence: Any = None) -> dict[str, Any]:
+        from .artist_step_evidence import inspect_receipts
         return {
             "active": self.plan is not None,
             "plan": deepcopy(self.plan),
@@ -174,6 +188,7 @@ class TaskPlanStore:
                              if self.protection is not None else "advisory; compare measured protected data explicitly"),
             "protection_generation": self.protection_generation,
             "baseline": deepcopy(self.baseline),
+            "step_evidence": inspect_receipts(self, evidence),
             "project_saved": False,
         }
 
@@ -181,6 +196,7 @@ class TaskPlanStore:
         self.plan = self.scope = self.baseline = None
         self.protection = None
         self.applying_preview = None
+        self.reset_step_evidence()
         self.invalidate_handles()
 
 

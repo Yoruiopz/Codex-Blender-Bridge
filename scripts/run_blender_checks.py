@@ -64,6 +64,7 @@ CASES = {
     "geometry_node_groups": ("blender_geometry_node_groups_smoke.py", "BLENDER_GEOMETRY_NODE_GROUPS_OK "),
     "task_plans": ("blender_task_plans_smoke.py", "BLENDER_TASK_PLANS_READER_OK "),
     "artist_loop": ("blender_artist_loop_smoke.py", "BLENDER_ARTIST_LOOP_OK "),
+    "artist_multitarget": ("blender_artist_multitarget_smoke.py", "BLENDER_ARTIST_MULTITARGET_OK "),
     "asset_delivery": ("blender_asset_delivery_smoke.py", "BLENDER_ASSET_DELIVERY_READER_OK "),
     "weight_brushes": ("blender_weight_brushes_smoke.py", "BLENDER_CODEX_WEIGHT_BRUSHES_SMOKE_OK "),
     "rig_drivers": ("blender_rig_drivers_smoke.py", "BLENDER_RIG_DRIVERS_OK "),
@@ -76,6 +77,7 @@ CASES = {
     "surface_projection_probe": ("blender_surface_projection_probe_smoke.py", "BLENDER_CODEX_SURFACE_PROJECTION_PROBE_OK "),
     "simulation_cache_probe": ("blender_simulation_cache_probe_smoke.py", "BLENDER_SIMULATION_CACHE_PROBE_OK "),
     "surface_paint": ("blender_surface_paint_smoke.py", "BLENDER_SURFACE_PAINT_OK "),
+    "viewport_framing": ("blender_viewport_framing_smoke.py", "BLENDER_VIEWPORT_FRAMING_OK "),
     "uv_selection_storage": ("blender_uv_selection_storage_smoke.py", "BLENDER_UV_SELECTION_STORAGE_OK "),
     "action_lifecycle_probe": ("blender_action_lifecycle_probe_smoke.py", "BLENDER_CODEX_ACTION_LIFECYCLE_PROBE_OK "),
     "asset_import_probe": ("blender_asset_import_probe_smoke.py", "BLENDER_ASSET_IMPORT_PROBE_READER_OK "),
@@ -105,6 +107,7 @@ CASES = {
     "object_rna_mutations": ("blender_object_rna_mutations_smoke.py", "BLENDER_CODEX_OBJECT_RNA_MUTATIONS_OK "),
     "shader_interface": ("blender_shader_interface_smoke.py", "BLENDER_SHADER_INTERFACE_READER_OK "),
     "rigid_lifecycle_probe": ("blender_rigid_lifecycle_probe_smoke.py", "BLENDER_RIGID_LIFECYCLE_PROBE_READER_OK "),
+    "rigid_timer_probe": ("blender_rigid_timer_probe_smoke.py", "BLENDER_RIGID_TIMER_PROBE_OK "),
     "rigid_body_scope": ("blender_rigid_body_scope_smoke.py", "BLENDER_RIGID_BODY_SCOPE_OK "),
     "rigid_evaluation_dependencies": ("blender_rigid_evaluation_dependencies_smoke.py", "BLENDER_RIGID_EVALUATION_DEPENDENCIES_OK "),
     "rigid_runtime_getters": ("blender_rigid_runtime_getters_smoke.py", "BLENDER_RIGID_RUNTIME_GETTERS_OK "),
@@ -162,6 +165,7 @@ OPT_IN_CASES.add("rigid_body_scope")
 OPT_IN_CASES.add("rigid_evaluation_dependencies")
 OPT_IN_CASES.add("rigid_runtime_getters")
 OPT_IN_CASES.add("rigid_create_new_probe")
+OPT_IN_CASES.add("rigid_timer_probe")
 PORTABLE_BLEND_RESEARCH_PHASES = {
     "portable_blend_writer_probe": "writer",
     "portable_blend_worker_probe": "worker",
@@ -184,6 +188,8 @@ INTERACTIVE_CASES = {"undo_lifecycle", "mesh_edit_recovery", "mesh_repair", "uv_
 
 INTERACTIVE_CASES.add("exclusive_mutation")
 OPT_IN_CASES.add("exclusive_mutation")
+INTERACTIVE_CASES.add("artist_multitarget")
+OPT_IN_CASES.add("artist_multitarget")
 INTERACTIVE_CASES.add("paint_jobs")
 INTERACTIVE_CASES.add("large_paint")
 INTERACTIVE_CASES.add("image_masks")
@@ -193,6 +199,8 @@ INTERACTIVE_CASES.add("image_delivery")
 INTERACTIVE_CASES.add("mesh_uv_refinement")
 INTERACTIVE_CASES.add("mesh_surface_projection")
 INTERACTIVE_CASES.add("surface_paint")
+INTERACTIVE_CASES.add("viewport_framing")
+OPT_IN_CASES.add("viewport_framing")
 INTERACTIVE_CASES.add("simulation_cache_probe")
 INTERACTIVE_CASES.add("nla_lifecycle_probe")
 INTERACTIVE_CASES.add("cinematic_variants")
@@ -204,6 +212,7 @@ INTERACTIVE_CASES.add("image_recovery_jobs_large")
 INTERACTIVE_CASES.update({"portable_blend_writer_probe", "portable_blend_reader_probe"})
 INTERACTIVE_CASES.add("rigid_startup_defaults_probe")
 INTERACTIVE_CASES.add("rigid_scope_profile_probe")
+INTERACTIVE_CASES.add("rigid_timer_probe")
 INTERACTIVE_CASES.add("render_boundaries_interactive")
 
 

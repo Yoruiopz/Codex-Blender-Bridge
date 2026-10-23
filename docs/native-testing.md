@@ -68,6 +68,16 @@ partial interruptions and audited explicit disablement. Runtime-getter/handler p
 remain uninvoked. It neither renders nor saves and does not accept visual intent, protected
 delivery or the full UX-01 benchmark. The two-process `task_plans` fixture separately covers
 saved schema-v1 persistence/reopen without imported operational authority.
+The extended fixture also checks step-bound placement/correction and rejected-operation
+receipts against actual outer history IDs, protected-only comparison observations, fresh
+context/reconnect bookkeeping retention and passive saved-v1 exclusion. Its undo/redo
+receipt invalidation invokes the registered handler directly; it explicitly reports that
+this probe does not execute native undo. Frozen source `cdbc1c5` passed the extended
+`artist_loop`, `artist_multitarget` and interactive `undo_lifecycle` cases on Linux
+Blender 4.5.14 and 5.2.2. The latter two exercise actual native pushes and undo;
+these focused results retain the bounded static-prop profile and do not accept UX-01.
+The separate [object-framing fixture](viewport-framing-native.md) passed sixteen
+matched captures and independent host pixel checks at frozen source `447ef57`.
 
 The interactive `undo_lifecycle` fixture additionally exercises real manual undo/redo and
 known bridge recovery while a protected plan remains active. It records whether native

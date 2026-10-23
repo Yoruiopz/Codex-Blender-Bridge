@@ -60,7 +60,8 @@ def set_transform(context: ToolContext, params: Mapping[str, Any]) -> dict[str, 
 
 
 def _commit(bpy: Any, context: ToolContext, method: str, obj: Any, assignments: tuple[RNAAssignment, ...]) -> dict[str, Any]:
-    boundary = Boundary(bpy, context, method, obj, transform=True)
+    from ._artist_checkpoint_admission import cached
+    boundary = cached(context, method, obj) or Boundary(bpy, context, method, obj, transform=True)
     for assignment in assignments:
         field = assignment.name
         locks = getattr(obj, "lock_rotation" if field.startswith("rotation_") else f"lock_{field}", ())
@@ -210,15 +211,22 @@ def apply_transform(context: ToolContext, params: Mapping[str, Any]) -> dict[str
 
 
 def register_tools(registry: ToolRegistry) -> None:
+    from ._artist_checkpoint_admission import factory
     from .artist_loop import prepare_transform_scope
     common = {
         "permissions": (Permission.TRANSFORM_OBJECTS,),
         "toolset": "objects",
         "modifies": True,
+        "checkpoint_admission_factory": None,
+        "checkpoint_batch_reviewed": True,
     }
-    registry.register("transform.set", set_transform, description="Set exact transform components.", protected_scope_resolver=prepare_transform_scope, **common)
-    registry.register("transform.translate", translate, description="Translate an object in world or local space.", protected_scope_resolver=prepare_transform_scope, **common)
-    registry.register("transform.rotate", rotate, description="Rotate an object by Euler-radian deltas.", protected_scope_resolver=prepare_transform_scope, **common)
-    registry.register("transform.scale", scale, description="Multiply an object's scale by deterministic factors.", protected_scope_resolver=prepare_transform_scope, **common)
+    for method, handler, description in (
+        ("transform.set", set_transform, "Set exact transform components."),
+        ("transform.translate", translate, "Translate an object in world or local space."),
+        ("transform.rotate", rotate, "Rotate an object by Euler-radian deltas."),
+        ("transform.scale", scale, "Multiply an object's scale by deterministic factors."),
+    ):
+        registry.register(method, handler, description=description, protected_scope_resolver=prepare_transform_scope,
+                          **{**common, "checkpoint_admission_factory": lambda context, params, method=method: factory(method, context, params)})
     registry.register("transform.apply", apply_transform, description="Apply selected object transform channels.",
                       permissions=(Permission.TRANSFORM_OBJECTS, Permission.EDIT_MESH), toolset="objects", modifies=True)

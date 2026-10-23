@@ -1753,3 +1753,19 @@ Local source, logs, reports, unit receipt and negative evidence are retained in
 These focused checks do not establish a complete current native matrix, Windows,
 installed-package or full workflow acceptance. Windows work stays paused; all fourteen
 release gates remain open and component versions remain 0.3.0.
+
+
+### 2026-10-23 — Step-linked artist execution evidence (development)
+
+Existing transform previews can bind an exact current plan step. A bounded runtime
+journal links the finalized outer executor operation ID and measured checkpoint/error
+facts to that preview, including rejected and failed attempts. Explicit step-linked
+comparison records protected-object observations only; it never certifies the edited
+target, appearance, user goal or completion. Reconnect preserves the journal; undo/redo
+marks observations stale and operations historical; plan replacement/load/reset clears
+it even when IDs are reused. Saved schema-v1 remains passive and unchanged.
+
+Portable regressions exercise callback retargeting, reused IDs, finalized failure
+receipts, direct/nested writer invalidation, bounded retention and recording failures.
+The extended artist-loop native fixture is prepared but unexecuted for this source
+increment. UX-01, full visual/artist acceptance and all release gates remain open.

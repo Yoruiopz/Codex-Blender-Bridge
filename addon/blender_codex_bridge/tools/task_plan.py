@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from copy import deepcopy
 from typing import Any
 
+from ..artist_step_evidence import associate, latest, observe
 from ..errors import BridgeError, ErrorCode, invalid_argument
 from ..permissions import Permission
 from ..task_plans import (
@@ -54,12 +55,12 @@ def set_plan(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
     store = get_task_plans(context.state)
     store.replace(parsed, scope, params.get("expected_revision"))
     context.state.set_task(parsed["goal"])
-    return store.inspect()
+    return store.inspect(context.evidence)
 
 
 def inspect_plan(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
     reject_unknown_params(params, set())
-    return get_task_plans(context.state).inspect()
+    return get_task_plans(context.state).inspect(context.evidence)
 
 
 def update_plan(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
@@ -85,7 +86,7 @@ def update_plan(context: ToolContext, params: Mapping[str, Any]) -> dict[str, An
     parsed["revision"] += 1
     encode_saved(parsed)
     store.plan = parsed
-    return store.inspect()
+    return store.inspect(context.evidence)
 
 
 def capture_plan(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
@@ -99,19 +100,38 @@ def capture_plan(context: ToolContext, params: Mapping[str, Any]) -> dict[str, A
     result = context.evidence.capture(bpy, {"object_names": plan["protected_objects"], **params}, context.check_cancelled)
     _checked_scope(context, store, bpy)
     store.baseline = {"snapshot_id": result["snapshot_id"], "captured_revision": plan["revision"], "coverage_complete": result["coverage_complete"], "fields": result["fields"]}
-    return {**store.inspect(), "evidence": result}
+    return {**store.inspect(context.evidence), "evidence": result}
 
 
 def compare_plan(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
-    reject_unknown_params(params, {"max_elements"})
+    reject_unknown_params(params, {"max_elements", "step_id", "expected_revision"})
     store = get_task_plans(context.state)
     store.require_plan()
     if store.baseline is None:
         raise invalid_argument("Capture the plan's protected objects before comparison; saved plans contain no live baseline.")
+    association = None
+    if "step_id" in params:
+        store.check_revision(params.get("expected_revision"))
+        association = associate(store, params["step_id"])
+        receipt_id = latest(store, association.step_id)["receipt_id"]
+        baseline = deepcopy(store.baseline)
+        mutation_revision = store.evidence_revision
+    elif "expected_revision" in params:
+        raise invalid_argument("expected_revision requires step_id for a step-linked comparison.")
     # Compare must report missing/replaced protected objects as changed, not hide them
     # behind the stricter preconditions needed to create a new baseline.
-    result = context.evidence.compare(require_blender(), {"snapshot_id": store.baseline["snapshot_id"], **params}, context.check_cancelled)
-    return {**store.inspect(), "evidence": result}
+    arguments = {"snapshot_id": store.baseline["snapshot_id"]}
+    if "max_elements" in params:
+        arguments["max_elements"] = params["max_elements"]
+    result = context.evidence.compare(require_blender(), arguments, context.check_cancelled)
+    if association is not None:
+        from .artist_loop import final_lifetime_gate
+        context.require(Permission.INSPECT_SCENE)
+        final_lifetime_gate(context)
+        if get_task_plans(context.state) is not store:
+            raise invalid_argument("Runtime plan store changed during comparison; no step evidence was attached.")
+        observe(store, association, receipt_id, baseline, mutation_revision, result)
+    return {**store.inspect(context.evidence), "evidence": result}
 
 
 def persist_plan(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
@@ -194,7 +214,7 @@ def persist_plan(context: ToolContext, params: Mapping[str, Any]) -> dict[str, A
                              possible_mutation=not rollback_verified, verification_required=True,
                              recovery=recovery, project_saved=False)
         raise error from (exc if error is not exc else None)
-    return {**store.inspect(), "stored_in_scene": scene.name, "scene_property": SCENE_PROPERTY, "project_saved": False}
+    return {**store.inspect(context.evidence), "stored_in_scene": scene.name, "scene_property": SCENE_PROPERTY, "project_saved": False}
 
 
 def load_plan(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
@@ -214,9 +234,10 @@ def load_plan(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]
     # operational authority are never imported from project data.
     store.plan = parsed
     store.scope, store.baseline = scope, None
+    store.reset_step_evidence()
     store.invalidate_handles()
     context.state.set_task(parsed["goal"])
-    return {**store.inspect(), "loaded_from_scene": bpy.context.scene.name}
+    return {**store.inspect(context.evidence), "loaded_from_scene": bpy.context.scene.name}
 
 
 def clear_plan(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
@@ -226,7 +247,7 @@ def clear_plan(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any
     store.check_revision(params.get("expected_revision"))
     store.clear()
     context.state.set_task("")
-    return {**store.inspect(), "stored_scene_property_removed": False}
+    return {**store.inspect(context.evidence), "stored_scene_property_removed": False}
 
 
 def register_tools(registry: ToolRegistry) -> None:

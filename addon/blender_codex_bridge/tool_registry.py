@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import logging
 import math
+import sys
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from .checkpoint_completion import claim_binding_completion, native_push_consumer
 from .errors import BridgeError, ErrorCode
 from .operation_lease import ExclusiveMutationLease, InvocationPermit, MutationInterlock
 from .permissions import Permission, PermissionManager
@@ -50,7 +52,8 @@ def _checkpoint_parameters(raw: Any) -> Any:
             return ("int", item)
         if kind is float:
             if not math.isfinite(item):
-                raise ValueError
+                raise BridgeError(ErrorCode.INVALID_ARGUMENT, "Numeric request parameters must be finite.",
+                                  {"checkpoint_parameters_finite": False})
             return ("float", item.hex())
         if kind is str:
             remaining[1] -= len(item.encode("utf-8"))
@@ -141,6 +144,8 @@ class ToolContext:
     checkpoint_finalization_owner: object | None = None
     # A final-gate binding, never authority for a new registry/executor entry.
     exclusive_mutation_lease: ExclusiveMutationLease | None = None
+    artist_step_entry_captured: bool = False
+    artist_step_entry: Any = None
 
     def require(self, *permissions: Permission) -> None:
         self.permissions.require(permissions)
@@ -181,8 +186,11 @@ class CheckpointAdmissionBinding:
             raise error
         self._check(self.readonly_callback)
 
-    def after_native_push(self) -> None:
-        """Trusted completion notification; no providers or adopted readback."""
+    def after_native_push(self, event: Any = None) -> None:
+        """Consume exact canonical completion before any domain hook."""
+        if self.stopped is not None:
+            raise self.stopped
+        claim_binding_completion(self, event)
         def completed() -> None:
             if self.native_push_callback is not None:
                 self.native_push_callback()
@@ -326,7 +334,8 @@ class ToolRegistry:
 
     @property
     def active_exclusive_mutation(self) -> bool:
-        return self._mutation_interlock.owner is not None or self._mutation_interlock.invocation is not None
+        return (self._mutation_interlock.owner is not None or self._mutation_interlock.invocation is not None
+                or self._mutation_interlock.has_retained_exclusive_entry)
 
     def mutation_entry(self, spec: ToolSpec, params: Mapping[str, Any], context: ToolContext):
         return self._mutation_interlock.entry(self, spec, params, context)
@@ -614,13 +623,35 @@ class ToolRegistry:
             native_push, self, spec, enclosing)
         context.checkpoint_admission, context.checkpoint_call_id = binding, call_id
         context.checkpoint_method, context.checkpoint_params = spec.name, params
+        cleanup = None
         try:
+            bind = None if callback is None else getattr(callback, "bind_checkpoint", None)
+            if bind is not None:
+                if not callable(bind):
+                    raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Checkpoint admission binder is not callable.")
+                cleanup = bind(binding)
+                if cleanup is not None and not callable(cleanup):
+                    raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Checkpoint admission cleanup is not callable.")
             yield binding
         finally:
+            primary = sys.exc_info()[1]
             if binding is not None:
                 binding.active = False
-            (context.checkpoint_admission, context.checkpoint_call_id, context.checkpoint_method,
-             context.checkpoint_params, context.checkpoint_finalization_owner) = previous
+            try:
+                if cleanup is not None and callable(cleanup):
+                    try:
+                        cleanup()
+                    except Exception:
+                        if primary is None:
+                            raise
+                        LOGGER.exception("Checkpoint admission cleanup failed; preserving primary error")
+            finally:
+                (context.checkpoint_admission, context.checkpoint_call_id, context.checkpoint_method,
+                 context.checkpoint_params, context.checkpoint_finalization_owner) = previous
+
+    def native_push_completion(self, permit: InvocationPermit, binding: CheckpointAdmissionBinding,
+                               manager: Any, *, final_check: Callable[[], None]):
+        return native_push_consumer(self, permit, binding, manager, final_check)
 
     def invoke(self, spec: ToolSpec, params: Mapping[str, Any], context: ToolContext, *, allow_recovery: bool = False,
                _permit: InvocationPermit | None = None) -> Any:
@@ -654,6 +685,9 @@ class ToolRegistry:
     def _invoke_admitted(self, spec: ToolSpec, params: Mapping[str, Any], context: ToolContext, *, allow_recovery: bool) -> Any:
         store = get_task_plans(context.state)
         if spec.modifies:
+            # Direct, nested and failed writer entries invalidate prior scoped
+            # observations even when no outer executor history record exists.
+            store.evidence_revision += 1
             self._executing_mutators += 1
             store.executing_mutators += 1
         try:

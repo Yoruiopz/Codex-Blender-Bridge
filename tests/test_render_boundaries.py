@@ -7,10 +7,12 @@ import importlib
 import struct
 import zlib
 from array import array
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace as NS
 
 import pytest
+from test_checkpoint_snapshots import NativeStack
 
 
 def png(*, width=16, height=16, depth=8, color=2, row_filter=0, metadata=None, raw_data=None):
@@ -430,7 +432,11 @@ def test_checkpoint_notification_uses_frozen_prediction_and_readonly_cas(
 ):
     f = live_boundary
     module = importlib.import_module(f"{f.module.__package__}._render_checkpoint")
-    f.context.checkpoints = NS(_prefix="BCB1:" + "a" * 32 + ":")
+    checkpoint = importlib.import_module(f"{f.module.__package__.rsplit('.', 1)[0]}.checkpoints")
+    stack = NativeStack()
+    monkeypatch.setattr(checkpoint, "require_blender", lambda: stack.bpy)
+    manager = checkpoint.CheckpointManager()
+    f.context.checkpoints = manager
     f.scene.role = 0
 
     def snapshot(*_args, **kwargs):
@@ -445,19 +451,35 @@ def test_checkpoint_notification_uses_frozen_prediction_and_readonly_cas(
         f.context, object(), f.scene, "render.configure", external=False, boundary=boundary,
     )
     assert f.calls == []
-    f.scene.role, f.scene.protected = native_role, authored
+    native_push = stack.bpy.ops.ed.undo_push
+    def push(**kwargs):
+        result = native_push(**kwargs)
+        f.scene.role, f.scene.protected = native_role, authored
+        return result
+    monkeypatch.setattr(stack.bpy.ops.ed, "undo_push", push)
+    spec = replace(f.registry.get("render.configure"), checkpoint_admission_factory=lambda *_: admission)
+    f.registry._tools[spec.name] = spec
+    params = {}
+
+    def complete():
+        with (f.registry.mutation_entry(spec, params, f.context) as permit,
+              f.registry.checkpoint_admission(spec, params, f.context) as binding,
+              f.registry.native_push_completion(permit, binding, manager,
+                  final_check=lambda: binding.check_identity(spec.name)) as consumer):
+            return manager.before_modification(spec.name, before_write=binding,
+                after_read=binding.check_after_read, after_native_push=consumer)
+
     if (native_role, authored) == (1, "original"):
-        admission.after_native_push()
-        admission.check_after_read()
+        assert complete()
         assert boundary.protected == (1, "original")
     else:
         with pytest.raises(f.errors.BridgeError) as caught:
-            admission.after_native_push()
+            complete()
         f.scene.role, f.scene.protected = 1, "original"
         with pytest.raises(f.errors.BridgeError) as repeated:
             admission.check_after_read()
         assert repeated.value is caught.value
-    assert f.calls == [] and f.owner.a == 0
+    assert len(stack.frames) == 2 and f.owner.a == 0
 
 
 def test_predicted_native_role_cannot_be_admitted_before_notification(live_boundary, monkeypatch):
