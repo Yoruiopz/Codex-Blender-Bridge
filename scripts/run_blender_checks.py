@@ -105,6 +105,7 @@ CASES = {
     "shader_remove_loaded_probe": ("blender_shader_remove_probe_smoke.py", "BLENDER_SHADER_REMOVE_LOADED_PROBE_READER_OK "),
     "animation_mutations": ("blender_animation_mutations_smoke.py", "BLENDER_ANIMATION_MUTATIONS_OK "),
     "character_nla": ("blender_character_nla_smoke.py", "BLENDER_CHARACTER_NLA_READER_OK "),
+    "character_revision": ("blender_character_revision_smoke.py", "BLENDER_CHARACTER_REVISION_OK "),
     "rig_binding_probe": ("blender_rig_binding_probe_smoke.py", "BLENDER_RIG_BINDING_PROBE_OK "),
     "rig_binding": ("blender_rig_binding_smoke.py", "BLENDER_RIG_BINDING_OK "),
     "rig_binding_reopen": ("blender_rig_binding_reopen_smoke.py", "BLENDER_RIG_BINDING_READER_OK "),
@@ -195,6 +196,7 @@ OPT_IN_CASES.add("camera_focus")
 OPT_IN_CASES.add("curve_sampling")
 OPT_IN_CASES.add("surface_publication_probe")
 OPT_IN_CASES.add("sculpt_mask")
+OPT_IN_CASES.add("character_revision")
 OPT_IN_CASES.add("scene_checkpoint_admission")
 OPT_IN_CASES.add("render_scope_probe")
 OPT_IN_CASES.add("render_boundaries")

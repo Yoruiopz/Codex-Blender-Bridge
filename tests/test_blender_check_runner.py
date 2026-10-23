@@ -27,7 +27,10 @@ def test_all_existing_smokes_are_in_registry(runner):
     } | {"blender_surface_publication_probe.py"}
 
 
-@pytest.mark.parametrize("case", ["core", "undo_lifecycle", "camera_focus", "curve_sampling", "surface_publication_probe", "sculpt_mask"])
+@pytest.mark.parametrize("case", [
+    "core", "undo_lifecycle", "camera_focus", "curve_sampling", "surface_publication_probe", "sculpt_mask",
+    "character_revision",
+])
 def test_factory_fixture_bytecode_prelude_runs_before_script(runner, monkeypatch, tmp_path, case):
     monkeypatch.setattr(runner.sys, "platform", "linux")
 
@@ -50,6 +53,7 @@ def test_factory_fixture_bytecode_prelude_runs_before_script(runner, monkeypatch
     assert "curve_sampling" in runner.OPT_IN_CASES and "curve_sampling" not in runner.INTERACTIVE_CASES
     assert "surface_publication_probe" in runner.OPT_IN_CASES and "surface_publication_probe" not in runner.INTERACTIVE_CASES
     assert "sculpt_mask" in runner.OPT_IN_CASES and "sculpt_mask" not in runner.INTERACTIVE_CASES
+    assert "character_revision" in runner.OPT_IN_CASES and "character_revision" not in runner.INTERACTIVE_CASES
 
 
 @pytest.mark.parametrize(

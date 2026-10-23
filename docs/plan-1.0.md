@@ -1955,3 +1955,27 @@ development registry contains **265 MCP tools**, component versions remain
 **0.3.0 alpha**, and all fourteen release requirements remain OPEN. Production
 sculpting, 4K/constrained-memory masks, durable recovery, Windows and installed
 A–F acceptance remain required; Windows testing remains paused.
+
+### 2026-10-23 — Integrated character weight repair and IK reach benchmark
+
+The opt-in background `character_revision` fixture connects existing registered
+tools around one character revision: inspect a poor elbow-weight patch, configure
+one static two-bone IK branch, repair explicit memberships with a weight brush,
+revise reachable target poses, then author an Action on the independent target
+with the rig/skin consumer scope declared explicitly. Stored curve inspection and
+sampling remain separate from current-frame evaluated deformation evidence.
+
+Its completion contract requires all-vertex independent skinning calculations,
+separate endpoint/bend-plane expectations, complete protected authored data and
+corresponding-frame comparisons for an independently animated shared-rest alias.
+Permission/locked-group refusal and known static IK post-write compensation must
+be measured, with matched 512px fixture-only captures retained for review. Exact
+source native results remain required; no pass is inferred from runner wiring or
+this planned evidence contract. See [the benchmark](character-revision.md).
+
+Static-only IK mutation and the one-IK-per-rig limit remain authoritative; this
+does not add animated-control IK reconfiguration or general control rigs. It
+neither saves a project nor qualifies native global undo or durable recovery.
+The registry remains **265 MCP tools**, components **0.3.0 alpha**. All fourteen
+release requirements remain OPEN, including full CHAR-01, installed A–F and
+Windows qualification; Windows testing remains paused.

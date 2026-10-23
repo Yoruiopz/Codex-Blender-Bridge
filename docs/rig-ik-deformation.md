@@ -158,3 +158,9 @@ Current development evidence passes on Linux Blender 4.3.2, 4.5.14 LTS and 5.2.2
 factory-startup evidence for this subset. Windows 11, installed-package scenarios, native
 undo, production character/visual acceptance and the complete CHARACTER gate remain open;
 see the [full release gates](release-1.0-readiness.md).
+
+The separate [character revision benchmark](character-revision.md) defines an
+ordered static-IK → weight-repair → target-Action path with protected sampled
+deformation and matched visual evidence. Its source-matched native proof remains
+a separate requirement; it does not relax this tool's static mutation scope or
+establish general animated-control IK revision.

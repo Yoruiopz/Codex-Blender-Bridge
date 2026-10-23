@@ -24,6 +24,9 @@ HELPERS = (
     "scripts.blender_animation_curve_sampling_smoke",
     "scripts.blender_surface_publication_probe",
     "scripts.blender_sculpt_mask_smoke",
+    "scripts.blender_character_revision_smoke",
+    "scripts.native_character_revision_evidence",
+    "scripts.native_character_evidence",
     "scripts.native_cache_evidence",
 )
 
@@ -57,7 +60,7 @@ def fixture_imports(addon_package, monkeypatch):
     module("blender_codex_bridge.scene_job_reservations", TURN_METHOD="jobs._scene_turn")
     module("blender_codex_bridge.tool_registry", check_final_mutation=forbidden("mutation gate"))
     tools = module("blender_codex_bridge.tools", __path__=[])
-    for name in ("_rigid_body_scope", "_scene_checkpoint_roles", "surface_brushes"):
+    for name in ("_rigid_body_scope", "_scene_checkpoint_roles", "surface_brushes", "rig_ik"):
         setattr(tools, name, module(f"blender_codex_bridge.tools.{name}"))
     tools.rigid_body = module("blender_codex_bridge.tools.rigid_body", _Boundary=type("Boundary", (), {}),
                               PERMISSIONS=(permissions.Permission.EDIT_SCENE,))
@@ -101,6 +104,8 @@ def fixture_imports(addon_package, monkeypatch):
     ("scripts.blender_animation_curve_sampling_smoke", "main"),
     ("scripts.blender_surface_publication_probe", "main"),
     ("scripts.blender_sculpt_mask_smoke", "main"),
+    ("scripts.blender_character_revision_smoke", "main"),
+    ("scripts.native_character_revision_evidence", "lbs_vertices"),
 ])
 def test_importing_helper_fixture_does_not_start_experiment(fixture_imports, name, helper):
     imported = importlib.import_module(name)
