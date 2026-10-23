@@ -1693,3 +1693,31 @@ package and CI checks require separate receipts; previous source passes are not
 combined into a current full native verdict. All fourteen release requirements remain
 open, including Windows 11, installed scenarios A–F, safe saving, production delivery,
 memory-pressure recovery and visual artist acceptance. No release date or 1.0 publication.
+
+
+### 2026-10-23 — Open-chain modeling and exact-build import containment
+
+Development adds paired `mesh.bridge_chains_preview` / `mesh.bridge_chains` tools with
+explicit equal-chain correspondence, retained pre-checkpoint admission, measured original
+and already-published data, live per-write guards and truthful partial effects. A native
+partial-edit recovery failure exposed missing derived-cache synchronization; each verified
+face now receives guarded normal/tessellation updates before later allocation. The connected
+prop fixture passes on Linux Blender 4.5.14/5.2.2, including the demonstrated injected failure
+and two actual recovery paths. Retained captures receive limited technical review. See
+[the bounded contract and evidence](mesh-loops.md).
+
+The known Blender 5.2.2 build `d13f752e3b9c` now refuses typed asset import before checkpoint,
+source/staging or scene allocation; preview remains available. A proposed global-cycle
+release fix failed native validation and is not integrated. The original full import fixture
+remains unchanged and unsupported on that build. The separate passing admission case
+verifies containment only. [Import details](asset-import.md) retain the unresolved gate.
+
+The combined development source passes 5,370 non-Blender tests with three Windows-only
+skips using MCP SDK 2.2.0, plus Ruff, mypy, compilation, generated inventory and whitespace
+checks. The registry has 260 MCP tools. Existing Python 3.10–3.12 / SDK 2.0.0 and 2.2.0 CI
+coverage is retained. The focused native results are not a complete native inventory or
+installed-package acceptance. Failed source variants remain retained independently.
+
+Windows compatibility work is paused at the user's request while implementation proceeds.
+All fourteen release gates remain open, including whole-project safe saving and production
+import/recovery. Component versions remain 0.3.0; no release is published by this increment.

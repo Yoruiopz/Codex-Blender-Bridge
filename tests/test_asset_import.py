@@ -41,6 +41,242 @@ def test_import_metadata_declares_private_cleanup_and_all_native_domains(module,
     assert native.modifies
 
 
+@pytest.fixture
+def native_build_admission(module, addon_package, monkeypatch):
+    """Real dispatch with every effect boundary independently forbidden."""
+    registry_module = importlib.import_module(addon_package + ".tool_registry")
+    permissions_module = importlib.import_module(addon_package + ".permissions")
+    executor_module = importlib.import_module(addon_package + ".executor")
+    queue_module = importlib.import_module(addon_package + ".command_queue")
+    state_module = importlib.import_module(addon_package + ".state")
+    effects = []
+
+    def forbidden(name):
+        def attempt(*args, **kwargs):
+            effects.append(name)
+            pytest.fail(name + " occurred before native-build admission")
+
+        return attempt
+
+    class MetadataOnlyBlender:
+        app = NS(version=(5, 2, 2), build_hash=b"d13f752e3b9c")
+
+        @property
+        def context(self):
+            return forbidden("Blender context access")()
+
+        @property
+        def data(self):
+            return forbidden("Blender data/Scene access")()
+
+    bpy = MetadataOnlyBlender()
+    monkeypatch.setattr(module, "require_blender", lambda: bpy)
+    for name in ("_preview", "read_source", "OwnedInput", "_native"):
+        monkeypatch.setattr(module, name, forbidden(name))
+    registry = registry_module.ToolRegistry(enabled_toolsets=("asset_delivery",))
+    module.register_tools(registry)
+    checkpoints = NS(
+        before_modification=forbidden("checkpoint before_modification"),
+        after_modification=forbidden("checkpoint after_modification"),
+        finish_editor_session=forbidden("checkpoint finalization"),
+        editor_session_status=lambda: None,
+    )
+    executor = executor_module.MainThreadExecutor(
+        command_queue=queue_module.CommandQueue(),
+        registry=registry,
+        state=state_module.BridgeState(),
+        permissions=permissions_module.PermissionManager(
+            lambda: {item.value: True for item in permissions_module.Permission}
+        ),
+        checkpoints=checkpoints,
+    )
+    return NS(
+        bpy=bpy,
+        executor=executor,
+        registry=registry,
+        checkpoints=checkpoints,
+        effects=effects,
+    )
+
+
+def import_params(format):
+    return {
+        "filepath": "/approved/asset." + format.lower(),
+        "format": format,
+        "collection_name": "Imported Asset",
+        "expected_fingerprint": "a" * 64,
+        "accepted_losses": [],
+        "include_animation": False,
+    }
+
+
+def assert_native_build_quarantined(error, build_hash="d13f752e3b9c"):
+    assert error.code == "NOT_IMPLEMENTED"
+    assert error.context == {
+        "reason": "KNOWN_NATIVE_IMPORT_LIFETIME_FAILURE",
+        "native_import_quarantined": True,
+        "blender_version": [5, 2, 2],
+        "blender_build_hash": build_hash,
+        "execution_started": False,
+        "native_import_started": False,
+        "source_accessed": False,
+        "staging_allocated": False,
+        "owned_ids_allocated": False,
+        "project_saved": False,
+        "safe_import_verified": False,
+    }
+
+
+@pytest.mark.parametrize("format", ["GLB", "FBX"])
+@pytest.mark.parametrize(
+    "build_hash",
+    [
+        b"d13f752e3b9c",
+        "d13f752e3b9c",
+        b"d13f752e3b9c4f8c261cda552b1021f8bcc0382c",
+        "d13f752e3b9c4f8c261cda552b1021f8bcc0382c",
+    ],
+)
+def test_known_native_failure_build_is_rejected_before_checkpoint_or_any_effect(
+    module, native_build_admission, format, build_hash
+):
+    case = native_build_admission
+    case.bpy.app.build_hash = build_hash
+    with pytest.raises(module.BridgeError) as caught:
+        case.executor.dispatch("asset.import", import_params(format))
+    expected_hash = build_hash.decode("ascii") if isinstance(build_hash, bytes) else build_hash
+    assert_native_build_quarantined(caught.value, expected_hash)
+    assert case.effects == []
+    assert case.registry.executing_mutators == 0
+
+
+@pytest.mark.parametrize("format", ["GLB", "FBX"])
+def test_direct_import_handler_cannot_bypass_known_native_build_quarantine(
+    module, native_build_admission, format
+):
+    case = native_build_admission
+    with pytest.raises(module.BridgeError) as caught:
+        module.import_asset(case.executor.context, import_params(format))
+    assert_native_build_quarantined(caught.value)
+    assert case.effects == []
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"allow_unsafe_native_import": True},
+        {"blender_version": [4, 5, 1], "blender_build_hash": "different-build"},
+    ],
+)
+@pytest.mark.parametrize("entry", ["executor", "direct"])
+def test_request_parameters_cannot_override_native_build_admission(
+    module, native_build_admission, override, entry
+):
+    case = native_build_admission
+    params = {**import_params("GLB"), **override}
+    with pytest.raises(module.BridgeError) as caught:
+        if entry == "executor":
+            case.executor.dispatch("asset.import", params)
+        else:
+            module.import_asset(case.executor.context, params)
+    assert_native_build_quarantined(caught.value)
+    assert case.effects == []
+
+
+@pytest.mark.parametrize(
+    "version,build_hash",
+    [
+        ((4, 5, 1), b"d13f752e3b9c"),
+        ((5, 2, 1), b"d13f752e3b9c"),
+        ((5, 2, 3), b"d13f752e3b9c"),
+        ((5, 2, 2), b"0123456789ab"),
+        ((5, 2, 2), b"d13f752e3b9c0000000000000000000000000000"),
+    ],
+)
+def test_other_native_builds_reach_the_existing_import_path(
+    module, native_build_admission, monkeypatch, version, build_hash
+):
+    """Admission of another build is not a claim that its native import is safe."""
+    case = native_build_admission
+    case.bpy.app.version = version
+    case.bpy.app.build_hash = build_hash
+    calls = []
+
+    def before(*args, **kwargs):
+        calls.append("checkpoint")
+        return False
+
+    stopped = module.BridgeError("INVALID_ARGUMENT", "existing preview boundary reached")
+
+    def preview(*args, **kwargs):
+        calls.append("preview")
+        raise stopped
+
+    monkeypatch.setattr(case.checkpoints, "before_modification", before)
+    monkeypatch.setattr(case.checkpoints, "finish_editor_session", lambda **kwargs: None)
+    monkeypatch.setattr(module, "_preview", preview)
+    with pytest.raises(module.BridgeError) as caught:
+        case.executor.dispatch("asset.import", import_params("GLB"))
+    assert caught.value is stopped
+    assert calls == ["checkpoint", "preview"]
+    assert case.effects == []
+
+
+def test_live_build_is_rechecked_after_checkpoint_read_before_any_checkpoint_write(
+    module, native_build_admission, monkeypatch
+):
+    case = native_build_admission
+    case.bpy.app.version = (4, 5, 1)
+    calls = []
+
+    def before(_tool, *, before_write, after_read, after_native_push):
+        calls.append("read checkpoint state")
+        case.bpy.app.version = (5, 2, 2)
+        after_read()
+        calls.append("checkpoint write")
+        pytest.fail("checkpoint write admitted after build became quarantined")
+
+    monkeypatch.setattr(case.checkpoints, "before_modification", before)
+    with pytest.raises(module.BridgeError) as caught:
+        case.executor.dispatch("asset.import", import_params("GLB"))
+    assert_native_build_quarantined(caught.value)
+    assert calls == ["read checkpoint state"]
+    assert case.effects == []
+
+
+@pytest.mark.parametrize("format", ["GLB", "FBX"])
+def test_source_preview_remains_available_on_quarantined_native_build(
+    module, monkeypatch, format
+):
+    context = NS(require=lambda *args: None, state=NS(snapshot=lambda: {}), check_cancelled=None)
+    bpy = NS(app=NS(version=(5, 2, 2), build_hash=b"d13f752e3b9c"))
+    source = NS(payload=b"admitted source", proof=lambda: {"file_sha256": "b" * 64})
+    reads = []
+    monkeypatch.setattr(module, "require_blender", lambda: bpy)
+    monkeypatch.setattr(module, "_runtime_admission", lambda *args: None)
+    monkeypatch.setattr(module, "_inventory", lambda *args: {})
+    monkeypatch.setattr(module, "_guard", lambda *args: {"same_destination": True})
+    monkeypatch.setattr(module, "_source_root", lambda: "/approved")
+
+    def read(*args):
+        reads.append(args[:3])
+        return source
+
+    monkeypatch.setattr(module, "read_source", read)
+    preflight_name = "preflight_glb" if format == "GLB" else "preflight_fbx"
+    monkeypatch.setattr(
+        module, preflight_name, lambda *args: {"required_accepted_losses": ["CONVERSION"]}
+    )
+    monkeypatch.setattr(module, "OwnedInput", lambda *args: pytest.fail("staging allocated"))
+    monkeypatch.setattr(module, "_native", lambda *args: pytest.fail("native importer invoked"))
+    params = {"filepath": "/approved/asset." + format.lower(), "format": format}
+    result = module.import_preview(context, params)
+    assert reads == [(params["filepath"], format, "/approved")]
+    assert len(result["fingerprint"]) == 64
+    assert result["required_accepted_losses"] == ["CONVERSION"]
+    assert result["file_written"] is False and result["project_saved"] is False
+
+
 @pytest.mark.parametrize(
     "flag,code", [("paused", "AGENT_PAUSED"), ("emergency_stopped", "EMERGENCY_STOPPED")]
 )

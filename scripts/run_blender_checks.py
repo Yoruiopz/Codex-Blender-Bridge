@@ -90,6 +90,7 @@ CASES = {
     "image_recovery_jobs": ("blender_image_recovery_jobs_smoke.py", "BLENDER_IMAGE_RECOVERY_JOBS_READER_OK "),
     "image_recovery_jobs_large": ("blender_image_recovery_jobs_large_smoke.py", "BLENDER_IMAGE_RECOVERY_JOBS_LARGE_READER_OK "),
     "installed_addon_probe": ("blender_installed_addon_probe_smoke.py", "BLENDER_INSTALLED_ADDON_PROBE_OK "),
+    "asset_import_admission": ("blender_asset_import_admission_smoke.py", "BLENDER_ASSET_IMPORT_ADMISSION_OK "),
     "object_drivers": ("blender_object_drivers_smoke.py", "BLENDER_CODEX_OBJECT_DRIVERS_OK "),
     "shader_interface_probe": ("blender_shader_interface_probe_smoke.py", "BLENDER_SHADER_INTERFACE_PROBE_READER_OK "),
     "animation_mutations": ("blender_animation_mutations_smoke.py", "BLENDER_ANIMATION_MUTATIONS_OK "),
@@ -152,6 +153,7 @@ OPT_IN_CASES.add("action_lifecycle_probe")
 OPT_IN_CASES.add("cinematic_variant_probe")
 OPT_IN_CASES.add("nla_lifecycle_probe")
 OPT_IN_CASES.add("installed_addon_probe")
+OPT_IN_CASES.add("asset_import_admission")
 OPT_IN_CASES.add("rig_binding_probe")
 OPT_IN_CASES.add("rig_binding")
 OPT_IN_CASES.add("rig_edit_probe")

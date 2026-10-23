@@ -80,6 +80,59 @@ FAMILIES = (
     "worlds",
 )
 ALLOWED_NEW = {"scenes", "collections", "objects", "meshes", "materials", "images"}
+_QUARANTINED_IMPORT_BUILD = "d13f752e3b9c4f8c261cda552b1021f8bcc0382c"
+
+
+def _require_native_import_build() -> None:
+    """Refuse one observed crashing build without reading scene or caller data."""
+    app = getattr(require_blender(), "app", None)
+    version = getattr(app, "version", None)
+    build = getattr(app, "build_hash", None)
+    if type(build) is bytes:
+        try:
+            build = build.decode("ascii")
+        except UnicodeDecodeError:
+            return
+    if version == (5, 2, 2) and type(build) is str and build in {
+        _QUARANTINED_IMPORT_BUILD[:12],
+        _QUARANTINED_IMPORT_BUILD,
+    }:
+        raise BridgeError(
+            ErrorCode.NOT_IMPLEMENTED,
+            "Typed asset import is quarantined on this Blender build after native Python-GC crashes; the lifetime failure remains unresolved.",
+            {
+                "reason": "KNOWN_NATIVE_IMPORT_LIFETIME_FAILURE",
+                "native_import_quarantined": True,
+                "blender_version": [5, 2, 2],
+                "blender_build_hash": build,
+                "execution_started": False,
+                "native_import_started": False,
+                "source_accessed": False,
+                "staging_allocated": False,
+                "owned_ids_allocated": False,
+                "project_saved": False,
+                "safe_import_verified": False,
+            },
+        )
+
+
+class _NativeImportAdmission:
+    """Static runtime metadata only; never capture or adopt destination state."""
+
+    __slots__ = ()
+
+    def __call__(self) -> None:
+        _require_native_import_build()
+
+    def check_after_read(self) -> None:
+        _require_native_import_build()
+
+
+def _native_import_admission(
+    _context: ToolContext, _params: Mapping[str, Any]
+) -> _NativeImportAdmission:
+    _require_native_import_build()
+    return _NativeImportAdmission()
 
 
 def _gate(context: ToolContext, *, writing=False) -> None:
@@ -810,6 +863,7 @@ def _cleanup(
 
 
 def import_asset(context: ToolContext, params: Mapping[str, Any]) -> dict:
+    _require_native_import_build()
     reject_unknown_params(
         params,
         {
@@ -1064,5 +1118,6 @@ def register_tools(registry: ToolRegistry) -> None:
         permissions=REQUIRED,
         modifies=True,
         batchable=False,
+        checkpoint_admission_factory=_native_import_admission,
         description="Import a fingerprinted bounded static GLB/FBX over frozen private source bytes into one new owned collection, preserving measured destination state; no project save.",
     )

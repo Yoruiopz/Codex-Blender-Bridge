@@ -43,7 +43,7 @@
     "ASSET-01": {
       "status": "open",
       "evidence": [],
-      "progress": "Previewed explicit-rail vertex/edge slides and exact-corner UV align/stitch/island relax implemented; full reference-constrained modeling/retopology and reviewed production quality remain."
+      "progress": "Previewed explicit-rail vertex/edge slides, exact-corner UV align/stitch/island relax and typed previewed equal open-chain bridges implemented within bounded contracts. Broader open-chain/native-scale qualification, unequal/multi-loop correspondence, full reference-constrained modeling/retopology and reviewed production quality remain."
     },
     "LOOK-01": {
       "status": "open",

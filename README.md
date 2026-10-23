@@ -123,7 +123,7 @@ It is checked against the registry in CI. It does not describe the 108-tool 0.3.
 The local recovery UI also has an add-on-only action, not an extra MCP tool.
 
 <!-- BEGIN GENERATED MCP TOOLS -->
-Current registry: **258 MCP tools**.
+Current registry: **260 MCP tools**.
 
 <details>
 <summary>core — 33 tools</summary>
@@ -343,7 +343,7 @@ Current registry: **258 MCP tools**.
 </details>
 
 <details>
-<summary>mesh — 28 tools</summary>
+<summary>mesh — 30 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
@@ -354,6 +354,8 @@ Current registry: **258 MCP tools**.
 | `color_attribute.rename` | Rename a color attribute with explicit named-consumer acknowledgment; consumers are not rewritten. |
 | `mesh.analyze` | Inspect bounded base-mesh topology, adjacent winding and triangle crossing/contact candidates with explicit completeness. |
 | `mesh.bevel_selected` | Bevel selected mesh elements with explicit width and segments. |
+| `mesh.bridge_chains` | Bridge an exact equal open-chain preview with quads and no vertex merge, preserving original supported custom data. |
+| `mesh.bridge_chains_preview` | Preview two equal open chains with explicit endpoint correspondence and a bounded preservation fingerprint. |
 | `mesh.bridge_loops` | Bridge two referenced closed boundary/wire loops without vertex merging; unequal loops produce triangles. |
 | `mesh.create` | Create a fully prevalidated arbitrary mesh object from bounded topology arrays. |
 | `mesh.delete_selected` | Delete selected mesh elements. |

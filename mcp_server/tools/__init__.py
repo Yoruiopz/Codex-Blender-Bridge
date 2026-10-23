@@ -27,6 +27,7 @@ from .interaction import InteractionTools
 from .layout import LayoutTools
 from .materials import MaterialTools
 from .mesh import MeshTools
+from .mesh_chains import MeshChainTools
 from .mesh_slide import MeshSlideTools
 from .mesh_surface import MeshSurfaceTools
 from .modifiers import ModifierTools
@@ -79,6 +80,7 @@ def iter_bindings(registry: ToolRegistry) -> Iterable[MCPToolBinding]:
         ObjectTools(registry),
         TransformTools(registry),
         MeshTools(registry),
+        MeshChainTools(registry),
         MeshSlideTools(registry),
         MeshSurfaceTools(registry),
         SurfaceBrushTools(registry),

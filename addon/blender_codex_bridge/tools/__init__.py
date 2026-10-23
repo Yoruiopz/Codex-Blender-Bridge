@@ -37,6 +37,7 @@ def register_all(registry: ToolRegistry) -> None:
         materials,
         mesh,
         mesh_analysis,
+        mesh_chains,
         mesh_loops,
         mesh_repair,
         mesh_slide,
@@ -93,6 +94,7 @@ def register_all(registry: ToolRegistry) -> None:
     mesh.register_tools(registry)
     face_attributes.register_tools(registry)
     mesh_analysis.register_tools(registry)
+    mesh_chains.register_tools(registry)
     mesh_loops.register_tools(registry)
     mesh_repair.register_tools(registry)
     mesh_slide.register_tools(registry)

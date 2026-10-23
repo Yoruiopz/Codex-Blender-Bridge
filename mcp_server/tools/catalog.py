@@ -232,6 +232,8 @@ MESH_TOOL_DATA: tuple[tuple[str, str, bool], ...] = (
     ("mesh.edge_ring_inspect", "Preview paginated measured edges and expected topology for a complete connected quad ring.", False),
     ("mesh.loop_cut", "Cut the entire connected quad ring with evenly spaced cuts, including unselected faces.", True),
     ("mesh.bridge_loops", "Bridge two referenced closed boundary/wire loops without vertex merging; unequal loops produce triangles.", True),
+    ("mesh.bridge_chains_preview", "Preview two equal open chains with explicit endpoint correspondence and a bounded preservation fingerprint.", False),
+    ("mesh.bridge_chains", "Bridge an exact equal open-chain preview with quads and no vertex merge, preserving original supported custom data.", True),
     ("mesh.subdivide_selected", "Subdivide selected edges without smoothing under a conservative growth budget.", True),
     ("mesh.merge_by_distance", "Weld only selected vertices within an explicit local-space distance.", True),
     ("mesh.fill_holes", "Cap complete disjoint boundary loops with bounded n-gons; new face UVs start at zero.", True),
