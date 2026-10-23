@@ -123,10 +123,10 @@ It is checked against the registry in CI. It does not describe the 108-tool 0.3.
 The local recovery UI also has an add-on-only action, not an extra MCP tool.
 
 <!-- BEGIN GENERATED MCP TOOLS -->
-Current registry: **265 MCP tools**.
+Current registry: **266 MCP tools**.
 
 <details>
-<summary>core — 33 tools</summary>
+<summary>core — 34 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
@@ -158,6 +158,7 @@ Current registry: **265 MCP tools**.
 | `task.plan.preview_transform` | Preview exact transform channels and reviewed affected consumers without editing or acquiring edit authority. |
 | `task.plan.set` | Create/correct a bounded artist plan with advisory protected objects; replacement requires current revision. |
 | `task.plan.update` | Correct an exact step's status/note at the expected plan revision. |
+| `task.plan.verify_transform` | Compare a current step receipt's independently retained intended core transform channels with the exact target; never completes the step. |
 | `task.reference.resolve` | Resolve exact object names/current selection to bounded runtime references without granting authority. |
 | `toolsets.disable` | Disable a local MCP domain toolset. |
 | `toolsets.enable` | Enable a lazy local MCP domain toolset. |

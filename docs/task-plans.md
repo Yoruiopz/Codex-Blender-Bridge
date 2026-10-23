@@ -42,7 +42,7 @@ receipt. Existing unassociated previews remain valid and create no step receipt.
 the resulting observation to that step's latest retained receipt. A plain compare
 continues to return evidence without attaching it. An intervening bridge writer,
 plan/generation change, newer receipt or replaced baseline prevents attachment.
-All attached observations are labeled `protected_objects_only` and
+These protected-comparison observations are labeled `protected_objects_only` and
 `user_goal_verified=false`: they say nothing about the edited target, appearance,
 artistic quality or step completion.
 
@@ -53,7 +53,7 @@ or `unknown` when its snapshot is no longer retained or availability is unknown.
 observation reports `current_scene_verified=false`. Manual edits and unrelated
 native activity require another explicit comparison. Native undo/redo keeps
 operation receipts as historical facts and marks their observations stale;
-an explicit comparison can add a new observation without making that old operation
+an explicit protected comparison can add a new observation without making that old operation
 current. Replacing/loading/clearing/resetting a plan discards the journal entirely.
 Saved schema-v1 stays passive and never includes receipts or observation IDs.
 
@@ -64,6 +64,38 @@ Portable tests cover the receipt and invalidation boundaries. The extended nativ
 `cdbc1c5`; real manual undo/redo and known recovery are exercised separately by
 the interactive `undo_lifecycle` fixture on both builds. These results verify
 execution evidence and preservation within the reviewed profile, not artistic intent.
+
+### Explicit target-channel observations
+
+`task.plan.verify_transform(step_id, receipt_id, expected_revision)` separately
+compares a current step's latest successful completed preview receipt with its
+exact target's authored core transform channels. Its independent Float32
+expectation is retained before application, including untouched inactive rotation
+channels and signed zero, and exposed as `target_expectation`. Results distinguish
+matching/differing channels and a missing/replaced target; changed provenance,
+later writers and historical or unavailable expectation profiles refuse before
+channel reads.
+
+This read-only `INSPECT_SCENE` method adds a runtime `target_observation`, with
+scope `authored_core_transform_channels` and `user_goal_verified=false`. It creates
+no checkpoint and never completes a step. Successful calls add no
+operation-history entry; failed or rejected calls handled by the executor retain
+its existing failure audit. The existing journal's top-level
+`scope=protected_objects_only` remains a compatibility label for protected
+observations; `target_observation_scope=authored_core_transform_channels`
+labels the separate target evidence, and the target record has its own scope.
+Both kinds of observation remain historical and report
+`current_scene_verified=false` during inspection. Sidebar protected-observation
+displays do not imply target or artistic
+acceptance.
+
+The first target profile requires an unchanged rotation mode and compares only
+location, rotation mode, Euler/quaternion/axis-angle channels and scale. Unsupported
+mode conversion leaves existing preview/application behavior intact. Parent,
+delta, evaluated/world and visual outcomes require separate evidence. See the
+[target-verification contract](artist-target-verification.md) for exact bounds,
+receipt lifetime and native acceptance requirements. Its new source-matched native
+proof is separate from the earlier artist-loop results above.
 
 Protected scope is **advisory by default**. `task.plan.capture` explicitly snapshots
 exact protected objects; `task.plan.compare` reports changed, unchanged-within-scope

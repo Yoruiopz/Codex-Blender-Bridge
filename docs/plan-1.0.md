@@ -1979,3 +1979,35 @@ neither saves a project nor qualifies native global undo or durable recovery.
 The registry remains **265 MCP tools**, components **0.3.0 alpha**. All fourteen
 release requirements remain OPEN, including full CHAR-01, installed A–F and
 Windows qualification; Windows testing remains paused.
+
+### 2026-10-23 — Explicit target verification for step-linked transforms
+
+`task.plan.verify_transform` adds a distinct target-result observation to the
+artist loop. A step-linked preview retains an immutable independent Float32
+expectation before application. The explicit read-only method compares that
+expectation with the exact native target's authored core channels and attaches
+the result to the current step's latest successful completed outer receipt.
+Protected-data comparison, a claimed step mark and artistic acceptance remain
+separate evidence.
+
+The first profile compares location, unchanged rotation mode, all three stored
+rotation representations and scale, including inactive channels and signed zero.
+Mode conversion and unqualified numeric storage profiles remain explicitly
+unavailable without changing the existing preview/apply contract. Frozen
+provenance is checked after live callbacks and static native reads; changed
+receipts, generations, plan revisions and intervening writers refuse. The reader
+uses no context/selection getter, view-layer update or evaluated/world transform.
+No checkpoint, native write, save or automatic completion is performed.
+Successful calls add no operation-history entry; failed or rejected calls handled
+by the executor retain its existing failure audit.
+
+The completion gate requires portable provenance/schema checks and the isolated
+`artist_target_verification` fixture on both Linux development builds, with
+independent Float32 values and complete declared protected/context preservation.
+Source-matched reports remain required; documentation or wiring alone establishes
+no native pass. See [the contract](artist-target-verification.md).
+
+This advances UX-01 while retaining **266 MCP tools**, component versions
+**0.3.0 alpha**, all fourteen requirements OPEN and Windows testing paused.
+Broader target/dependency/visual evidence, protected save, native undo/durable
+recovery, whole artist scenarios and installed A–F remain mandatory.

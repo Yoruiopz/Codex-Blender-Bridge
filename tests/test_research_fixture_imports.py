@@ -25,6 +25,7 @@ HELPERS = (
     "scripts.blender_surface_publication_probe",
     "scripts.blender_sculpt_mask_smoke",
     "scripts.blender_character_revision_smoke",
+    "scripts.blender_artist_target_verification_smoke",
     "scripts.native_character_revision_evidence",
     "scripts.native_character_evidence",
     "scripts.native_cache_evidence",
@@ -105,6 +106,7 @@ def fixture_imports(addon_package, monkeypatch):
     ("scripts.blender_surface_publication_probe", "main"),
     ("scripts.blender_sculpt_mask_smoke", "main"),
     ("scripts.blender_character_revision_smoke", "main"),
+    ("scripts.blender_artist_target_verification_smoke", "main"),
     ("scripts.native_character_revision_evidence", "lbs_vertices"),
 ])
 def test_importing_helper_fixture_does_not_start_experiment(fixture_imports, name, helper):

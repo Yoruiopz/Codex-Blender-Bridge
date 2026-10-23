@@ -14,6 +14,7 @@ from copy import deepcopy
 from typing import Any
 
 from ..artist_step_evidence import associate, check_apply, matches
+from ..artist_target_intent import capture_intent, public_intent
 from ..entry_effects import mark_view_layer_sync_possible
 from ..errors import BridgeError, ErrorCode, invalid_argument
 from ..permissions import Permission
@@ -300,14 +301,16 @@ def preview_transform(context: ToolContext, params: Mapping[str, Any]) -> dict[s
         if any(locked and old != new for locked, old, new in zip(locks, before[field], desired[field], strict=False)):
             raise invalid_argument("Preview does not bypass locked transform components.", property=field)
     changes = [{"field": field, "before": before[field], "requested": desired[field]} for field in before if before[field] != desired[field]]
+    target_intent = capture_intent(bpy, obj, parsed) if association is not None else None
     preview = {"reference_id": params["reference_id"], "params": parsed, "profile": _profile(boundary),
                "policy_stamp": policy_stamp(context), "plan_id": store.require_plan()["plan_id"], "step_association": association,
-               "checkpoint_roles": boundary.checkpoint_roles.origin()}
+               "checkpoint_roles": boundary.checkpoint_roles.origin(), "target_intent": target_intent}
     if association is not None and not matches(store, association):
         raise invalid_argument("The plan step changed during preview; resolve it again.")
     final_lifetime_gate(context)
     identifier = _keep(store.previews, "preview_", preview, MAX_PREVIEWS)
     return {"preview_id": identifier, "step_id": association.step_id if association is not None else None,
+            "target_expectation": public_intent(target_intent) if target_intent is not None else None,
             "method": "transform.set", "object": obj.name, "changes": changes,
             "affected_objects": boundary.affected, "scope_complete": True,
             "protected_scope_enforced": store.protection is not None,

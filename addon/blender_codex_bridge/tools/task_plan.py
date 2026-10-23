@@ -251,7 +251,7 @@ def clear_plan(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any
 
 
 def register_tools(registry: ToolRegistry) -> None:
-    from . import artist_loop
+    from . import artist_loop, artist_target_verify
     for name, handler, description in (
         ("set", set_plan, "Create or revision-check replacement of a bounded artist task plan; protected objects are advisory."),
         ("inspect", inspect_plan, "Inspect the current artist plan, steps and advisory protected scope."),
@@ -264,3 +264,4 @@ def register_tools(registry: ToolRegistry) -> None:
         registry.register(f"task.plan.{name}", handler, permissions=(Permission.INSPECT_SCENE,), description=description, batchable=False, record_history=False)
     registry.register("task.plan.persist", persist_plan, permissions=(Permission.INSPECT_SCENE, Permission.EDIT_SCENE), modifies=True, description="Explicitly store validated plan JSON in the active scene without saving the project.", batchable=False)
     artist_loop.register_tools(registry)
+    artist_target_verify.register_tools(registry)
