@@ -39,7 +39,7 @@ No current release should be described as a complete human-equivalent artist.
 | Procedural modeling | Reviewed GN graphs/zones; [nested instances/copies and modifier constants](geometry-node-groups.md), [identifier-preserving zone conversion/interface edits](geometry-zone-lifecycle.md) | Broader nested/interface lifecycle, disk baking, evaluated diagnostics and broader node types |
 | Rig and skin | Armatures/bones/poses/constraints/binding; numeric weights; [brushes, geometric mirror and barycentric surface transfer](weight-brushes.md), [bounded IK controls and current-frame deformation measurements](rig-ik-deformation.md) | Broader skinning/deformation diagnosis, control-rig authoring and protected character benchmark |
 | Animate | Frames/keyframes, NLA clips/tracks; [Action copies and curve handles/interpolation](animation-curves.md), [numeric controls and non-scripted bone drivers](rig-drivers.md), [bounded Action lifecycle](action-lifecycle.md) and [NLA clips/transitions/reordering](nla-lifecycle.md) | Broader Action/constraint/control-rig combinations, complete mutator safety audit and protected multi-frame revisions |
-| Simulate | Scoped cloth setup/configuration and bounded in-memory bake/free | Fluid/rigid-body/other solvers, dependencies, disk caches, asynchronous progress/cancellation and production-scale validation |
+| Simulate | Scoped cloth setup/configuration, bounded in-memory bake/free, three reviewed rigid-body cache tools and an internal [Scene job kernel](scene-job-kernel.md) | Public cooperative rigid-body jobs, broader solvers/dependencies, disk caches and production-scale latency/recovery validation |
 | Stage and light | Collections, world, camera/light settings, layout; [persistent static-scene variants and matched previews](cinematic-variants.md) | Broader composition/navigation and lighting workflows, asset-scale and placement constraints, reviewed artistic acceptance |
 | Render and composite | Render settings/execution, captures; reviewed compositor graph editing | Broader nodes/image assets, passes, color/output workflows, render diagnostics and job/progress management |
 | Deliver production assets | Safe native project saving is [blocked](project-save-safety.md); [cooperative texture export/reimport](texture-delivery.md), fresh texture/project reopen, [packed recovery](image-portability.md), [material-free static/skinned GLB/FBX export and fresh reimport](asset-delivery.md), [approved-source static GLB/material-free FBX import](asset-import.md) | Safe authorized project save and portable `.blend` delivery; broader skinned/animated/material asset import, textured FBX exchange, complete dependency packaging, broader recovery/formats and production validation |
@@ -70,8 +70,10 @@ development manifest still declares 4.2; this is not a newly qualified 1.0 suppo
 Historical Windows checks exercised 4.5.1 LTS and 5.1.2, while this implementation session
 has Linux development runners for 4.3.2, 4.5.14 LTS and 5.2.2 LTS. Their results remain
 separate from Windows qualification; source-matched outcomes and failures are retained in
-the [development checkpoint](artist-workflow-checkpoint-20261022.md). The user confirmed that no Windows test machine is available.
-Native Windows and installed-package acceptance remain blocked; other platforms remain
+the historical [development checkpoint](artist-workflow-checkpoint-20261022.md) and
+the [2026-10-23 checkpoint](artist-workflow-checkpoint-20261023.md). Windows testing
+is paused at the user's request while development continues on Linux. Native
+Windows and installed-package acceptance remain open; other platforms remain
 unqualified for 1.0. Align the manifest and support claims only at candidate qualification.
 
 ## Release gates
@@ -80,10 +82,10 @@ unqualified for 1.0. Align the manifest and support claims only at candidate qua
 | --- | --- | --- |
 | Target and data ownership | Every modifying domain documents shared data, linked libraries, overrides, active/multi-object modes and hidden scope; rejects unsupported cases before mutation | Mesh/UV/material, object/data/Action and collection/parenting guards exist with bounded regressions; complete per-tool/dependency audit, protected enforcement and recovery acceptance remain |
 | Recoverable edits | Deliberate mid-operation faults, canceled callers, operator failures and manual undo interleaving leave truthful history and verifiable recovery state | Checkpoints/batches are not transactions. [Conservative capacity reporting/pruning](native-recovery.md) and a long/manual-eviction fixture exist; memory-pressure, production-scale mixed-editor/domain, durable recovery and UI acceptance remain open. Never expand user preferences silently |
-| Preserved context | Each representative workflow proves unchanged mode, selection, active object, visibility, UV layer and unrelated data where promised | Selection preservation has coverage; UV layer activation and operator context need broader audit |
+| Preserved context | Each representative workflow proves unchanged mode, selection, active object, visibility, UV layer and unrelated data where promised | Bounded restoration has coverage, but known preflight getters can normalize selection before denial; entry diagnostics report possibility and do not prevent it. UV layer activation/operator context and full preservation remain open |
 | Bounded evidence | Explicit truncation, stable pagination rules, large-scene fixtures and measured time/memory reports | Hard limits exist; add performance baselines and inspect partial-result handling across domains |
 | End-to-end workflows | Modeling, materials/nodes, UVs, rigging, animation, scene layout and rendering each have an install-to-result scenario with pre/post evidence | Current factory-startup smokes cover portions, not complete production acceptance |
-| Visual verification | Retained, matched viewport/render evidence for appearance-sensitive acceptance scenarios | Isolated preview exists; add repeatable comparisons and interactive viewport coverage |
+| Visual verification | Retained, matched viewport/render evidence for appearance-sensitive acceptance scenarios | Exact-object framing has matched captures and independent projection/pixel checks; protected capture still refuses, and complete appearance-sensitive artist acceptance remains open |
 | Protocol and authorization | Versioned compatibility, reconnect, malformed/oversized frames, duplicate IDs, timeout/cancel, pause/stop and Python gates pass adversarial tests | Core tests exist; expand live disconnect and recovery scenarios; no LAN listener |
 | Installation and upgrade | Fresh ZIP/wheel/plugin installation, previous-release upgrade, rollback, paths with spaces and disconnected/restarted Blender tested on claimed platforms | Package/metadata/checksum/clean-wheel CI exists; interactive install and platform matrix remain open |
 | Public contracts | Registry, schemas, README, permission matrix, error codes, limitations and migration notes agree for the release commit | Generated inventory is checked; audit full parameter/error contracts and freeze supported surface before RC |
@@ -110,8 +112,15 @@ explicit protected-only comparison observations. Reconnect retains them; undo/re
 invalidates observation currency, and plan replacement/load/reset discards them.
 Sidebar execution evidence remains separate from claimed completion. The saved-v1
 document stays passive. Portable boundary tests and the extended native artist-loop
-fixture are described in [task plans](task-plans.md); native execution of this
-increment is pending. This does not close UX-01 or any full-artist release gate.
+fixture are described in [task plans](task-plans.md). Both Linux builds have passed
+the extended artist, multi-target native-push and interactive undo fixtures; their
+source-specific evidence is recorded in the [dated checkpoint](artist-workflow-checkpoint-20261023.md).
+Object framing also has independent projection/pixel evidence. Capture while
+protection is armed still refuses. Native context getters can normalize selection
+before a permission denial; [bounded entry diagnostics](entry-context-effects.md)
+report that possibility and do not prevent it. The internal Scene reservation and
+owned-checkpoint kernel has a five-scenario native fixture; public rigid-body jobs
+remain pending. This does not close UX-01 or any full-artist release gate.
 
 1. **Safety baseline:** close ownership/context gaps, add regression fixtures, strengthen failure evidence.
 2. **Daily workflows:** finish targeted structured editing gaps and add whole-task acceptance scenarios.

@@ -8,6 +8,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
+from .entry_effects import bounded_entry_effects
 from .errors import invalid_argument
 from .task_plans import TaskPlanStore, get_task_plans
 
@@ -129,6 +130,9 @@ def _record_terminal(store: TaskPlanStore, entry: StepCall | None, request: Any,
         "possible_mutation": possible if type(possible) is bool else None,
         "undo_boundary_created": bool(undo_created), "undo_boundary_finalized": bool(undo_finalized),
         "recovery_evidence": deepcopy(record.recovery_evidence), "protected_observation": None}
+    effects = bounded_entry_effects(getattr(record, "entry_effects", None))
+    if effects is not None:
+        receipt["entry_effects"] = effects
     if len(store.step_receipts) == MAX_RECEIPTS:
         store.step_receipts.pop(0)
         store.receipts_truncated = True

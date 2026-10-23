@@ -74,6 +74,43 @@ restore the exact owned output only while all authority remains valid.
 Recovery history is finite and is not
 a durable backup. These tools do not save; safe project saving remains separately blocked.
 
+All user custom-property keys on supported shader owners enter the proof, including
+the literal `_codex_bridge_undo_marker`. That name grants no checkpoint authority
+on a Material, World, Light, node tree, node, interface item or socket. This proof
+does not read Scene custom properties and has no Scene-marker exception. A live
+granting provider's change to such a payload invalidates the captured scope before
+an edit or inverse compensation. Unsupported or non-finite payloads fail the same
+bounded value validation as other custom data. Native socket user-property support
+differs by version; 5.2 system-property-only sockets are not presented as supporting
+user payloads.
+
+Scope, identity, predicted-output and compensation checks use the same finite
+canonical JSON representation as the existing fingerprint. Boolean, integer and
+float values remain distinct, including positive and negative floating-point zero;
+Python's value equality cannot authorize a write or verify rollback. The same
+comparison governs whether an exact default edit is a no-op. A requested zero-sign
+change therefore requires an assignment and exact native readback. This changes
+no schema or fingerprint encoding and does not normalize protected values.
+
+The marker-key increment `e22e23c9f02126907ab5ec42c9c0de882b09e236` passed the
+phased `shader_interface` fixture on Linux Blender 4.5.14 and 5.2.2: eight and six
+granting-provider marker-drift cases respectively, successful typed edits, native
+undo and separate-process reopen retained the tested marker payloads. Its report
+is retained at `build/shader-marker-composition-native-20261023/native/report.json`
+(SHA-256 `ea9b857088014566830c4700e78fe91030db5a2256f6bfb24c76ffd3f0cc3bba`).
+That source still used Python scope equality; it did not establish typed/sign
+drift protection. The subsequent exact-comparison source `87ffd23408cfb78612baaf1d8a253189e92f75f7`
+passed both Linux writer/reader cases, including eight real typed/sign drift
+refusals and two requested zero-sign default edits per build. Its report is
+`build/shader-exact-composition-native-20261023/native/report.json` (SHA-256
+`a02839827ba8d882f35b0bcb9874a6efd1cc3998123b4282663b4d4dae94e98f`);
+the independent source/readback audit is
+`76c4fdad6f22a21c306c8657049e80ea70ad9488bde2922fa6d57674953ecdcb`.
+Portable registered-dispatch tests separately prove initial, post-write and
+compensation refusals, exact no-ops and failed sign readback handling. These
+results do not qualify Windows or the full native custom-property metadata and
+preservation audit.
+
 Use preview → review every affected owner → explicit shared consent → edit →
 reinspect/compare. These operations preserve existing rendered inputs rather than
 claiming an appearance change. Appearance-changing follow-up work still requires

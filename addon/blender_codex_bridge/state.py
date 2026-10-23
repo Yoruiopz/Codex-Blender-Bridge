@@ -10,6 +10,8 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import Any
 
+from .entry_effects import bounded_entry_effects
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -178,10 +180,13 @@ class OperationRecord:
     job_evidence: dict[str, Any] | None = None
     external_effects: dict[str, Any] | None = None
     recovery_evidence: dict[str, Any] | None = None
+    entry_effects: dict[str, bool] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
         value["affected_objects"] = list(self.affected_objects)
+        if self.entry_effects is None:
+            value.pop("entry_effects")
         return value
 
 
@@ -261,6 +266,7 @@ class BridgeState:
         job_evidence: dict[str, Any] | None = None,
         external_effects: Mapping[str, Any] | None = None,
         recovery_evidence: Mapping[str, Any] | None = None,
+        entry_effects: Mapping[str, Any] | None = None,
     ) -> OperationRecord:
         record = OperationRecord(
             operation_id=f"op_{uuid.uuid4().hex[:10]}",
@@ -274,6 +280,7 @@ class BridgeState:
             job_evidence=job_evidence,
             external_effects=bounded_external_effects(external_effects),
             recovery_evidence=bounded_recovery_evidence(recovery_evidence),
+            entry_effects=bounded_entry_effects(entry_effects),
         )
         with self._lock:
             self._history.appendleft(record)

@@ -12,6 +12,7 @@ from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from typing import Any
 
+from .entry_effects import EntryAudit, entry_audit
 from .errors import BridgeError, ErrorCode
 
 
@@ -33,6 +34,7 @@ class _InvocationRecord:
     call_id: object
     lease: ExclusiveMutationLease | None
     continuation_id: int
+    audit: EntryAudit
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -65,6 +67,17 @@ class MutationInterlock:
         self.invocation: _InvocationRecord | None = None
         self._entries: list[_InvocationRecord] = []
         self._consumed: set[int] = set()
+
+    def audit_for(self, permit: InvocationPermit | None) -> EntryAudit | None:
+        """Diagnostic lookup by retained call identity, never context-slot authority."""
+        if type(permit) is not InvocationPermit:
+            return None
+        for record in reversed(self._entries):
+            if (record.continuation_id == id(permit) and record.call_id is permit.call_id
+                    and record.registry is permit.registry and record.spec is permit.spec
+                    and record.context is permit.context and record.params is permit.params):
+                return record.audit
+        return None
 
     @property
     def has_retained_exclusive_entry(self) -> bool:
@@ -122,46 +135,47 @@ class MutationInterlock:
     @contextmanager
     def entry(self, registry: Any, spec: Any, params: Mapping[str, Any], context: Any) -> Iterator[InvocationPermit]:
         self._reject_entry(spec)  # Before factories, providers, checkpoints or handler callbacks.
-        call_id = object()
-        permit = InvocationPermit(registry, spec, context, params, call_id)
-        lease = ExclusiveMutationLease(registry, spec, context, params, call_id) if spec.exclusive_mutation else None
-        record = _InvocationRecord(registry, spec, context, params, call_id, lease, id(permit))
-        previous = getattr(context, "exclusive_mutation_lease", None)
-        if lease is not None:
-            self.owner, self.invocation = lease, record
-            context.exclusive_mutation_lease = lease
-        self._entries.append(record)
-        primary: BaseException | None = None
-        try:
-            yield permit
-        except BaseException as error:
-            primary = error
-            raise
-        finally:
-            drift = None
+        with entry_audit() as audit:
+            call_id = object()
+            permit = InvocationPermit(registry, spec, context, params, call_id)
+            lease = ExclusiveMutationLease(registry, spec, context, params, call_id) if spec.exclusive_mutation else None
+            record = _InvocationRecord(registry, spec, context, params, call_id, lease, id(permit), audit)
+            previous = getattr(context, "exclusive_mutation_lease", None)
             if lease is not None:
-                try:
-                    self.check_owner(registry, spec, context)
-                except BridgeError as error:
-                    drift = error
-                # Never unlock or overwrite a newer/foreign owner. Lifecycle
-                # reset does not touch this service, including during native C.
-                if self.owner is lease:
-                    self.owner = None
-                if self.invocation is record:
-                    self.invocation = None
-                if getattr(context, "exclusive_mutation_lease", None) is lease:
-                    context.exclusive_mutation_lease = previous
-            self._consumed.discard(id(permit))
-            if self._entries and self._entries[-1] is record:
-                self._entries.pop()
-            if drift is not None:
-                if isinstance(primary, BridgeError):
-                    primary.context["exclusive_mutation_lease_drift"] = dict(drift.context)
-                elif primary is not None:
-                    # Preserve even an unexpected exception's identity. The
-                    # executor normally converts it before this scope unwinds.
-                    with suppress(AttributeError, TypeError):
-                        primary.exclusive_mutation_lease_drift = dict(drift.context)
-                else:
-                    raise drift
+                self.owner, self.invocation = lease, record
+                context.exclusive_mutation_lease = lease
+            self._entries.append(record)
+            primary: BaseException | None = None
+            try:
+                yield permit
+            except BaseException as error:
+                primary = error
+                raise
+            finally:
+                drift = None
+                if lease is not None:
+                    try:
+                        self.check_owner(registry, spec, context)
+                    except BridgeError as error:
+                        drift = error
+                    # Never unlock or overwrite a newer/foreign owner. Lifecycle
+                    # reset does not touch this service, including during native C.
+                    if self.owner is lease:
+                        self.owner = None
+                    if self.invocation is record:
+                        self.invocation = None
+                    if getattr(context, "exclusive_mutation_lease", None) is lease:
+                        context.exclusive_mutation_lease = previous
+                self._consumed.discard(id(permit))
+                if self._entries and self._entries[-1] is record:
+                    self._entries.pop()
+                if drift is not None:
+                    if isinstance(primary, BridgeError):
+                        primary.context["exclusive_mutation_lease_drift"] = dict(drift.context)
+                    elif primary is not None:
+                        # Preserve even an unexpected exception's identity. The
+                        # executor normally converts it before this scope unwinds.
+                        with suppress(AttributeError, TypeError):
+                            primary.exclusive_mutation_lease_drift = dict(drift.context)
+                    else:
+                        raise drift

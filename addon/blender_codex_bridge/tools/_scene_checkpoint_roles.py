@@ -11,6 +11,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from ..entry_effects import mark_view_layer_sync_possible
 from . import _scene_evaluation_scope as evaluation
 from . import _scene_mutation as proof
 
@@ -105,6 +106,7 @@ class Plan:
             raise proof.unsupported("An exposed ParticleEdit Scene role requires a separate source review.")
         particle_object = _pointer(bpy, particle, "object", "Object")
         original = _pointer(bpy, scene, "original", "ID")
+        mark_view_layer_sync_possible()
         active = bpy.context.view_layer.objects.active
         if active is not None:
             self.active_validator(bpy, active)

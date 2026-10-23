@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
 import traceback
@@ -25,6 +26,55 @@ from blender_codex_bridge.request_lifecycle import ConnectionLifetime, RequestLi
 from blender_codex_bridge.runtime import get_runtime  # noqa: E402
 from blender_codex_bridge.tools import shader_interface as domain  # noqa: E402
 from native_fixture_save import serialize_owned_fixture  # noqa: E402
+
+MARKER_KEY = "_codex_bridge_undo_marker"
+
+
+def exact_json(value):
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
+
+
+def marker_hosts():
+    """Resolve native user-property hosts; 5.2 sockets use system properties only."""
+    leaf = bpy.data.node_groups["Probe Shared Leaf"]
+    node = bpy.data.node_groups["Probe Shared Outer"].nodes["Right"]
+    hosts = {"material": bpy.data.materials["Probe Material A"], "tree": leaf, "node": node}
+    socket = node.inputs["Tint"]
+    try:
+        socket.keys()
+    except TypeError as error:
+        assert "IDProperties" in str(error)
+        socket_supported = False
+    else:
+        hosts["socket"] = socket
+        socket_supported = True
+    return hosts, socket_supported
+
+
+def marker_state():
+    hosts, _socket_supported = marker_hosts()
+    return {kind: domain._Proof().value(owner[MARKER_KEY]) for kind, owner in hosts.items()}
+
+
+def seed_marker_payloads():
+    hosts, socket_supported = marker_hosts()
+    for kind, owner in hosts.items():
+        owner[MARKER_KEY] = {"host": kind, "revision": 1, "weights": [.125, .25]}
+    return marker_state(), socket_supported
+
+
+def replace_fixture_marker(owner, payload):
+    """Owned manual fixture action; recreating the key prevents native coercion."""
+    identity = owner.as_pointer()
+    del owner[MARKER_KEY]
+    owner[MARKER_KEY] = payload
+    actual = domain._Proof().value(owner[MARKER_KEY])
+    assert owner.as_pointer() == identity
+    if exact_json(actual) != exact_json(payload):
+        print("SHADER_NATIVE_CUSTOM_TYPE_COERCION "+json.dumps({"requested_json": exact_json(payload),
+            "actual_json": exact_json(actual)}), flush=True)
+    assert exact_json(actual) == exact_json(payload), "Native fixture property did not retain its requested type/sign"
+    return actual
 
 
 def resolve(refs):
@@ -252,10 +302,177 @@ def native_scope_and_recovery_faults(runtime, identifier, refs):
     return outcomes
 
 
+def native_marker_faults(runtime, identifier):
+    """A granting provider's marker-named edit remains protected user data."""
+    manager, context = runtime.executor.context.permissions, runtime.executor.context
+    kinds = list(marker_state())
+    outcomes = []
+    for kind in kinds:
+        for after_write in (False, True):
+            params = plan(runtime, identifier, "SET_DEFAULT", value=.625)
+            leaf = bpy.data.node_groups["Probe Shared Leaf"]
+            original, _scope = domain._capture(bpy, leaf)
+            hosts, _socket_supported = marker_hosts()
+            owner = hosts[kind]
+            original_payload = domain._Proof().value(owner[MARKER_KEY])
+            late_payload = {"host": kind, "revision": 2, "weights": [.5, .875]}
+            boundary = {"prepared": False, "written": False, "poisoned": False}
+            assignments = []
+            source, capture, write = manager._source, domain._capture, domain._write
+            primary = BridgeError("OPERATION_FAILED", "Original native failure after complete interface assignment")
+
+            def captured(*args, capture=capture, boundary=boundary):
+                result = capture(*args)
+                boundary["prepared"] = True
+                return result
+
+            def provider(source=source, owner=owner, boundary=boundary, after_write=after_write, late_payload=late_payload):
+                if not boundary["poisoned"] and (boundary["written"] if after_write else boundary["prepared"]):
+                    boundary["poisoned"] = True
+                    owner[MARKER_KEY] = late_payload
+                return source()
+
+            def owned_write(tree, operation, *, inverse=False, write=write, boundary=boundary, primary=primary, assignments=assignments):
+                assignments.append("inverse" if inverse else "forward")
+                write(tree, operation, inverse=inverse)
+                boundary["written"] = True
+                raise primary
+
+            manager._source, domain._capture, domain._write = provider, captured, owned_write
+            try:
+                failure = denied(lambda params=params: domain.edit(context, params))
+                assert boundary["poisoned"]
+                assert assignments == (["forward"] if after_write else [])
+                assert failure.context["possible_mutation"] is after_write
+                assert failure.context["rollback_verified"] is not after_write
+                assert exact_json(domain._Proof().value(owner[MARKER_KEY])) == exact_json(late_payload)
+                assert probe.interface(leaf, identifier).default_value == (.625 if after_write else .25)
+                if after_write:
+                    assert failure.code == primary.code and failure.__cause__ is primary
+                else:
+                    assert failure.code == "INVALID_ARGUMENT"
+                outcomes.append({"owner_kind": kind, "after_owned_assignment": after_write,
+                    "protected_late_payload_retained": True, "inverse_assignments": 0,
+                    "primary_failure_preserved": after_write})
+            finally:
+                manager._source, domain._capture, domain._write = source, capture, write
+                owner[MARKER_KEY] = original_payload
+                probe.interface(leaf, identifier).default_value = .25
+            assert exact_json(domain._capture(bpy, leaf)[0]) == exact_json(original)
+    return outcomes
+
+
+def native_exact_value_faults(runtime, identifier):
+    """Prove real native typed/sign drift, then deny writes and compensation."""
+    manager, context = runtime.executor.context.permissions, runtime.executor.context
+    outcomes = []
+    cases = (("bool_to_int", True, 1), ("int_to_float", 1, 1.0),
+        ("positive_to_negative_zero", 0.0, -0.0),
+        ("nested_bool_to_int", {"values": {"selected": True}}, {"values": {"selected": 1}}))
+    for name, initial_payload, late_payload in cases:
+        for after_write in (False, True):
+            leaf = bpy.data.node_groups["Probe Shared Leaf"]
+            owner = bpy.data.node_groups["Probe Shared Outer"].nodes["Right"]
+            fixture_before, _scope = domain._capture(bpy, leaf)
+            fixture_payload = domain._Proof().value(owner[MARKER_KEY])
+            actual_before = replace_fixture_marker(owner, initial_payload)
+            params = plan(runtime, identifier, "SET_DEFAULT", value=.625)
+            boundary = {"prepared": False, "written": False, "poisoned": False}
+            assignments = []
+            source, capture, write = manager._source, domain._capture, domain._write
+            primary = BridgeError("OPERATION_FAILED", "Original native failure before typed-drift compensation")
+
+            def captured(*args, capture=capture, boundary=boundary):
+                result = capture(*args)
+                boundary["prepared"] = True
+                return result
+
+            def provider(source=source, owner=owner, boundary=boundary, after_write=after_write,
+                         actual_before=actual_before, late_payload=late_payload, name=name):
+                if not boundary["poisoned"] and (boundary["written"] if after_write else boundary["prepared"]):
+                    boundary["poisoned"] = True
+                    actual_after = replace_fixture_marker(owner, late_payload)
+                    assert actual_after == actual_before
+                    assert exact_json(actual_after) != exact_json(actual_before)
+                    boundary["actual_late_value_json"] = exact_json(actual_after)
+                    print("SHADER_EXACT_VALUE_FAULT "+json.dumps({"case": name, "after_owned_assignment": after_write,
+                        "actual_initial_value_json": exact_json(actual_before),
+                        "actual_late_value_json": boundary["actual_late_value_json"]}), flush=True)
+                return source()
+
+            def owned_write(tree, operation, *, inverse=False, write=write, boundary=boundary,
+                            primary=primary, assignments=assignments):
+                assignments.append("inverse" if inverse else "forward")
+                write(tree, operation, inverse=inverse)
+                boundary["written"] = True
+                if not inverse:
+                    raise primary
+
+            manager._source, domain._capture, domain._write = provider, captured, owned_write
+            try:
+                failure = denied(lambda params=params: domain.edit(context, params))
+                assert boundary["poisoned"] and "actual_late_value_json" in boundary
+                assert assignments == (["forward"] if after_write else [])
+                assert failure.context["possible_mutation"] is after_write
+                assert failure.context["rollback_verified"] is not after_write
+                assert exact_json(domain._Proof().value(owner[MARKER_KEY])) == exact_json(late_payload)
+                assert probe.interface(leaf, identifier).default_value == (.625 if after_write else .25)
+                if after_write:
+                    assert failure.code == primary.code and failure.__cause__ is primary
+                else:
+                    assert failure.code == "INVALID_ARGUMENT"
+                outcomes.append({"case": name, "after_owned_assignment": after_write,
+                    "nested_mapping_representation": name == "nested_bool_to_int",
+                    "actual_initial_value_json": exact_json(actual_before),
+                    "actual_late_value_json": boundary["actual_late_value_json"],
+                    "python_value_equality": True, "canonical_value_equality": False,
+                    "fixture_owned_property_recreated": True, "owner_identity_preserved": True,
+                    "protected_typed_drift_retained": True, "inverse_assignments": 0,
+                    "primary_failure_preserved": after_write})
+            finally:
+                manager._source, domain._capture, domain._write = source, capture, write
+                replace_fixture_marker(owner, fixture_payload)
+                probe.interface(leaf, identifier).default_value = .25
+            assert exact_json(domain._capture(bpy, leaf)[0]) == exact_json(fixture_before)
+    return outcomes
+
+
+def native_signed_zero_defaults(runtime):
+    """Verify both zero-sign edits through the actual typed tool and RNA readback."""
+    tree, _source, _output = probe.group("Typed Signed Zero Defaults")
+    item = tree.interface.new_socket(name="Signed Zero", in_out="INPUT", socket_type="NodeSocketFloat")
+    identifier = item.identifier
+    item.default_value = 0.0
+    assert exact_json(item.default_value) == "0.0"
+    outcomes = []
+    for desired in (-0.0, 0.0):
+        before = probe.interface(tree, identifier).default_value
+        assert before == desired and math.copysign(1., before) != math.copysign(1., desired)
+        params = {"group_name": tree.name, "socket_identifier": identifier, "operation": "SET_DEFAULT", "value": desired}
+        preview = runtime.dispatch("shader_group.interface_preview", params)
+        assert exact_json(preview["before"]) == exact_json(before)
+        assert exact_json(preview["after"]) == exact_json(desired)
+        try:
+            result = runtime.dispatch("shader_group.interface_edit", {**params, "expected_fingerprint": preview["fingerprint"]})
+        except Exception:
+            print("SHADER_SIGNED_ZERO_TYPED_FAILURE "+json.dumps({"before_json": exact_json(before),
+                "desired_json": exact_json(desired), "actual_after_failed_call_json": exact_json(probe.interface(tree, identifier).default_value)}), flush=True)
+            raise
+        actual = probe.interface(tree, identifier).default_value
+        assert result["changed"] is True and result["protected_graph_state_preserved"] is True
+        assert math.copysign(1., actual) == math.copysign(1., desired)
+        assert exact_json(actual) == exact_json(desired)
+        outcomes.append({"before_json": exact_json(before), "desired_json": exact_json(desired),
+            "actual_after_json": exact_json(actual), "typed_edit_performed": True,
+            "actual_native_zero_sign_verified": True})
+    return outcomes
+
+
 def writer(runtime, grants, bundle):
     leaf, _outer, identifiers, trees = probe.setup()
     refs = [probe.tree_reference(tree) for tree in trees]
     identifier = identifiers["Roughness"]
+    protected_markers, socket_user_properties_supported = seed_marker_payloads()
     initial_ids = [item.identifier for item in leaf.interface.items_tree]
     original = probe.snapshot(trees)
     # Demonstrate the exact RNA references counted by the product ownership gate.
@@ -274,7 +491,10 @@ def writer(runtime, grants, bundle):
     assert probe.snapshot(trees) == original
     faults = native_provider_faults(runtime, identifier, refs)
     scope_faults = native_scope_and_recovery_faults(runtime, identifier, refs)
+    marker_faults = native_marker_faults(runtime, identifier)
+    exact_value_faults = native_exact_value_faults(runtime, identifier)
     socket_families = native_socket_family_proof(runtime)
+    signed_zero_defaults = native_signed_zero_defaults(runtime)
     results = []
     for operation, extra in (("RENAME", {"new_name": "Surface Roughness"}), ("MOVE", {"to_index": 2}), ("SET_DEFAULT", {"value": .75})):
         params = plan(runtime, identifier, operation, **extra)
@@ -292,6 +512,7 @@ def writer(runtime, grants, bundle):
             print("SHADER_INTERFACE_NATIVE_AFTER "+json.dumps(probe.snapshot(trees)), flush=True)
             raise
         assert result["protected_graph_state_preserved"] and result["existing_instance_defaults_preserved"]
+        assert exact_json(marker_state()) == exact_json(protected_markers)
         assert set(initial_ids) == {item.identifier for item in leaf.interface.items_tree}
         assert probe.defaults(trees, leaf.name, identifier) == defaults
         after = probe.snapshot(trees)
@@ -302,6 +523,7 @@ def writer(runtime, grants, bundle):
         params = plan(runtime, shader_identifier, operation, **extra)
         before = probe.snapshot(trees)
         runtime.dispatch("shader_group.interface_edit", params)
+        assert exact_json(marker_state()) == exact_json(protected_markers)
         assert probe.without_edit(before, leaf.name, shader_identifier, operation) == probe.without_edit(probe.snapshot(trees), leaf.name, shader_identifier, operation)
         results.append({"operation": operation, "socket_type": "NodeSocketShader", "all_identifiers_links_existing_defaults_preserved": True})
     fresh = probe.instance(bpy.data.node_groups["Probe Shared Outer"], leaf, "New Instance Inherits")
@@ -325,14 +547,18 @@ def writer(runtime, grants, bundle):
     assert undo["undone"], undo
     trees = resolve(refs)
     assert probe.snapshot(trees) == before_undo
+    assert exact_json(marker_state()) == exact_json(protected_markers)
     leaf = bpy.data.node_groups["Probe Shared Leaf"]
     expected = {"graphs": probe.snapshot(trees), "references": refs, "identifiers": initial_ids,
-        "roughness_identifier": identifier, "leaf": leaf.name}
+        "roughness_identifier": identifier, "leaf": leaf.name, "marker_payloads": protected_markers}
     fixture_save = serialize_owned_fixture(runtime, bundle/"shader-interface.blend")
     (bundle/"expected.json").write_text(json.dumps(expected), encoding="utf-8")
     return {"phase": "writer", "blender_version": bpy.app.version_string,
         "typed_operations": results, "socket_families": socket_families, "native_provider_faults": faults,
         "native_scope_recovery_faults": scope_faults, "native_undo_verified": True,
+        "native_marker_payload_faults": marker_faults, "marker_named_user_payloads_preserved": True,
+        "native_exact_typed_value_faults": exact_value_faults, "native_signed_zero_default_edits": signed_zero_defaults,
+        "socket_user_custom_properties_supported": socket_user_properties_supported,
         "new_instance_default_verified": True, "shared_material_world_light_scope_verified": True,
         **fixture_save, "permission_mode_stale_preview_and_animation_denials": True, "fixture_project_serialized": True,
         "visual_review": "No rendered appearance claim; exact interface/link/default comparisons only."}
@@ -344,6 +570,7 @@ def reader(runtime, _grants, bundle):
     runtime.registry.enable_toolset("nodes")
     trees = resolve(expected["references"])
     assert probe.snapshot(trees) == expected["graphs"]
+    assert exact_json(marker_state()) == exact_json(expected["marker_payloads"])
     leaf = bpy.data.node_groups[expected["leaf"]]
     assert set(expected["identifiers"]) == {item.identifier for item in leaf.interface.items_tree}
     identifier = expected["roughness_identifier"]
@@ -353,6 +580,7 @@ def reader(runtime, _grants, bundle):
     return {"phase": "reader", "blender_version": bpy.app.version_string,
         "fresh_process_all_nested_graphs_and_root_bindings_verified": True,
         "stable_identifiers_existing_defaults_definition_default_verified": True,
+        "marker_named_user_payloads_preserved_after_reopen": True,
         "new_process_read_only_scope_proof": True, "project_saved_by_reader": False}
 
 

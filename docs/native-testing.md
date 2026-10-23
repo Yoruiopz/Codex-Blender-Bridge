@@ -17,6 +17,13 @@ per-case execution mode, timeout/failure and native success evidence. A clean pr
 without a valid fixture marker is not a pass. Isolated scenes and config/scripts/datafiles/
 temporary recovery folders keep these tests separate from an existing user project.
 
+Current Windows testing is paused at the user's request. Historical Windows
+reports remain source-specific; current Linux checks and the private-desktop
+runner do not establish Windows qualification. The
+[2026-10-23 development checkpoint](artist-workflow-checkpoint-20261023.md) separates
+current source/report fingerprints from historical evidence; all fourteen release
+requirements remain open.
+
 The small background `project_save_denial` case proves public save refusals and
 late permission/caller/stop errors without Blender/save entry. Public `project.save`
 is [unavailable](project-save-safety.md). Feature writer/reader cases that need
@@ -78,6 +85,23 @@ Blender 4.5.14 and 5.2.2. The latter two exercise actual native pushes and undo;
 these focused results retain the bounded static-prop profile and do not accept UX-01.
 The separate [object-framing fixture](viewport-framing-native.md) passed sixteen
 matched captures and independent host pixel checks at frozen source `447ef57`.
+
+The separate [Scene kernel fixture](scene-job-kernel.md) qualifies internal
+reservation/owned-checkpoint scheduling with five measured scenarios on each Linux
+build. It adds no public rigid-body job API. `readonly_context_probe` records the
+source-pinned getter side effect; [artist_public_entry_probe](artist-public-entry-probe.md)
+uses actual registered permission-denied calls. Its current host checks verify
+[optional context-effect metadata](entry-context-effects.md) in errors and history;
+portable regressions separately verify rejected-step receipt timing. Requested transforms, protected geometry and
+handler/checkpoint/native-push counts remain unchanged. This is diagnostic
+evidence; selection can still normalize before denial, and armed capture remains
+refused. See the dated checkpoint for exact tested sources.
+
+The loaded-participant [shader interface removal research](shader-interface-remove-probe.md)
+is a separate opt-in native probe with actual undo/redo and fresh-reader evidence.
+It changes no production interface operations. Its original fresh-created negative
+case and changed active UI socket identifiers remain explicit limitations; loaded
+setup serialization is owned fixture setup, not public project-save qualification.
 
 The interactive `undo_lifecycle` fixture additionally exercises real manual undo/redo and
 known bridge recovery while a protected plan remains active. It records whether native

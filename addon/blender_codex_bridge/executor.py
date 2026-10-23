@@ -12,6 +12,7 @@ from typing import Any
 from .artist_step_evidence import capture_call, record_terminal
 from .checkpoints import CheckpointManager
 from .command_queue import CommandQueue, QueuedRequest
+from .entry_effects import annotate_entry_error
 from .errors import BridgeError, ErrorCode
 from .operation_lease import InvocationPermit
 from .permissions import PermissionManager
@@ -214,6 +215,7 @@ class MainThreadExecutor:
         owns_finalization = False
         finalization_token = None
         context = _context
+        audit = self.registry._mutation_interlock.audit_for(_permit)
         context.check_cancelled = check_cancelled
         context.request_lifecycle = request._lifecycle
         context.request_id = request.id
@@ -422,6 +424,7 @@ class MainThreadExecutor:
                         execution_started = True
                         error.context.update({"execution_started": True, "verification_required": True,
                                               "undo_boundary_finalized": True})
+            entry_effects = annotate_entry_error(error, audit)
             record = self.state.record_operation(
                 tool=request.method,
                 description=_history_description(
@@ -436,6 +439,7 @@ class MainThreadExecutor:
                 error_code=error.code,
                 external_effects=effects,
                 recovery_evidence=recovery,
+                entry_effects=entry_effects,
             )
             receipt_id = record_terminal(context, request, record, error.context, entry=step_entry, modifying=bool(spec is not None and spec.modifies),
                 handler_entered=handler_entered, undo_created=undo_boundary, undo_finalized=undo_finalized)
@@ -483,12 +487,14 @@ class MainThreadExecutor:
                 error.context["undo_group"] = dict(undo_group)
             if finalization_denial is not None:
                 retain_finalization_denial(error, finalization_denial)
+            entry_effects = annotate_entry_error(error, audit)
             record = self.state.record_operation(
                 tool=request.method,
                 description=error.message,
                 success=False,
                 duration_ms=duration_ms,
                 error_code=error.code,
+                entry_effects=entry_effects,
             )
             receipt_id = record_terminal(context, request, record, error.context, entry=step_entry, modifying=bool(spec is not None and spec.modifies),
                 handler_entered=handler_entered, undo_created=undo_boundary, undo_finalized=undo_finalized)

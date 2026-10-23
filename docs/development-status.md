@@ -1,7 +1,7 @@
 # Development status
 
 **Unreleased development; 1.0 is NOT_READY.** The published [0.3.0 alpha](releases/0.3.0.md)
-contains 108 tools. The development registry currently contains **258 MCP tools**;
+contains 108 tools. The development registry currently contains **260 MCP tools**;
 its packages retain 0.3.0 metadata until a qualified release is accepted. Always pair the
 add-on and MCP server from one checkout. A matching version string alone does not identify
 an unpublished build.
@@ -24,8 +24,11 @@ and [evidence rules](release-evidence.md) define the work needed for 1.0.
 Linux development checks, including historical 4.3.2 increments and newer
 4.5.14 LTS / 5.2.2 LTS results, are separate from historical Windows
 reports for earlier increments. Windows 11 qualification on Blender 4.5 LTS and stable 5.x,
-installed-package acceptance and scenarios A–F remain required. There is currently no
-available Windows 11 test machine; those gates remain open.
+installed-package acceptance and scenarios A–F remain required. Windows testing
+is paused at the user's request; those gates remain open. The
+[2026-10-23 checkpoint](artist-workflow-checkpoint-20261023.md) records selected
+Linux Scene-kernel, artist-entry and composition results separately from shader
+removal research and historical evidence; it is not a complete native matrix.
 
 Recent bounded additions include [mesh slides and UV refinement](mesh-uv-refinement.md),
 [sculpt and vertex-color brushes](surface-brushes.md), [weight brushes and surface transfer](weight-brushes.md),

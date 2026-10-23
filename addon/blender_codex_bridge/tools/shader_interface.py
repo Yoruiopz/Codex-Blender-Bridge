@@ -56,8 +56,17 @@ def _gate(context, *, modify=False):
         raise BridgeError(ErrorCode.AGENT_PAUSED, "Shader interface mutation paused.")
 
 
+def _canonical(value):
+    """Use the fingerprint representation for type/sign-sensitive readback."""
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+
+
 def _digest(value):
-    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
+    return hashlib.sha256(_canonical(value)).hexdigest()
+
+
+def _same(left, right):
+    return _canonical(left) == _canonical(right)
 
 
 def _identity(owner):
@@ -106,8 +115,7 @@ class _Proof:
         except (AttributeError, TypeError):
             keys = ()  # Native structs such as sockets do not have IDProperties.
         if keys:
-            result["custom_properties"] = {key: self.value(owner[key]) for key in sorted(keys)
-                if key != "_codex_bridge_undo_marker"}
+            result["custom_properties"] = {key: self.value(owner[key]) for key in sorted(keys)}
         return result
 
     def graph(self, tree):
@@ -480,34 +488,34 @@ def edit(context: ToolContext, params: Mapping) -> dict:
     def current():
         _gate(context, modify=True)
         resolved = shader_scope.group_exact(bpy, params["group_name"])
-        if _identity(resolved) != before["target"]:
+        if not _same(_identity(resolved), before["target"]):
             raise invalid_argument("Shader interface target identity changed; no further writes.")
         observed, summary = _capture(bpy, resolved)
-        if summary != scope:
+        if not _same(summary, scope):
             raise invalid_argument("Shader interface owner scope changed; no further writes.")
         return resolved, observed
 
     try:
         tree, observed = current()
-        if observed != before:
+        if not _same(observed, before):
             raise invalid_argument("Shader interface state changed after preview; no write allowed.")
-        if plan["before"] != plan["value"]:
+        if not _same(plan["before"], plan["value"]):
             attempted = True
             _write(tree, plan)
         _tree, observed = current()
-        if observed != expected:
+        if not _same(observed, expected):
             raise BridgeError(ErrorCode.OPERATION_FAILED, "Shader interface propagation changed protected state or did not match the exact planned output.")
     except Exception as error:
         restored = not attempted
         if attempted:
             try:
                 tree, observed = current()
-                if observed == before:
+                if _same(observed, before):
                     restored = True
-                elif observed == expected:
+                elif _same(observed, expected):
                     _write(tree, plan, inverse=True)
                     _tree, observed = current()
-                    restored = observed == before
+                    restored = _same(observed, before)
                 else:
                     raise invalid_argument("Shader output no longer equals the owned planned state; compensation refused.")
             except Exception:

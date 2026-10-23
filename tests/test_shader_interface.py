@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import importlib
+import math
 from types import SimpleNamespace as NS
 from typing import get_type_hints
 
@@ -336,6 +337,258 @@ def test_read_only_gate_remains_available_with_stop_flags(domain, flag):
 def test_proof_rejects_custom_native_pointer_before_keys(domain):
     with pytest.raises(Exception, match="native references"):
         domain._Proof().value(NS(as_pointer=lambda: 1, keys=lambda: []))
+
+
+class CustomOwner(dict):
+    """Model an owner that actually supports user IDProperties, without bpy."""
+
+    bl_rna = NS(properties=())
+
+
+@pytest.mark.parametrize("payload", [False, 17, .375, "artist-owned", [1., 2.], {"revision": 2, "label": "keep"}])
+def test_marker_named_custom_property_is_ordinary_preserved_data(domain, payload):
+    owner = CustomOwner(_codex_bridge_undo_marker=payload, unrelated="retained")
+    proof = domain._Proof().properties(owner)
+    assert proof["custom_properties"] == owner
+    changed = CustomOwner(owner)
+    changed["_codex_bridge_undo_marker"] = "new artist payload"
+    assert domain._digest(domain._Proof().properties(changed)) != domain._digest(proof)
+
+
+@pytest.mark.parametrize("payload", [float("nan"), float("inf"), NS(as_pointer=lambda: 1)])
+def test_marker_named_property_cannot_hide_unsupported_native_values(domain, payload):
+    with pytest.raises(domain.BridgeError):
+        domain._Proof().properties(CustomOwner(_codex_bridge_undo_marker=payload))
+
+
+def marker_record(captured, owner_kind):
+    if owner_kind == "material":
+        return captured["owners"][9].setdefault("properties", {})
+    if owner_kind == "tree":
+        return captured["graphs"][1].setdefault("properties", {})
+    if owner_kind == "node":
+        return captured["graphs"][2]["nodes"][0].setdefault("properties", {})
+    return captured["graphs"][2]["nodes"][0]["inputs"][1]["properties"]
+
+
+@pytest.mark.parametrize("owner_kind", ["material", "tree", "node", "socket"])
+def test_successful_interface_edit_preserves_marker_named_payload(transaction, monkeypatch, owner_kind):
+    t = transaction
+    owner = CustomOwner(_codex_bridge_undo_marker={"revision": 1, "weights": [.125, .25]})
+    capture = t.module._capture
+
+    def captured(*args):
+        result, scope = capture(*args)
+        marker_record(result, owner_kind).update(t.module._Proof().properties(owner))
+        return result, scope
+
+    monkeypatch.setattr(t.module, "_capture", captured)
+    original, _scope = captured()
+    plan = t.module._plan(None, None)
+    params = {**t.params, "expected_fingerprint": t.module._digest({"state": original, "plan": plan})}
+    result = t.module.edit(t.context, params)
+    assert result["protected_graph_state_preserved"] and t.writes == ["forward"]
+    assert captured()[0] == t.module._project(original, 1, plan)
+    assert owner["_codex_bridge_undo_marker"] == {"revision": 1, "weights": [.125, .25]}
+
+
+@pytest.mark.parametrize("owner_kind", ["material", "tree", "node", "socket"])
+@pytest.mark.parametrize("after_write", [False, True])
+def test_grant_provider_marker_drift_blocks_writes_and_inverse_compensation(transaction, monkeypatch, owner_kind, after_write):
+    t = transaction
+    permissions = importlib.import_module(t.module.__name__.rsplit(".tools.", 1)[0]+".permissions")
+    marker = "_codex_bridge_undo_marker"
+    owner = CustomOwner({marker: {"revision": 1, "label": "artist-owned"}})
+    boundary = {"prepared": False, "written": False, "poisoned": False}
+    capture = t.module._capture
+
+    def captured(*args):
+        result, scope = capture(*args)
+        marker_record(result, owner_kind).update(t.module._Proof().properties(owner))
+        boundary["prepared"] = True
+        return result, scope
+
+    monkeypatch.setattr(t.module, "_capture", captured)
+    original, _scope = captured()
+    params = {**t.params, "expected_fingerprint": t.module._digest({"state": original, "plan": t.module._plan(None, None)})}
+    boundary["prepared"] = False
+    primary = t.module.BridgeError("OPERATION_FAILED", "Original failure after completed interface assignment")
+
+    def provider():
+        if not boundary["poisoned"] and (boundary["written"] if after_write else boundary["prepared"]):
+            boundary["poisoned"] = True
+            owner[marker] = {"revision": 2, "label": "manual protected edit"}
+        return {"INSPECT_SCENE": True, "EDIT_MATERIALS": True}
+
+    manager = permissions.PermissionManager(provider)
+    t.context.require = lambda *required: manager.require(required)
+
+    def written_then_failed(tree, plan, *, inverse=False):
+        t.write(tree, plan, inverse=inverse)
+        boundary["written"] = True
+        raise primary
+
+    if after_write:
+        monkeypatch.setattr(t.module, "_write", written_then_failed)
+    with pytest.raises(t.module.BridgeError) as caught:
+        t.module.edit(t.context, params)
+    error = caught.value
+    assert boundary["poisoned"]
+    assert t.writes == (["forward"] if after_write else [])
+    assert error.context["possible_mutation"] is after_write
+    assert error.context["rollback_verified"] is not after_write
+    assert owner[marker] == {"revision": 2, "label": "manual protected edit"}
+    assert t.current["graphs"][1]["interface"][0]["properties"]["default_value"] == (.75 if after_write else .25)
+    if after_write:
+        assert error.code == primary.code and error.__cause__ is primary
+    else:
+        assert error.code == "INVALID_ARGUMENT"
+
+
+@pytest.fixture
+def canonical_transaction(transaction):
+    t = transaction
+    package = t.module.__name__.rsplit(".tools.", 1)[0]
+    registry_module = importlib.import_module(package+".tool_registry")
+    permissions = importlib.import_module(package+".permissions")
+    state_module = importlib.import_module(package+".state")
+    t.context = registry_module.ToolContext(state_module.BridgeState(),
+        permissions.PermissionManager(lambda: {"INSPECT_SCENE": True, "EDIT_MATERIALS": True}),
+        t.context.registry, NS())
+    return t
+
+
+@pytest.mark.parametrize("initial,replacement", [(True, 1), (1, 1.), (0., -0.),
+    ({"values": [True]}, {"values": [1]})])
+@pytest.mark.parametrize("phase", ["before", "verification", "compensation"])
+def test_canonical_provider_typed_drift_cannot_pass_cas_or_compensation(canonical_transaction, monkeypatch, initial, replacement, phase):
+    t = canonical_transaction
+    after_write = phase != "before"
+    permissions = importlib.import_module(t.module.__name__.rsplit(".tools.", 1)[0]+".permissions")
+    marker = "_codex_bridge_undo_marker"
+    owner = CustomOwner({marker: copy.deepcopy(initial)})
+    capture = t.module._capture
+    boundary = {"prepared": False, "written": False, "poisoned": False}
+    assert initial == replacement and t.module._digest(initial) != t.module._digest(replacement)
+
+    def captured(*args):
+        result, scope = capture(*args)
+        marker_record(result, "node").update(t.module._Proof().properties(owner))
+        boundary["prepared"] = True
+        return result, scope
+
+    monkeypatch.setattr(t.module, "_capture", captured)
+    original, _scope = captured()
+    params = {**t.params, "expected_fingerprint": t.module._digest({"state": original, "plan": t.module._plan(None, None)})}
+    boundary["prepared"] = False
+    primary = t.module.BridgeError("OPERATION_FAILED", "Original failure before typed drift in compensation")
+
+    def provider():
+        if not boundary["poisoned"] and (boundary["written"] if after_write else boundary["prepared"]):
+            owner[marker] = copy.deepcopy(replacement)
+            boundary["poisoned"] = True
+        return {"INSPECT_SCENE": True, "EDIT_MATERIALS": True}
+
+    t.context.permissions = permissions.PermissionManager(provider)
+
+    def owned_write(tree, plan, *, inverse=False):
+        t.write(tree, plan, inverse=inverse)
+        boundary["written"] = True
+        if not inverse and phase == "compensation":
+            raise primary
+
+    if after_write:
+        monkeypatch.setattr(t.module, "_write", owned_write)
+    with pytest.raises(t.module.BridgeError) as caught:
+        t.context.registry.dispatch("shader_group.interface_edit", params, t.context)
+    assert boundary["poisoned"]
+    assert t.writes == (["forward"] if after_write else [])
+    assert caught.value.context["possible_mutation"] is after_write
+    assert caught.value.context["rollback_verified"] is not after_write
+    assert t.module._digest(owner[marker]) == t.module._digest(replacement)
+    assert t.current["graphs"][1]["interface"][0]["properties"]["default_value"] == (.75 if after_write else .25)
+    if phase == "compensation":
+        assert caught.value.code == primary.code and caught.value.__cause__ is primary
+    elif phase == "before":
+        assert caught.value.code == "INVALID_ARGUMENT"
+    else:
+        assert caught.value.code == "OPERATION_FAILED"
+        assert "propagation changed protected state" in caught.value.__cause__.message
+
+
+@pytest.mark.parametrize("initial,desired", [(0., -0.), (-0., 0.)])
+def test_default_plan_retains_requested_zero_sign(domain, initial, desired):
+    target = tree()
+    target.interface.items_tree[0].default_value = initial
+    plan = domain._plan(target, {"operation": "SET_DEFAULT", "socket_identifier": "a", "value": desired})
+    assert math.copysign(1., plan["before"]) == math.copysign(1., initial)
+    assert math.copysign(1., plan["value"]) == math.copysign(1., desired)
+
+
+@pytest.mark.parametrize("initial,desired,changed", [(0., -0., True), (-0., 0., True),
+    (0., 0., False), (-0., -0., False)])
+def test_zero_sign_edit_and_exact_noop_read_back_actual_state(canonical_transaction, monkeypatch, initial, desired, changed):
+    t = canonical_transaction
+    t.current["graphs"][1]["interface"][0]["properties"]["default_value"] = initial
+    plan = {"operation": "SET_DEFAULT", "socket_identifier": "a", "in_out": "INPUT", "before": initial, "value": desired}
+    monkeypatch.setattr(t.module, "_plan", lambda *_args: plan.copy())
+    before = copy.deepcopy(t.current)
+    params = {**t.params, "value": desired, "expected_fingerprint": t.module._digest({"state": before, "plan": plan})}
+    result = t.context.registry.dispatch("shader_group.interface_edit", params, t.context)
+    assert result["changed"] is changed
+    assert t.writes == (["forward"] if changed else [])
+    actual = t.current["graphs"][1]["interface"][0]["properties"]["default_value"]
+    assert math.copysign(1., actual) == math.copysign(1., desired)
+    assert t.module._digest(t.current) == t.module._digest(t.module._project(before, 1, plan))
+
+
+@pytest.mark.parametrize("inverse_preserves_sign", [False, True])
+def test_zero_sign_rollback_requires_exact_actual_readback(canonical_transaction, monkeypatch, inverse_preserves_sign):
+    t = canonical_transaction
+    t.current["graphs"][1]["interface"][0]["properties"]["default_value"] = -0.
+    plan = {"operation": "SET_DEFAULT", "socket_identifier": "a", "in_out": "INPUT", "before": -0., "value": 0.}
+    monkeypatch.setattr(t.module, "_plan", lambda *_args: plan.copy())
+    before = copy.deepcopy(t.current)
+    params = {**t.params, "value": 0., "expected_fingerprint": t.module._digest({"state": before, "plan": plan})}
+    primary = t.module.BridgeError("OPERATION_FAILED", "Original zero-sign native assignment failure")
+
+    def owned_write(tree, operation, *, inverse=False):
+        t.write(tree, operation, inverse=inverse)
+        if not inverse:
+            raise primary
+        if not inverse_preserves_sign:
+            t.current["graphs"][1]["interface"][0]["properties"]["default_value"] = 0.
+
+    monkeypatch.setattr(t.module, "_write", owned_write)
+    with pytest.raises(t.module.BridgeError) as caught:
+        t.context.registry.dispatch("shader_group.interface_edit", params, t.context)
+    assert t.writes == ["forward", "inverse"]
+    assert caught.value.__cause__ is primary
+    assert caught.value.context["rollback_verified"] is inverse_preserves_sign
+    assert caught.value.context["possible_mutation"] is not inverse_preserves_sign
+    assert (t.module._digest(t.current) == t.module._digest(before)) is inverse_preserves_sign
+
+
+@pytest.mark.parametrize("initial,desired", [(0., -0.), (-0., 0.)])
+def test_zero_sign_native_normalization_cannot_report_success(canonical_transaction, monkeypatch, initial, desired):
+    t = canonical_transaction
+    t.current["graphs"][1]["interface"][0]["properties"]["default_value"] = initial
+    plan = {"operation": "SET_DEFAULT", "socket_identifier": "a", "in_out": "INPUT", "before": initial, "value": desired}
+    monkeypatch.setattr(t.module, "_plan", lambda *_args: plan.copy())
+    before = copy.deepcopy(t.current)
+    params = {**t.params, "value": desired, "expected_fingerprint": t.module._digest({"state": before, "plan": plan})}
+
+    def normalize_sign(tree, operation, *, inverse=False):
+        t.write(tree, operation, inverse=inverse)
+        t.current["graphs"][1]["interface"][0]["properties"]["default_value"] = initial
+
+    monkeypatch.setattr(t.module, "_write", normalize_sign)
+    with pytest.raises(t.module.BridgeError) as caught:
+        t.context.registry.dispatch("shader_group.interface_edit", params, t.context)
+    assert t.writes == ["forward"]
+    assert caught.value.context["rollback_verified"] is True
+    assert caught.value.context["possible_mutation"] is False
+    assert t.module._digest(t.current) == t.module._digest(before)
 
 
 def test_animation_rejected_even_empty_native_container(domain):

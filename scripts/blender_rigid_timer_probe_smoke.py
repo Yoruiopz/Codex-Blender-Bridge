@@ -529,5 +529,10 @@ def tick():
         return fail("tick")
 
 
-bpy.app.timers.register(heartbeat, first_interval=.01)
-bpy.app.timers.register(tick, first_interval=1.)
+def main():
+    bpy.app.timers.register(heartbeat, first_interval=.01)
+    bpy.app.timers.register(tick, first_interval=1.)
+
+
+if __name__ == "__main__":
+    main()

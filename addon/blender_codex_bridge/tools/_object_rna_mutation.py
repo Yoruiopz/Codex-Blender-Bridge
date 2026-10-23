@@ -11,6 +11,7 @@ import math
 from collections.abc import Sequence
 from typing import Any
 
+from ..entry_effects import mark_view_layer_sync_possible
 from ..errors import BridgeError, ErrorCode, invalid_argument
 from ..permissions import Permission
 from ..tool_registry import check_final_mutation
@@ -341,7 +342,9 @@ class Boundary:
 
     def _session(self) -> Any:
         ctx = self.bpy.context
-        session = (scope.action_token(ctx.scene), scope.key(ctx.view_layer), self.bpy.data.filepath, ctx.mode,
+        prefix = (scope.action_token(ctx.scene), scope.key(ctx.view_layer), self.bpy.data.filepath)
+        mark_view_layer_sync_possible()
+        session = (*prefix, ctx.mode,
                 tuple(scope.action_token(item) for item in _items(getattr(ctx, "selected_objects", ()), 1024, "selection")),
                 scope.action_token(ctx.view_layer.objects.active), getattr(ctx.scene, "frame_current", None), getattr(ctx.scene, "frame_subframe", None))
         return session if self.checkpoint_roles is None else (*session, self.checkpoint_roles.authored())

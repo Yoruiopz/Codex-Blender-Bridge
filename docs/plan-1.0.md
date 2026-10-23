@@ -97,7 +97,7 @@ and “accepted for release” are separate states.
 | 14 / RC-01 | Compatibility, installation, upgrade and release audit | Resolve claimed matrix, test packaged bits and old-release upgrade; requires all capability and reliability evidence |
 
 The original sequence began with EVID-01, SAFE-01 and REC-01; their development increments
-are recorded below, not blanket release acceptance. Current focus (2026-10-21): ASSET-01 has
+are recorded below, not blanket release acceptance. Historical focus (2026-10-21): ASSET-01 has
 bounded repair, loop modeling, UV authoring, measured UV-quality and mesh-winding/contact analysis,
 and a connected repair/unwrap/material fixture. LOOK-01 adds approved images, nested shader paths,
 group lifecycle and measured instance isolation. A logical-batch revision works at default undo
@@ -1610,7 +1610,8 @@ passed. Per-increment Linux Blender 4.3.2 reports are dirty-source development e
 they are not combined into a Windows or full-release verdict. Final source/package evidence
 is retained under `build/release-implementation-20261022/` with separate logs and hashes.
 
-The user confirmed **no Windows 11 test machine is available**. All fourteen requirement
+At this checkpoint the user reported no available Windows 11 test machine. The later
+2026-10-23 direction pauses Windows testing at the user's request. All fourteen requirement
 acceptance entries stay open. Full modeling/retopology, sculpt/surface/vertex/weight painting,
 character/driver/NLA, simulation/cache/bake, production materials/import/delivery, full artist
 interaction, constrained-memory, installed upgrade/rollback and Windows version acceptance
@@ -1767,5 +1768,51 @@ it even when IDs are reused. Saved schema-v1 remains passive and unchanged.
 
 Portable regressions exercise callback retargeting, reused IDs, finalized failure
 receipts, direct/nested writer invalidation, bounded retention and recording failures.
-The extended artist-loop native fixture is prepared but unexecuted for this source
-increment. UX-01, full visual/artist acceptance and all release gates remain open.
+At preparation the extended artist-loop native fixture was unexecuted. Subsequent
+source-matched Linux runs now cover the extended artist loop, multi-target pushes
+and interactive undo; see the [2026-10-23 checkpoint](artist-workflow-checkpoint-20261023.md).
+UX-01, full visual/artist acceptance and all release gates remain open.
+
+### 2026-10-23 — Scene ownership, truthful entry effects and loaded shader research
+
+Frozen production source `ff8b0f06e2cc2614eb9192b7d90ea4a6f414b517` passes
+**6,169 non-Blender tests with three Windows-only skips** and static checks.
+Its 324 production/runner Python files have fingerprint
+`7d552d3e032a5d8af58893b57137bff71a8a723492f68817644958bc80cd46a1`.
+The registry remains **260 MCP tools**, component versions remain **0.3.0 alpha**,
+and Windows testing is paused at the user's request.
+
+The integrated internal Scene kernel retains exact reservations, starter/driver
+authority, scheduler-local turns and owned pending checkpoints. One domain or
+checkpoint phase runs per tick; status is cached. Both Linux builds pass a
+five-scenario fixture: successful three-body matrix evaluation and stopped
+cancel/permission/disconnect/external-edit cases, retaining partial receipts
+without stopped-owner cleanup, context restoration or AFTER pushes. This is
+evaluation evidence and adds no public rigid-body job or bake API.
+
+Fourteen further selected runs cover artist entry/loop/multi-target, interactive
+undo, Scene checkpoint admission, painting jobs and exclusive import ownership
+on both builds. The total **16 selected results** is not a full native inventory.
+Public permission-denial cases retain exact four-boolean possible-context-effect
+metadata in errors/history; portable regressions verify rejected-step receipt
+timing before terminal recording. Primary errors, legacy
+flag presence, requested transforms, protected geometry and zero native-entry
+counts remain intact. Selection can still normalize before denial. This
+diagnostic does not prevent the native getter effect, and armed capture still
+refuses. Earlier exact-object framing/pixel evidence remains source-specific.
+
+Separate research source `31eb64d4f26c7bc223464c8c099c1cd49547f895`
+passes twelve unused interface-socket removal/actual undo/redo cases per Linux
+build and fresh-process reader checks. It requires explicit owned loaded setup
+and literal `is_runtime_data=False` on every participant, with no runtime-field
+exclusion. Native active interface identifiers change in all twelve cases on
+each build; no public UI-preservation or production REMOVE/conversion claim
+follows. The original fresh-created and immediate-post-load failures remain
+retained, separate from the corrected post-load timer result.
+
+The [dated checkpoint](artist-workflow-checkpoint-20261023.md) records exact
+sources, report/audit hashes, retained archive and limitations. Safe project save,
+the exact Blender 5.2 import quarantine, protected visual verification, public
+simulation jobs, Windows/installed A–F acceptance and all fourteen release gates
+remain open. Next work must complete those bounded contracts and native proofs;
+no gate is waived or closed by these selected passes.

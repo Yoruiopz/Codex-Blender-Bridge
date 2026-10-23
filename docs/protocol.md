@@ -154,10 +154,31 @@ and batch steps use that wrapper. Calling a trusted handler directly is not a
 remote protocol entry point and does not replace registered preflight.
 Every handler entry has a final internal lifetime/toolset/identity check after
 preflight callbacks. Pause and emergency-stop checks apply to the exact retained
-modifying ToolSpec; readonly inspection, status and nonmodifying controls remain
-available while paused or stopped. Its diagnostic entry counter is runtime-only. The
+modifying ToolSpec. Readonly inspection, status and nonmodifying controls remain
+eligible while paused or stopped, subject to live permissions and any active Scene
+reservation. A readonly registration does not certify that its native getters or
+evaluation are passive. Its diagnostic entry counter is runtime-only. The
 existing explicit local recovery override permits pause/stop recovery only for
 the two canonical recovery methods; it never bypasses caller lifetime/toolsets.
+
+Known artist context reads can synchronize a ViewLayer before the requested
+handler starts, including before a subsequent permission denial. Failed entries
+may add a bounded `error.context.entry_effects` record:
+
+```json
+{"view_layer_sync_possible":true,"context_change_measured":false,"handler_entered":false,"reinspection_required":true}
+```
+
+This optional record contains exactly four booleans and no denied scene data.
+`handler_entered` refers to the exact canonical handler; nested reads can make
+context effects possible without entering that handler. It is conservative
+evidence of a known synchronizing read, not measurement or prevention of a
+selection change. The primary error code/message and existing execution/mutation
+facts retain their meanings; `verification_required` becomes true. Generic failed
+history and runtime artist step receipts retain the same evidence before terminal
+recording. A step may remain `rejected` with `handler_entered=false`. Unmarked
+legacy records omit the addition; absence is not a passive-context guarantee.
+See [entry context effects](entry-context-effects.md).
 
 Unreleased `project.save` retains its optional `filepath`, permissions and V1
 registration but returns `NOT_IMPLEMENTED` for Save and Save As after live grants
@@ -280,7 +301,8 @@ calls from permission providers, checkpoint/native callbacks or finalizers fail
 before their providers and checkpoints with `OPERATION_FAILED` and
 `reason: REENTRANT_MUTATION_BLOCKED`. Reusing a context, request ID or local
 recovery override grants no entry. Read-only status/inspection and pause/stop
-controls remain callable; nested status retains the outer execution display.
+controls remain eligible under their other live gates; nested status retains the
+outer execution display. An independent Scene reservation can restrict inspection.
 The canonical executor-to-handler continuation uses a local single-use permit,
 never a wire field or context-held grant. Exact lease loss stops subsequent
 guarded writes; a primary error retains its identity and receives optional
@@ -290,6 +312,20 @@ unwinds. Ordinary batch/artist composition and image-job interleaving retain
 their existing behavior. This is a structured-entry interlock, not a sandbox
 for native handlers or arbitrary Python, a cancellation/preemption guarantee,
 or a solution to whole-project serialization.
+
+The internal [Scene job kernel](scene-job-kernel.md) retains a reservation across
+turns. While it owns the evaluation context, only its exact frozen nonmodifying
+status/control specifications may interleave: `bridge.status`, `jobs.inspect`,
+`jobs.list`, `jobs.cancel`, `toolsets.list`, `toolsets.enable` and `toolsets.disable`.
+They retain their own live permission requirements. Other structured calls,
+including evaluation-capable inspection and viewport capture, fail before their
+providers/handlers with `OPERATION_FAILED` and
+`reason: SCENE_JOB_RESERVATION_BLOCKED`. Replacing a same-name specification does
+not enter the frozen allowlist. The local-only `jobs._scene_turn` requires a fresh
+scheduler origin; no wire parameter, copied context or recovery flag grants it.
+Cached inspection exposes bounded progress/checkpoint/terminal receipts without
+evaluating the Scene. The integrated kernel adds no public rigid-body job API and
+does not make native evaluation or undo calls preemptible.
 
 - Multiple requests may be in flight at the transport/client layer.
 - Writes on each socket are serialized so NDJSON frames never interleave.

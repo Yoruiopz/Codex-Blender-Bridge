@@ -78,6 +78,8 @@ CASES = {
     "simulation_cache_probe": ("blender_simulation_cache_probe_smoke.py", "BLENDER_SIMULATION_CACHE_PROBE_OK "),
     "surface_paint": ("blender_surface_paint_smoke.py", "BLENDER_SURFACE_PAINT_OK "),
     "viewport_framing": ("blender_viewport_framing_smoke.py", "BLENDER_VIEWPORT_FRAMING_OK "),
+    "readonly_context_probe": ("blender_readonly_context_probe_smoke.py", "BLENDER_READONLY_CONTEXT_PROBE_OK "),
+    "artist_public_entry_probe": ("blender_artist_public_entry_probe_smoke.py", "BLENDER_ARTIST_PUBLIC_ENTRY_PROBE_OK "),
     "uv_selection_storage": ("blender_uv_selection_storage_smoke.py", "BLENDER_UV_SELECTION_STORAGE_OK "),
     "action_lifecycle_probe": ("blender_action_lifecycle_probe_smoke.py", "BLENDER_CODEX_ACTION_LIFECYCLE_PROBE_OK "),
     "asset_import_probe": ("blender_asset_import_probe_smoke.py", "BLENDER_ASSET_IMPORT_PROBE_READER_OK "),
@@ -96,6 +98,8 @@ CASES = {
     "asset_import_admission": ("blender_asset_import_admission_smoke.py", "BLENDER_ASSET_IMPORT_ADMISSION_OK "),
     "object_drivers": ("blender_object_drivers_smoke.py", "BLENDER_CODEX_OBJECT_DRIVERS_OK "),
     "shader_interface_probe": ("blender_shader_interface_probe_smoke.py", "BLENDER_SHADER_INTERFACE_PROBE_READER_OK "),
+    "shader_remove_probe": ("blender_shader_remove_probe_smoke.py", "BLENDER_SHADER_REMOVE_PROBE_READER_OK "),
+    "shader_remove_loaded_probe": ("blender_shader_remove_probe_smoke.py", "BLENDER_SHADER_REMOVE_LOADED_PROBE_READER_OK "),
     "animation_mutations": ("blender_animation_mutations_smoke.py", "BLENDER_ANIMATION_MUTATIONS_OK "),
     "character_nla": ("blender_character_nla_smoke.py", "BLENDER_CHARACTER_NLA_READER_OK "),
     "rig_binding_probe": ("blender_rig_binding_probe_smoke.py", "BLENDER_RIG_BINDING_PROBE_OK "),
@@ -108,6 +112,7 @@ CASES = {
     "shader_interface": ("blender_shader_interface_smoke.py", "BLENDER_SHADER_INTERFACE_READER_OK "),
     "rigid_lifecycle_probe": ("blender_rigid_lifecycle_probe_smoke.py", "BLENDER_RIGID_LIFECYCLE_PROBE_READER_OK "),
     "rigid_timer_probe": ("blender_rigid_timer_probe_smoke.py", "BLENDER_RIGID_TIMER_PROBE_OK "),
+    "scene_job_kernel": ("blender_scene_job_kernel_smoke.py", "BLENDER_SCENE_JOB_KERNEL_OK "),
     "rigid_body_scope": ("blender_rigid_body_scope_smoke.py", "BLENDER_RIGID_BODY_SCOPE_OK "),
     "rigid_evaluation_dependencies": ("blender_rigid_evaluation_dependencies_smoke.py", "BLENDER_RIGID_EVALUATION_DEPENDENCIES_OK "),
     "rigid_runtime_getters": ("blender_rigid_runtime_getters_smoke.py", "BLENDER_RIGID_RUNTIME_GETTERS_OK "),
@@ -144,6 +149,8 @@ PHASED_CASES = {
     "image_recovery_jobs": ("BLENDER_IMAGE_RECOVERY_JOBS_WRITER_OK ", "BLENDER_IMAGE_RECOVERY_JOBS_READER_OK "),
     "image_recovery_jobs_large": ("BLENDER_IMAGE_RECOVERY_JOBS_LARGE_WRITER_OK ", "BLENDER_IMAGE_RECOVERY_JOBS_LARGE_READER_OK "),
     "shader_interface_probe": ("BLENDER_SHADER_INTERFACE_PROBE_WRITER_OK ", "BLENDER_SHADER_INTERFACE_PROBE_READER_OK "),
+    "shader_remove_probe": ("BLENDER_SHADER_REMOVE_PROBE_WRITER_OK ", "BLENDER_SHADER_REMOVE_PROBE_READER_OK "),
+    "shader_remove_loaded_probe": ("BLENDER_SHADER_REMOVE_LOADED_PROBE_WRITER_OK ", "BLENDER_SHADER_REMOVE_LOADED_PROBE_READER_OK "),
     "character_nla": ("BLENDER_CHARACTER_NLA_WRITER_OK ", "BLENDER_CHARACTER_NLA_READER_OK "),
     "shader_interface": ("BLENDER_SHADER_INTERFACE_WRITER_OK ", "BLENDER_SHADER_INTERFACE_READER_OK "),
     "rig_edit_reopen": ("BLENDER_RIG_EDIT_WRITER_OK ", "BLENDER_RIG_EDIT_READER_OK "),
@@ -166,6 +173,7 @@ OPT_IN_CASES.add("rigid_evaluation_dependencies")
 OPT_IN_CASES.add("rigid_runtime_getters")
 OPT_IN_CASES.add("rigid_create_new_probe")
 OPT_IN_CASES.add("rigid_timer_probe")
+OPT_IN_CASES.add("scene_job_kernel")
 PORTABLE_BLEND_RESEARCH_PHASES = {
     "portable_blend_writer_probe": "writer",
     "portable_blend_worker_probe": "worker",
@@ -201,18 +209,25 @@ INTERACTIVE_CASES.add("mesh_surface_projection")
 INTERACTIVE_CASES.add("surface_paint")
 INTERACTIVE_CASES.add("viewport_framing")
 OPT_IN_CASES.add("viewport_framing")
+INTERACTIVE_CASES.add("readonly_context_probe")
+OPT_IN_CASES.add("readonly_context_probe")
+INTERACTIVE_CASES.add("artist_public_entry_probe")
+OPT_IN_CASES.add("artist_public_entry_probe")
 INTERACTIVE_CASES.add("simulation_cache_probe")
 INTERACTIVE_CASES.add("nla_lifecycle_probe")
 INTERACTIVE_CASES.add("cinematic_variants")
 INTERACTIVE_CASES.add("nla_lifecycle")
 INTERACTIVE_CASES.add("character_nla")
 INTERACTIVE_CASES.add("shader_interface")
+INTERACTIVE_CASES.add("shader_remove_probe")
+INTERACTIVE_CASES.add("shader_remove_loaded_probe")
 INTERACTIVE_CASES.add("image_recovery_jobs")
 INTERACTIVE_CASES.add("image_recovery_jobs_large")
 INTERACTIVE_CASES.update({"portable_blend_writer_probe", "portable_blend_reader_probe"})
 INTERACTIVE_CASES.add("rigid_startup_defaults_probe")
 INTERACTIVE_CASES.add("rigid_scope_profile_probe")
 INTERACTIVE_CASES.add("rigid_timer_probe")
+INTERACTIVE_CASES.add("scene_job_kernel")
 INTERACTIVE_CASES.add("render_boundaries_interactive")
 
 
@@ -255,6 +270,8 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
         if bundle is None or phase_marker is None:
             raise ValueError("Phased cases require an owned bundle and success marker")
         command.extend(["--", "--bridge-phase", phase, "--bridge-bundle", str(bundle)])
+        if case == "shader_remove_loaded_probe":
+            command.append("--bridge-loaded-fixture")
         marker = phase_marker
     # Blender writes quit.blend on normal UI exit. Keep it outside the user's temp recovery.
     temporary = output / f"{label}-temp"

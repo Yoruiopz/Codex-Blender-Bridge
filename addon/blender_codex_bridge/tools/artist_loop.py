@@ -14,6 +14,7 @@ from copy import deepcopy
 from typing import Any
 
 from ..artist_step_evidence import associate, check_apply, matches
+from ..entry_effects import mark_view_layer_sync_possible
 from ..errors import BridgeError, ErrorCode, invalid_argument
 from ..permissions import Permission
 from ..request_lifecycle import RequestLifetime
@@ -154,6 +155,7 @@ def enforce_plan(context: ToolContext, params: Mapping[str, Any]) -> dict[str, A
 
 
 def _context(bpy: Any) -> Any:
+    mark_view_layer_sync_possible()
     selected = scope.bounded(getattr(bpy.context, "selected_objects", ()), 32, "artist selected objects")
     return (scope.action_token(bpy.context.scene), scope.key(bpy.context.view_layer), bpy.context.mode,
             getattr(bpy.data, "filepath", ""), tuple(scope.action_token(obj) for obj in selected),
@@ -177,6 +179,7 @@ def resolve_reference(context: ToolContext, params: Mapping[str, Any]) -> dict[s
     if source == "selection":
         if "object_names" in params:
             raise invalid_argument("Selection references cannot also supply object_names.")
+        mark_view_layer_sync_possible()
         names = [obj.name for obj in scope.bounded(bpy.context.selected_objects, 32, "artist selected objects")]
     elif source == "objects":
         names = params.get("object_names")

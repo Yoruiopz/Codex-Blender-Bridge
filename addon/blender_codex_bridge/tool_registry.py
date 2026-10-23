@@ -11,10 +11,17 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from .checkpoint_completion import claim_binding_completion, native_push_consumer
+from .entry_effects import (
+    annotate_entry_error,
+    bind_entry_audit,
+    current_entry_audit,
+    mark_handler_entered,
+)
 from .errors import BridgeError, ErrorCode
 from .operation_lease import ExclusiveMutationLease, InvocationPermit, MutationInterlock
 from .permissions import Permission, PermissionManager
 from .request_lifecycle import RequestLifetime
+from .scene_job_reservations import TURN_METHOD, SceneJobReservations
 from .state import BridgeState
 from .task_plans import get_task_plans
 
@@ -323,6 +330,7 @@ class ToolRegistry:
         # must not hide a handler that is still unwinding on Blender's thread.
         self._executing_mutators = 0
         self._mutation_interlock = MutationInterlock()
+        self._scene_reservations = SceneJobReservations(self)
 
     @property
     def _exclusive_mutation_lease(self) -> ExclusiveMutationLease | None:
@@ -337,11 +345,18 @@ class ToolRegistry:
         return (self._mutation_interlock.owner is not None or self._mutation_interlock.invocation is not None
                 or self._mutation_interlock.has_retained_exclusive_entry)
 
-    def mutation_entry(self, spec: ToolSpec, params: Mapping[str, Any], context: ToolContext):
-        return self._mutation_interlock.entry(self, spec, params, context)
+    @contextmanager
+    def mutation_entry(self, spec: ToolSpec, params: Mapping[str, Any], context: ToolContext, *, _scene_turn: Any = None):
+        self._scene_reservations.check_entry(spec, context, _scene_turn)
+        with self._mutation_interlock.entry(self, spec, params, context) as permit:
+            if _scene_turn is not None:
+                self._scene_reservations.bind_invocation(_scene_turn, permit, params)
+            yield permit
 
     def check_mutation_owner(self, spec: ToolSpec, context: ToolContext) -> None:
         self._mutation_interlock.check_owner(self, spec, context)
+        if spec.name == TURN_METHOD:
+            self._scene_reservations.check_turn(self._scene_reservations.current(context).token)
 
     @property
     def executing_mutators(self) -> int:
@@ -460,7 +475,7 @@ class ToolRegistry:
         allow_recovery: bool = False,
     ) -> ToolSpec:
         spec = self.get(name)
-        if not spec.remote and not allow_recovery:
+        if not spec.remote and not allow_recovery and not self._scene_reservations.scheduled(spec, context):
             raise BridgeError(
                 ErrorCode.METHOD_NOT_FOUND,
                 f"Tool '{name}' is available only from Blender's local recovery UI.",
@@ -550,13 +565,16 @@ class ToolRegistry:
                     enclosing.check_after_read()
                 raise deferred
             return self.invoke(spec, params, context, _permit=permit)
+        except BridgeError as error:
+            annotate_entry_error(error, current_entry_audit())
+            raise
         finally:
             if captured:
                 scope.__exit__(None, None, None)
 
     def check_admission_entry(self, spec: ToolSpec, context: ToolContext, *, allow_recovery: bool = False) -> None:
         """Pure spec/lifetime/pause gate before readonly factory capture."""
-        if not spec.remote and not allow_recovery:
+        if not spec.remote and not allow_recovery and not self._scene_reservations.scheduled(spec, context):
             raise BridgeError(ErrorCode.METHOD_NOT_FOUND, "This tool is available only from Blender's local recovery UI.")
         if spec.toolset not in self.enabled_toolsets:
             raise BridgeError(ErrorCode.TOOLSET_DISABLED, "Toolset is disabled before admission capture.")
@@ -653,13 +671,63 @@ class ToolRegistry:
                                manager: Any, *, final_check: Callable[[], None]):
         return native_push_consumer(self, permit, binding, manager, final_check)
 
+    def invoke_scene_turn(self, turn: Any, params: Mapping[str, Any], context: ToolContext, manager: Any,
+                          *, checkpoint_phase: Any = None, check_only: bool = False) -> Any:
+        """Local scheduler entry; its one-use origin never comes from a context or wire."""
+        spec = self.get(TURN_METHOD)
+        with self.mutation_entry(spec, params, context, _scene_turn=turn) as permit:
+            if self._scene_reservations.current(context).check_only is not check_only:
+                raise BridgeError(ErrorCode.OPERATION_FAILED, "Scene turn purpose differs from its scheduler origin.")
+            if check_only:
+                # A paused/undelivered owner's consent can still be revoked.
+                # This branch cannot enter a handler or create a push consumer;
+                # its local origin buys only a leased, provider-ordered read.
+                record = self._scene_reservations.current(context)
+                context.require(*record.owner.authority.required_permissions)
+                record.owner.job.checkpoint_manager.check_pending_markers(record.owner.job.pending, turn)
+                record.owner.job.driver.check_after_read(context)
+                self._scene_reservations.check_turn(turn)
+                if self.get(TURN_METHOD) is not spec or spec.toolset not in self.enabled_toolsets:
+                    raise BridgeError(ErrorCode.TOOLSET_DISABLED, "Scene job entry changed before its next phase.")
+                return None
+            entry = self.checkpoint_parameter_entry(spec, params)
+            self.check_admission_entry(spec, context)
+            scope, captured, deferred = self._capture_admission(spec, params, context)
+            try:
+                binding = context.checkpoint_admission
+                if not captured:
+                    self.prepare_call(spec.name, params, context)
+                    raise deferred
+                with self.native_push_completion(permit, binding, manager,
+                        final_check=lambda: check_final_mutation(context, TURN_METHOD)) as consumer:
+                    record = self._scene_reservations.current(context)
+                    record.binding, record.consumer_id = binding, id(consumer)
+                    prepared = self.prepare_call(spec.name, params, context)
+                    self.check_checkpoint_parameter_entry(entry, params)
+                    result = self.invoke(prepared, params, context, _permit=permit)
+                    if record.phase in {"checkpoint_before", "checkpoint_after"}:
+                        if checkpoint_phase is None:
+                            raise BridgeError(ErrorCode.OPERATION_FAILED, "Scene checkpoint phase has no scheduler owner.")
+                        result = checkpoint_phase(turn, context, consumer)
+                    check_final_mutation(context, TURN_METHOD)
+                    return result
+            finally:
+                if captured:
+                    scope.__exit__(None, None, None)
+
     def invoke(self, spec: ToolSpec, params: Mapping[str, Any], context: ToolContext, *, allow_recovery: bool = False,
                _permit: InvocationPermit | None = None) -> Any:
         if _permit is None:
             with self.mutation_entry(spec, params, context) as permit:
                 return self.invoke(spec, params, context, allow_recovery=allow_recovery, _permit=permit)
         self._mutation_interlock.consume(self, spec, params, context, _permit)
-        return self._invoke_owned(spec, params, context, allow_recovery=allow_recovery)
+        audit = self._mutation_interlock.audit_for(_permit)
+        with bind_entry_audit(audit):
+            try:
+                return self._invoke_owned(spec, params, context, allow_recovery=allow_recovery)
+            except BridgeError as error:
+                annotate_entry_error(error, audit)
+                raise
 
     def _invoke_owned(self, spec: ToolSpec, params: Mapping[str, Any], context: ToolContext, *, allow_recovery: bool = False) -> Any:
         """Enter a prepared handler without arming over an in-flight writer."""
@@ -697,6 +765,7 @@ class ToolRegistry:
             # toolset authority after providers. Pause/stop gates apply to writes.
             check_final_mutation(context, spec.name, allow_recovery=allow_recovery, expected_spec=spec)
             context.handler_entries += 1
+            mark_handler_entered()
             return spec.handler(context, params)
         finally:
             if spec.modifies:

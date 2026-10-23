@@ -12,6 +12,7 @@ import math
 import threading
 import time
 from collections import deque
+from contextlib import nullcontext
 from typing import Any
 
 from .errors import BridgeError, ErrorCode, invalid_argument
@@ -49,10 +50,18 @@ class CooperativeJobController:
         job = self.active
         if job is None:
             return False
-        context = self._context(job)
+        with self._tick_scope(job) as control:
+            return self._tick_owned(job, control)
+
+    def _tick_owned(self, job: Any, control: Any) -> bool:
+        guarded_context = self._guard_context_creation(job)
+        if not guarded_context:
+            context = self._tick_context(job, control)
         job.in_tick = True
         try:
-            self._check(job, context)
+            if guarded_context:
+                context = self._tick_context(job, control)
+            self._tick_check(job, context, control)
             snapshot = context.state.snapshot()
             if snapshot["emergency_stopped"]:
                 raise BridgeError(ErrorCode.EMERGENCY_STOPPED, self._emergency_message)
@@ -63,34 +72,39 @@ class CooperativeJobController:
                 return True
             if not job.lifetime.delivered.is_set():
                 return True
-            context.registry.prepare(job.method, context)
+            self._prepare_step(job, context)
             job.state = "RUNNING"
             if job.work is None:
                 job.work = self._make_work(job, context)
-            budget = self.budget_ms()
+            budget = self._budget_for(job)
             budget = min(8., max(1., float(budget))) if isinstance(budget, (int, float)) and math.isfinite(budget) else 4.
             deadline = time.perf_counter() + budget / 1000
+            steps = 0
             while time.perf_counter() < deadline:
-                self._check(job, context)
+                self._tick_check(job, context, control)
                 flags = context.state.snapshot()
                 if flags["paused"] and not flags["emergency_stopped"]:
                     job.state = "PAUSED"
                     job.revision += 1
                     return True
-                context.registry.prepare(job.method, context)
+                self._prepare_step(job, context)
                 try:
-                    job.progress = next(job.work)
+                    job.progress = self._advance_work(job, context, control)
                     job.revision += 1
+                    steps += 1
+                    limit = self._work_step_limit(job)
+                    if limit is not None and steps >= limit:
+                        break
                 except StopIteration as completed:
-                    self._complete_work(job, context, completed.value)
+                    self._complete_tick(job, context, completed.value, control)
                     return False
         except BridgeError as error:
             cancelled = error.code in {ErrorCode.TIMEOUT.value, ErrorCode.EMERGENCY_STOPPED.value}
-            self._finish(job, "CANCELLED" if cancelled else "FAILED", error)
+            self._finish_tick(job, "CANCELLED" if cancelled else "FAILED", error, control)
         except Exception as error:
             self._logger.exception(self._unexpected_failure_log)
-            self._finish(job, "FAILED", BridgeError(ErrorCode.OPERATION_FAILED, self._unexpected_failure_message,
-                                                    {"exception_type": type(error).__name__}))
+            self._finish_tick(job, "FAILED", BridgeError(ErrorCode.OPERATION_FAILED, self._unexpected_failure_message,
+                                                    {"exception_type": type(error).__name__}), control)
         finally:
             job.in_tick = False
         return self.active is not None
@@ -149,6 +163,36 @@ class CooperativeJobController:
 
     def _context(self, job: Any) -> Any:
         raise NotImplementedError
+
+    def _tick_scope(self, job: Any):
+        return nullcontext(None)
+
+    def _tick_context(self, job: Any, control: Any) -> Any:
+        return self._context(job)
+
+    def _guard_context_creation(self, job: Any) -> bool:
+        return False
+
+    def _tick_check(self, job: Any, context: Any, control: Any) -> None:
+        self._check(job, context)
+
+    def _advance_work(self, job: Any, context: Any, control: Any) -> Any:
+        return next(job.work)
+
+    def _finish_tick(self, job: Any, state: str, error: BridgeError, control: Any) -> None:
+        self._finish(job, state, error)
+
+    def _complete_tick(self, job: Any, context: Any, value: Any, control: Any) -> None:
+        self._complete_work(job, context, value)
+
+    def _prepare_step(self, job: Any, context: Any) -> None:
+        context.registry.prepare(job.method, context)
+
+    def _budget_for(self, job: Any) -> float:
+        return self.budget_ms()
+
+    def _work_step_limit(self, job: Any) -> int | None:
+        return None
 
     def _check(self, job: Any, context: Any) -> None:
         raise NotImplementedError
