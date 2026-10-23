@@ -1852,3 +1852,22 @@ memory/latency and whole-workflow recovery remain open, alongside safe project
 save, protected visual verification, native MCP end-to-end, Windows and installed
 A–F acceptance. All fourteen release requirements remain OPEN; the full 1.0
 target is unchanged.
+
+### 2026-10-23 — Read-only exact F-curve evidence before authoring
+
+`animation.curve_inspect` adds explicit-object active-Action/assigned-slot
+inspection under `INSPECT_SCENE`. It returns stored extrapolation and complete
+finite keyframe/Bezier-handle coordinates and types in indexed pages: 64 points
+by default, at most 256 per page and 1,000,000 points per curve. Exact selectors
+refuse missing or ambiguous curves; shared/linked data remains readable. Sampled
+curves and unsupported layered APIs fail explicitly. Inspection never updates or
+evaluates animation. Use these pages before an intended `curve_edit` and afterward
+to compare authored values; separate sampled-motion and deformation evidence is
+still required.
+
+The development registry now contains **263 MCP tools** and component versions
+remain **0.3.0 alpha**. This bounded read-only increment does not complete full
+character/animation acceptance (`CHAR-01`) or any other release requirement.
+Native fixture results must be retained for the exact qualified source; all
+fourteen release requirements remain OPEN, including Windows and installed A–F
+acceptance.

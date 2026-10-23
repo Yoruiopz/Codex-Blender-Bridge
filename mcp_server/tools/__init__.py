@@ -7,6 +7,7 @@ from collections.abc import Iterable
 from ..tool_registry import ToolRegistry
 from ._common import MCPToolBinding
 from .animation import AnimationTools
+from .animation_curve_inspection import AnimationCurveInspectionTools
 from .animation_curves import AnimationCurveTools
 from .animation_lifecycle import ActionLifecycleTools
 from .artist import ArtistTools
@@ -100,6 +101,7 @@ def iter_bindings(registry: ToolRegistry) -> Iterable[MCPToolBinding]:
         RigIKTools(registry),
         DeformationTools(registry),
         AnimationTools(registry),
+        AnimationCurveInspectionTools(registry),
         AnimationCurveTools(registry),
         ActionLifecycleTools(registry),
         RenderTools(registry),

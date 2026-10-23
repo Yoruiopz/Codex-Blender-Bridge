@@ -1,7 +1,7 @@
 # Development status
 
 **Unreleased development; 1.0 is NOT_READY.** The published [0.3.0 alpha](releases/0.3.0.md)
-contains 108 tools. The development registry currently contains **262 MCP tools**;
+contains 108 tools. The development registry currently contains **263 MCP tools**;
 its packages retain 0.3.0 metadata until a qualified release is accepted. Always pair the
 add-on and MCP server from one checkout. A matching version string alone does not identify
 an unpublished build.
@@ -43,6 +43,10 @@ Recent increments also add [cooperative packed recovery](image-recovery-jobs.md)
 [guarded rig edits](rig-edit-boundaries.md),
 [object property recovery](object-rna-safety.md) and
 [saved two-bone NLA motion](character-nla.md).
+Read-only [exact F-curve inspection](animation-curves.md#inspect-one-exact-curve-before-editing)
+adds paged stored handle coordinates/types and extrapolation before authoring,
+including shared/linked Actions. Its bounded pages do not establish character or
+animation acceptance.
 The [artist interaction foundation](task-plans.md) adds exact references and reviewed
 transform previews with opt-in protected scope. Undo/redo invalidates runtime handles;
 new checkpoint writes and modifying handler entry check caller lifetime again after
