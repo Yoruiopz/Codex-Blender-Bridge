@@ -29,6 +29,184 @@ from blender_codex_bridge.tools import rigid_body  # noqa: E402
 from scripts.blender_rigid_lifecycle_probe_smoke import context_state, make_scene  # noqa: E402
 
 
+def native_exact_comparisons(runtime, scene, bodies, params, grants):
+    """Real Object IDProperty drift around the registered public cache handler.
+
+    Checkpoints retain their existing executor behavior. These observations count
+    the selected domain native intervals, not every Blender/checkpoint side effect.
+    """
+    target, key = bodies[0], "_bridge_owned_rigid_exact_value"
+    assert key not in target
+    original_check = rigid_body._Boundary.check
+    original_interval = rigid_body._Boundary._native_interval
+    previous_permissions = (runtime.permissions, runtime.executor.permissions)
+    initial_context = context_state()
+    transitions = (("bool_to_int", False, 0), ("int_to_float", 0, 0.),
+                   ("signed_zero", 0., -0.), ("nested_bool_to_int", {"value": False}, {"value": 0}))
+    scenarios = [(name, old, new, stage, False) for name, old, new in transitions
+                 for stage in ("provider_before_native", "after_reset_return")]
+    scenarios.append(("nested_bool_to_int", {"value": False}, {"value": 0}, "after_reset_return", True))
+    records = []
+
+    def canonical(value):
+        return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
+
+    def fingerprint(value):
+        return hashlib.sha256(canonical(value).encode()).hexdigest()
+
+    def projected(snapshot):
+        # This is the actual Object.custom projection captured by scope.snapshot.
+        # The Mesh custom reader already type-tags values and is not this repro.
+        objects = snapshot["protected"][8]
+        states = [dict(state) for state, _body in objects if dict(state)["name"] == target.name]
+        assert len(states) == 1
+        return dict(states[0]["custom"])[key]
+
+    def describe(raw, expected, *, captured=False):
+        if isinstance(expected, dict):
+            if captured:
+                assert isinstance(raw, tuple) and [name for name, _value in raw] == ["value"]
+                leaf = dict(raw)["value"]
+            else:
+                assert hasattr(raw, "keys") and list(raw.keys()) == ["value"], type(raw).__name__
+                leaf = raw["value"]
+            expected = expected["value"]
+        else:
+            leaf = raw
+        assert type(leaf) is type(expected), ("Native IDProperty scalar type was not preserved", type(leaf).__name__, type(expected).__name__)
+        assert leaf == expected
+        if type(expected) is float:
+            assert leaf.hex() == expected.hex(), (leaf.hex(), expected.hex())
+        return {"container_type": type(raw).__name__, "leaf_type": type(leaf).__name__,
+                "leaf_value": leaf, "leaf_float_hex": leaf.hex() if type(leaf) is float else None}
+
+    for name, old, new, injection_stage, native_failure in scenarios:
+        assert key not in target and not scene.rigidbody_world.point_cache.is_baked
+        target[key] = old
+        raw_before = describe(target[key], old)
+        captured_before = describe(projected(scope.snapshot(bpy, scene, params)), old, captured=True)
+        proposal = {"scene_name": scene.name, **params, "operation": "BAKE", "frame_start": 2, "frame_end": 3}
+        preview = runtime.dispatch("rigid_body.cache_preview", proposal)
+        proposal["expected_fingerprint"] = preview["expected_fingerprint"]
+        observed = {"armed": False, "fired": False, "entries": [], "returns": [], "boundary": None}
+        native_fault = RuntimeError("Owned native exact-comparison fault after reset return")
+
+        def inject(boundary, *, observed=observed, old=old, new=new):
+            assert not observed["fired"]
+            expected = boundary.expected
+            expected_value = projected(expected)
+            expected_description = describe(expected_value, old, captured=True)
+            # Recreating the actual native property avoids existing-slot coercion.
+            del target[key]
+            target[key] = new
+            raw_after = describe(target[key], new)
+            actual = scope.snapshot(bpy, scene, params)
+            actual_value = projected(actual)
+            captured_after = describe(actual_value, new, captured=True)
+            assert expected["protected"] == actual["protected"], "This case must expose Python's conflated equality"
+            assert canonical(expected["protected"]) != canonical(actual["protected"])
+            assert canonical(expected_value) != canonical(actual_value)
+            observed.update(fired=True, raw_after=raw_after, captured_after=captured_after,
+                captured_expected=expected_description, captured_old_value=expected_value, captured_new_value=actual_value,
+                protected_python_equal=True, protected_canonical_different=True,
+                protected_before_sha256=fingerprint(expected["protected"]), protected_after_sha256=fingerprint(actual["protected"]),
+                native_entries_at_injection=list(observed["entries"]), native_returns_at_injection=list(observed["returns"]))
+
+        def check(boundary, *, observed=observed, old=old):
+            if observed["boundary"] is None:
+                observed["boundary"] = boundary
+                observed["armed"] = True  # cache() has retained its real baseline.
+                describe(projected(boundary.expected), old, captured=True)
+            return original_check(boundary)
+
+        def provider(*, observed=observed, injection_stage=injection_stage, inject=inject):
+            if observed["armed"] and not observed["fired"] and injection_stage == "provider_before_native":
+                inject(observed["boundary"])
+            return dict(grants)
+
+        def interval(boundary, stage, callback, *, observed=observed, injection_stage=injection_stage,
+                     native_failure=native_failure, native_fault=native_fault, inject=inject):
+            def actual_native():
+                observed["entries"].append(stage)
+                result = callback()  # Real native implementation, including its writes.
+                observed["returns"].append(stage)
+                return result
+
+            result = original_interval(boundary, stage, actual_native)
+            if stage == "same_value_world_reset" and not observed["fired"] and injection_stage == "after_reset_return":
+                inject(boundary)
+                if native_failure:
+                    raise native_fault
+            return result
+
+        live_permissions = PermissionManager(provider)
+        runtime.permissions = runtime.executor.permissions = live_permissions
+        rigid_body._Boundary.check, rigid_body._Boundary._native_interval = check, interval
+        try:
+            try:
+                runtime.dispatch("rigid_body.cache", proposal)
+            except BridgeError as error:
+                assert observed["fired"] and observed["boundary"] is not None
+                details = error.context
+                assert error.code == ("OPERATION_FAILED" if native_failure else "INVALID_ARGUMENT"), error.to_dict()
+                assert details["primary_error_type"] == ("RuntimeError" if native_failure else "BridgeError")
+                if native_failure:
+                    assert error.__cause__ is native_fault
+                expected_entries = [] if injection_stage == "provider_before_native" else [
+                    "cache_range_setter", "cache_range_setter", "same_value_world_reset"]
+                assert observed["entries"] == observed["returns"] == expected_entries
+                assert observed["entries"] == observed["native_entries_at_injection"]
+                assert observed["returns"] == observed["native_returns_at_injection"]
+                assert observed["boundary"].started is (injection_stage == "after_reset_return")
+                assert details["possible_mutation"] is (injection_stage == "after_reset_return")
+                assert details["cache_operation_started"] is False and details["cache_operation_verified"] is False
+                assert details["final_authority_and_scope_verified"] is False
+                for field in ("range_recovery", "frame_recovery"):
+                    assert details[field]["attempted"] is False and details[field]["verified"] is False
+                    assert details[field]["error_code"] == "INVALID_ARGUMENT", details[field]
+                assert context_state() == initial_context
+                expected_range = (1, 3) if injection_stage == "provider_before_native" else (2, 3)
+                assert (scene.rigidbody_world.point_cache.frame_start, scene.rigidbody_world.point_cache.frame_end) == expected_range
+                assert not scene.rigidbody_world.point_cache.is_baked
+                final_raw = describe(target[key], new)
+                final_scope = scope.snapshot(bpy, scene, params)
+                describe(projected(final_scope), new, captured=True)
+                # The old protected CAS remains retained; drift was not adopted.
+                describe(projected(observed["boundary"].expected), old, captured=True)
+                record = {"case": name, "injection_stage": injection_stage, "native_failure": native_failure,
+                    "entry": "ACTUAL_REGISTERED_RUNTIME_DISPATCH", "raw_before": raw_before,
+                    "captured_before": captured_before, "raw_after": observed["raw_after"],
+                    "captured_after": observed["captured_after"], "captured_old_value": observed["captured_old_value"],
+                    "captured_new_value": observed["captured_new_value"], "final_raw": final_raw,
+                    "protected_python_equal": True, "protected_canonical_different": True,
+                    "protected_before_sha256": observed["protected_before_sha256"],
+                    "protected_after_sha256": observed["protected_after_sha256"],
+                    "actual_native_entries": observed["entries"], "actual_native_returns": observed["returns"],
+                    "selected_native_calls_after_injection": 0, "frozen_old_property_retained": True,
+                    "retained_range": list(expected_range), "retained_frame": [scene.frame_current, scene.frame_subframe],
+                    "native_fault_identity_preserved": native_failure and error.__cause__ is native_fault,
+                    "error": error.to_dict(), "executor_checkpoints_separate_from_domain_native_counts": True}
+            else:
+                raise AssertionError("Registered cache ignored real typed/signed-zero protected drift")
+        finally:
+            rigid_body._Boundary.check, rigid_body._Boundary._native_interval = original_check, original_interval
+            runtime.permissions, runtime.executor.permissions = previous_permissions
+        # All assertions precede these disclosed new fixture writes. They are not
+        # production compensation, recovery, or continuation of failed authority.
+        del target[key]
+        scene.rigidbody_world.point_cache.frame_start = 1
+        scene.rigidbody_world.point_cache.frame_end = 3
+        scene.frame_set(7, subframe=.25)
+        bpy.context.view_layer.update()
+        assert context_state() == initial_context and key not in target
+        record["explicit_fixture_reset_after_assertions"] = {"property_removed": True, "range": [1, 3],
+            "frame": [7, .25], "product_cleanup_or_recovery_claim": False}
+        records.append(record)
+        print("RIGID_EXACT_COMPARISON_CASE " + canonical(record), flush=True)
+    assert len(records) == 9
+    return records
+
+
 def main():
     bpy.context.preferences.use_preferences_save = False
     scene, bodies, sentinel = make_scene("Owned Product Scope", (0., 0., -9.81))
@@ -177,6 +355,9 @@ def main():
     scene[self_reference_key] = scene
     reject("scene_custom_self_reference_beyond_native_checkpoint")
     del scene[self_reference_key]
+
+    # Keep the original five successful registered-history assertions above.
+    native_exact_comparison_cases = native_exact_comparisons(runtime, scene, bodies, params, grants)
 
     queue_final_hook_available = hasattr(runtime.executor.context, "check_final_request")
     assert queue_final_hook_available, "Canonical pure request hook is required for this native fixture"
@@ -462,6 +643,7 @@ def main():
                                     "invalidation": invalidated},
           "permission_denied_before_writes": True, "live_stop_evidence": live_stops,
           "owner_revocation_inside_live_provider": owner_failures,
+          "native_exact_comparison_cases": native_exact_comparison_cases,
           "post_native_failure": post_native_failure,
           "release_readiness": "NOT_ASSESSED"}
     full_path = Path(tempfile.gettempdir()) / "rigid-body-scope-complete-evidence.json"
@@ -482,6 +664,10 @@ def main():
 
     evidence = {**compact(complete_evidence), "complete_evidence_file": str(full_path),
                 "complete_evidence_file_sha256": hashlib.sha256(full_bytes).hexdigest()}
+    evidence["native_exact_comparison_cases"] = {"case_count": len(native_exact_comparison_cases),
+        "provider_before_domain_native": 4, "after_real_reset_return": 4, "after_return_primary_runtime_error": 1,
+        "actual_native_property_types_and_scope_values_proven": True,
+        "python_equal_but_canonical_different": True, "complete_records_retained_in_evidence_file": True}
     payload = json.dumps(evidence, separators=(",", ":"))
     assert len(payload.encode()) < 60000, "Keep the runner's bounded marker extraction intact"
     print("BLENDER_RIGID_BODY_SCOPE_OK " + payload, flush=True)

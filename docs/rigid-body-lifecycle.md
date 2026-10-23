@@ -86,6 +86,18 @@ before the final pure checks. A newer manual edit, expired owner or revoked
 authority stops further edits, including compensation. Changes from frame
 handlers are rejected at preflight rather than treated as owned publication.
 
+The synchronous cache boundary compares the captured scope, protected authored
+content and declared owned changes with the same canonical JSON digest used by
+the preview fingerprint. Boolean, integer and floating-point custom-property
+values remain distinct, including nested values and the sign of floating-point
+zero. This also applies when deciding whether caller-time/range recovery is
+needed and whether it was verified. A typed edit after preview validation or a
+native call therefore refuses further domain writes and compensation instead of
+certifying preservation through Python's numeric equality. The native identity
+checks and the numeric matrix playback tolerance keep their existing behavior.
+This comparison rule covers this cache lifecycle; it does not qualify every
+other mutator, expand the supported native profile or close a 1.0 acceptance gate.
+
 The caller's frame and subframe are independently restored and measured. An
 otherwise successful bake with failed context restoration is an operation
 failure. Recovery evidence distinguishes range, time scale, frame context and

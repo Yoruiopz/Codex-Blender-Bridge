@@ -148,14 +148,16 @@ class _Boundary:
     def check(self) -> None:
         self._authority()
         scene = scope.current_scene(self.bpy, self.params["scene_name"])
-        if scene != self.scene or self._timed("scope_comparison", lambda: scope.snapshot(self.bpy, scene, self.params)) != self.expected:
+        if (scene != self.scene
+                or evidence.digest(self._timed("scope_comparison", lambda: scope.snapshot(self.bpy, scene, self.params))) != evidence.digest(self.expected)):
             raise invalid_argument("Rigid-body identity, authored inputs, cache, context or consumers changed; further writes and compensation are refused.", scope_complete=False)
         self._final()
 
     def _accept(self, owned: Mapping[str, Any]) -> None:
         actual = self._timed("scope_publication_readback", lambda: scope.snapshot(self.bpy, self.scene, self.params))
         protected = ("protected", "body_names", "constraint_names", "base_vertices")
-        if any(actual[field] != self.expected[field] for field in protected) or actual["owned"] != owned:
+        if (any(evidence.digest(actual[field]) != evidence.digest(self.expected[field]) for field in protected)
+                or evidence.digest(actual["owned"]) != evidence.digest(owned)):
             raise invalid_argument("Native rigid-body work changed protected or unexpected authored state; inspect partial effects before continuing.", scope_complete=False)
         self._final()
         # Only the declared owned delta and native read-only cache status are
@@ -306,11 +308,11 @@ def _recover_frame(boundary: _Boundary) -> dict[str, Any]:
     try:
         boundary.check()
         original = boundary.original["frame"]
-        if boundary.expected["owned"]["frame"] != original:
+        if evidence.digest(boundary.expected["owned"]["frame"]) != evidence.digest(original):
             result["attempted"] = True
             boundary.frame(*original)
         boundary.check()
-        result["verified"] = boundary.expected["owned"]["frame"] == original
+        result["verified"] = evidence.digest(boundary.expected["owned"]["frame"]) == evidence.digest(original)
     except Exception as error:
         LOGGER.exception("Rigid-body caller-time recovery refused or failed")
         result.update(error_type=type(error).__name__, error_code=getattr(error, "code", None))
@@ -322,7 +324,7 @@ def _recover_range(boundary: _Boundary) -> dict[str, Any]:
     try:
         boundary.check()
         original = boundary.original["range"]
-        if boundary.expected["owned"]["range"] != original:
+        if evidence.digest(boundary.expected["owned"]["range"]) != evidence.digest(original):
             if boundary.scene.rigidbody_world.point_cache.is_baked:
                 result["reason"] = "BAKED_CACHE_RETAINED_NO_IMPLICIT_FREE"
                 return result
@@ -330,7 +332,7 @@ def _recover_range(boundary: _Boundary) -> dict[str, Any]:
                 result["attempted"] = True
                 boundary.range_field(field, value)
         boundary.check()
-        result["verified"] = boundary.expected["owned"]["range"] == original
+        result["verified"] = evidence.digest(boundary.expected["owned"]["range"]) == evidence.digest(original)
     except Exception as error:
         LOGGER.exception("Rigid-body cache-range recovery refused or failed")
         result.update(error_type=type(error).__name__, error_code=getattr(error, "code", None))
