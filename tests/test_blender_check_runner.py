@@ -27,6 +27,28 @@ def test_all_existing_smokes_are_in_registry(runner):
     }
 
 
+@pytest.mark.parametrize("case", ["core", "undo_lifecycle", "camera_focus"])
+def test_factory_fixture_bytecode_prelude_runs_before_script(runner, monkeypatch, tmp_path, case):
+    monkeypatch.setattr(runner.sys, "platform", "linux")
+
+    def run(command, **kwargs):
+        expression = command.index("--python-expr")
+        script = command.index("--python")
+        assert expression < script
+        assert command[expression + 1] == "import sys; sys.dont_write_bytecode = True"
+        assert command[script + 1] == str(ROOT / "scripts" / runner.CASES[case][0])
+        assert "--factory-startup" in command
+        assert command[command.index("--python-exit-code") + 1] == "1"
+        assert ("--background" in command) is (case not in runner.INTERACTIVE_CASES)
+        marker = runner.CASES[case][1]
+        kwargs["stdout"].write((marker + json.dumps({"blender_version": "5.2.2"})).encode())
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(runner.subprocess, "run", run)
+    assert runner.run_case(Path("blender"), case, tmp_path, 10)["status"] == "passed"
+    assert "camera_focus" in runner.OPT_IN_CASES and "camera_focus" not in runner.INTERACTIVE_CASES
+
+
 @pytest.mark.parametrize(
     "text,marker,valid",
     [

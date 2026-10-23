@@ -213,6 +213,7 @@ def test_camera_configure_rejects_late_scene_target_without_partial_mutation(
         dof=SimpleNamespace(
             use_dof=False,
             focus_object=old_focus,
+            focus_distance=10.0,
             aperture_fstop=2.8,
         ),
     )
@@ -481,6 +482,7 @@ def test_camera_configure_rolls_back_when_dof_setter_fails(
         def __init__(self) -> None:
             self.use_dof = False
             self.focus_object = old_focus
+            self.focus_distance = 10.0
             self._aperture_fstop = 2.8
 
         @property

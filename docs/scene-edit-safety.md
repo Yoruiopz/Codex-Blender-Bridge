@@ -158,6 +158,30 @@ Derived camera angle aliases are accounted for separately from owned lens/sensor
 fields. An admitted camera type change must preserve the rest of that measured
 native projection; broader conversion behavior is not inferred from it.
 
+### Manual camera focus distance
+
+`camera.configure(object_name, ..., focus_distance=...)` optionally edits the stored
+manual depth-of-field distance. Values must be finite numbers from 0 to 1,000,000,000;
+booleans and numeric strings are rejected. Distances use Blender coordinate units.
+No conversion from scene unit scale or meters is performed. Native Float32 storage
+can round the requested decimal; the receipt reports the stored value.
+
+Manual distance is accepted only when the final `focus_object` is absent. If one is
+already assigned, include `clear_focus_object=true`; the existing direct-protocol
+`focus_object:null` clear remains supported. A non-null focus object combined with
+distance is invalid before checkpoint creation or setters. Omitting both explicit
+clear forms never clears a focus target, and setting distance never enables depth
+of field. Set `dof_enabled=true` separately when that change is intended.
+
+A distance-only edit uses the same local, editable, non-override, sole-consumer
+camera ownership and complete admitted static Scene profile as other camera-data
+edits. It writes through the existing per-field authority, exact native prediction
+and measured restoration boundary. The configuration receipt's `dof.focus_distance`
+and `object.inspect`'s `camera.dof.focus_distance` always expose the stored value,
+including when depth of field is disabled or a focus object makes manual distance
+inactive. Stored distance does not prove the rendered focus or artistic quality;
+matched visual review and full cinematic acceptance remain required.
+
 Light subtype conversion is currently refused before changing type or settings.
 Native research found that setting `Light.type` can leave the existing Python
 wrapper at its old subtype, while other subtype settings become hidden. Silently

@@ -44,6 +44,7 @@ class _PreparedCamera:
     dof_enabled: bool | None
     set_focus: bool
     focus_object: Any | None
+    focus_distance: float | None
     aperture_fstop: float | None
     active_scene: Any | None
     set_active_for_scene: bool
@@ -233,7 +234,7 @@ def _settings_boundary(context: ToolContext, method: str, prepared: Any, *, chec
         fields["active_camera"] = proof.Field(lambda: scene, "camera")
         scope = profile.Profile(bpy, scene, method, obj=obj, focus=prepared.focus_object, edit_data=bool(
             prepared.camera_type is not None or prepared.numeric or prepared.dof_enabled is not None
-            or prepared.set_focus or prepared.aperture_fstop is not None),
+            or prepared.set_focus or prepared.focus_distance is not None or prepared.aperture_fstop is not None),
             checkpoint_authored=checkpoint_authored, checkpoint_roles=checkpoint_roles)
     else:
         obj = prepared.obj
@@ -523,6 +524,14 @@ def _prepare_camera(params: Mapping[str, Any]) -> _PreparedCamera:
     if clear_focus and params.get("focus_object") is not None:
         raise invalid_argument("Use either 'focus_object' or 'clear_focus_object', not both.")
     set_focus = clear_focus or "focus_object" in params
+    focus_distance = (
+        float_param(params, "focus_distance", float(camera.dof.focus_distance), minimum=0.0, maximum=1.0e9)
+        if "focus_distance" in params else None
+    )
+    if focus_distance is not None:
+        final_focus = params.get("focus_object") if set_focus else camera.dof.focus_object
+        if final_focus is not None:
+            raise invalid_argument("Manual 'focus_distance' requires no final focus object; explicitly clear an existing focus object.")
     focus_object = None
     if not clear_focus and "focus_object" in params:
         focus_name = params.get("focus_object")
@@ -558,6 +567,7 @@ def _prepare_camera(params: Mapping[str, Any]) -> _PreparedCamera:
         dof_enabled=dof_enabled,
         set_focus=set_focus,
         focus_object=focus_object,
+        focus_distance=focus_distance,
         aperture_fstop=aperture_fstop,
         active_scene=active_scene,
         set_active_for_scene=set_active_for_scene,
@@ -569,7 +579,7 @@ def configure_camera(context: ToolContext, params: Mapping[str, Any]) -> dict[st
     prepared = admitted.prepared if admitted is not None else _prepare_camera(params)
     obj, camera = prepared.obj, prepared.camera
     if (prepared.camera_type is not None or prepared.numeric or prepared.dof_enabled is not None
-            or prepared.set_focus or prepared.aperture_fstop is not None):
+            or prepared.set_focus or prepared.focus_distance is not None or prepared.aperture_fstop is not None):
         require_single_user_object_data(obj, operation="Camera configuration")
     if prepared.set_active_for_scene and prepared.active_scene is not None:
         require_local_editable_id(prepared.active_scene, operation="Active camera assignment")
@@ -583,6 +593,8 @@ def configure_camera(context: ToolContext, params: Mapping[str, Any]) -> dict[st
             boundary.write("dof.use_dof", prepared.dof_enabled)
         if prepared.set_focus:
             boundary.write("dof.focus_object", prepared.focus_object)
+        if prepared.focus_distance is not None:
+            boundary.write("dof.focus_distance", prepared.focus_distance)
         if prepared.aperture_fstop is not None:
             boundary.write("dof.aperture_fstop", prepared.aperture_fstop)
         if prepared.set_active_for_scene and prepared.active_scene is not None:
@@ -593,6 +605,7 @@ def configure_camera(context: ToolContext, params: Mapping[str, Any]) -> dict[st
                 "camera_type": camera.type, "lens": float(camera.lens), "sensor_width": float(camera.sensor_width),
                 "clip_start": float(camera.clip_start), "clip_end": float(camera.clip_end), "ortho_scale": float(camera.ortho_scale),
                 "dof": {"enabled": bool(camera.dof.use_dof), "focus_object": camera.dof.focus_object.name if camera.dof.focus_object else None,
+                        "focus_distance": float(camera.dof.focus_distance),
                         "aperture_fstop": float(camera.dof.aperture_fstop)}}
     except Exception as error:
         raise boundary.failure(error, affected=(obj.name,)) from error

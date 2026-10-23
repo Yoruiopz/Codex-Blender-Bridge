@@ -126,6 +126,7 @@ CASES = {
     "scene_edit_probe": ("blender_scene_edit_probe_smoke.py", "BLENDER_SCENE_EDIT_PROBE_OK "),
     "scene_collection_scope": ("blender_scene_collection_scope_smoke.py", "BLENDER_SCENE_COLLECTION_SCOPE_OK "),
     "scene_edit_boundaries": ("blender_scene_edit_boundaries_smoke.py", "BLENDER_SCENE_EDIT_BOUNDARIES_OK "),
+    "camera_focus": ("blender_camera_focus_smoke.py", "BLENDER_CAMERA_FOCUS_OK "),
     "scene_checkpoint_admission": ("blender_scene_checkpoint_admission_smoke.py", "BLENDER_SCENE_CHECKPOINT_ADMISSION_OK "),
     "render_scope_probe": ("blender_render_scope_probe_smoke.py", "BLENDER_RENDER_SCOPE_PROBE_OK "),
     "render_boundaries": ("blender_render_boundaries_smoke.py", "BLENDER_RENDER_BOUNDARIES_OK "),
@@ -187,6 +188,7 @@ OPT_IN_CASES.add("rigid_scope_profile_probe")
 OPT_IN_CASES.add("scene_edit_probe")
 OPT_IN_CASES.add("scene_collection_scope")
 OPT_IN_CASES.add("scene_edit_boundaries")
+OPT_IN_CASES.add("camera_focus")
 OPT_IN_CASES.add("scene_checkpoint_admission")
 OPT_IN_CASES.add("render_scope_probe")
 OPT_IN_CASES.add("render_boundaries")
@@ -262,6 +264,8 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
         "--factory-startup",
         "--python-exit-code",
         "1",
+        "--python-expr",
+        "import sys; sys.dont_write_bytecode = True",
         "--python",
         str(script),
     ]

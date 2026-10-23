@@ -14,7 +14,7 @@ def _camera(*, users: int = 1) -> Any:
     return SimpleNamespace(
         name="Camera Data", users=users, type="PERSP", lens=35.0, sensor_width=36.0,
         clip_start=0.1, clip_end=1000.0, ortho_scale=6.0,
-        dof=SimpleNamespace(use_dof=False, focus_object=None, aperture_fstop=2.8),
+        dof=SimpleNamespace(use_dof=False, focus_object=None, focus_distance=10.0, aperture_fstop=2.8),
     )
 
 

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import struct
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -100,6 +102,94 @@ def main():
         finally:
             proof.Boundary.write = original
 
+    def camera_focus_checks():
+        dof = camera.data.dof
+        descriptor = dof.bl_rna.properties["focus_distance"]
+        metadata = {"identifier": descriptor.identifier, "type": descriptor.type,
+                    "hard_min": descriptor.hard_min, "hard_max": descriptor.hard_max,
+                    "soft_min": descriptor.soft_min, "soft_max": descriptor.soft_max,
+                    "subtype": descriptor.subtype, "unit": descriptor.unit,
+                    "readonly": descriptor.is_readonly, "array_length": descriptor.array_length}
+        assert descriptor.type == "FLOAT" and not descriptor.is_readonly and descriptor.array_length == 0
+        assert descriptor.hard_min <= 0. and descriptor.hard_max >= 1.e9, metadata
+        rows = []
+
+        def state():
+            return (proof.primitive(bpy, camera.data), proof.primitive(bpy, dof),
+                    scene.get("_codex_bridge_undo_marker"), proof.session(bpy), geometry(mesh))
+
+        def reject(label, params, code):
+            before = state()
+            try:
+                runtime.dispatch("camera.configure", {"object_name": camera.name, **params})
+            except BridgeError as error:
+                assert error.code == code, error.to_dict()
+                assert state() == before
+                rows.append({"case": label, "unchanged": True, "error": error.to_dict()})
+            else:
+                raise AssertionError("Manual-focus invalid request was accepted: " + label)
+
+        call("camera.configure", {"object_name": camera.name, "dof_enabled": False})
+        for requested in (0., 13.1, 1.e9):
+            before = (proof.primitive(bpy, camera.data), proof.primitive(bpy, dof, exclude=frozenset({"focus_distance"})))
+            receipt = call("camera.configure", {"object_name": camera.name, "focus_distance": requested})
+            expected = struct.unpack("f", struct.pack("f", requested))[0]
+            inspected = call("object.inspect", {"object_name": camera.name})
+            assert dof.focus_distance == expected
+            assert receipt["dof"]["focus_distance"] == expected
+            assert inspected["camera"]["dof"]["focus_distance"] == expected
+            assert not dof.use_dof and dof.focus_object is None
+            assert (proof.primitive(bpy, camera.data), proof.primitive(bpy, dof, exclude=frozenset({"focus_distance"}))) == before
+            rows.append({"case": "distance-only", "requested": requested, "stored_float32": expected,
+                         "stored_hex": float(dof.focus_distance).hex(), "receipt": receipt,
+                         "inspection_dof": inspected["camera"]["dof"], "other_camera_fields_preserved": True,
+                         "dof_remained_disabled": True})
+
+        call("camera.configure", {"object_name": camera.name, "focus_object": mesh.name})
+        reject("existing-focus-needs-clear", {"focus_distance": 13.1}, "INVALID_ARGUMENT")
+        reject("explicit-focus-conflict", {"focus_object": mesh.name, "focus_distance": 13.1}, "INVALID_ARGUMENT")
+        receipt = call("camera.configure", {"object_name": camera.name, "clear_focus_object": True, "focus_distance": 13.1})
+        assert dof.focus_object is None and receipt["dof"]["focus_distance"] == dof.focus_distance
+        rows.append({"case": "explicit-clear-and-distance", "receipt": receipt})
+
+        alias = bpy.data.objects.new("Owned Shared Manual Focus Camera", camera.data)
+        scene.collection.objects.link(alias)
+        try:
+            assert camera.data.users == 2
+            reject("distance-only-shared-camera-data", {"focus_distance": 19.2}, "NOT_IMPLEMENTED")
+        finally:
+            # Fixture-owned setup cleanup, after the unchanged rejection proof.
+            bpy.data.objects.remove(alias, do_unlink=True)
+        grants[Permission.EDIT_SCENE.value] = False
+        try:
+            reject("distance-permission-denied", {"focus_distance": 19.2}, "PERMISSION_DENIED")
+        finally:
+            reset()
+
+        distance, aperture = dof.focus_distance, dof.aperture_fstop
+        def fail_after_focus_distance(_boundary):
+            assert dof.focus_distance == struct.unpack("f", struct.pack("f", 19.2))[0]
+            assert dof.aperture_fstop == aperture
+            raise RuntimeError("Owned known failure after manual focus-distance publication")
+        error = failure("camera.configure", {"object_name": camera.name, "focus_distance": 19.2, "aperture_fstop": 5.6},
+                        fail_after_focus_distance, code="OPERATION_FAILED", restored=True)
+        assert dof.focus_distance == distance and dof.aperture_fstop == aperture
+        assert error.context["recovery_evidence"]["owned_write_attempts"] == 1
+        assert error.context["recovery_evidence"]["restoration_verified"] is True
+        assert error.context["undo_boundary_finalized"] is True
+        rows.append({"case": "known-failure-after-distance", "error": error.to_dict(),
+                     "distance_restored": True, "later_aperture_not_written": True})
+        call("camera.configure", {"object_name": camera.name, "dof_enabled": True})
+        raw = (json.dumps({"descriptor": metadata, "unit_scale_length": scene.unit_settings.scale_length,
+                           "distance_unit": "Native Blender coordinate units; no scene-unit conversion",
+                           "cases": rows, "protected_geometry_sha256": protected,
+                           "context_preserved": True, "project_saved": False}, sort_keys=True, indent=2) + "\n").encode()
+        path = Path(tempfile.gettempdir()) / "camera-focus-boundary-evidence.json"
+        path.write_bytes(raw)
+        return {"case_count": len(rows), "descriptor": metadata, "evidence_file": str(path),
+                "evidence_sha256": hashlib.sha256(raw).hexdigest(), "float32_readback_verified": True,
+                "distance_only_ownership_checked": True, "known_failure_restored": True}
+
     try:
         call("scene.configure", {"scene_name": scene.name, "unit_system": "METRIC", "unit_scale_length": .01,
                                  "use_gravity": False, "gravity": [0., -.2, -9.81]})
@@ -109,6 +199,7 @@ def main():
                                    "focus_object": mesh.name, "aperture_fstop": 3.2})
         assert camera.data.dof.focus_object == mesh
         call("camera.configure", {"object_name": camera.name, "clear_focus_object": True})
+        camera_focus = camera_focus_checks()
         call("light.configure", {"object_name": light.name, "energy": 731.2, "color": [.2, .3, .4]})
         call("world.configure", {"scene_name": scene.name, "use_nodes": True, "color": [.1, .2, .3], "strength": .7})
         old_world = scene.world
@@ -573,6 +664,7 @@ def main():
             "permission_denial_methods": denied, "separate_delete_denial": True, "nonempty_collection_preserved": True,
             "invalid_context_methods": invalid_context_methods, "static_dependency_controls": dependency_controls,
             "protected_geometry_sha256": protected, "context_preserved": True,
+            "camera_focus_distance": camera_focus,
             "project_saved": False, "user_preferences_saved": False,
             "artistic_or_windows_acceptance": False}, sort_keys=True))
     finally:

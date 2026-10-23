@@ -14,7 +14,7 @@ SCENE_FIELDS = frozenset({"camera", "use_gravity", "gravity"})
 UNIT_FIELDS = frozenset({"system", "scale_length"})
 CAMERA_FIELDS = frozenset({"type", "lens", "sensor_width", "clip_start", "clip_end", "ortho_scale"})
 CAMERA_DERIVED = frozenset({"angle", "angle_x", "angle_y"})
-DOF_FIELDS = frozenset({"use_dof", "focus_object", "aperture_fstop"})
+DOF_FIELDS = frozenset({"use_dof", "focus_object", "focus_distance", "aperture_fstop"})
 LIGHT_FIELDS = frozenset({"type", "energy", "color", "shadow_soft_size", "spot_size", "spot_blend"})
 WORLD_FIELDS = frozenset({"use_nodes", "color"})
 

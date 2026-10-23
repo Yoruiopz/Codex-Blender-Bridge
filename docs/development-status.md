@@ -58,6 +58,11 @@ across checkpoint creation, editing and finalization. Marker writes preserve new
 metadata, and custom-property comparisons distinguish scalar types and signed zero.
 Guarded production batches refuse composition that has not been reviewed. Scene
 responses explicitly report incomplete preservation of bundled runtime settings.
+The existing `camera.configure` also accepts bounded
+[manual focus distance](scene-edit-safety.md#manual-camera-focus-distance), with
+explicit focus-object clearing and stored-value inspection. This preserves the
+admitted static camera ownership scope and does not enable depth of field or
+complete cinematic acceptance.
 [Render admission](render-boundaries.md) uses the same checkpoint guards, a bounded
 static EEVEE profile and validated PNG publication. Its reviewed Blender 5.2 build
 refuses rendering/configuration because a supported, read-only comparison of hidden

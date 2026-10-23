@@ -121,6 +121,7 @@ def _object_compact(obj: Any, active: Any) -> dict[str, Any]:
             "dof": {
                 "enabled": bool(camera.dof.use_dof),
                 "focus_object": camera.dof.focus_object.name if camera.dof.focus_object else None,
+                "focus_distance": float(camera.dof.focus_distance),
                 "aperture_fstop": float(camera.dof.aperture_fstop),
             },
         }

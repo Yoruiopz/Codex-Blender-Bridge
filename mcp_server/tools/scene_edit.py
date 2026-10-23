@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
+
+from pydantic import Field, StrictFloat
 
 from ..tool_registry import ToolDefinition, ToolRegistry, remote_tool
 from ._common import MCPToolBinding, params
+
+FocusDistance = Annotated[StrictFloat, Field(ge=0.0, le=1.0e9, allow_inf_nan=False)]
 
 SCENE_EDIT_TOOL_DATA: tuple[tuple[str, str, bool, tuple[str, ...]], ...] = (
     ("scene.configure", "Configure an explicit scene's camera, units, and gravity.", True, ("EDIT_SCENE",)),
@@ -109,8 +113,9 @@ class SceneEditTools:
         aperture_fstop: float | None = None,
         scene_name: str | None = None,
         set_active_for_scene: bool | None = None,
+        focus_distance: FocusDistance | None = None,
     ) -> Any:
-        """Configure camera optics, clipping, depth of field, and scene assignment."""
+        """Configure camera optics, clipping, depth of field, and scene assignment. Optional focus_distance is 0 to 1e9 Blender coordinate units and requires no final focus object; explicitly clear an existing focus first. It does not enable depth of field."""
 
         return await self.registry.call(
             "camera.configure",
@@ -128,6 +133,7 @@ class SceneEditTools:
                 aperture_fstop=aperture_fstop,
                 scene_name=scene_name,
                 set_active_for_scene=set_active_for_scene,
+                focus_distance=focus_distance,
             ),
         )
 

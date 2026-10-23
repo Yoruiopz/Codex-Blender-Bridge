@@ -1871,3 +1871,19 @@ character/animation acceptance (`CHAR-01`) or any other release requirement.
 Native fixture results must be retained for the exact qualified source; all
 fourteen release requirements remain OPEN, including Windows and installed A–F
 acceptance.
+
+### 2026-10-23 — Explicit manual camera focus distance
+
+The existing `camera.configure` adds optional finite `focus_distance` from 0 to
+1,000,000,000 in Blender coordinate units, with no scene-unit conversion. A final
+focus object is incompatible with manual distance; existing focus targets require
+explicit clearing. Distance-only edits retain the existing static Scene admission,
+sole-camera-data ownership, per-write authority, native Float32 prediction and
+measured recovery contract. Neither focus clearing nor depth-of-field enabling is
+implicit. Configuration and object inspection report stored distance even when
+it is inactive, supporting inspect → edit → compare before matched visual review.
+
+This extends an existing schema: the registry remains **263 MCP tools**, component
+versions remain **0.3.0 alpha**, and all fourteen release requirements remain OPEN.
+Source-matched native and visual evidence is still required; this bounded change
+does not complete cinematic variants, installed A–F or full artist acceptance.
