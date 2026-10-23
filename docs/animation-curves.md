@@ -1,4 +1,4 @@
-# Bounded Action versions, F-curve inspection and authoring
+# Bounded Action versions, F-curve inspection, sampling and authoring
 
 These unreleased structured tools extend the existing animation tools. They do not
 complete character, animation or NLA acceptance for 1.0. Explicit assignment and
@@ -40,6 +40,40 @@ uses only the requested native indices, including when earlier pages are skipped
 An offset equal to the count returns an empty complete page; an offset beyond it
 is invalid. Sampled curves return `NOT_IMPLEMENTED` even when their keyframe
 collection is empty, rather than suggesting their animation was fully inspected.
+
+## Measure values between stored keys
+
+`animation.curve_sample(object_name, data_path, frames, index=0, slot_identifier?)`
+requires Blender-side `INSPECT_SCENE` and the `animation` toolset. It uses the same
+exact active-Action/assigned-slot selector as `curve_inspect`; shared, linked and
+noneditable data remains readable. Supply 1 to 128 explicit finite numbers within
+plus or minus 1,000,000. Booleans and numeric strings are invalid. Request order and
+duplicate frames are retained.
+
+Each `samples` entry reports `requested_frame`, the Float32 `evaluated_frame`
+actually passed to Blender, and the finite `value` returned by native
+`FCurve.evaluate`. Results identify the object, Action, slot, curve, group,
+extrapolation, mute/lock state, `point_count` and `sample_count`. Muted and locked
+curves may be read: these values describe the stored curve independently of
+whether playback uses it. `evaluation_scope=ACTIVE_ACTION_FCURVE`,
+`scene_evaluated=false` and the four `includes_*` flags explicitly exclude NLA
+blending, drivers, constraints and deformation. Frames use Action coordinates;
+there is no scene-time or NLA remapping.
+
+Sampling supports 1 to 1,024 keyframes with finite coordinates and handles,
+strictly increasing stored key times, `CONSTANT`/`LINEAR`/`BEZIER` interpolation,
+and `CONSTANT`/`LINEAR` extrapolation. Empty or sampled curves, modifiers, drivers,
+unsupported interpolation/extrapolation and an unavailable native evaluation API
+return `NOT_IMPLEMENTED` before evaluation. Invalid native output or an evaluation
+failure is an explicit error; a partial sample list is never returned as success.
+No property path is resolved or evaluated as Python.
+
+The tool never advances scene time, evaluates the dependency graph, updates
+handles, writes properties, creates checkpoints or saves. Cancellation/deadline
+checks bound work between native calls; an individual native evaluation remains
+non-preemptible. Use `curve_inspect` to compare stored authoring, then
+`curve_sample` to compare numeric easing or overshoot at chosen frames. Full
+character motion and visual deformation require separate evidence.
 
 ## Create an independent Action
 

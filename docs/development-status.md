@@ -1,7 +1,7 @@
 # Development status
 
 **Unreleased development; 1.0 is NOT_READY.** The published [0.3.0 alpha](releases/0.3.0.md)
-contains 108 tools. The development registry currently contains **263 MCP tools**;
+contains 108 tools. The development registry currently contains **264 MCP tools**;
 its packages retain 0.3.0 metadata until a qualified release is accepted. Always pair the
 add-on and MCP server from one checkout. A matching version string alone does not identify
 an unpublished build.
@@ -47,6 +47,10 @@ Read-only [exact F-curve inspection](animation-curves.md#inspect-one-exact-curve
 adds paged stored handle coordinates/types and extrapolation before authoring,
 including shared/linked Actions. Its bounded pages do not establish character or
 animation acceptance.
+The separate [stored-curve sampler](animation-curves.md#measure-values-between-stored-keys)
+measures native interpolation at explicit bounded frames without advancing scene
+time. It excludes NLA blending, drivers, constraints and deformation; numeric
+curve samples do not establish complete character-motion acceptance.
 The [artist interaction foundation](task-plans.md) adds exact references and reviewed
 transform previews with opt-in protected scope. Undo/redo invalidates runtime handles;
 new checkpoint writes and modifying handler entry check caller lifetime again after

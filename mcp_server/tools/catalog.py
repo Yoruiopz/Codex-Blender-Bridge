@@ -13,6 +13,10 @@ from .animation_curve_inspection import TOOL_DATA as ANIMATION_CURVE_INSPECTION_
 from .animation_curve_inspection import (
     load_definitions as _load_animation_curve_inspection_definitions,
 )
+from .animation_curve_sampling import TOOL_DATA as ANIMATION_CURVE_SAMPLING_TOOL_DATA
+from .animation_curve_sampling import (
+    load_definitions as _load_animation_curve_sampling_definitions,
+)
 from .animation_curves import TOOL_DATA as ANIMATION_CURVE_TOOL_DATA
 from .animation_curves import load_definitions as _load_animation_curve_definitions
 from .animation_lifecycle import DESTRUCTIVE_TOOL_NAMES as ACTION_DESTRUCTIVE_TOOL_NAMES
@@ -127,7 +131,7 @@ def load_asset_delivery_definitions() -> tuple[ToolDefinition, ...]:
     return (*_load_base_asset_delivery_definitions(), *_load_asset_import_definitions())
 
 ANIMATION_TOOL_DATA = (*ANIMATION_TOOL_DATA, *((name, description, True, ("EDIT_ANIMATION",))
-                                           for name, description in ANIMATION_CURVE_TOOL_DATA), *ANIMATION_CURVE_INSPECTION_TOOL_DATA, *ACTION_LIFECYCLE_TOOL_DATA)
+                                           for name, description in ANIMATION_CURVE_TOOL_DATA), *ANIMATION_CURVE_INSPECTION_TOOL_DATA, *ANIMATION_CURVE_SAMPLING_TOOL_DATA, *ACTION_LIFECYCLE_TOOL_DATA)
 ANIMATION_TOOL_NAMES = tuple(item[0] for item in ANIMATION_TOOL_DATA)
 GEOMETRY_TOOL_DATA = (*GEOMETRY_TOOL_DATA, *GEOMETRY_GROUP_TOOL_DATA, *GEOMETRY_ZONE_TOOL_DATA)
 GEOMETRY_TOOL_NAMES = tuple(item[0] for item in GEOMETRY_TOOL_DATA)
@@ -151,7 +155,7 @@ def load_uv_definitions() -> tuple[ToolDefinition, ...]:
 
 
 def load_animation_definitions() -> tuple[ToolDefinition, ...]:
-    return (*_load_base_animation_definitions(), *_load_animation_curve_inspection_definitions(), *_load_animation_curve_definitions(), *_load_action_lifecycle_definitions())
+    return (*_load_base_animation_definitions(), *_load_animation_curve_inspection_definitions(), *_load_animation_curve_sampling_definitions(), *_load_animation_curve_definitions(), *_load_action_lifecycle_definitions())
 
 
 def load_geometry_definitions() -> tuple[ToolDefinition, ...]:

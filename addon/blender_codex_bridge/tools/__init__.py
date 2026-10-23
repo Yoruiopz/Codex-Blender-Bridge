@@ -11,6 +11,7 @@ def register_all(registry: ToolRegistry) -> None:
     from . import (
         animation,
         animation_curve_inspection,
+        animation_curve_sampling,
         animation_curves,
         animation_layers,
         animation_lifecycle,
@@ -77,6 +78,7 @@ def register_all(registry: ToolRegistry) -> None:
     core.register_tools(registry)
     task_plan.register_tools(registry)
     animation_curve_inspection.register_tools(registry)
+    animation_curve_sampling.register_tools(registry)
     animation_curves.register_tools(registry)
     animation_lifecycle.register_tools(registry)
     asset_delivery.register_tools(registry)

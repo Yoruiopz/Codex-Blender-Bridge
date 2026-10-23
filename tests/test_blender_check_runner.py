@@ -27,7 +27,7 @@ def test_all_existing_smokes_are_in_registry(runner):
     }
 
 
-@pytest.mark.parametrize("case", ["core", "undo_lifecycle", "camera_focus"])
+@pytest.mark.parametrize("case", ["core", "undo_lifecycle", "camera_focus", "curve_sampling"])
 def test_factory_fixture_bytecode_prelude_runs_before_script(runner, monkeypatch, tmp_path, case):
     monkeypatch.setattr(runner.sys, "platform", "linux")
 
@@ -47,6 +47,7 @@ def test_factory_fixture_bytecode_prelude_runs_before_script(runner, monkeypatch
     monkeypatch.setattr(runner.subprocess, "run", run)
     assert runner.run_case(Path("blender"), case, tmp_path, 10)["status"] == "passed"
     assert "camera_focus" in runner.OPT_IN_CASES and "camera_focus" not in runner.INTERACTIVE_CASES
+    assert "curve_sampling" in runner.OPT_IN_CASES and "curve_sampling" not in runner.INTERACTIVE_CASES
 
 
 @pytest.mark.parametrize(

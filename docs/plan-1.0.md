@@ -1887,3 +1887,20 @@ This extends an existing schema: the registry remains **263 MCP tools**, compone
 versions remain **0.3.0 alpha**, and all fourteen release requirements remain OPEN.
 Source-matched native and visual evidence is still required; this bounded change
 does not complete cinematic variants, installed A–F or full artist acceptance.
+
+### 2026-10-23 — Bounded stored F-curve value sampling
+
+`animation.curve_sample` complements stored key/handle inspection with native
+values at 1 to 128 explicit Action-coordinate frames. It selects exactly one
+active-Action/assigned-slot curve, reports Float32-effective evaluation times and
+keeps scene time, context and authored animation unchanged. The initial bounded
+contract supports 1 to 1,024 finite, ordered keys with constant, linear or Bezier
+interpolation and constant or linear extrapolation. Modifiers, drivers, sampled
+curves and unsupported native state fail explicitly before evaluation.
+
+This is numeric stored-curve evidence, excluding NLA blending, constraints,
+drivers and deformation. It supports inspect → edit → compare easing without
+claiming complete sampled character motion. The development registry contains
+**264 MCP tools**; component versions remain **0.3.0 alpha**. Exact-source native
+and installed-package qualification remain separate evidence requirements. All
+fourteen release requirements remain OPEN and Windows testing remains paused.

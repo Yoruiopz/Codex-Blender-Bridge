@@ -123,7 +123,7 @@ It is checked against the registry in CI. It does not describe the 108-tool 0.3.
 The local recovery UI also has an add-on-only action, not an extra MCP tool.
 
 <!-- BEGIN GENERATED MCP TOOLS -->
-Current registry: **263 MCP tools**.
+Current registry: **264 MCP tools**.
 
 <details>
 <summary>core — 33 tools</summary>
@@ -167,7 +167,7 @@ Current registry: **263 MCP tools**.
 </details>
 
 <details>
-<summary>animation — 13 tools</summary>
+<summary>animation — 14 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
@@ -179,6 +179,7 @@ Current registry: **263 MCP tools**.
 | `animation.action_update` | Rename/set fake-user retention on one Action; clearing retention additionally needs DELETE_OBJECTS. |
 | `animation.curve_edit` | Edit interpolation/easing/handles on at most 256 existing keyframes of one local unshared active-Action curve; at most 1024 curve points, no insertion or arbitrary RNA. |
 | `animation.curve_inspect` | Inspect an exact active-Action curve's extrapolation and paged keyframes with full Bezier handles; never update or evaluate animation. |
+| `animation.curve_sample` | Sample bounded direct values of one exact active-Action curve; no scene, NLA, driver, constraint or deformation evaluation. |
 | `animation.inspect` | Inspect one object's bounded action, F-curves, keyframes, slots, and drivers. |
 | `animation.keyframe_delete` | Delete a keyframe from an explicit object RNA data path. |
 | `animation.keyframe_insert` | Insert a keyframe on an explicit object RNA data path. |
