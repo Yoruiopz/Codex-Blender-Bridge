@@ -18,6 +18,7 @@ HELPERS = (
     "scripts.blender_rigid_timer_probe_smoke",
     "scripts.blender_rigid_lifecycle_probe_smoke",
     "scripts.blender_scene_job_kernel_smoke",
+    "scripts.blender_rigid_evaluation_jobs_smoke",
     "scripts.blender_simulation_cache_probe_smoke",
     "scripts.native_cache_evidence",
 )
@@ -90,6 +91,7 @@ def fixture_imports(addon_package, monkeypatch):
     ("scripts.blender_rigid_timer_probe_smoke", "checkpointed_cache"),
     ("scripts.blender_rigid_lifecycle_probe_smoke", "make_scene"),
     ("scripts.blender_scene_job_kernel_smoke", "RigidDriver"),
+    ("scripts.blender_rigid_evaluation_jobs_smoke", "Fixture"),
     ("scripts.blender_simulation_cache_probe_smoke", "values"),
 ])
 def test_importing_helper_fixture_does_not_start_experiment(fixture_imports, name, helper):
@@ -101,6 +103,7 @@ def test_importing_helper_fixture_does_not_start_experiment(fixture_imports, nam
 @pytest.mark.parametrize("name,expected", [
     ("blender_rigid_timer_probe_smoke.py", [("heartbeat", {"first_interval": .01}), ("tick", {"first_interval": 1.})]),
     ("blender_scene_job_kernel_smoke.py", [("setup", {"first_interval": 1.})]),
+    ("blender_rigid_evaluation_jobs_smoke.py", [("setup", {"first_interval": 1.})]),
 ])
 def test_explicit_fixture_entrypoint_schedules_only_its_own_timers(fixture_imports, name, expected):
     runpy.run_path(str(ROOT / "scripts" / name), run_name="__main__")

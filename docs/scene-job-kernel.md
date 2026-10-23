@@ -1,10 +1,14 @@
 # Scene job kernel development fixture
 
-Status: internal scheduling integration. Source `ff8b0f0` passed the five-scenario
+Status: scheduling integration used by public bounded rigid evaluation. Source
+`ff8b0f0` passed the original five-scenario
 fixture on both Linux development builds; see the
 [2026-10-23 source/report checkpoint](artist-workflow-checkpoint-20261023.md).
-This adds no public rigid-body job tool and does not close SIM-01,
-JOB-01, whole-project recovery or full 1.0 acceptance.
+That kernel increment added no public starter. Source `aacb39d` adds
+[`rigid_body.evaluate_preview` and `rigid_body.evaluate_job_start`](rigid-body-evaluation-jobs.md),
+with a separate actual public Blender RPC fixture. The internal turn remains
+local-only. Neither increment closes SIM-01, JOB-01, whole-project recovery or
+full 1.0 acceptance.
 
 The runtime now uses `SceneJobs`, preserving the `PaintJobs` image adapter and
 single active-job controller. Its one additional Blender registry entry,
@@ -78,6 +82,15 @@ context capture, domain phases, cleanup or another operation-history attempt.
 Literal completed-push counts advance immediately after native `FINISHED`, before
 fallible undo-window bookkeeping. Failure there retains the completed count but
 does not authenticate a weak-role completion callback.
+
+Drivers may also retain a bounded plain `native_effects` snapshot outside normal
+progress publication. The rigid adapter uses an 8 KiB selected-interval receipt,
+including entered/returned/verified facts even when later admission fails. This
+is not complete native-effect coverage. Snapshot allocation failure makes the
+evidence incomplete and keeps the terminal owner fenced; terminal retries do not
+resume domain work, context factories, providers or native calls. The
+[public adapter contract](rigid-body-evaluation-jobs.md) records its exact
+source/report and limits separately from the original kernel fixture below.
 
 The opt-in interactive `scene_job_kernel` runner case uses a new factory-process
 Scene with the existing three-body, three-frame rigid-body benchmark. A socket

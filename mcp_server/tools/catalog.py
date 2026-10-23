@@ -162,9 +162,9 @@ def load_scene_edit_definitions() -> tuple[ToolDefinition, ...]:
     return (*_load_base_scene_edit_definitions(), *_load_scene_variant_definitions())
 
 CORE_REMOTE_TOOLS: tuple[tuple[str, str, bool, tuple[str, ...]], ...] = (
-    ("jobs.inspect", "Inspect session-local image-job progress, result/error and file/recovery evidence.", False, ("INSPECT_SCENE",)),
-    ("jobs.list", "List bounded session-local image jobs; no durable queue.", False, ("INSPECT_SCENE",)),
-    ("jobs.cancel", "Request safe-point image-job cancellation, not rollback; available while paused.", False, ()),
+    ("jobs.inspect", "Inspect session-local image or bounded rigid-evaluation job progress, result/error and retained effects.", False, ("INSPECT_SCENE",)),
+    ("jobs.list", "List bounded session-local image and rigid-evaluation jobs and retained Scene receipts; no durable queue.", False, ("INSPECT_SCENE",)),
+    ("jobs.cancel", "Request safe-point cancellation of an exact job, not rollback; available while paused.", False, ()),
     ("bridge.status", "Report Blender bridge, project, mode, and permission status.", False, ()),
     ("bridge.task.set", "Show the current high-level Codex task in Blender's UI.", False, ()),
     ("bridge.task.clear", "Clear the current high-level task from Blender's UI.", False, ()),

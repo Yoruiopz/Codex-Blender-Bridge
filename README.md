@@ -123,7 +123,7 @@ It is checked against the registry in CI. It does not describe the 108-tool 0.3.
 The local recovery UI also has an add-on-only action, not an extra MCP tool.
 
 <!-- BEGIN GENERATED MCP TOOLS -->
-Current registry: **260 MCP tools**.
+Current registry: **262 MCP tools**.
 
 <details>
 <summary>core — 33 tools</summary>
@@ -136,9 +136,9 @@ Current registry: **260 MCP tools**.
 | `checkpoint.create` | Create a logical agent undo checkpoint. |
 | `checkpoint.list` | List checkpoint labels, operation history and conservative recovery availability. |
 | `checkpoint.undo_last` | Use Blender global undo only with explicit acknowledgement of user-interleaving risk. |
-| `jobs.cancel` | Request safe-point image-job cancellation, not rollback; available while paused. |
-| `jobs.inspect` | Inspect session-local image-job progress, result/error and file/recovery evidence. |
-| `jobs.list` | List bounded session-local image jobs; no durable queue. |
+| `jobs.cancel` | Request safe-point cancellation of an exact job, not rollback; available while paused. |
+| `jobs.inspect` | Inspect session-local image or bounded rigid-evaluation job progress, result/error and retained effects. |
+| `jobs.list` | List bounded session-local image and rigid-evaluation jobs and retained Scene receipts; no durable queue. |
 | `object.inspect` | Inspect one object without dumping raw vertex coordinates. |
 | `project.info` | Inspect project metadata and render settings. |
 | `project.save` | Project saving is unavailable until native save side effects can be bounded. |
@@ -506,12 +506,14 @@ Current registry: **260 MCP tools**.
 </details>
 
 <details>
-<summary>simulation — 7 tools</summary>
+<summary>simulation — 9 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
 | `rigid_body.cache` | Execute an exact whole-world memory cache proposal; BAKE verifies every matrix/frame and all operations measure context recovery. |
 | `rigid_body.cache_preview` | Preview a bounded memory-only world operation and session/context fingerprint; requires static reviewed Main dependencies including unused IDs. |
+| `rigid_body.evaluate_job_start` | Accept an exact preview for cooperative whole-world evaluation; poll jobs.inspect for completion and retained partial effects. |
+| `rigid_body.evaluate_preview` | Preview a bounded whole-world evaluation job, proposed range and exact session/context fingerprint; no bake claim. |
 | `rigid_body.inspect` | Inspect the exact current Scene's bounded whole-world rigid bodies, constraints and cache ownership. |
 | `simulation.cache` | Bake/free one in-memory cloth cache, at most 32 frames and 2000 vertices; excluded from batches. |
 | `simulation.cloth_add` | Add cloth to a local single-user mesh with a bounded empty modifier stack. |

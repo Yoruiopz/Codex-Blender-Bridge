@@ -1,7 +1,7 @@
 # Development status
 
 **Unreleased development; 1.0 is NOT_READY.** The published [0.3.0 alpha](releases/0.3.0.md)
-contains 108 tools. The development registry currently contains **260 MCP tools**;
+contains 108 tools. The development registry currently contains **262 MCP tools**;
 its packages retain 0.3.0 metadata until a qualified release is accepted. Always pair the
 add-on and MCP server from one checkout. A matching version string alone does not identify
 an unpublished build.
@@ -61,6 +61,15 @@ runtime settings is unavailable. This is a deliberate capability restriction.
 
 Three opt-in [rigid-body inspection/cache tools](rigid-body-lifecycle.md) add a
 bounded whole-world BOX profile; ordinary startup Scene consumers remain unsupported.
+Two additional [rigid evaluation tools](rigid-body-evaluation-jobs.md),
+`rigid_body.evaluate_preview` and `rigid_body.evaluate_job_start`, use the Scene
+reservation/owned-checkpoint controller for bounded whole-world evaluation.
+They retain the requested cache range, report selected native effects and restore
+caller time only on successful owned completion; stopped work retains partial
+effects without automatic cleanup. They do not bake or certify cache coverage.
+The actual public Blender RPC fixture passes on both Linux development builds at
+`aacb39d`; portable official MCP SDK/schema tests are separate evidence. Broader
+solver/scale, native MCP end-to-end, Windows and installed A–F acceptance remain open.
 [Private Mesh/UV and native-role research](rigid-create-new-research.md) is not wired
 to production admission. [Fresh-worker asset serialization research](portable-blend-worker-research.md)
 compares a tiny static asset across processes; it does not enable project saving.

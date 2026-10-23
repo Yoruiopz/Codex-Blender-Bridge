@@ -264,9 +264,10 @@ Only a failure known to occur before a frame was sent carries `executed:false` a
 
 ## Concurrency and ordering
 
-Unreleased `image.paint_job_start` and `image.export_job_start` return bounded accepted job
-descriptors, not completed painting or delivery. Both share the same single-active scheduler.
-Trusted in-process lifetime flags are never accepted from wire fields. CPU work waits until its
+Unreleased image job starters and `rigid_body.evaluate_job_start` return bounded
+accepted job descriptors, not completed domain work. Image painting, delivery,
+snapshot/recovery and rigid evaluation share the same single-active scheduler.
+Trusted in-process lifetime flags are never accepted from wire fields. Job work waits until its
 success response is flushed; failed delivery, observed disconnect or expired handoff cancels it.
 After handoff, a separate 1–300 second job deadline applies while the owning connection remains
 open. Main-thread timer slices service the normal request queue first. `jobs.inspect/list` poll
@@ -274,7 +275,8 @@ revisioned phase-local progress and terminal result/error; `jobs.cancel` request
 cancellation, not rollback. Native publication has its own final checkpoint/history record.
 No events, new envelopes or duplicate terminal responses are introduced. A connection reader
 preserves bounded partial frames across idle timeouts while active requests/jobs remain; inactive
-connections still expire. See [painting jobs](painting-jobs.md) for limits and recovery semantics.
+connections still expire. See [painting jobs](painting-jobs.md) and
+[rigid evaluation jobs](rigid-body-evaluation-jobs.md) for domain limits and recovery semantics.
 
 Export/reimport descriptors additionally expose `duration_ms` and bounded `external_effects`.
 Published or uncertain disk effects survive cancellation/native undo and are retained in
@@ -313,7 +315,8 @@ their existing behavior. This is a structured-entry interlock, not a sandbox
 for native handlers or arbitrary Python, a cancellation/preemption guarantee,
 or a solution to whole-project serialization.
 
-The internal [Scene job kernel](scene-job-kernel.md) retains a reservation across
+The [Scene job kernel](scene-job-kernel.md), used by the public rigid evaluation
+adapter, retains a reservation across
 turns. While it owns the evaluation context, only its exact frozen nonmodifying
 status/control specifications may interleave: `bridge.status`, `jobs.inspect`,
 `jobs.list`, `jobs.cancel`, `toolsets.list`, `toolsets.enable` and `toolsets.disable`.
@@ -324,8 +327,18 @@ providers/handlers with `OPERATION_FAILED` and
 not enter the frozen allowlist. The local-only `jobs._scene_turn` requires a fresh
 scheduler origin; no wire parameter, copied context or recovery flag grants it.
 Cached inspection exposes bounded progress/checkpoint/terminal receipts without
-evaluating the Scene. The integrated kernel adds no public rigid-body job API and
-does not make native evaluation or undo calls preemptible.
+evaluating the Scene. `rigid_body.evaluate_preview` fingerprints the exact whole
+world, proposed range and job limit; `rigid_body.evaluate_job_start` accepts that
+proposal only under renewed Blender authority. The nonbatchable job performs at
+most one checkpoint/domain phase per tick and keeps its owned pending checkpoint
+across turns. Successful completion restores caller time and retains the proposed
+cache range. Stops retain partial effects without automatic restoration or cleanup.
+The bounded `native_effects` receipt describes selected declared intervals; it is
+not complete native-state evidence. Unresolved Scene receipts remain discoverable
+after ordinary 32-entry display-history eviction. This evaluation API performs no
+BAKE/conversion and makes no cache-coverage, durability or native-preemption claim.
+Its typed Blender RPC native fixture and portable official MCP SDK tests are
+separate routes; installed native MCP end-to-end acceptance remains open.
 
 - Multiple requests may be in flight at the transport/client layer.
 - Writes on each socket are serialized so NDJSON frames never interleave.

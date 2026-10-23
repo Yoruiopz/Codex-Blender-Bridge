@@ -1816,3 +1816,39 @@ the exact Blender 5.2 import quarantine, protected visual verification, public
 simulation jobs, Windows/installed A–F acceptance and all fourteen release gates
 remain open. Next work must complete those bounded contracts and native proofs;
 no gate is waived or closed by these selected passes.
+
+### 2026-10-23 — Public bounded rigid evaluation jobs
+
+Frozen production source `aacb39d70b76d0533473f9fb1d154d75ac8ae605` adds
+`rigid_body.evaluate_preview` and `rigid_body.evaluate_job_start` in the disabled-by-default
+simulation toolset, bringing the development registry to **262 MCP tools**.
+Component versions remain **0.3.0 alpha**. The exact preview binds the complete
+bounded static world, proposed cache range and job deadline. The Scene kernel
+owns the pending checkpoint and reservation across yielded native phases;
+successful evaluation retains the requested range and restores caller time.
+Cancellation, permission loss, disconnect or authored drift retains partial
+effects without automatic stopped-owner restoration or cleanup. Selected native
+interval receipts are bounded; they do not prove complete native/cache state.
+This adapter performs evaluation only, without BAKE or cache conversion.
+
+The source passes **496 focused and 6,365 full non-Blender tests**, with three
+Windows-only skips and static checks. Its 329 Python files have fingerprint
+`1f086f3dee9bb5cb16b8bf81aa093372be57cd63cafa6ab7e67f1fb258b95eb5`.
+The source-matched public RPC fixture passes on Linux Blender 4.5.14 LTS and
+5.2.2 LTS: two successful jobs and eight early/late stop cases per build, with
+retained-receipt capacity refusal. Moving and zero-gravity three-body/three-frame
+trajectories match fresh complete matrix references with zero error. The
+independent source/evidence audit passes. A separate same-source composition
+report passes eight existing cases per build, with its independent source,
+marker and artifact audit also passing. Exact report/audit hashes and raw-log paths are retained in the
+[evaluation-job contract](rigid-body-evaluation-jobs.md).
+
+The native fixture uses standard-library TCP and the actual public typed Blender
+RPC. Portable official MCP SDK/schema tests are separate, and neither route
+establishes an installed MCP-to-Blender artist scenario. The earlier `ff8`/260-tool
+results above remain historical source-specific evidence. Hidden cache coverage,
+cooperative bake, setup/broader solver work, the full 16-body/32-frame bounds,
+memory/latency and whole-workflow recovery remain open, alongside safe project
+save, protected visual verification, native MCP end-to-end, Windows and installed
+A–F acceptance. All fourteen release requirements remain OPEN; the full 1.0
+target is unchanged.

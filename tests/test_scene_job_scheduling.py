@@ -21,9 +21,10 @@ def test_context_factory_failure_retires_scene_with_truthful_checkpoint_receipt(
     env.manager.context_factory = unavailable
     assert not env.manager.tick()
     terminal = accepted.job.summary()
-    assert terminal["state"] == "FAILED"  # Separate terminal history capture also failed.
+    assert terminal["state"] == ("CANCELLED" if typed else "FAILED")
     assert terminal["error"]["code"] == ("TIMEOUT" if typed else "OPERATION_FAILED")
-    assert terminal["error"]["context"]["operation_history_unknown"] is True
+    assert not terminal["error"]["context"].get("operation_history_unknown", False)
+    assert env.state.history()[0]["tool"] == "jobs._scene_turn"  # Retained original state needs no context factory.
     assert terminal["checkpoint"]["native_snapshots_completed"] == facts["native_snapshots_completed"]
     assert terminal["checkpoint"]["marker_writes_completed"] == facts["marker_writes_completed"]
     assert terminal["error"]["context"]["possible_mutation"] is after_before

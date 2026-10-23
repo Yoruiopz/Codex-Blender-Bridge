@@ -139,6 +139,7 @@ def rigid_case(addon_package, monkeypatch):
 
     registry = registry_module.ToolRegistry(enabled_toolsets=("simulation",))
     module.register(registry)
+    importlib.import_module(f"{addon_package}.tools.rigid_body_jobs").register(registry)
     context = registry_module.ToolContext(state=state_module.BridgeState(),
         permissions=permissions_module.PermissionManager(permission_source), registry=registry, checkpoints=None,
         request_lifecycle=lifecycle.RequestLifetime.local())

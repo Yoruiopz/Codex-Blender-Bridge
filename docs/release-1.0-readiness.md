@@ -39,11 +39,11 @@ No current release should be described as a complete human-equivalent artist.
 | Procedural modeling | Reviewed GN graphs/zones; [nested instances/copies and modifier constants](geometry-node-groups.md), [identifier-preserving zone conversion/interface edits](geometry-zone-lifecycle.md) | Broader nested/interface lifecycle, disk baking, evaluated diagnostics and broader node types |
 | Rig and skin | Armatures/bones/poses/constraints/binding; numeric weights; [brushes, geometric mirror and barycentric surface transfer](weight-brushes.md), [bounded IK controls and current-frame deformation measurements](rig-ik-deformation.md) | Broader skinning/deformation diagnosis, control-rig authoring and protected character benchmark |
 | Animate | Frames/keyframes, NLA clips/tracks; [Action copies and curve handles/interpolation](animation-curves.md), [numeric controls and non-scripted bone drivers](rig-drivers.md), [bounded Action lifecycle](action-lifecycle.md) and [NLA clips/transitions/reordering](nla-lifecycle.md) | Broader Action/constraint/control-rig combinations, complete mutator safety audit and protected multi-frame revisions |
-| Simulate | Scoped cloth setup/configuration, bounded in-memory bake/free, three reviewed rigid-body cache tools and an internal [Scene job kernel](scene-job-kernel.md) | Public cooperative rigid-body jobs, broader solvers/dependencies, disk caches and production-scale latency/recovery validation |
+| Simulate | Scoped cloth setup/configuration, bounded in-memory bake/free, three rigid-body cache tools and two public [bounded evaluation job tools](rigid-body-evaluation-jobs.md) using the [Scene job kernel](scene-job-kernel.md) | Cooperative bake/coverage proof, broader solvers/dependencies, disk caches, native scale/memory/recovery and installed end-to-end qualification |
 | Stage and light | Collections, world, camera/light settings, layout; [persistent static-scene variants and matched previews](cinematic-variants.md) | Broader composition/navigation and lighting workflows, asset-scale and placement constraints, reviewed artistic acceptance |
 | Render and composite | Render settings/execution, captures; reviewed compositor graph editing | Broader nodes/image assets, passes, color/output workflows, render diagnostics and job/progress management |
 | Deliver production assets | Safe native project saving is [blocked](project-save-safety.md); [cooperative texture export/reimport](texture-delivery.md), fresh texture/project reopen, [packed recovery](image-portability.md), [material-free static/skinned GLB/FBX export and fresh reimport](asset-delivery.md), [approved-source static GLB/material-free FBX import](asset-import.md) | Safe authorized project save and portable `.blend` delivery; broader skinned/animated/material asset import, textured FBX exchange, complete dependency packaging, broader recovery/formats and production validation |
-| Operate interactively | Status/history/permissions/stop/pause; [4K painting jobs](painting-jobs.md); [persistent plans/exact references/guarded transform previews and corrections](task-plans.md) and [static-scene variants](cinematic-variants.md) | Visual references, wider protected authoring/previews, protected save, broad durable variants and general long-operation/bake jobs |
+| Operate interactively | Status/history/permissions/stop/pause; [4K painting jobs](painting-jobs.md), [bounded rigid evaluation jobs](rigid-body-evaluation-jobs.md); [persistent plans/exact references/guarded transform previews and corrections](task-plans.md) and [static-scene variants](cinematic-variants.md) | Visual references, wider protected authoring/previews, protected save, broad durable variants and general long-operation/bake jobs |
 | Work safely and improve results | Checkpoints, batch failure evidence, bounded [structural comparisons](scene-evidence.md) including optional rigs/animation/nested shaders; per-domain ownership guards | Enforced complete preservation, remaining mutator/recovery audits, mixed-editor/pressure evidence, aesthetic iteration and whole-project benchmarks |
 
 Each row needs representative end-to-end tasks with observable success, failure and recovery
@@ -118,9 +118,15 @@ source-specific evidence is recorded in the [dated checkpoint](artist-workflow-c
 Object framing also has independent projection/pixel evidence. Capture while
 protection is armed still refuses. Native context getters can normalize selection
 before a permission denial; [bounded entry diagnostics](entry-context-effects.md)
-report that possibility and do not prevent it. The internal Scene reservation and
-owned-checkpoint kernel has a five-scenario native fixture; public rigid-body jobs
-remain pending. This does not close UX-01 or any full-artist release gate.
+report that possibility and do not prevent it. The Scene reservation and
+owned-checkpoint kernel now supports public bounded rigid evaluation. Its exact
+`aacb39d` public RPC fixture passes on both Linux builds with two successful jobs,
+eight stopped jobs and retained-receipt capacity refusal per build. This evaluates
+three-body/three-frame worlds; it does not establish cache coverage, asynchronous
+baking, the full 16-body/32-frame bounds, production memory/latency or installed
+MCP-to-Blender acceptance. Portable official SDK tests are separate evidence.
+See the [adapter contract and source/report](rigid-body-evaluation-jobs.md).
+This does not close SIM-01, JOB-01, UX-01 or any full-artist release gate.
 
 1. **Safety baseline:** close ownership/context gaps, add regression fixtures, strengthen failure evidence.
 2. **Daily workflows:** finish targeted structured editing gaps and add whole-task acceptance scenarios.

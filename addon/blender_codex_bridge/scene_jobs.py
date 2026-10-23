@@ -18,6 +18,7 @@ from .jobs import PaintJobs
 from .protocol import utc_timestamp
 from .request_lifecycle import RequestLifetime
 from .scene_job_authority import SceneJobAuthority, bind_permissions
+from .scene_job_effects import EffectsStatus, SceneNativeEffects, snapshot_native_effects
 from .scene_job_evidence import phase as phase_report
 from .scene_job_evidence import plain
 from .scene_job_evidence import progress as progress_report
@@ -38,6 +39,7 @@ class _StartAdmission:
     required_permissions: tuple
     kind: str
     label: str
+    native_effects: Any
 
     def __init__(self, context, params, factory):
         authority = SceneJobAuthority.capture(context, params)
@@ -47,11 +49,15 @@ class _StartAdmission:
         driver = factory(context, params)  # Freeze authored inputs before providers.
         authority = authority.include_driver_permissions(tuple(driver.required_permissions))
         kind, label = plain(driver.kind), plain(driver.label)
+        native_effects = getattr(driver, "native_effects", None)
+        if native_effects is not None and type(native_effects) is not SceneNativeEffects:
+            raise refused("SCENE_NATIVE_EFFECTS_INVALID")
         if type(kind) is not str or type(label) is not str or not kind or not label:
             raise refused("SCENE_JOB_EVIDENCE_INVALID")
         for name, value in (("context", context), ("params", params), ("authority", authority), ("allowlist", allowlist),
                             ("state_origin", state_origin), ("markers", markers), ("driver", driver),
-                            ("required_permissions", authority.required_permissions), ("kind", kind), ("label", label)):
+                            ("required_permissions", authority.required_permissions), ("kind", kind), ("label", label),
+                            ("native_effects", native_effects)):
             object.__setattr__(self, name, value)
 
     def __call__(self):
@@ -59,6 +65,7 @@ class _StartAdmission:
         self.check_after_read()
 
     def check_after_read(self):
+        check_final_mutation(self.context, self.context.checkpoint_method)
         self.authority.check()
         state, store, epoch = self.state_origin
         if self.context.state is not state or getattr(state, "_artist_task_plans", None) is not store or store.evidence_epoch != epoch:
@@ -143,6 +150,8 @@ class SceneJob:
     terminal_pending_released: bool = False
     terminal_primary: BridgeError | None = None
     terminal_error_captured: bool = False
+    native_effects: SceneNativeEffects | None = None
+    native_effects_snapshot: dict | None = None
 
     def summary(self):
         return plain({"job_id": self.job_id, "kind": self.kind, "label": self.label, "request_id": self.request_id,
@@ -151,6 +160,8 @@ class SceneJob:
                 "state": self.state, "terminal": self.state in TERMINAL, "revision": self.revision,
                 "phase": self.phase, "progress": dict(self.progress), "checkpoint": dict(self.checkpoint),
                 "effects": dict(self.effects), "result": self.result, "error": self.error,
+                **({"native_effects": (self.native_effects_snapshot if self.native_effects_snapshot is not None
+                                      else snapshot_native_effects(self.native_effects))} if self.native_effects is not None else {}),
                 "execution_started": self.execution_started, "undo_boundary_created": self.boundary_created,
                 "undo_boundary_finalized": self.boundary_finalized, "operation_id": self.operation_id,
                 "created_at": self.created_at, "verification_required": True, "durable": False,
@@ -200,6 +211,7 @@ class SceneJobs(PaintJobs):
             context.request_lifecycle or RequestLifetime.local(), time.monotonic()+time_limit,
             driver, context.checkpoints, admission.kind, admission.label, admission.required_permissions, admission.state_origin,
             admission.authority)
+        job.native_effects = admission.native_effects
         start_origin = object()  # Caller-local; the reservation stores only its ID.
         job.reservation = self.reservations.reserve(job, start_origin, allowlist=admission.allowlist, authority=admission.authority)
         try:
@@ -395,6 +407,13 @@ class SceneJobs(PaintJobs):
             job.terminal_state = state
         if job.finished is None:
             job.finished = time.monotonic()
+        if job.native_effects is not None and job.native_effects_snapshot is None:
+            # Directly retained fixed cells only. No stopped-driver property,
+            # context factory, provider or Blender read is consulted here.
+            if type(job.native_effects) is not SceneNativeEffects or type(job.native_effects.status) is not EffectsStatus:
+                raise refused("SCENE_NATIVE_EFFECTS_INVALID")
+            job.native_effects.status.sealed = True
+            job.native_effects_snapshot = snapshot_native_effects(job.native_effects)
         if not job.terminal_error_captured:
             primary = job.terminal_primary
             if primary is not None:
@@ -420,10 +439,13 @@ class SceneJobs(PaintJobs):
         if not job.terminal_history_attempted:
             job.terminal_history_attempted = True
             try:
-                record = self.context_factory().state.record_operation(tool=TURN_METHOD,
+                record = job.state_origin[0].record_operation(tool=TURN_METHOD,
                     description=f"Scene job {job.job_id} {job.terminal_state.lower()}: {job.label}; verify state",
                     success=job.terminal_state == "SUCCEEDED", duration_ms=(job.finished-job.started)*1000,
-                    error_code=job.error["code"] if job.error else None)
+                    error_code=job.error["code"] if job.error else None,
+                    **({"job_evidence": {"job_id": job.job_id, "state": job.terminal_state,
+                                         "native_effects": job.native_effects_snapshot}}
+                       if job.native_effects_snapshot is not None else {}))
                 job.operation_id = record.operation_id
             except Exception:
                 job.terminal_state = "FAILED"
