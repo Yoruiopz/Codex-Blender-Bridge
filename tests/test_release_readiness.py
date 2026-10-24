@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
+import json
 import os
 import subprocess
 import sys
@@ -112,3 +114,112 @@ def test_mismatched_release_fails_before_build(tmp_path: Path, component: str) -
     with pytest.raises(ValueError, match="versions disagree"):
         load_script("build_release").build(tmp_path, output)
     assert not output.exists()
+
+
+@pytest.fixture
+def probe_package(tmp_path: Path) -> Path:
+    package = tmp_path / "candidate.zip"
+    with ZipFile(package, "w") as archive:
+        archive.writestr("blender_codex_bridge/__init__.py", "")
+        archive.writestr("blender_codex_bridge/constants.py", "ADDON_VERSION = (0, 4, 0)\n")
+    return package
+
+
+def test_installed_probe_pins_exact_inventory_bytes_and_sorted_names(probe_package, tmp_path):
+    module = load_script("package_probe_config")
+    tools = tmp_path / "accepted tools.json"
+    payload = b'[\n  "transform.set",\n  "toolsets.list",\n  "bridge.status"\n]\n'
+    tools.write_bytes(payload)
+    record = module.package_record(probe_package, 3, tools_file=tools)
+    assert record["expected_tool_names"] == ["bridge.status", "toolsets.list", "transform.set"]
+    assert record["expected_tool_names_sha256"] == hashlib.sha256(payload).hexdigest()
+    assert record["expected_tool_names_source"] == str(tools.resolve())
+    assert record["expected_tools"] == 3
+    assert record["require_discovery"] is True
+
+
+def test_installed_probe_count_only_configuration_remains_available(probe_package):
+    record = load_script("package_probe_config").package_record(probe_package, 108, require_discovery=False)
+    assert record["expected_tools"] == 108
+    assert record["require_discovery"] is False
+    assert not any(name.startswith("expected_tool_names") for name in record)
+
+
+@pytest.mark.parametrize("count", [True, False, 1.0, "1", None, 0, -1, 4097])
+def test_installed_probe_rejects_noninteger_and_unbounded_tool_counts(probe_package, count):
+    with pytest.raises(ValueError):
+        load_script("package_probe_config").package_record(probe_package, count)
+
+
+@pytest.mark.parametrize("payload,count", [
+    (b'{}', 1),
+    (b'"toolsets.list"', 1),
+    (b'null', 1),
+    (b'[]', 1),
+    (b'["toolsets.list", "toolsets.list"]', 2),
+    (b'["toolsets.list"]', 2),
+    (b'["toolsets.list", 1]', 2),
+    (b'["toolsets.list", true]', 2),
+    (b'["toolsets.list", null]', 2),
+    (b'["toolsets.list", ["transform.set"]]', 2),
+    (b'[NaN]', 1),
+    (b'[Infinity]', 1),
+    (b'[-Infinity]', 1),
+    (b'\xff', 1),
+    (b'not JSON', 1),
+])
+def test_installed_probe_rejects_invalid_inventory_documents(probe_package, tmp_path, payload, count):
+    tools = tmp_path / "tools.json"
+    tools.write_bytes(payload)
+    with pytest.raises(ValueError):
+        load_script("package_probe_config").package_record(probe_package, count, tools_file=tools)
+
+
+@pytest.mark.parametrize("name", [
+    "", "toolsets", "Toolsets.list", "toolsets.List", "toolsets.list\n", " toolsets.list",
+    "toolsets.list ", ".toolsets.list", "toolsets..list", "toolsets/list", "toolsets.list-name",
+    "toolsets.1list", "toolsets.líst", "toolsets.\u0000list", "a." + "v" * 127,
+])
+def test_installed_probe_rejects_invalid_public_method_names(probe_package, tmp_path, name):
+    tools = tmp_path / "tools.json"
+    tools.write_text(json.dumps([name]), encoding="utf-8")
+    with pytest.raises(ValueError):
+        load_script("package_probe_config").package_record(probe_package, 1, tools_file=tools)
+
+
+def test_installed_probe_inventory_byte_limit_is_inclusive(probe_package, tmp_path):
+    module = load_script("package_probe_config")
+    tools = tmp_path / "tools.json"
+    payload = b'["toolsets.list"]'
+    boundary = payload + b' ' * (512 * 1024 - len(payload))
+    tools.write_bytes(boundary)
+    assert module.package_record(probe_package, 1, tools_file=tools)["expected_tool_names_sha256"] == hashlib.sha256(boundary).hexdigest()
+    tools.write_bytes(boundary + b' ')
+    with pytest.raises(ValueError):
+        module.package_record(probe_package, 1, tools_file=tools)
+
+
+def test_installed_probe_accepts_maximum_method_name_length(probe_package, tmp_path):
+    tools = tmp_path / "tools.json"
+    name = "a." + "v" * 126
+    tools.write_text(json.dumps([name]), encoding="utf-8")
+    record = load_script("package_probe_config").package_record(probe_package, 1, tools_file=tools)
+    assert record["expected_tool_names"] == [name]
+
+
+def test_installed_probe_cli_pins_candidate_inventory_only(probe_package, tmp_path, monkeypatch):
+    tools = tmp_path / "tools.json"
+    tools.write_bytes(b'["toolsets.list"]\n')
+    output = tmp_path / "probe.json"
+    monkeypatch.setattr(sys, "argv", [
+        "package_probe_config.py", "--candidate", str(probe_package), "--candidate-tools", "1",
+        "--candidate-tools-file", str(tools), "--previous", str(probe_package), "--previous-tools", "108",
+        "--allow-previous-undiscoverable", "--output", str(output),
+    ])
+    load_script("package_probe_config").main()
+    config = json.loads(output.read_text(encoding="utf-8"))
+    assert config["candidate"]["expected_tool_names"] == ["toolsets.list"]
+    assert config["candidate"]["expected_tool_names_sha256"] == hashlib.sha256(tools.read_bytes()).hexdigest()
+    assert config["previous"]["expected_tools"] == 108
+    assert config["previous"]["require_discovery"] is False
+    assert not any(name.startswith("expected_tool_names") for name in config["previous"])

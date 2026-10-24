@@ -11,6 +11,7 @@ import hashlib
 import importlib
 import json
 import os
+import re
 import shutil
 import socket
 import stat
@@ -24,6 +25,67 @@ import addon_utils  # type: ignore
 import bpy  # type: ignore
 
 MODULE = "blender_codex_bridge"
+TOOL_NAME = r"[a-z][a-z0-9_]*(?:\.[a-z_][a-z0-9_]*)+"
+
+
+def _valid_tool_names(names: object, count: int) -> bool:
+    return (type(names) is list and len(names) == count
+            and all(type(name) is str and len(name) <= 128 and re.fullmatch(TOOL_NAME, name) is not None for name in names)
+            and len(set(names)) == len(names))
+
+
+def _expected_tool_names(record: dict) -> list[str] | None:
+    count = record["expected_tools"]
+    assert type(count) is int and 1 <= count <= 4096, "Invalid expected tool count"
+    fields = {"expected_tool_names", "expected_tool_names_sha256", "expected_tool_names_source"}
+    present = fields.intersection(record)
+    if not present:
+        return None
+    assert present == fields, "Incomplete expected tool-name pins"
+    names = record["expected_tool_names"]
+    assert _valid_tool_names(names, count) and names == sorted(names), "Invalid expected tool names"
+    source = record["expected_tool_names_source"]
+    assert type(source) is str and Path(source).is_absolute(), "Invalid expected tool-name source"
+    digest = record["expected_tool_names_sha256"]
+    assert type(digest) is str and re.fullmatch(r"[a-f0-9]{64}", digest), "Invalid expected tool-name hash"
+    with Path(source).open("rb") as stream:
+        payload = stream.read(512 * 1024 + 1)
+    assert len(payload) <= 512 * 1024 and hashlib.sha256(payload).hexdigest() == digest, "Expected tool-name file changed"
+    original = json.loads(payload)
+    assert _valid_tool_names(original, count) and sorted(original) == names, "Pinned tool-name source disagrees with configuration"
+    return names
+
+
+def _public_tool_surface(registry, record: dict) -> dict:
+    expected = _expected_tool_names(record)
+    listed = registry.list_tools()
+    assert type(listed) in (list, tuple) and 1 <= len(listed) <= 4096, "Invalid registry name inventory"
+    assert _valid_tool_names(list(listed), len(listed)), "Invalid or duplicate registry names"
+    description = registry.describe()
+    assert type(description) is dict and type(description.get("tools")) is list, "Invalid registry descriptor inventory"
+    descriptors = description["tools"]
+    assert len(descriptors) == len(listed), "Registry descriptors omit or add methods"
+    public, hidden, described = [], [], []
+    for item in descriptors:
+        assert type(item) is dict and type(item.get("remote")) is bool, "Registry remote metadata must be an explicit bool"
+        name = item.get("name")
+        assert _valid_tool_names([name], 1), "Invalid registry descriptor name"
+        described.append(name)
+        if item["remote"]:
+            public.append(name)
+        else:
+            hidden.append({"name": name, "remote": False})
+    assert len(set(described)) == len(described) and set(described) == set(listed), "Duplicate or inconsistent registry descriptors"
+    public.sort()
+    hidden.sort(key=lambda item: item["name"])
+    assert len(public) == record["expected_tools"], {"actual_public_count": len(public), "expected": record["expected_tools"]}
+    if expected is not None:
+        assert public == expected, {"missing": sorted(set(expected) - set(public)), "extra": sorted(set(public) - set(expected))}
+    return {"documented_tool_count": len(public), "public_tool_names": public,
+            "public_tool_names_sha256": hashlib.sha256(json.dumps(public, separators=(",", ":")).encode()).hexdigest(),
+            "hidden_tool_count": len(hidden), "hidden_tool_metadata": hidden,
+            "exact_expected_tool_names_verified": expected is not None,
+            "expected_tool_names_source_sha256": record.get("expected_tool_names_sha256")}
 
 
 def _archive(record: dict, owned: Path, label: str) -> tuple[Path, dict[str, str]]:
@@ -149,8 +211,7 @@ def _exercise(label: str, archive: Path, members: dict, record: dict, scripts: P
     else:
         raise AssertionError("Installed default profile granted deletion")
     runtime.dispatch("toolsets.disable", {"name": "objects"})
-    tool_count = len(runtime.registry.list_tools()) - 1  # internal toolsets.list is not an MCP tool
-    assert tool_count == record["expected_tools"], tool_count
+    public_surface = _public_tool_surface(runtime.registry, record)
     first = _network(runtime, label + "-connect")
     second = _network(runtime, label + "-reconnect")
     allowed = {permission.value: True for permission in permissions_module.Permission}
@@ -163,7 +224,7 @@ def _exercise(label: str, archive: Path, members: dict, record: dict, scripts: P
     assert tuple(bpy.data.objects[name].location) == (1., 2., 3.)
     _installed_bytes(installed, members)
     return {"label": label, "archive_sha256": record["sha256"], "version": status["addon_version"],
-            "documented_tool_count": tool_count, "installed_members_verified": len(members),
+            **public_surface, "installed_members_verified": len(members),
             "module_path": str(Path(module.__file__).resolve()), "default_deletion_denied": True,
             "default_permissions": default_permissions, "discovered_in_addon_list": bool(discovered),
             "clean_directory_replacement": replaced,
@@ -178,6 +239,8 @@ def main() -> None:
     assert len(config_bytes) <= 512 * 1024
     config = json.loads(config_bytes)
     assert config["schema_version"] == 1 and set(config) == {"schema_version", "candidate", "previous"}
+    for record in (config["candidate"], config["previous"]):
+        _expected_tool_names(record)
     scripts = Path(os.environ["BLENDER_USER_SCRIPTS"]).resolve()
     assert scripts.is_dir() and scripts != Path.home()
     # Keep the caller's user-script folder untouched; the runner supplies this
