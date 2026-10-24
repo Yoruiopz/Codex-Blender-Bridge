@@ -1,0 +1,46 @@
+{
+  "publication-download-verification.json": {
+    "sha256": "20ad4e62cab876f8c543d8de6e06d58ea22d7b7dd25279846d210ea768f6bc1a",
+    "bytes": 3029
+  },
+  "published-release-api.json": {
+    "sha256": "062b574d8cc91d3a6ebfd14553d9000faf2f74573605ebe5a91602a388c51e11",
+    "bytes": 17758
+  },
+  "publisher-api-and-logs.json": {
+    "sha256": "402c30d214ec3728e61630981a486b64331bce347483504fee6b41a0090c9949",
+    "bytes": 45494
+  },
+  "publisher-review.md": {
+    "sha256": "5edc54df6b5751a7d37fcd982483c4e8113cae17f26148e772059143c5f7fb2f",
+    "bytes": 3805
+  },
+  "publisher-preparation-receipt.json": {
+    "sha256": "5f9c28a670d5a04f1292aa76772a4c23ec4219e38b96caa56bd76aeb20c46873",
+    "bytes": 1694
+  },
+  "publisher-inline-source.py": {
+    "sha256": "76bffcb5f5523c2818185e65fadff91703174396efc39a0dee3bc56c96dd4804",
+    "bytes": 14397
+  },
+  "publisher-commit-identity.json": {
+    "sha256": "12175ce5b9c4d917eb435476b445b725268422f120cb47c82daab6c57050387d",
+    "bytes": 200
+  },
+  "archive-verification.json": {
+    "sha256": "99597ce321708165db496d893907871840c72977d1953475e025119d798e40f2",
+    "bytes": 473
+  },
+  "bundle-verification.json": {
+    "sha256": "43bbb640a3935474a8905b359f8ff04cae52d663eaff072cd84c41081916d6af",
+    "bytes": 362
+  },
+  "pr-8-after-release.json": {
+    "sha256": "2b3f5958b543e7436986a33286c1fbc57f4d1a9b0f768d76ce470c5b83fbe6d5",
+    "bytes": 4808
+  },
+  "primary-user-edits-preserved.json": {
+    "sha256": "00954099724da06c9edb3106937055514e08d3bc1a2b2851b07a9e03c262a0b4",
+    "bytes": 381
+  }
+}

@@ -1,0 +1,47 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "Action completed."
+    }
+  ],
+  "structuredContent": {
+    "url": "https://github.com/Yoruiopz/Codex-Blender-Bridge/pull/8",
+    "number": 8,
+    "state": "open",
+    "merged": false,
+    "mergeable": true,
+    "draft": true,
+    "body": "Published [0.4.0 alpha](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.4.0) from the exact commit below. All six downloaded assets match their accepted hashes; the development evidence archive is retained with the release. This PR remains draft and unmerged.\n\nPrepare matching **0.4.0 alpha** packages with tighter bounded weight/export\nrecovery and a corrected installed-package probe. Weight writes/restoration now\ncompare independently predicted membership, geometry and context state. Export\nretains its exact request/lifecycle, revalidates source and staging scope before\nnative writes, and stops cleanup after observed authority or scope loss. Unknown\npartial effects remain explicit; native exporters remain synchronous.\n\nThe installation probe now derives public names from strict `remote` metadata,\nincludes `toolsets.list`, excludes internal methods, and optionally pins the exact\naccepted MCP name inventory. It checks names as well as counts instead of\nsubtracting a presumed internal tool. The private UV planner and fixture-only\nboundary probe remain prerequisites, without a public UV guard or recovery claim.\n\nFinal source: `4470d88bb4d8fb1ed75e86090dd6886fb55eb589`, tree\n`0353d119fd44ac918dc66d871ef2279576f9312d`. Exact CI artifacts contain matching\n0.4.0 add-on, wheel, plugin and checksums; the registry remains at 266 MCP tools.\n\nValidation:\n\n- [CI run 40058140088](https://github.com/Yoruiopz/Codex-Blender-Bridge/actions/runs/40058140088): all seven jobs passed. Each Python 3.10\u20133.12 \u00d7 MCP SDK 2.0.0/2.2.0 cell passed **7,582 tests**, with the same three Windows-only skips. Ruff, mypy, inventory, whitespace and source compilation passed.\n- Linux Blender 4.5.14/5.2.2: six selected UV-research, weight-brush and limited asset-delivery results passed. These are selected cases, not the complete native inventory or visual acceptance.\n- Both Linux builds passed the installed-add-on probe: exact package/import origins and public names, default denial, loopback reconnect, and clean-directory published-0.3.0 upgrade/rollback. Each build used one process; preferences migration/UI uninstall and full installed A\u2013F remain unqualified.\n- A **new source-matched 0.4.0 wheel installation and real stdio session** passed under SDK 2.2.0: 266 exact names, core-only defaults and 195 malformed-input checks; installed MCP bytes match the accepted wheel and Git, with no checkout imports or old-session reuse.\n\nAll **fourteen stable release requirements remain OPEN**. Windows-specific\ncompatibility/testing is deferred until implementation is complete and remains\nunverified. Safe project saving, protected capture, shader REMOVE, the exact-build\n5.2.2 typed-import quarantine, complete native/visual/A\u2013F acceptance and broader\nproduction ownership/recovery remain open. The held animation-provider\ninvestigation is not resumed. This is bounded alpha pre-release evidence, not\nstable 1.0 acceptance.\n\nCurrent UV ownership/recovery guard integration and expanded 4K surface/sculpt work\nbelong to **0.5 development** and are absent from this 0.4.0 commit/packages. The\n[29-item implementation checklist](https://github.com/Yoruiopz/Codex-Blender-Bridge/blob/4470d88bb4d8fb1ed75e86090dd6886fb55eb589/docs/implementation-completion.md)\npreserves the full agreed artist-workflow scope.\n",
+    "title": "Bounded artist workflows and recovery guards for 0.4.0 alpha",
+    "base": "main",
+    "base_sha": "1e3c9898ca1f4cf0d91858a383a0b93bf6438db5",
+    "head": "codex/full-workflow-fourth",
+    "head_sha": "4470d88bb4d8fb1ed75e86090dd6886fb55eb589",
+    "head_repo_id": 1327089885,
+    "head_repo_full_name": "Yoruiopz/Codex-Blender-Bridge",
+    "merge_commit_sha": "9f00d9828d7e84ed3cbbd68568e2186b8e6b3544",
+    "user": {
+      "login": "Yoruiopz",
+      "name": "Yoruiopz",
+      "email": null,
+      "avatar_url": "https://avatars.githubusercontent.com/u/36910989?v=4",
+      "id": 36910989
+    },
+    "requested_reviewers": null,
+    "requested_team_reviewers": null,
+    "diff": null,
+    "comments": null,
+    "created_at": "2026-10-22T18:54:21Z",
+    "updated_at": "2026-10-24T04:32:52Z",
+    "closed_at": null,
+    "merged_at": null,
+    "commits": 36,
+    "changed_files": 257,
+    "additions": 60166,
+    "deletions": 1330,
+    "display_url": "https://github.com/Yoruiopz/Codex-Blender-Bridge/pull/8",
+    "display_title": "Bounded artist workflows and recovery guards for 0.4.0 alpha"
+  },
+  "isError": false
+}

@@ -1,0 +1,44 @@
+{
+  "status": "SOURCE_CLEAR_PREPARED_NOT_EXECUTED",
+  "files": {
+    "publish-reviewed-alpha.yml": {
+      "bytes": 18141,
+      "sha256": "e2b03aac49b0e3d5f0f3f4bb8441df33be07e851a21c5009d1926afb0fe65992"
+    },
+    "publisher-review.md": {
+      "bytes": 3805,
+      "sha256": "5edc54df6b5751a7d37fcd982483c4e8113cae17f26148e772059143c5f7fb2f"
+    }
+  },
+  "authority": {
+    "repository": "Yoruiopz/Codex-Blender-Bridge",
+    "support_branch": "codex/publish-reviewed-0.4.0",
+    "source_commit": "4470d88bb4d8fb1ed75e86090dd6886fb55eb589",
+    "source_tree": "0353d119fd44ac918dc66d871ef2279576f9312d",
+    "accepted_ci_run": 40058140088,
+    "accepted_ci_artifact": 12546620664,
+    "draft_release_id": 422510687,
+    "tag": "v0.4.0"
+  },
+  "checks": {
+    "inline_python_ast": "passed",
+    "six_actual_local_asset_size_and_sha256_checks": "passed",
+    "actual_notes_size_and_sha256": "passed",
+    "whitespace": "passed; git diff --no-index --check emitted no findings",
+    "yaml": "fixed structure manually reviewed; PyYAML unavailable in existing interpreter",
+    "independent_source_review": {
+      "reviewer": "/root/artist_target_mcp_docs/installed_config_tests",
+      "reviewed_workflow_sha256": "e2b03aac49b0e3d5f0f3f4bb8441df33be07e851a21c5009d1926afb0fe65992",
+      "status": "SOURCE_CLEAR",
+      "material_blockers": []
+    }
+  },
+  "execution_owner": "/root",
+  "workflow_executed": false,
+  "network_or_api_used_during_preparation": false,
+  "candidate_code_executed": false,
+  "evidence_archive_executed_or_unpacked": false,
+  "main_merged": false,
+  "root_must_review_before_support_branch_push": true,
+  "publication_acceptance_not_claimed_by_this_receipt": true
+}

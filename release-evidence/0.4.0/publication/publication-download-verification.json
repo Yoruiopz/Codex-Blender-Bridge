@@ -1,0 +1,68 @@
+{
+  "status": "PUBLISHED_AND_DOWNLOADED_BYTES_VERIFIED",
+  "verified_utc": "2026-10-24T04:31:30Z",
+  "release_id": 422510687,
+  "url": "https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.4.0",
+  "tag": "v0.4.0",
+  "published_at": "2026-10-24T04:30:48Z",
+  "source_commit": "4470d88bb4d8fb1ed75e86090dd6886fb55eb589",
+  "prerelease": true,
+  "GitHub_immutable_flag": false,
+  "assets": [
+    {
+      "name": "blender-codex-bridge-0.4.0-development-evidence.tar.gz",
+      "id": 671258957,
+      "bytes": 22157039,
+      "sha256": "f6bc5dce6ecb2d495e7390be4cfcf81127c9d8a597eb63f578d010f8e594fc1a",
+      "API_digest_and_independent_download_match": true,
+      "browser_download_url": "https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/download/v0.4.0/blender-codex-bridge-0.4.0-development-evidence.tar.gz"
+    },
+    {
+      "name": "blender-codex-bridge-plugin-0.4.0.zip",
+      "id": 671258925,
+      "bytes": 6640,
+      "sha256": "61a16a96aa6fa2e20ef7d6c4e3ca25527eb96e871c78fd24d20be7664242bc84",
+      "API_digest_and_independent_download_match": true,
+      "browser_download_url": "https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/download/v0.4.0/blender-codex-bridge-plugin-0.4.0.zip"
+    },
+    {
+      "name": "blender_codex_bridge-0.4.0-py3-none-any.whl",
+      "id": 671258909,
+      "bytes": 161122,
+      "sha256": "591d088cfe842174c3e13faf2c56a1fa60ae311a1d5a63971d545e5c7c9f09d0",
+      "API_digest_and_independent_download_match": true,
+      "browser_download_url": "https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/download/v0.4.0/blender_codex_bridge-0.4.0-py3-none-any.whl"
+    },
+    {
+      "name": "blender_codex_bridge-0.4.0.zip",
+      "id": 671258891,
+      "bytes": 732258,
+      "sha256": "1d212a02a5a1a4a30bab62c8043d3ae63e7a626687507a5262c2fec29c9b357b",
+      "API_digest_and_independent_download_match": true,
+      "browser_download_url": "https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/download/v0.4.0/blender_codex_bridge-0.4.0.zip"
+    },
+    {
+      "name": "EVIDENCE-SHA256SUMS.txt",
+      "id": 671258992,
+      "bytes": 121,
+      "sha256": "c5dbdaa22890f6ce0a94a1a8a8964e466fdc183bae53cfb20ca1bd0f0754cecd",
+      "API_digest_and_independent_download_match": true,
+      "browser_download_url": "https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/download/v0.4.0/EVIDENCE-SHA256SUMS.txt"
+    },
+    {
+      "name": "SHA256SUMS.txt",
+      "id": 671258943,
+      "bytes": 311,
+      "sha256": "69c86fd4881099147cfa7bee3b7dcb873498e8861e48ba241801bc105ba99c48",
+      "API_digest_and_independent_download_match": true,
+      "browser_download_url": "https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/download/v0.4.0/SHA256SUMS.txt"
+    }
+  ],
+  "main_unchanged": true,
+  "previous_v0_3_0_present": true,
+  "Windows": "DEFERRED_UNVERIFIED",
+  "all_14_stable_gates": "OPEN",
+  "stable_1_0_accepted": false,
+  "publisher_workflow_run": 40062608895,
+  "publisher_support_commit": "2ef30b4ee3fcda5d960ae9c9240cd73b736cdf58"
+}

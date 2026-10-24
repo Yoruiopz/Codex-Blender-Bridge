@@ -1,0 +1,12 @@
+{
+  "status": "PASSED",
+  "archive": "/tmp/blender-codex-0.4-publication-20261024/blender-codex-bridge-0.4.0-development-evidence.tar.gz",
+  "sha256": "f6bc5dce6ecb2d495e7390be4cfcf81127c9d8a597eb63f578d010f8e594fc1a",
+  "bytes": 22157039,
+  "regular_members": 2016,
+  "all_archive_members_bytes_verified": true,
+  "all_source_evidence_unchanged": true,
+  "symlinks_metadata_only": 265,
+  "special_nodes_omitted": 0,
+  "contains_self_contained_verified_Git_bundle": true
+}

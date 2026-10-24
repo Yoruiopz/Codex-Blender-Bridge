@@ -1,0 +1,9 @@
+{
+  "status": "PASS",
+  "files": {
+    "AGENTS.md": "1390f648d92c5f0f9256bea75793c9544484b2c7b374ff93a68c522f1effce93",
+    "README.md": "9399c0f66682471b7933b8f3a5f73161b2174330a110729469c880604699f500",
+    "plugins/blender-codex-bridge/skills/blender-studio/SKILL.md": "184966e8f3059a07923b26ebaabf1f2dfa76e37613cfd50b848a7c39e1218bcf"
+  },
+  "no_primary_checkout_edit": true
+}

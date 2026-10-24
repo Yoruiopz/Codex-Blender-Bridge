@@ -1,0 +1,10 @@
+{
+  "self_contained": true,
+  "empty_restore_and_strict_fsck": true,
+  "refs": {
+    "refs/heads/accepted-public": "4470d88bb4d8fb1ed75e86090dd6886fb55eb589",
+    "refs/heads/portable-local": "d07ab89ac42c7025d4fd21ae3e164bdfa6f4db19",
+    "refs/heads/initial-local": "619d0ae51a601c74f10d5dd2b41b2aa3c4bea0e4"
+  },
+  "primary_repository_refs_modified": false
+}
