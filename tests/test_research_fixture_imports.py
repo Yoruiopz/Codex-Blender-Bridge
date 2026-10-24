@@ -30,6 +30,7 @@ HELPERS = (
     "scripts.blender_artist_sidebar_smoke",
     "scripts.blender_artist_quaternion_storage_smoke",
     "scripts.blender_artist_quaternion_smoke",
+    "scripts.blender_uv_edit_storage_smoke",
     "scripts.native_character_revision_evidence",
     "scripts.native_character_evidence",
     "scripts.native_cache_evidence",
@@ -114,6 +115,7 @@ def fixture_imports(addon_package, monkeypatch):
     ("scripts.blender_artist_sidebar_smoke", "main"),
     ("scripts.blender_artist_quaternion_storage_smoke", "main"),
     ("scripts.blender_artist_quaternion_smoke", "main"),
+    ("scripts.blender_uv_edit_storage_smoke", "main"),
     ("scripts.native_character_revision_evidence", "lbs_vertices"),
 ])
 def test_importing_helper_fixture_does_not_start_experiment(fixture_imports, name, helper):
@@ -132,8 +134,9 @@ def test_explicit_fixture_entrypoint_schedules_only_its_own_timers(fixture_impor
     assert fixture_imports.timers == expected and fixture_imports.events == []
 
 
-@pytest.mark.parametrize("script", ["blender_artist_quaternion_storage_smoke.py", "blender_artist_quaternion_smoke.py"])
-def test_quaternion_unowned_entry_never_acquires_process_exit(fixture_imports, monkeypatch, script):
+@pytest.mark.parametrize("script", ["blender_artist_quaternion_storage_smoke.py", "blender_artist_quaternion_smoke.py",
+                                  "blender_uv_edit_storage_smoke.py"])
+def test_owned_background_entry_never_acquires_process_exit(fixture_imports, monkeypatch, script):
     def forbidden_exit(_status):
         pytest.fail("An unowned invocation must not terminate its Blender process")
 
@@ -141,6 +144,139 @@ def test_quaternion_unowned_entry_never_acquires_process_exit(fixture_imports, m
     with pytest.raises(AssertionError, match="Use the isolated background runner"):
         runpy.run_path(str(ROOT / "scripts" / script), run_name="__main__")
     assert fixture_imports.timers == [] and fixture_imports.events == []
+
+
+@pytest.mark.parametrize("global_selection,empty_secondary_pin", [(False, False), (True, False), (True, True)])
+def test_uv_object_reader_copies_each_property_before_native_handle_invalidation(
+    fixture_imports, monkeypatch, global_selection, empty_secondary_pin,
+):
+    script = importlib.import_module("scripts.blender_uv_edit_storage_smoke")
+    events = []
+    mesh = NS(generation=0)
+
+    def descriptor(kind, *, length=0, fixed=None):
+        return NS(type=kind, array_length=length, is_runtime=False, is_registered=False,
+                  fixed_type=NS(identifier=fixed))
+
+    class Float2AttributeValue:
+        bl_rna = NS(properties={"vector": descriptor("FLOAT", length=2)})
+
+        def __init__(self, generation, field, index, value):
+            self.generation, self.field, self.index, self.raw = generation, field, index, value
+
+        @property
+        def vector(self):
+            assert self.generation == mesh.generation, "UV collection survived a later allocating getter"
+            events.append(("copy", self.field, self.index))
+            return self.raw
+
+    class BoolAttributeValue(Float2AttributeValue):
+        bl_rna = NS(properties={"value": descriptor("BOOLEAN")})
+
+        @property
+        def value(self):
+            assert self.generation == mesh.generation, "Boolean collection survived a later allocating getter"
+            events.append(("copy", self.field, self.index))
+            return self.raw
+
+    buffers = {name: {"uv": [(index * .25, -0. if index == 0 else .5) for index in range(8)],
+                      "pin": [index % 3 == 0 for index in range(8)],
+                      "vertex_selection": [index % 2 == 0 for index in range(8)],
+                      "edge_selection": [index % 2 == 1 for index in range(8)]} for name in script.MAPS}
+    if empty_secondary_pin:
+        buffers[script.MAPS[1]]["pin"] = []
+
+    class MeshUVLoopLayer:
+        bl_rna = NS(properties={field: descriptor("COLLECTION", fixed="Float2AttributeValue" if field == "uv" else "BoolAttributeValue")
+                                for field in ("uv", "pin", "vertex_selection", "edge_selection")})
+
+        def __init__(self, name):
+            self.name, self.generation = name, mesh.generation
+
+        def __getattr__(self, field):
+            assert self.generation == mesh.generation, "UV-layer handle survived a materializing getter"
+            assert field in buffers[self.name]
+            events.append(("getter", self.name, field))
+            mesh.generation += 1
+            kind = Float2AttributeValue if field == "uv" else BoolAttributeValue
+            return [kind(mesh.generation, field, index, value) for index, value in enumerate(buffers[self.name][field])]
+
+    def fresh_layer(name):
+        events.append(("fresh_layer", name))
+        return MeshUVLoopLayer(name)
+
+    monkeypatch.setattr(script.bpy, "types", NS(MeshUVLoopLayer=MeshUVLoopLayer,
+                        Float2AttributeValue=Float2AttributeValue, BoolAttributeValue=BoolAttributeValue), raising=False)
+    mesh.uv_layers = NS(get=fresh_layer)
+    mesh.loops = [NS(vertex_index=index % 6, edge_index=index % 7) for index in range(8)]
+    mesh.polygons = [NS(index=0, loop_indices=range(4)), NS(index=1, loop_indices=range(4, 8))]
+    proof = object.__new__(script.Proof)
+    proof.work, proof.global_selection = NS(data=mesh), global_selection
+    proof.data = {"object_property_copies": []}
+    proof.access, proof.flush = lambda _label, callback: callback(), lambda: None
+    result = proof.read_maps("mock_object", edit=False)
+    fields = ("uv", "pin") if global_selection else ("uv", "pin", "vertex_selection", "edge_selection")
+    assert [event for event in events if event[0] == "getter"] == [
+        ("getter", name, field) for name in script.MAPS for field in fields]
+    assert len([event for event in events if event[0] == "fresh_layer"]) == len(fields) * 2
+    cursor = 0
+    for name in script.MAPS:
+        for field in fields:
+            assert events[cursor:cursor + 2] == [("fresh_layer", name), ("getter", name, field)]
+            cursor += 2
+            for index in range(len(buffers[name][field])):
+                assert events[cursor] == ("copy", field, index)
+                cursor += 1
+    assert cursor == len(events)
+    for name in script.MAPS:
+        assert len(result[name]) == 8
+        for index, corner in enumerate(result[name]):
+            assert corner["uv"] == list(buffers[name]["uv"][index])
+            assert corner["float32_le"] == script.pair_bits(buffers[name]["uv"][index])
+            assert corner["pin_uv"] is (buffers[name]["pin"][index] if buffers[name]["pin"] else None)
+            assert ("select" in corner) is (not global_selection)
+    assert result[script.MAPS[0]][0]["float32_le"][1] == "00000080"
+    copied = proof.data["object_property_copies"]
+    assert len(copied) == len(fields) * 2
+    assert all(row["raw_length"] == len(row["plain_values"]) and row["mesh_loop_count"] == 8 for row in copied)
+    if empty_secondary_pin:
+        assert next(row for row in copied if row["map"] == script.MAPS[1] and row["property"] == "pin")["plain_values"] == []
+
+
+@pytest.mark.parametrize("malformed", ["runtime_descriptor", "wrong_pin_item_type"])
+def test_uv_object_reader_refuses_malformed_descriptors_or_item_types_before_value_read(
+    fixture_imports, monkeypatch, malformed,
+):
+    script = importlib.import_module("scripts.blender_uv_edit_storage_smoke")
+    reads = []
+    boolean = NS(type="BOOLEAN", array_length=0, is_runtime=False, is_registered=False)
+
+    class BoolAttributeValue:
+        bl_rna = NS(properties={"value": boolean})
+
+        @property
+        def value(self):
+            reads.append("value")
+            pytest.fail("Malformed native data must be refused before reading a value")
+
+    class Float2AttributeValue:
+        pass
+
+    class MeshUVLoopLayer:
+        bl_rna = NS(properties={"pin": NS(type="COLLECTION", is_runtime=malformed == "runtime_descriptor",
+            is_registered=False, fixed_type=NS(identifier="BoolAttributeValue"))})
+
+        @property
+        def pin(self):
+            reads.append("pin_getter")
+            return [Float2AttributeValue()]
+
+    monkeypatch.setattr(script.bpy, "types", NS(MeshUVLoopLayer=MeshUVLoopLayer,
+                        BoolAttributeValue=BoolAttributeValue), raising=False)
+    mesh = NS(uv_layers=NS(get=lambda _name: MeshUVLoopLayer()))
+    with pytest.raises(AssertionError):
+        script.copy_object_uv_property(mesh, script.MAPS[0], "pin")
+    assert reads == ([] if malformed == "runtime_descriptor" else ["pin_getter"])
 
 
 @pytest.fixture

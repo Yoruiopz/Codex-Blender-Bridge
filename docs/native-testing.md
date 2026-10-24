@@ -42,6 +42,16 @@ scope unwinds. It does not import assets, constrain arbitrary native/Python
 callbacks, preempt a native call or qualify whole-project recovery. Run the
 separate `asset_import` fixture on admitted builds for the actual import path.
 
+`uv_edit_storage` is an opt-in background research fixture (`--case uv_edit_storage`).
+It measures raw coordinate, transform and pin writes on two small UV maps, keeping
+live Edit Mode BMesh observations separate from the potentially stale Mesh RNA
+view. Getter inventories, legacy per-map or newer mesh-global UV selection,
+consumer reference counts, protected geometry, map roles and Float32 signed zeros
+are retained. Explicit mesh updates and mode exit/reentry are separate phases;
+wrapper identity is process-local evidence, not a persistent native identity
+guarantee. It invokes no production UV tool, checkpoint, recovery, capture or save.
+This prerequisite does not qualify guarded UV editing or any release gate.
+
 ## Fresh-process phases
 
 `image_reopen`, `image_portability_probe`, `task_plans` and `asset_delivery` launch a writer
