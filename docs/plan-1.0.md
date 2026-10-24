@@ -11,6 +11,33 @@ historical; current feature reopen fixtures use labeled owned setup serializatio
 Safe authorized saving and portable `.blend` delivery remain mandatory open
 requirements, with no scope reduction. See [the safety contract](project-save-safety.md).
 
+## Current implementation priorities — 2026-10-24
+
+The [29-item implementation checklist](implementation-completion.md) is the
+current finite worklist for the full agreed artist workflow. Finish the existing
+safety/recovery boundaries and required save/protected-visual alternatives, then
+complete asset/look/paint, character and procedural/cinematic workflows in
+parallel as each domain becomes safe. Integrate scenarios A–F through actual
+structured tools and installed packages; do not substitute tool counts, private
+research or isolated happy paths for functional completion.
+
+Implementation checks use available Linux Blender **4.5.14** and **5.2.2**.
+**Windows-specific compatibility/testing is deferred until implementation is
+complete, remains unverified, and is not a blocker to this implementation pass.**
+It remains a mandatory future stable 1.0 qualification gate. Existing save,
+protected-capture, shader REMOVE, animation-provider reproduction and exact-build
+5.2 import holds remain; required capabilities need separately reviewed safe
+designs/alternatives, not retries or weaker evidence.
+
+Meaningful versioned GitHub **pre-releases are authorized**, on an approximately
+two-to-three-hour review cadence. The **0.4.0 candidate is planned, not published**;
+the latest published **0.3.0 alpha** dates to 2026-09-22. Build matching components
+and checksums from a clean reviewed increment, disclose limits and unverified
+Windows status, and verify downloaded bytes. Preserve previous releases. Present
+an exact merge proposal where required; merge permission is not blanket. The
+[stable release gates](release-evidence.md) and historical evidence below are
+unchanged. See the checklist for current foundations and work still in progress.
+
 ## Outcome and scope
 
 Ship a downloadable, installable, consent-first bridge that lets an agent complete full
@@ -78,6 +105,9 @@ prerequisites, with explicit file ownership and integration checks.
 
 All items below are open unless matching implementation and evidence are recorded below. “Implemented”
 and “accepted for release” are separate states.
+Use the [current implementation checklist](implementation-completion.md) for
+cross-domain dependencies and concrete completion checks; the fourteen IDs below
+remain the requirement ledger.
 
 | Order / ID | Concrete next deliverable | Acceptance / dependency |
 | --- | --- | --- |
@@ -97,7 +127,7 @@ and “accepted for release” are separate states.
 | 14 / RC-01 | Compatibility, installation, upgrade and release audit | Resolve claimed matrix, test packaged bits and old-release upgrade; requires all capability and reliability evidence |
 
 The original sequence began with EVID-01, SAFE-01 and REC-01; their development increments
-are recorded below, not blanket release acceptance. Current focus (2026-10-21): ASSET-01 has
+are recorded below, not blanket release acceptance. Historical focus (2026-10-21): ASSET-01 has
 bounded repair, loop modeling, UV authoring, measured UV-quality and mesh-winding/contact analysis,
 and a connected repair/unwrap/material fixture. LOOK-01 adds approved images, nested shader paths,
 group lifecycle and measured instance isolation. A logical-batch revision works at default undo
@@ -112,15 +142,18 @@ An [original reference-constrained scanner](field-scanner-workflow.md) now integ
 modeling, shell/display UVs, nested materials, texture variants and staged native recovery.
 PAINT-01 now includes generated linear/data canvases, bounded copy-on-write UV-image strokes,
 raw-channel image masks with inversion/bilinear resampling, pixel digests/samples and a painted
-display revision in the reference workflow. Surface/viewport projection, stencils, sculpt/vertex
-masks/brushes, weight brushes and complete paint acceptance remain open.
+display revision in the reference workflow. Bounded orthographic surface strokes/stencils,
+sculpt/color/weight brushes and generated-image sculpt masks are now implemented.
+Perspective and 4K-square surface/mask workflows, broader paint/sculpt feedback and
+complete artist acceptance remain open.
 JOB-01 now has source-frozen [cooperative painting jobs](painting-jobs.md): progress/cancel,
 live source/consent revalidation, guarded publication and tile-bounded coverage for 4K canvases.
 Full source/output arrays remain; measured native tail stalls prevent real-time/production acceptance.
 DELIVER-01 now has internal streaming PNG/float-EXR codecs and native alpha/4K raw round-trip
 fixtures, plus an explicit [delivery execution contract](texture-delivery.md). Internal approved-folder
 staging now seals complete stream hashes and publishes without overwrite, with live edit/file/save
-grants, Windows directory pins and scoped cleanup. This is not a registered export API;
+grants, Windows directory pins and scoped cleanup. The registered
+`image.export_job_start` uses the cooperative delivery path;
 reviewed public plain FLOAT RGBA EXR/large PNG import now uses the shared streaming reader.
 Typed cooperative export/reimport now joins the codecs, staging and shared reader, with
 complete decoded-channel checks and explicit external effects in terminal jobs/history.
@@ -1610,7 +1643,8 @@ passed. Per-increment Linux Blender 4.3.2 reports are dirty-source development e
 they are not combined into a Windows or full-release verdict. Final source/package evidence
 is retained under `build/release-implementation-20261022/` with separate logs and hashes.
 
-The user confirmed **no Windows 11 test machine is available**. All fourteen requirement
+At this checkpoint the user reported no available Windows 11 test machine. The later
+2026-10-23 direction pauses Windows testing at the user's request. All fourteen requirement
 acceptance entries stay open. Full modeling/retopology, sculpt/surface/vertex/weight painting,
 character/driver/NLA, simulation/cache/bake, production materials/import/delivery, full artist
 interaction, constrained-memory, installed upgrade/rollback and Windows version acceptance
@@ -1664,3 +1698,395 @@ disconnect partials without illegal compensation, and native handler/getter reje
 invocation. It neither renders nor saves. The full UX-01 benchmark, visual reference understanding,
 wider protected authoring, protected authorized save/delivery, Windows and all release acceptance
 remain open. No version, release, package publication or requirement acceptance changes here.
+
+
+### 2026-10-22 — Retained checkpoint admission and bounded delivery research
+
+Scene and render increments retain request identity and one authored comparison plan
+before callbacks, through native checkpoint pushes and handler finalization. Marker
+updates compare exact ownership and preserve newer values. Custom-property evidence
+retains exposed scalar types and finite float signs. Production guarded batches
+require reviewed composition; current Scene/render composition refuses before writes.
+See [Scene scope](scene-edit-safety.md) and [render scope](render-boundaries.md).
+Scene success still reports unread bundled runtime settings; the exact reviewed
+Blender 5.2 render profile refuses because a supported read-only hidden-storage
+reader is not proven. These changes advance safety without closing the mutator audit.
+
+Three typed rigid-body inspect/preview/cache tools remain bounded to their documented
+whole-world profile. Private Mesh/UV and external WindowManager-role projections are
+comparison research and do not expand production admission or provide backups.
+The [fresh-worker serialization probe](portable-blend-worker-research.md) restores
+original per-ID fake-user flags and compares a tiny static asset with packed 2×2
+images after a fresh reopen. Blender 4.5 camera serialization's compatibility
+conversion is reported explicitly. This is neither complete-project preservation nor
+an OS/network-contained production save backend; public project.save stays unavailable.
+
+The combined development registry has 258 tools. Per-increment receipts retain their
+own source fingerprints, failures and selected Linux results. Combined clean-source,
+package and CI checks require separate receipts; previous source passes are not
+combined into a current full native verdict. All fourteen release requirements remain
+open, including Windows 11, installed scenarios A–F, safe saving, production delivery,
+memory-pressure recovery and visual artist acceptance. No release date or 1.0 publication.
+
+
+### 2026-10-23 — Open-chain modeling and exact-build import containment
+
+Development adds paired `mesh.bridge_chains_preview` / `mesh.bridge_chains` tools with
+explicit equal-chain correspondence, retained pre-checkpoint admission, measured original
+and already-published data, live per-write guards and truthful partial effects. A native
+partial-edit recovery failure exposed missing derived-cache synchronization; each verified
+face now receives guarded normal/tessellation updates before later allocation. The connected
+prop fixture passes on Linux Blender 4.5.14/5.2.2, including the demonstrated injected failure
+and two actual recovery paths. Retained captures receive limited technical review. See
+[the bounded contract and evidence](mesh-loops.md).
+
+The known Blender 5.2.2 build `d13f752e3b9c` now refuses typed asset import before checkpoint,
+source/staging or scene allocation; preview remains available. A proposed global-cycle
+release fix failed native validation and is not integrated. The original full import fixture
+remains unchanged and unsupported on that build. The separate passing admission case
+verifies containment only. [Import details](asset-import.md) retain the unresolved gate.
+
+The combined development source passes 5,370 non-Blender tests with three Windows-only
+skips using MCP SDK 2.2.0, plus Ruff, mypy, compilation, generated inventory and whitespace
+checks. The registry has 260 MCP tools. Existing Python 3.10–3.12 / SDK 2.0.0 and 2.2.0 CI
+coverage is retained. The focused native results are not a complete native inventory or
+installed-package acceptance. Failed source variants remain retained independently.
+
+Windows compatibility work is paused at the user's request while implementation proceeds.
+All fourteen release gates remain open, including whole-project safe saving and production
+import/recovery. Component versions remain 0.3.0; no release is published by this increment.
+
+
+### 2026-10-23 — Exclusive native-import mutation ownership (development)
+
+`asset.import` now acquires an internal registry-owned lease before admission,
+permission callbacks and automatic checkpoints. It retains ownership through native
+work, compensation and finalization. New nested mutators cannot borrow its context,
+request identity or recovery flag; the canonical handler continuation is single-use.
+Read-only inspection/status retains the outer execution display. Guarded import writes
+and cleanup prove exact ownership after callbacks, and only the owning scope releases
+its own lease. Other batch, artist-transform and painting-job composition is unchanged.
+This interlock neither constrains arbitrary Python/native callbacks nor preempts native
+calls, implements safe project saving, or removes the known 5.2 import quarantine.
+
+Validation: 68 focused and 5,438 full non-Blender tests pass with three Windows-only
+skips; Ruff, mypy, compilation, generated inventory and whitespace checks pass. The
+native fixture at `526ec0e` passes on Linux Blender 4.5.14 and 5.2.2, proving 36 nested
+rejections per runtime across admission/provider/checkpoint/handler/finalizer callbacks,
+actual edits and undo, scope release on success/failure, and a subsequent admitted edit.
+The separate existing 4.5.14 GLB/FBX import writer/reader fixture passes with injected
+failure cleanup and fresh reopen; its serialization remains explicitly fixture-only.
+An earlier `ff60d6c` fixture failure is retained: its final control operation returned no
+reviewed checkpoint guard. The correction changes only the fixture, not production code.
+
+The 308-file native source fingerprint is
+`e3d2b08083d61525bd082c8ea4af6e4f7752efeb4b4fe2c09eb2839cd77ce13c`.
+Local source, logs, reports, unit receipt and negative evidence are retained in
+`build/exclusive-mutation-evidence-20261023.tar.gz` (SHA-256
+`c7a4340cdd9d7755333757e339bf8673bc183f9f37b75800c263e4ec66a3c61c`).
+These focused checks do not establish a complete current native matrix, Windows,
+installed-package or full workflow acceptance. Windows work stays paused; all fourteen
+release gates remain open and component versions remain 0.3.0.
+
+
+### 2026-10-23 — Step-linked artist execution evidence (development)
+
+Existing transform previews can bind an exact current plan step. A bounded runtime
+journal links the finalized outer executor operation ID and measured checkpoint/error
+facts to that preview, including rejected and failed attempts. Explicit step-linked
+comparison records protected-object observations only; it never certifies the edited
+target, appearance, user goal or completion. Reconnect preserves the journal; undo/redo
+marks observations stale and operations historical; plan replacement/load/reset clears
+it even when IDs are reused. Saved schema-v1 remains passive and unchanged.
+
+Portable regressions exercise callback retargeting, reused IDs, finalized failure
+receipts, direct/nested writer invalidation, bounded retention and recording failures.
+At preparation the extended artist-loop native fixture was unexecuted. Subsequent
+source-matched Linux runs now cover the extended artist loop, multi-target pushes
+and interactive undo; see the [2026-10-23 checkpoint](artist-workflow-checkpoint-20261023.md).
+UX-01, full visual/artist acceptance and all release gates remain open.
+
+### 2026-10-23 — Scene ownership, truthful entry effects and loaded shader research
+
+Frozen production source `ff8b0f06e2cc2614eb9192b7d90ea4a6f414b517` passes
+**6,169 non-Blender tests with three Windows-only skips** and static checks.
+Its 324 production/runner Python files have fingerprint
+`7d552d3e032a5d8af58893b57137bff71a8a723492f68817644958bc80cd46a1`.
+The registry remains **260 MCP tools**, component versions remain **0.3.0 alpha**,
+and Windows testing is paused at the user's request.
+
+The integrated internal Scene kernel retains exact reservations, starter/driver
+authority, scheduler-local turns and owned pending checkpoints. One domain or
+checkpoint phase runs per tick; status is cached. Both Linux builds pass a
+five-scenario fixture: successful three-body matrix evaluation and stopped
+cancel/permission/disconnect/external-edit cases, retaining partial receipts
+without stopped-owner cleanup, context restoration or AFTER pushes. This is
+evaluation evidence and adds no public rigid-body job or bake API.
+
+Fourteen further selected runs cover artist entry/loop/multi-target, interactive
+undo, Scene checkpoint admission, painting jobs and exclusive import ownership
+on both builds. The total **16 selected results** is not a full native inventory.
+Public permission-denial cases retain exact four-boolean possible-context-effect
+metadata in errors/history; portable regressions verify rejected-step receipt
+timing before terminal recording. Primary errors, legacy
+flag presence, requested transforms, protected geometry and zero native-entry
+counts remain intact. Selection can still normalize before denial. This
+diagnostic does not prevent the native getter effect, and armed capture still
+refuses. Earlier exact-object framing/pixel evidence remains source-specific.
+
+Separate research source `31eb64d4f26c7bc223464c8c099c1cd49547f895`
+passes twelve unused interface-socket removal/actual undo/redo cases per Linux
+build and fresh-process reader checks. It requires explicit owned loaded setup
+and literal `is_runtime_data=False` on every participant, with no runtime-field
+exclusion. Native active interface identifiers change in all twelve cases on
+each build; no public UI-preservation or production REMOVE/conversion claim
+follows. The original fresh-created and immediate-post-load failures remain
+retained, separate from the corrected post-load timer result.
+
+The [dated checkpoint](artist-workflow-checkpoint-20261023.md) records exact
+sources, report/audit hashes, retained archive and limitations. Safe project save,
+the exact Blender 5.2 import quarantine, protected visual verification, public
+simulation jobs, Windows/installed A–F acceptance and all fourteen release gates
+remain open. Next work must complete those bounded contracts and native proofs;
+no gate is waived or closed by these selected passes.
+
+### 2026-10-23 — Public bounded rigid evaluation jobs
+
+Frozen production source `aacb39d70b76d0533473f9fb1d154d75ac8ae605` adds
+`rigid_body.evaluate_preview` and `rigid_body.evaluate_job_start` in the disabled-by-default
+simulation toolset, bringing the development registry to **262 MCP tools**.
+Component versions remain **0.3.0 alpha**. The exact preview binds the complete
+bounded static world, proposed cache range and job deadline. The Scene kernel
+owns the pending checkpoint and reservation across yielded native phases;
+successful evaluation retains the requested range and restores caller time.
+Cancellation, permission loss, disconnect or authored drift retains partial
+effects without automatic stopped-owner restoration or cleanup. Selected native
+interval receipts are bounded; they do not prove complete native/cache state.
+This adapter performs evaluation only, without BAKE or cache conversion.
+
+The source passes **496 focused and 6,365 full non-Blender tests**, with three
+Windows-only skips and static checks. Its 329 Python files have fingerprint
+`1f086f3dee9bb5cb16b8bf81aa093372be57cd63cafa6ab7e67f1fb258b95eb5`.
+The source-matched public RPC fixture passes on Linux Blender 4.5.14 LTS and
+5.2.2 LTS: two successful jobs and eight early/late stop cases per build, with
+retained-receipt capacity refusal. Moving and zero-gravity three-body/three-frame
+trajectories match fresh complete matrix references with zero error. The
+independent source/evidence audit passes. A separate same-source composition
+report passes eight existing cases per build, with its independent source,
+marker and artifact audit also passing. Exact report/audit hashes and raw-log paths are retained in the
+[evaluation-job contract](rigid-body-evaluation-jobs.md).
+
+The native fixture uses standard-library TCP and the actual public typed Blender
+RPC. Portable official MCP SDK/schema tests are separate, and neither route
+establishes an installed MCP-to-Blender artist scenario. The earlier `ff8`/260-tool
+results above remain historical source-specific evidence. Hidden cache coverage,
+cooperative bake, setup/broader solver work, the full 16-body/32-frame bounds,
+memory/latency and whole-workflow recovery remain open, alongside safe project
+save, protected visual verification, native MCP end-to-end, Windows and installed
+A–F acceptance. All fourteen release requirements remain OPEN; the full 1.0
+target is unchanged.
+
+### 2026-10-23 — Read-only exact F-curve evidence before authoring
+
+`animation.curve_inspect` adds explicit-object active-Action/assigned-slot
+inspection under `INSPECT_SCENE`. It returns stored extrapolation and complete
+finite keyframe/Bezier-handle coordinates and types in indexed pages: 64 points
+by default, at most 256 per page and 1,000,000 points per curve. Exact selectors
+refuse missing or ambiguous curves; shared/linked data remains readable. Sampled
+curves and unsupported layered APIs fail explicitly. Inspection never updates or
+evaluates animation. Use these pages before an intended `curve_edit` and afterward
+to compare authored values; separate sampled-motion and deformation evidence is
+still required.
+
+The development registry now contains **263 MCP tools** and component versions
+remain **0.3.0 alpha**. This bounded read-only increment does not complete full
+character/animation acceptance (`CHAR-01`) or any other release requirement.
+Native fixture results must be retained for the exact qualified source; all
+fourteen release requirements remain OPEN, including Windows and installed A–F
+acceptance.
+
+### 2026-10-23 — Explicit manual camera focus distance
+
+The existing `camera.configure` adds optional finite `focus_distance` from 0 to
+1,000,000,000 in Blender coordinate units, with no scene-unit conversion. A final
+focus object is incompatible with manual distance; existing focus targets require
+explicit clearing. Distance-only edits retain the existing static Scene admission,
+sole-camera-data ownership, per-write authority, native Float32 prediction and
+measured recovery contract. Neither focus clearing nor depth-of-field enabling is
+implicit. Configuration and object inspection report stored distance even when
+it is inactive, supporting inspect → edit → compare before matched visual review.
+
+This extends an existing schema: the registry remains **263 MCP tools**, component
+versions remain **0.3.0 alpha**, and all fourteen release requirements remain OPEN.
+Source-matched native and visual evidence is still required; this bounded change
+does not complete cinematic variants, installed A–F or full artist acceptance.
+
+### 2026-10-23 — Bounded stored F-curve value sampling
+
+`animation.curve_sample` complements stored key/handle inspection with native
+values at 1 to 128 explicit Action-coordinate frames. It selects exactly one
+active-Action/assigned-slot curve, reports Float32-effective evaluation times and
+keeps scene time, context and authored animation unchanged. The initial bounded
+contract supports 1 to 1,024 finite, ordered keys with constant, linear or Bezier
+interpolation and constant or linear extrapolation. Modifiers, drivers, sampled
+curves and unsupported native state fail explicitly before evaluation.
+
+This is numeric stored-curve evidence, excluding NLA blending, constraints,
+drivers and deformation. It supports inspect → edit → compare easing without
+claiming complete sampled character motion. The development registry contains
+**264 MCP tools**; component versions remain **0.3.0 alpha**. Exact-source native
+and installed-package qualification remain separate evidence requirements. All
+fourteen release requirements remain OPEN and Windows testing remains paused.
+
+### 2026-10-23 — Surface publication callbacks and protected scope
+
+A source-matched negative probe at local `13668d2` reproduced a surface-brush
+ordering gap on Linux Blender 4.5.14 and 5.2.2: the last permission provider ran
+after the final preservation comparison. Five measured cases per build published
+sculpt/color effects after pause or changed coordinates/ownership; sculpting
+overwrote a newer coordinate and color removal affected a newly shared consumer.
+The research reports explicitly keep `production_guard_accepted=false`.
+
+The first corrected-source native run at `ec821d8` failed because its allocation
+prediction assumed zeroed color layers. Complete native captures on both Linux
+builds instead measured white RGBA for new POINT and CORNER `FLOAT_COLOR` layers.
+That failed run remains separate evidence. The prediction and portable test
+doubles were corrected to the measured literal state before further acceptance.
+
+The bounded correction finishes callbacks before callback-free scope/content
+validation and the canonical pure caller/stop gate. Exact operation names,
+attribute checks and create/rename destination checks remain part of admission.
+Source-matched positive native proof, portable regressions and full validation
+are required before accepting that correction. This advances SAFE-01 and base
+sculpt/color workflows without claiming complete mutator recovery, durable
+backups, visual artist acceptance or any closed release requirement. The public
+surface remains **264 MCP tools**, components **0.3.0 alpha**, with all fourteen
+requirements OPEN and Windows testing paused.
+
+### 2026-10-23 — Generated UV-image sculpt mask sampling
+
+`mesh.sculpt_mask_sample` connects a painted local generated image to the existing
+explicit sculpt brush without adding an image dependency to the mutation
+boundary. Under `INSPECT_SCENE`, it reads a named Object Mode base mesh/UV layer,
+samples a raw R/G/B/A channel at each requested vertex's UV corners and returns
+ordered numeric weights. The caller explicitly chooses MIN, MAX or MEAN for UV
+seams; inversion applies to each corner sample before reduction. The bounded
+profile supports 1–1,024 distinct vertices, finite `[0,1]` UVs and a loaded,
+unanimated four-channel generated image with each dimension from 1 to 4,096 and
+at most 1,048,576 total pixels. It performs no
+color/alpha conversion or image, geometry, selection, frame or checkpoint write.
+
+The returned image/UV/topology fingerprints describe a snapshot, not a live
+binding or durable backup. Resample after image, UV or topology changes, then
+pass the resulting `vertex_indices` and `mask_weights` explicitly to
+`mesh.sculpt_brush`, whose independent edit/ownership gate remains authoritative.
+Portable analytical/schema tests and exact-source native paint → sample → sculpt
+preservation/visual evidence are separate completion requirements.
+
+This advances the painted-mask portion of PAINT-01 and the asset workflow. The
+development registry contains **265 MCP tools**, component versions remain
+**0.3.0 alpha**, and all fourteen release requirements remain OPEN. Production
+sculpting, 4K/constrained-memory masks, durable recovery, Windows and installed
+A–F acceptance remain required; Windows testing remains paused.
+
+### 2026-10-23 — Integrated character weight repair and IK reach benchmark
+
+The opt-in background `character_revision` fixture connects existing registered
+tools around one character revision: inspect a poor elbow-weight patch, configure
+one static two-bone IK branch, repair explicit memberships with a weight brush,
+revise reachable target poses, then author an Action on the independent target
+with the rig/skin consumer scope declared explicitly. Stored curve inspection and
+sampling remain separate from current-frame evaluated deformation evidence.
+
+Its completion contract requires all-vertex independent skinning calculations,
+separate endpoint/bend-plane expectations, complete protected authored data and
+corresponding-frame comparisons for an independently animated shared-rest alias.
+Permission/locked-group refusal and known static IK post-write compensation must
+be measured, with matched 512px fixture-only captures retained for review. Exact
+source native results remain required; no pass is inferred from runner wiring or
+this planned evidence contract. See [the benchmark](character-revision.md).
+
+Static-only IK mutation and the one-IK-per-rig limit remain authoritative; this
+does not add animated-control IK reconfiguration or general control rigs. It
+neither saves a project nor qualifies native global undo or durable recovery.
+The registry remains **265 MCP tools**, components **0.3.0 alpha**. All fourteen
+release requirements remain OPEN, including full CHAR-01, installed A–F and
+Windows qualification; Windows testing remains paused.
+
+### 2026-10-23 — Explicit target verification for step-linked transforms
+
+`task.plan.verify_transform` adds a distinct target-result observation to the
+artist loop. A step-linked preview retains an immutable independent Float32
+expectation before application. The explicit read-only method compares that
+expectation with the exact native target's authored core channels and attaches
+the result to the current step's latest successful completed outer receipt.
+Protected-data comparison, a claimed step mark and artistic acceptance remain
+separate evidence.
+
+The first profile compares location, unchanged rotation mode, all three stored
+rotation representations and scale, including inactive channels and signed zero.
+Mode conversion and unqualified numeric storage profiles remain explicitly
+unavailable without changing the existing preview/apply contract. Frozen
+provenance is checked after live callbacks and static native reads; changed
+receipts, generations, plan revisions and intervening writers refuse. The reader
+uses no context/selection getter, view-layer update or evaluated/world transform.
+No checkpoint, native write, save or automatic completion is performed.
+Successful calls add no operation-history entry; failed or rejected calls handled
+by the executor retain its existing failure audit.
+
+The completion gate requires portable provenance/schema checks and the isolated
+`artist_target_verification` fixture on both Linux development builds, with
+independent Float32 values and complete declared protected/context preservation.
+Source-matched reports remain required; documentation or wiring alone establishes
+no native pass. See [the contract](artist-target-verification.md).
+
+This advances UX-01 while retaining **266 MCP tools**, component versions
+**0.3.0 alpha**, all fourteen requirements OPEN and Windows testing paused.
+Broader target/dependency/visual evidence, protected save, native undo/durable
+recovery, whole artist scenarios and installed A–F remain mandatory.
+
+### 2026-10-23 — Historical target evidence in the artist sidebar
+
+The artist sidebar presents the latest displayed step receipt's existing public
+target observation under a **Target core channels:** heading, with the status on
+the next line. The fixed historical and step-claim reminders each use two short
+lines. These line breaks change presentation only. Recorded matches, differences,
+missing targets and replacements remain historical;
+protected comparison and claimed completion retain their separate meanings.
+Stale evidence takes priority over a previous recorded result. Unavailable
+expectations and targets not yet verified remain distinct, while missing legacy
+fields or unsupported record contents display uncertainty rather than success.
+
+The presentation formats the receipt already available to the sidebar. It adds
+no plan inspection, native/context read, verification, capture, mutation or save.
+Portable formatter and sidebar-wiring checks are the completion gate for this
+bounded UI increment; they do not establish current-scene, visual, installed or
+full artist-workflow acceptance. See [the display boundary](artist-target-verification.md#sidebar-evidence).
+
+This advances UX-01 with **266 MCP tools**, components **0.3.0 alpha**, all fourteen
+release requirements OPEN and Windows testing paused. Protected save, durable
+recovery, broader target/dependency/visual evidence and installed A–F remain
+required.
+
+### 2026-10-23 — Bounded authored quaternion assignments
+
+`transform.set` and `task.plan.preview_transform` gain optional
+`rotation_quaternion=[W, X, Y, Z]` for an already-`QUATERNION` target. The new field
+excludes Euler rotation inputs and every `rotation_mode` argument. It retains
+independent Float32 expectations without normalization, mode conversion or sign
+canonicalization. A complete qualified immutable six-channel intent is required
+before writing. The bounded numeric and static single-user Mesh
+[mutation profile](object-rna-safety.md#quaternion-assignments) applies only to the
+new field; ordinary transform inputs retain their existing contracts.
+
+Seven-case native-storage research at `112f7d6` is historical prerequisite
+evidence, not typed-workflow acceptance. Source-matched portable checks and
+native setter/preview/application/explicit-verification evidence remain required,
+with measured protected/context preservation and refusal/recovery behavior.
+Authored core-channel results do not establish evaluated orientation, artistic
+acceptance, native global undo or durable recovery.
+
+This advances the bounded transform portion of UX-01 with **266 MCP tools**,
+components **0.3.0 alpha**, all fourteen release requirements OPEN and Windows
+testing paused. Protected save, wider character/dependency/visual workflows and
+installed scenarios A–F remain required.

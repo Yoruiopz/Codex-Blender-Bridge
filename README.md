@@ -4,27 +4,33 @@ Let Codex inspect and edit Blender through local, permission-controlled MCP tool
 Work with objects, meshes, materials, UVs, rigs, animation, lights and renders, with
 status, permissions and recovery controls inside Blender.
 
-**[Download 0.3.0 alpha](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.3.0)** ·
+**[0.4.0 alpha prerelease candidate](docs/releases/0.4.0.md)** ·
+[Previous 0.3.0 downloads](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.3.0) ·
 [Install](#install--no-source-build-needed) · [Troubleshooting](docs/troubleshooting.md) ·
 [Contribute](CONTRIBUTING.md)
 
 This is **alpha software**. Try it on a disposable scene or a copy of your project.
-The published **0.3.0** packages provide **108 MCP tools**. The current development branch
-adds unreleased tools and safety changes, listed in the generated inventory below.
-Development builds still use 0.3.0 metadata; they are not the published release and must
-be installed as matching add-on/server builds from one checkout.
+This source prepares **0.4.0**, with **266 MCP tools**, bounded artist workflows and safety
+changes since 0.3.0. Candidate metadata does not establish packaged-release acceptance;
+use matching add-on, MCP server and optional plugin artifacts from one accepted build.
+The previously published **0.3.0** packages remain available with their original **108 tools**.
 
 **1.0 is not ready.** Follow the [development status](docs/development-status.md),
 [roadmap](docs/roadmap.md) and [release plan](docs/plan-1.0.md).
-Current Linux development evidence does not qualify Windows 11, Blender 4.5 LTS/stable 5.x,
-or the installed end-to-end workflows required by the [release gates](docs/release-1.0-readiness.md).
+Windows compatibility work and Windows testing are **deferred**. Linux development evidence
+does not qualify Windows 11, the Windows Blender 4.5 LTS/stable 5.x matrix, or the installed
+end-to-end workflows required by the [release gates](docs/release-1.0-readiness.md).
 
 ## Install — no source build needed
 
-For the published alpha you need Blender **4.2+**, standalone **Python 3.10+**, and a
-local Codex client with MCP support. Blender's bundled Python does not run the MCP server.
-The declared minimum is not a guarantee that every Blender version or platform is tested;
-see [0.3.0 release notes](docs/releases/0.3.0.md) for release-specific evidence.
+The instructions below install the previously published **0.3.0 alpha**. The **0.4.0 source
+candidate** has [separate notes and qualification limits](docs/releases/0.4.0.md); this page
+does not claim that its release assets have been published.
+
+You need Blender **4.2+**, standalone **Python 3.10+**, and a local Codex client with MCP
+support. Blender's bundled Python does not run the MCP server. The declared minimum is not
+a guarantee that every Blender version or platform is tested; see the
+[0.3.0 release notes](docs/releases/0.3.0.md) for that release's evidence.
 
 ### 1. Download the packages
 
@@ -91,6 +97,25 @@ Read the [security model](docs/security.md) and [recovery limits](docs/native-re
 
 ## Features
 
+### 0.4.0 candidate additions
+
+The source candidate adds artist plans, exact runtime references, reviewed transform
+preview/apply and independent target-channel observations. Step marks and historical receipts
+do not certify the user's goal. It also adds bounded mesh repair and UV authoring, explicit
+sculpt/vertex-color brushes, weight brushes and geometric transfer, Action/F-curve inspection
+and sampling, reviewed rig controls, nested node workflows and bounded jobs. Quaternion
+assignment preserves raw WXYZ components within a strict existing-mode static-mesh profile.
+See the [0.4.0 notes](docs/releases/0.4.0.md) and each linked domain contract for limits.
+
+Safety changes narrow unsupported ownership, checkpoint, callback and recovery paths.
+**`project.save` is unavailable**, protected viewport capture and shader-interface removal
+remain unsupported, and the known Blender 5.2.2 import quarantine stays in place. Private UV
+Edit Mode storage/planning research does not enable a public guard or qualify UV editing.
+Candidate export/weight recovery changes still require their exact native validation; no
+production-delivery or character-workflow acceptance follows from the tool inventory.
+
+### Previously published 0.3.0 alpha
+
 The **published 0.3.0 alpha** includes inspection and viewport evidence, object lifecycle and
 transforms, selection-scoped mesh editing, materials and shader nodes, UV unwrap/packing,
 reviewed modifiers and constraints, rigging/keyframes, scene/camera/light/world/render tools,
@@ -98,7 +123,7 @@ and explicit saving. Its 20 additions provide selection/mode control, filtered q
 bulk origin-based layout, ordered batches and allowlisted Geometry Nodes editing.
 See [release notes](docs/releases/0.3.0.md) and [workflow examples](docs/agent-workflows.md).
 
-### Faster agent workflows in 0.3.0
+### Earlier 0.3.0 agent workflows
 
 Use precise queries, compact inspection and small batches to reduce round trips. A batch plan
 checks availability and permissions, not simulated scene results. Blender executes serially;
@@ -106,27 +131,28 @@ inspect partial failures before retrying. See [batch and Geometry Nodes limits](
 
 <a id="unreleased-structured-uv-seams"></a>
 
-Unreleased mesh/UV, painting, shader, character, procedural, simulation and delivery work is
-tracked in [development status](docs/development-status.md), including the
+Candidate mesh/UV, painting, shader, character, procedural, simulation and delivery contracts
+are tracked in [development status](docs/development-status.md), including the
 [structured UV-seam contract](docs/development-status.md#unreleased-structured-uv-seams).
-These features are absent from the published downloads unless their release notes say otherwise.
+They are absent from the 0.3.0 downloads. The private UV planner/probe remains research.
 
 Current development contracts include [packed recovery jobs](docs/image-recovery-jobs.md),
 [shader interface plans](docs/shader-interface-lifecycle.md),
 [guarded rig edits](docs/rig-edit-boundaries.md) and the
 [two-bone animation benchmark](docs/character-nla.md).
 
-### Complete tool inventory — main branch
+### Complete tool inventory — current source
 
-This generated inventory describes the **development branch**, including unreleased tools.
-It is checked against the registry in CI. It does not describe the 108-tool 0.3.0 download.
+This generated inventory describes the **0.4.0 candidate source**, including bounded tools
+whose acceptance remains subject to their documented limits. It is checked against the
+registry in CI. It does not describe the 108-tool 0.3.0 download.
 The local recovery UI also has an add-on-only action, not an extra MCP tool.
 
 <!-- BEGIN GENERATED MCP TOOLS -->
-Current registry: **255 MCP tools**.
+Current registry: **266 MCP tools**.
 
 <details>
-<summary>core — 33 tools</summary>
+<summary>core — 34 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
@@ -136,9 +162,9 @@ Current registry: **255 MCP tools**.
 | `checkpoint.create` | Create a logical agent undo checkpoint. |
 | `checkpoint.list` | List checkpoint labels, operation history and conservative recovery availability. |
 | `checkpoint.undo_last` | Use Blender global undo only with explicit acknowledgement of user-interleaving risk. |
-| `jobs.cancel` | Request safe-point image-job cancellation, not rollback; available while paused. |
-| `jobs.inspect` | Inspect session-local image-job progress, result/error and file/recovery evidence. |
-| `jobs.list` | List bounded session-local image jobs; no durable queue. |
+| `jobs.cancel` | Request safe-point cancellation of an exact job, not rollback; available while paused. |
+| `jobs.inspect` | Inspect session-local image or bounded rigid-evaluation job progress, result/error and retained effects. |
+| `jobs.list` | List bounded session-local image and rigid-evaluation jobs and retained Scene receipts; no durable queue. |
 | `object.inspect` | Inspect one object without dumping raw vertex coordinates. |
 | `project.info` | Inspect project metadata and render settings. |
 | `project.save` | Project saving is unavailable until native save side effects can be bounded. |
@@ -158,6 +184,7 @@ Current registry: **255 MCP tools**.
 | `task.plan.preview_transform` | Preview exact transform channels and reviewed affected consumers without editing or acquiring edit authority. |
 | `task.plan.set` | Create/correct a bounded artist plan with advisory protected objects; replacement requires current revision. |
 | `task.plan.update` | Correct an exact step's status/note at the expected plan revision. |
+| `task.plan.verify_transform` | Compare a current step receipt's independently retained intended core transform channels with the exact target; never completes the step. |
 | `task.reference.resolve` | Resolve exact object names/current selection to bounded runtime references without granting authority. |
 | `toolsets.disable` | Disable a local MCP domain toolset. |
 | `toolsets.enable` | Enable a lazy local MCP domain toolset. |
@@ -167,7 +194,7 @@ Current registry: **255 MCP tools**.
 </details>
 
 <details>
-<summary>animation — 12 tools</summary>
+<summary>animation — 14 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
@@ -178,6 +205,8 @@ Current registry: **255 MCP tools**.
 | `animation.action_remove` | Confirm removal of one unused unretained Action ID without unlinking or automatic recreation. |
 | `animation.action_update` | Rename/set fake-user retention on one Action; clearing retention additionally needs DELETE_OBJECTS. |
 | `animation.curve_edit` | Edit interpolation/easing/handles on at most 256 existing keyframes of one local unshared active-Action curve; at most 1024 curve points, no insertion or arbitrary RNA. |
+| `animation.curve_inspect` | Inspect an exact active-Action curve's extrapolation and paged keyframes with full Bezier handles; never update or evaluate animation. |
+| `animation.curve_sample` | Sample bounded direct values of one exact active-Action curve; no scene, NLA, driver, constraint or deformation evaluation. |
 | `animation.inspect` | Inspect one object's bounded action, F-curves, keyframes, slots, and drivers. |
 | `animation.keyframe_delete` | Delete a keyframe from an explicit object RNA data path. |
 | `animation.keyframe_insert` | Insert a keyframe on an explicit object RNA data path. |
@@ -343,7 +372,7 @@ Current registry: **255 MCP tools**.
 </details>
 
 <details>
-<summary>mesh — 28 tools</summary>
+<summary>mesh — 31 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
@@ -354,6 +383,8 @@ Current registry: **255 MCP tools**.
 | `color_attribute.rename` | Rename a color attribute with explicit named-consumer acknowledgment; consumers are not rewritten. |
 | `mesh.analyze` | Inspect bounded base-mesh topology, adjacent winding and triangle crossing/contact candidates with explicit completeness. |
 | `mesh.bevel_selected` | Bevel selected mesh elements with explicit width and segments. |
+| `mesh.bridge_chains` | Bridge an exact equal open-chain preview with quads and no vertex merge, preserving original supported custom data. |
+| `mesh.bridge_chains_preview` | Preview two equal open chains with explicit endpoint correspondence and a bounded preservation fingerprint. |
 | `mesh.bridge_loops` | Bridge two referenced closed boundary/wire loops without vertex merging; unequal loops produce triangles. |
 | `mesh.create` | Create a fully prevalidated arbitrary mesh object from bounded topology arrays. |
 | `mesh.delete_selected` | Delete selected mesh elements. |
@@ -370,6 +401,7 @@ Current registry: **255 MCP tools**.
 | `mesh.project_to_surface` | Apply an exact current bounded base-surface projection preview, preserving supported custom data. |
 | `mesh.recalculate_normals` | Recalculate normals for the selected mesh region. |
 | `mesh.sculpt_brush` | Apply explicit-mask base-mesh PUSH/SMOOTH strokes with protected topology/UV/material evidence. |
+| `mesh.sculpt_mask_sample` | Sample a generated UV image into explicit sculpt-mask weights without changing mesh or image data. |
 | `mesh.set_face_attributes` | Set smooth shading and/or an existing material-slot index on bounded referenced faces; material changes additionally require EDIT_MATERIALS. |
 | `mesh.slide_preview` | Preview bounded selected vertex/edge slides along explicit topology rails. |
 | `mesh.subdivide_selected` | Subdivide selected edges without smoothing under a conservative growth budget. |
@@ -491,9 +523,9 @@ Current registry: **255 MCP tools**.
 | --- | --- |
 | `camera.configure` | Configure camera optics, clipping, depth of field, and active-scene assignment. |
 | `collection.create` | Create and link a collection under an explicit scene or parent. |
-| `collection.delete` | Remove an explicitly confirmed collection and report unlinked contents. |
+| `collection.delete` | Remove an explicitly confirmed empty collection within the current Scene. |
 | `collection.rename` | Rename an explicit collection without collisions. |
-| `light.configure` | Configure a named Blender light's type, energy, color, and shape settings. |
+| `light.configure` | Configure a named Blender light's energy, color, and supported settings within its current subtype. |
 | `scene.configure` | Configure an explicit scene's camera, units, and gravity. |
 | `scene.variant.apply` | Apply an exact fresh preview with live consent, ownership and protected-state CAS checks. |
 | `scene.variant.capture` | Store exact current camera/light controls and protected static scene proof as Scene JSON without saving. |
@@ -504,10 +536,15 @@ Current registry: **255 MCP tools**.
 </details>
 
 <details>
-<summary>simulation — 4 tools</summary>
+<summary>simulation — 9 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
+| `rigid_body.cache` | Execute an exact whole-world memory cache proposal; BAKE verifies every matrix/frame and all operations measure context recovery. |
+| `rigid_body.cache_preview` | Preview a bounded memory-only world operation and session/context fingerprint; requires static reviewed Main dependencies including unused IDs. |
+| `rigid_body.evaluate_job_start` | Accept an exact preview for cooperative whole-world evaluation; poll jobs.inspect for completion and retained partial effects. |
+| `rigid_body.evaluate_preview` | Preview a bounded whole-world evaluation job, proposed range and exact session/context fingerprint; no bake claim. |
+| `rigid_body.inspect` | Inspect the exact current Scene's bounded whole-world rigid bodies, constraints and cache ownership. |
 | `simulation.cache` | Bake/free one in-memory cloth cache, at most 32 frames and 2000 vertices; excluded from batches. |
 | `simulation.cloth_add` | Add cloth to a local single-user mesh with a bounded empty modifier stack. |
 | `simulation.configure` | Configure reviewed cloth and pin-group settings before baking. |

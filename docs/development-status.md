@@ -1,7 +1,7 @@
 # Development status
 
 **Unreleased development; 1.0 is NOT_READY.** The published [0.3.0 alpha](releases/0.3.0.md)
-contains 108 tools. The development registry currently contains **255 MCP tools**;
+contains 108 tools. The development registry currently contains **264 MCP tools**;
 its packages retain 0.3.0 metadata until a qualified release is accepted. Always pair the
 add-on and MCP server from one checkout. A matching version string alone does not identify
 an unpublished build.
@@ -24,8 +24,11 @@ and [evidence rules](release-evidence.md) define the work needed for 1.0.
 Linux development checks, including historical 4.3.2 increments and newer
 4.5.14 LTS / 5.2.2 LTS results, are separate from historical Windows
 reports for earlier increments. Windows 11 qualification on Blender 4.5 LTS and stable 5.x,
-installed-package acceptance and scenarios A–F remain required. There is currently no
-available Windows 11 test machine; those gates remain open.
+installed-package acceptance and scenarios A–F remain required. Windows testing
+is paused at the user's request; those gates remain open. The
+[2026-10-23 checkpoint](artist-workflow-checkpoint-20261023.md) records selected
+Linux Scene-kernel, artist-entry and composition results separately from shader
+removal research and historical evidence; it is not a complete native matrix.
 
 Recent bounded additions include [mesh slides and UV refinement](mesh-uv-refinement.md),
 [sculpt and vertex-color brushes](surface-brushes.md), [weight brushes and surface transfer](weight-brushes.md),
@@ -40,12 +43,49 @@ Recent increments also add [cooperative packed recovery](image-recovery-jobs.md)
 [guarded rig edits](rig-edit-boundaries.md),
 [object property recovery](object-rna-safety.md) and
 [saved two-bone NLA motion](character-nla.md).
+Read-only [exact F-curve inspection](animation-curves.md#inspect-one-exact-curve-before-editing)
+adds paged stored handle coordinates/types and extrapolation before authoring,
+including shared/linked Actions. Its bounded pages do not establish character or
+animation acceptance.
+The separate [stored-curve sampler](animation-curves.md#measure-values-between-stored-keys)
+measures native interpolation at explicit bounded frames without advancing scene
+time. It excludes NLA blending, drivers, constraints and deformation; numeric
+curve samples do not establish complete character-motion acceptance.
 The [artist interaction foundation](task-plans.md) adds exact references and reviewed
 transform previews with opt-in protected scope. Undo/redo invalidates runtime handles;
 new checkpoint writes and modifying handler entry check caller lifetime again after
 preflight. Modifier and transform application also require mesh-edit permission because
 they change base geometry. These bounded changes do not complete the mutator audit.
 See the [source-matched checkpoint](artist-workflow-checkpoint-20261022.md) for retained evidence.
+[Scene admission](scene-edit-safety.md) now retains the same bounded authored plan
+across checkpoint creation, editing and finalization. Marker writes preserve newer
+metadata, and custom-property comparisons distinguish scalar types and signed zero.
+Guarded production batches refuse composition that has not been reviewed. Scene
+responses explicitly report incomplete preservation of bundled runtime settings.
+The existing `camera.configure` also accepts bounded
+[manual focus distance](scene-edit-safety.md#manual-camera-focus-distance), with
+explicit focus-object clearing and stored-value inspection. This preserves the
+admitted static camera ownership scope and does not enable depth of field or
+complete cinematic acceptance.
+[Render admission](render-boundaries.md) uses the same checkpoint guards, a bounded
+static EEVEE profile and validated PNG publication. Its reviewed Blender 5.2 build
+refuses rendering/configuration because a supported, read-only comparison of hidden
+runtime settings is unavailable. This is a deliberate capability restriction.
+
+Three opt-in [rigid-body inspection/cache tools](rigid-body-lifecycle.md) add a
+bounded whole-world BOX profile; ordinary startup Scene consumers remain unsupported.
+Two additional [rigid evaluation tools](rigid-body-evaluation-jobs.md),
+`rigid_body.evaluate_preview` and `rigid_body.evaluate_job_start`, use the Scene
+reservation/owned-checkpoint controller for bounded whole-world evaluation.
+They retain the requested cache range, report selected native effects and restore
+caller time only on successful owned completion; stopped work retains partial
+effects without automatic cleanup. They do not bake or certify cache coverage.
+The actual public Blender RPC fixture passes on both Linux development builds at
+`aacb39d`; portable official MCP SDK/schema tests are separate evidence. Broader
+solver/scale, native MCP end-to-end, Windows and installed A–F acceptance remain open.
+[Private Mesh/UV and native-role research](rigid-create-new-research.md) is not wired
+to production admission. [Fresh-worker asset serialization research](portable-blend-worker-research.md)
+compares a tiny static asset across processes; it does not enable project saving.
 Broader retopology/painting, character animation, procedural baking,
 simulation and production delivery still have open acceptance work.
 

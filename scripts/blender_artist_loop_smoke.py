@@ -15,8 +15,9 @@ from blender_codex_bridge.errors import BridgeError  # noqa: E402
 from blender_codex_bridge.permissions import Permission, PermissionManager  # noqa: E402
 from blender_codex_bridge.protocol import Request  # noqa: E402
 from blender_codex_bridge.request_lifecycle import ConnectionLifetime, RequestLifetime  # noqa: E402
-from blender_codex_bridge.runtime import get_runtime  # noqa: E402
+from blender_codex_bridge.runtime import _before_external_undo_redo, get_runtime  # noqa: E402
 from blender_codex_bridge.task_plans import SCENE_PROPERTY, clear_task_plans, get_task_plans  # noqa: E402
+from blender_codex_bridge.tool_registry import ToolContext  # noqa: E402
 
 
 def main():
@@ -48,7 +49,7 @@ def main():
         return original_checkpoint(method, **kwargs)
     runtime.checkpoints.before_modification = checkpoint
     plan = call("task.plan.set", {"goal": "Place and revise the selected prop while preserving Cube",
-        "steps": [{"id": "place", "description": "Resolve, preview, compare and correct prop placement"}],
+        "steps": [{"id": "revise", "description": "Resolve, preview, compare and correct prop placement"}],
         "protected_objects": [protected.name]})
     revision = plan["plan"]["revision"]
     call("task.plan.persist", {"confirm": True, "expected_revision": revision})
@@ -67,27 +68,107 @@ def main():
             return error
         raise AssertionError(f"Expected {method} to fail with {code}")
 
-    def preview(location, scale=None):
+    def preview(location, scale=None, step_id=None):
         token = call("task.reference.resolve", {"source": "selection"})["reference_id"]
         params = {"reference_id": token, "expected_revision": revision, "location": location}
         if scale is not None:
             params["scale"] = scale
+        if step_id is not None:
+            params["step_id"] = step_id
         return call("task.plan.preview_transform", params)
+
+    def step_evidence(inspection=None):
+        evidence = (inspection if inspection is not None else call("task.plan.inspect"))["step_evidence"]
+        assert evidence["runtime_only"] and evidence["scope"] == "protected_objects_only"
+        assert evidence["user_goal_verified"] is False and evidence["max_receipts"] == 32
+        assert not evidence["truncated"] and len(evidence["receipts"]) <= evidence["max_receipts"]
+        return evidence
+
+    def receipt_for(operation_id, inspection=None):
+        receipts = [receipt for receipt in step_evidence(inspection)["receipts"]
+            if receipt["operation_id"] == operation_id]
+        assert len(receipts) == 1
+        receipt = receipts[0]
+        assert receipt["step_id"] == "revise"
+        records = [record for record in runtime.state.history(50) if record["operation_id"] == operation_id]
+        assert len(records) == 1 and records[0]["tool"] == "task.plan.apply_preview"
+        assert receipt["success"] == records[0]["success"]
+        return receipt
+
+    def assert_observation(receipt, validity="recorded"):
+        observation = receipt["protected_observation"]
+        assert observation["status"] == "unchanged_within_scope" and observation["coverage_complete"]
+        assert observation["scope"] == "protected_objects_only" and observation["snapshot_id"] == captured["baseline"]["snapshot_id"]
+        assert observation["validity"] == validity and observation["user_goal_verified"] is False
+        assert observation["current_scene_verified"] is False
 
     # Native builtin descriptors pass; preview needs inspect authority only.
     grants[Permission.TRANSFORM_OBJECTS.value] = False
-    result = preview([1., 2., 3.])
+    result = preview([1., 2., 3.], step_id="revise")
     assert not result["scene_edited"] and not result["authority_granted"] and tuple(work.location) == (0., 0., 0.)
     deny("PERMISSION_DENIED", "task.plan.apply_preview", preview_id=result["preview_id"], expected_revision=revision)
+    rejected = [receipt for receipt in step_evidence()["receipts"]
+        if receipt["preview_id"] == result["preview_id"] and receipt["error_code"] == "PERMISSION_DENIED"]
+    assert len(rejected) == 1 and rejected[0]["outcome"] == "rejected" and not rejected[0]["success"]
+    assert receipt_for(rejected[0]["operation_id"])["protected_observation"] is None
     grants[Permission.TRANSFORM_OBJECTS.value] = True
     applied = call("task.plan.apply_preview", {"preview_id": result["preview_id"], "expected_revision": revision})
     assert applied["preview_consumed"] and tuple(work.location) == (1., 2., 3.)
+    placed_operation_id = applied["operation"]["operation_id"]
+    assert placed_operation_id and call("task.plan.inspect")["plan"]["steps"][0]["status"] == "pending"
+    placed_receipt = receipt_for(placed_operation_id)
+    assert placed_receipt["preview_id"] == result["preview_id"] and placed_receipt["success"]
+    assert placed_receipt["outcome"] == "completed" and placed_receipt["protected_observation"] is None
+    assert placed_receipt["undo_boundary_created"] == applied["operation"]["undo_boundary_created"]
+    assert placed_receipt["undo_boundary_finalized"] == applied["operation"]["undo_boundary_finalized"]
     deny("INVALID_ARGUMENT", "task.plan.apply_preview", preview_id=result["preview_id"], expected_revision=revision)
-    assert call("task.plan.compare")["evidence"]["status"] == "unchanged_within_scope"
-    revision = call("task.plan.update", {"step_id": "place", "note": "Corrected placement after measured comparison", "expected_revision": revision})["plan"]["revision"]
-    corrected = preview([2., 2., 3.])
-    call("task.plan.apply_preview", {"preview_id": corrected["preview_id"], "expected_revision": revision})
+    comparison = call("task.plan.compare", {"step_id": "revise", "expected_revision": revision})
+    assert comparison["evidence"]["status"] == "unchanged_within_scope" and comparison["evidence"]["coverage_complete"]
+    assert_observation(receipt_for(placed_operation_id, comparison))
+    revision = call("task.plan.update", {"step_id": "revise", "note": "Corrected placement after measured comparison", "expected_revision": revision})["plan"]["revision"]
+    corrected = preview([2., 2., 3.], step_id="revise")
+    corrected_result = call("task.plan.apply_preview", {"preview_id": corrected["preview_id"], "expected_revision": revision})
+    corrected_operation_id = corrected_result["operation"]["operation_id"]
+    assert corrected_operation_id and corrected_operation_id != placed_operation_id
     assert tuple(work.location) == (2., 2., 3.)
+    assert call("task.plan.inspect")["plan"]["steps"][0]["status"] == "pending"
+    corrected_receipt = receipt_for(corrected_operation_id)
+    assert corrected_receipt["preview_id"] == corrected["preview_id"] and corrected_receipt["success"]
+    assert corrected_receipt["outcome"] == "completed" and corrected_receipt["protected_observation"] is None
+    comparison = call("task.plan.compare", {"step_id": "revise", "expected_revision": revision})
+    assert comparison["evidence"]["status"] == "unchanged_within_scope" and comparison["evidence"]["coverage_complete"]
+    assert_observation(receipt_for(corrected_operation_id, comparison))
+    observed = step_evidence(comparison)
+    assert step_evidence(call("task.plan.compare")) == observed
+    # A new request context shares the runtime journal without importing any
+    # live state from saved JSON. This exercises reconnect bookkeeping, not a
+    # transport round trip or a project/runtime reset.
+    before_reconnect = call("task.plan.inspect")
+    runtime.state.client_connected()
+    runtime.state.client_disconnected()
+    resumed_context = ToolContext(runtime.state, manager, runtime.registry, runtime.checkpoints,
+        evidence=runtime.executor.evidence, jobs=runtime.jobs, request_lifecycle=RequestLifetime.local(),
+        request_id="artist-step-resumed-inspection")
+    resumed = runtime.registry.dispatch("task.plan.inspect", {}, resumed_context)
+    assert resumed == before_reconnect and resumed["protected_scope_enforced"]
+    assert receipt_for(corrected_operation_id, resumed)["history_state"] == "current_runtime_generation"
+    assert_observation(receipt_for(corrected_operation_id, resumed))
+    # Exercise the real invalidation callback without running an undo operator
+    # in this background fixture. Actual native undo remains a separate UI case.
+    navigation_preview = preview([2., 2., 3.], step_id="revise")
+    generation_before = resumed["protection_generation"]
+    _before_external_undo_redo(None)
+    navigated = call("task.plan.inspect")
+    assert navigated["protected_scope_enforced"] and navigated["protection_generation"] > generation_before
+    historical = receipt_for(corrected_operation_id, navigated)
+    assert historical["history_state"] == "historical_after_generation_change"
+    assert_observation(historical, "stale")
+    deny("INVALID_ARGUMENT", "task.plan.apply_preview", preview_id=navigation_preview["preview_id"], expected_revision=revision)
+    rechecked = call("task.plan.compare", {"step_id": "revise", "expected_revision": revision})
+    historical = receipt_for(corrected_operation_id, rechecked)
+    assert historical["history_state"] == "historical_after_generation_change"
+    assert_observation(historical)
+    assert rechecked["plan"]["steps"][0]["status"] == "pending"
 
     unknown_calls = []
     runtime.registry.register("fixture.unreviewed_edit", lambda *_: unknown_calls.append(True), modifies=True)
@@ -255,15 +336,26 @@ def main():
     disabled = call("task.plan.enforce", {"enabled": False, "expected_revision": revision})
     assert disabled["protection_audit_operation_id"]
     runtime.state.set_emergency_stopped(False)
+    runtime.state.set_paused(False)
+    assert step_evidence()["receipts"]
+    call("task.plan.persist", {"confirm": True, "expected_revision": revision})
+    saved = scene[SCENE_PROPERTY]
+    assert "step_evidence" not in saved and "receipt_id" not in saved and "operation_id" not in saved
+    assert placed_operation_id not in saved and corrected_operation_id not in saved
     clear_task_plans(runtime.state)
     loaded = call("task.plan.load")
     assert not loaded["protected_scope_enforced"] and loaded["baseline"] is None
+    assert not step_evidence(loaded)["receipts"]
     assert not get_task_plans(runtime.state).references and not get_task_plans(runtime.state).previews
     assert scene[SCENE_PROPERTY] == saved
     assert work.active_selection_set == bundled_ui_index
     print("BLENDER_ARTIST_LOOP_OK " + json.dumps({"blender": bpy.app.version_string,
         "native_builtin_descriptors_accepted": True, "protected_structural_comparison": True,
         "exact_preview_single_use": True, "adversarial_before_checkpoint": adversarial,
+        "step_bound_placement_correction_operation_receipts": [placed_operation_id, corrected_operation_id],
+        "step_claim_not_automatically_completed": True, "step_protected_comparison_observations": True,
+        "step_evidence_fresh_context_retention": True, "step_evidence_history_callback_invalidation": True,
+        "step_evidence_actual_native_undo_executed": False, "step_evidence_saved_v1_excluded": True,
         "measured_partial_no_illegal_compensation": partial, "host_handler_invoked": False,
         "runtime_rna_getter_invoked": False, "saved_plan_restored_authority": False,
         "bundled_bone_selection_ui_preserved": True,

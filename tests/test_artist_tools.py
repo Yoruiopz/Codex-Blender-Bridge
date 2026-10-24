@@ -19,7 +19,8 @@ def test_artist_metadata_and_permissions(addon_package):
     registry = registry_module.ToolRegistry(enabled_toolsets=MODULES)
     for module in MODULES:
         importlib.import_module(f"{addon_package}.tools.{module}").register_tools(registry)
-    context = SimpleNamespace(permissions=permissions.PermissionManager(lambda: {}))
+    state = importlib.import_module(f"{addon_package}.state").BridgeState()
+    context = registry_module.ToolContext(state, permissions.PermissionManager(lambda: {}), registry, None)
     for name, group, modifies, required, _ in TOOL_DATA:
         spec = registry.get(name)
         assert spec.toolset == group and spec.modifies == modifies

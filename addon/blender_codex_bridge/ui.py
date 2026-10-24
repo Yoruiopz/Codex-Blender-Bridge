@@ -1,5 +1,7 @@
 """Codex Bridge 3D View N-panel and explicit user-control operators."""
 
+from typing import TypeGuard
+
 try:
     import bpy  # type: ignore
 except ImportError:  # pragma: no cover
@@ -11,6 +13,106 @@ from .preferences import get_preferences
 from .protocol import PROTOCOL_VERSION
 from .runtime import get_runtime
 from .serialization import dumps
+
+
+def _target_channels_label(receipt: object) -> str:
+    """Format cached public facts without inspecting or refreshing scene state."""
+    def plain_fields(value: object) -> TypeGuard[dict[str, object]]:
+        return (type(value) is dict and len(value) <= 64
+                and all(type(key) is str and len(key) <= 128 for key in value))
+
+    unavailable = "Observation unavailable"
+    if not plain_fields(receipt):
+        return unavailable
+    history = receipt.get("history_state")
+    if history is not None and (type(history) is not str or len(history) > 64):
+        return unavailable
+    if history == "historical_after_generation_change":
+        return "Stale; verify again"
+    if history not in {None, "current_runtime_generation"}:
+        return unavailable
+    observation = receipt.get("target_observation")
+    if observation is not None:
+        if not plain_fields(observation):
+            return unavailable
+        validity = observation.get("validity")
+        if type(validity) is not str or len(validity) > 64:
+            return unavailable
+        if validity == "stale":
+            return "Stale; verify again"
+        scope = observation.get("scope")
+        if validity != "recorded" or type(scope) is not str or scope != "authored_core_transform_channels":
+            return unavailable
+        status = observation.get("status")
+        if type(status) is not str or len(status) > 64:
+            return unavailable
+        if (observation.get("current_scene_verified") is not False
+                or observation.get("user_goal_verified") is not False
+                or observation.get("comparison_complete") is not (status in {"channels_match", "channels_differ"})):
+            return unavailable
+        return {"channels_match": "Matched at verification",
+                "channels_differ": "Differences at verification",
+                "target_missing": "Target missing at verification",
+                "target_replaced": "Target replaced at verification"}.get(status, unavailable)
+    expectation = receipt.get("target_expectation")
+    if expectation is None:
+        return "No retained expectation"
+    if not plain_fields(expectation):
+        return unavailable
+    availability = expectation.get("availability")
+    if type(availability) is not str or len(availability) > 64:
+        return unavailable
+    if availability == "available":
+        return "Not verified"
+    if availability == "unavailable":
+        return "Expectation unavailable"
+    return unavailable
+
+
+def _draw_job(jobs, job):
+    """Render cached image or Scene evidence without evaluating native data."""
+    label = job.get("new_image", job.get("label", job["kind"]))
+    jobs.label(text=f"{job['state']}: {label[:36]}")
+    workload = job.get("workload", {})
+    if workload:
+        size = workload["image_size"]
+        jobs.label(text=f"{size[0]} x {size[1]} pixels")
+        if "candidate_pixel_tests" in workload:
+            jobs.label(text=f"{workload['candidate_pixel_tests']} brush candidates")
+        if "format" in workload:
+            jobs.label(text=f"Export/reimport: {workload['format']}")
+        if "mode" in workload:
+            jobs.label(text={"CURRENT_PIXELS_SNAPSHOT": "Snapshot current pixels",
+                             "LOADED_BUFFER": "Restore loaded pixels",
+                             "PACKED_RECONSTRUCTION": "Restore packed pixels"}.get(workload["mode"], "Image recovery"))
+        if "private_pixel_and_payload_peak_estimate_bytes" in workload:
+            jobs.label(text=f"Private pixels/payload estimate: {workload['private_pixel_and_payload_peak_estimate_bytes'] / 1048576:.1f} MiB")
+        elif "private_pixel_buffers_peak_estimate_bytes" in workload:
+            jobs.label(text=f"Private pixel estimate: {workload['private_pixel_buffers_peak_estimate_bytes'] / 1048576:.1f} MiB")
+        jobs.label(text="Excludes native/GPU/undo buffers")
+    progress = job["progress"]
+    jobs.label(text=f"{progress['phase']}: {progress['completed']}/{progress['total']}")
+    if not job["terminal"]:
+        jobs.operator("blender_codex_bridge.cancel_job", icon="CANCEL")
+    if job["error"]:
+        jobs.label(text=job["error"]["code"], icon="ERROR")
+        if job["error"]["context"].get("possible_mutation"):
+            jobs.label(text="Possible effects; inspect/recover", icon="ERROR")
+    effects = job.get("external_effects", {})
+    if effects.get("file_published") or effects.get("publication_outcome_unknown"):
+        jobs.label(text="File may persist after cancel/undo; inspect", icon="INFO")
+    if effects.get("retained_staging_path"):
+        jobs.label(text="Retained staging file; inspect job details", icon="ERROR")
+    recovery = job.get("recovery_evidence", {})
+    recovery_unknown = "recovery_evidence" in job.get("evidence_observation_unknown", ())
+    if recovery_unknown:
+        jobs.label(text="Recovery state could not be observed; inspect", icon="ERROR")
+    elif recovery.get("snapshot_retained"):
+        jobs.label(text=("Snapshot retained at completion; verify before saving" if job["terminal"]
+                         else "Packed snapshot retained; save for durability"), icon="INFO")
+    if recovery.get("possible_mutation"):
+        jobs.label(text="Image may have changed; inspect recovery", icon="ERROR")
+
 
 if bpy is not None:
 
@@ -75,8 +177,8 @@ if bpy is not None:
 
     class BCB_OT_cancel_job(bpy.types.Operator):
         bl_idname = "blender_codex_bridge.cancel_job"
-        bl_label = "Cancel Image Job"
-        bl_description = "Cancel private image work at its next safe point; native commits cannot be preempted"
+        bl_label = "Cancel Job"
+        bl_description = "Cancel job work at its next safe point; native calls cannot be preempted"
 
         def execute(self, context):
             del context
@@ -311,17 +413,42 @@ if bpy is not None:
                 error_row.label(text=f"Last error: {state['last_error'][:96]}", icon="ERROR")
 
             plan_store = getattr(runtime.state, "_artist_task_plans", None)
-            plan = plan_store.inspect()["plan"] if plan_store is not None else None
+            plan_info = plan_store.inspect(runtime.executor.evidence) if plan_store is not None else None
+            plan = plan_info["plan"] if plan_info is not None else None
             if plan is not None:
                 completed = sum(step["status"] == "completed" for step in plan["steps"])
                 task_box.label(text=f"Plan: {completed}/{len(plan['steps'])} marked complete")
                 icons = {"pending": "DOT", "in_progress": "PLAY", "completed": "CHECKMARK", "blocked": "ERROR"}
                 for step in plan["steps"][:8]:
                     task_box.label(text=step["description"][:80], icon=icons[step["status"]])
+                    receipts = [item for item in plan_info["step_evidence"]["receipts"] if item["step_id"] == step["id"]]
+                    if receipts:
+                        receipt = receipts[-1]
+                        earlier = " (earlier scene state)" if receipt["history_state"] == "historical_after_generation_change" else ""
+                        task_box.label(text=f"Last edit: {receipt['outcome'].capitalize()}{earlier}")
+                        task_box.label(text="Target core channels:")
+                        task_box.label(text=_target_channels_label(receipt))
+                        observation = receipt["protected_observation"]
+                        label = "Not compared"
+                        if observation:
+                            if observation["validity"] == "stale":
+                                label = "Stale; compare again"
+                            elif observation["validity"] == "unknown":
+                                label = "Snapshot unavailable"
+                            else:
+                                label = {"unchanged_within_scope": "Unchanged at comparison", "changed": "Changes found",
+                                         "unknown": "Comparison incomplete"}.get(observation["status"], "Comparison incomplete")
+                        task_box.label(text=f"Protected objects only: {label}")
                 if len(plan["steps"]) > 8:
                     task_box.label(text=f"{len(plan['steps']) - 8} more steps; inspect the plan")
-                task_box.label(text=f"Protected scope: {len(plan['protected_objects'])} objects (advisory)")
-                task_box.label(text="Compare evidence before marking work verified", icon="INFO")
+                policy = "enforced" if plan_info["protected_scope_enforced"] else "advisory"
+                task_box.label(text=f"Protected scope: {len(plan['protected_objects'])} objects ({policy})")
+                task_box.label(text="Step marks are claims;", icon="INFO")
+                task_box.label(text="receipts do not verify the goal")
+                task_box.label(text="Target records are historical;", icon="INFO")
+                task_box.label(text="verify after manual edits")
+                if plan_info["step_evidence"]["incomplete"]:
+                    task_box.label(text="Execution receipts incomplete; inspect history", icon="ERROR")
 
             toolsets = layout.box()
             toolsets.label(text="Capability Toolsets", icon="MODIFIER")
@@ -383,50 +510,11 @@ if bpy is not None:
                     )
 
             jobs = layout.box()
-            jobs.label(text="Image Jobs", icon="BRUSH_DATA")
+            jobs.label(text="Jobs", icon="BRUSH_DATA")
             if preferences:
                 jobs.prop(preferences, "paint_job_budget_ms")
             for job in runtime.jobs.list(limit=3)["jobs"]:
-                jobs.label(text=f"{job['state']}: {job['new_image'][:36]}")
-                workload = job["workload"]
-                if workload:
-                    size = workload["image_size"]
-                    jobs.label(text=f"{size[0]} x {size[1]} pixels")
-                    if "candidate_pixel_tests" in workload:
-                        jobs.label(text=f"{workload['candidate_pixel_tests']} brush candidates")
-                    if "format" in workload:
-                        jobs.label(text=f"Export/reimport: {workload['format']}")
-                    if "mode" in workload:
-                        jobs.label(text={"CURRENT_PIXELS_SNAPSHOT": "Snapshot current pixels",
-                                         "LOADED_BUFFER": "Restore loaded pixels",
-                                         "PACKED_RECONSTRUCTION": "Restore packed pixels"}.get(workload["mode"], "Image recovery"))
-                    if "private_pixel_and_payload_peak_estimate_bytes" in workload:
-                        jobs.label(text=f"Private pixels/payload estimate: {workload['private_pixel_and_payload_peak_estimate_bytes'] / 1048576:.1f} MiB")
-                    elif "private_pixel_buffers_peak_estimate_bytes" in workload:
-                        jobs.label(text=f"Private pixel estimate: {workload['private_pixel_buffers_peak_estimate_bytes'] / 1048576:.1f} MiB")
-                    jobs.label(text="Excludes native/GPU/undo buffers")
-                progress = job["progress"]
-                jobs.label(text=f"{progress['phase']}: {progress['completed']}/{progress['total']}")
-                if not job["terminal"]:
-                    jobs.operator("blender_codex_bridge.cancel_job", icon="CANCEL")
-                if job["error"]:
-                    jobs.label(text=job["error"]["code"], icon="ERROR")
-                    if job["error"]["context"].get("possible_mutation"):
-                        jobs.label(text="Possible effects; inspect/recover", icon="ERROR")
-                effects = job.get("external_effects", {})
-                if effects.get("file_published") or effects.get("publication_outcome_unknown"):
-                    jobs.label(text="File may persist after cancel/undo; inspect", icon="INFO")
-                if effects.get("retained_staging_path"):
-                    jobs.label(text="Retained staging file; inspect job details", icon="ERROR")
-                recovery = job.get("recovery_evidence", {})
-                recovery_unknown = "recovery_evidence" in job.get("evidence_observation_unknown", ())
-                if recovery_unknown:
-                    jobs.label(text="Recovery state could not be observed; inspect", icon="ERROR")
-                elif recovery.get("snapshot_retained"):
-                    jobs.label(text=("Snapshot retained at completion; verify before saving" if job["terminal"]
-                                     else "Packed snapshot retained; save for durability"), icon="INFO")
-                if recovery.get("possible_mutation"):
-                    jobs.label(text="Image may have changed; inspect recovery", icon="ERROR")
+                _draw_job(jobs, job)
             jobs.label(text="Session only; native transfers cannot be preempted")
             history = layout.box()
             history.label(text="History", icon="TIME")

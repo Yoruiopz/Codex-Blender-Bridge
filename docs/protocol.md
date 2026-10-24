@@ -132,7 +132,7 @@ Requirements:
 | `PERMISSION_DENIED` | Blender-side permission is disabled. | after user consent |
 | `TOOLSET_DISABLED` | Domain toolset is not enabled. | after enablement |
 | `AGENT_PAUSED` | Agent modifications are paused. | yes, after resume |
-| `EMERGENCY_STOPPED` | Emergency stop prevents execution. | after explicit reset |
+| `EMERGENCY_STOPPED` | Emergency stop prevents modifications. | after explicit reset |
 | `BLENDER_CONTEXT_ERROR` | Required area/region/context is unavailable. | context-dependent |
 | `OPERATION_FAILED` | Handler failed after validation. | context-dependent |
 | `TIMEOUT` | Deadline expired before a terminal result. | context-dependent |
@@ -152,10 +152,33 @@ Prepared internal handler invocation tracks in-flight mutators on Blender's main
 thread; protection cannot be enabled over one. Executor, direct registry dispatch
 and batch steps use that wrapper. Calling a trusted handler directly is not a
 remote protocol entry point and does not replace registered preflight.
-Each modifying handler entry has a final internal lifetime/toolset/stop check
-after preflight callbacks. Its diagnostic entry counter is runtime-only. The
+Every handler entry has a final internal lifetime/toolset/identity check after
+preflight callbacks. Pause and emergency-stop checks apply to the exact retained
+modifying ToolSpec. Readonly inspection, status and nonmodifying controls remain
+eligible while paused or stopped, subject to live permissions and any active Scene
+reservation. A readonly registration does not certify that its native getters or
+evaluation are passive. Its diagnostic entry counter is runtime-only. The
 existing explicit local recovery override permits pause/stop recovery only for
 the two canonical recovery methods; it never bypasses caller lifetime/toolsets.
+
+Known artist context reads can synchronize a ViewLayer before the requested
+handler starts, including before a subsequent permission denial. Failed entries
+may add a bounded `error.context.entry_effects` record:
+
+```json
+{"view_layer_sync_possible":true,"context_change_measured":false,"handler_entered":false,"reinspection_required":true}
+```
+
+This optional record contains exactly four booleans and no denied scene data.
+`handler_entered` refers to the exact canonical handler; nested reads can make
+context effects possible without entering that handler. It is conservative
+evidence of a known synchronizing read, not measurement or prevention of a
+selection change. The primary error code/message and existing execution/mutation
+facts retain their meanings; `verification_required` becomes true. Generic failed
+history and runtime artist step receipts retain the same evidence before terminal
+recording. A step may remain `rejected` with `handler_entered=false`. Unmarked
+legacy records omit the addition; absence is not a passive-context guarantee.
+See [entry context effects](entry-context-effects.md).
 
 Unreleased `project.save` retains its optional `filepath`, permissions and V1
 registration but returns `NOT_IMPLEMENTED` for Save and Save As after live grants
@@ -241,9 +264,10 @@ Only a failure known to occur before a frame was sent carries `executed:false` a
 
 ## Concurrency and ordering
 
-Unreleased `image.paint_job_start` and `image.export_job_start` return bounded accepted job
-descriptors, not completed painting or delivery. Both share the same single-active scheduler.
-Trusted in-process lifetime flags are never accepted from wire fields. CPU work waits until its
+Unreleased image job starters and `rigid_body.evaluate_job_start` return bounded
+accepted job descriptors, not completed domain work. Image painting, delivery,
+snapshot/recovery and rigid evaluation share the same single-active scheduler.
+Trusted in-process lifetime flags are never accepted from wire fields. Job work waits until its
 success response is flushed; failed delivery, observed disconnect or expired handoff cancels it.
 After handoff, a separate 1–300 second job deadline applies while the owning connection remains
 open. Main-thread timer slices service the normal request queue first. `jobs.inspect/list` poll
@@ -251,7 +275,8 @@ revisioned phase-local progress and terminal result/error; `jobs.cancel` request
 cancellation, not rollback. Native publication has its own final checkpoint/history record.
 No events, new envelopes or duplicate terminal responses are introduced. A connection reader
 preserves bounded partial frames across idle timeouts while active requests/jobs remain; inactive
-connections still expire. See [painting jobs](painting-jobs.md) for limits and recovery semantics.
+connections still expire. See [painting jobs](painting-jobs.md) and
+[rigid evaluation jobs](rigid-body-evaluation-jobs.md) for domain limits and recovery semantics.
 
 Export/reimport descriptors additionally expose `duration_ms` and bounded `external_effects`.
 Published or uncertain disk effects survive cancellation/native undo and are retained in
@@ -271,6 +296,49 @@ The preview tool may impose a smaller count. These facts describe retained files
 Render Result effects separately from scene restoration; native scene undo does not
 remove them. They do not grant file access or certify crash durability. Inspection denial
 redacts the whole external-effects record, including all nested paths and hashes.
+
+`asset.import` holds an internal exclusive mutation lease from entry admission
+through native work, cleanup and checkpoint finalization. Reentrant modifying
+calls from permission providers, checkpoint/native callbacks or finalizers fail
+before their providers and checkpoints with `OPERATION_FAILED` and
+`reason: REENTRANT_MUTATION_BLOCKED`. Reusing a context, request ID or local
+recovery override grants no entry. Read-only status/inspection and pause/stop
+controls remain eligible under their other live gates; nested status retains the
+outer execution display. An independent Scene reservation can restrict inspection.
+The canonical executor-to-handler continuation uses a local single-use permit,
+never a wire field or context-held grant. Exact lease loss stops subsequent
+guarded writes; a primary error retains its identity and receives optional
+`exclusive_mutation_lease_drift` evidence. Lifecycle reset cannot unlock an
+active native call; only its owning scope can release its exact lease when it
+unwinds. Ordinary batch/artist composition and image-job interleaving retain
+their existing behavior. This is a structured-entry interlock, not a sandbox
+for native handlers or arbitrary Python, a cancellation/preemption guarantee,
+or a solution to whole-project serialization.
+
+The [Scene job kernel](scene-job-kernel.md), used by the public rigid evaluation
+adapter, retains a reservation across
+turns. While it owns the evaluation context, only its exact frozen nonmodifying
+status/control specifications may interleave: `bridge.status`, `jobs.inspect`,
+`jobs.list`, `jobs.cancel`, `toolsets.list`, `toolsets.enable` and `toolsets.disable`.
+They retain their own live permission requirements. Other structured calls,
+including evaluation-capable inspection and viewport capture, fail before their
+providers/handlers with `OPERATION_FAILED` and
+`reason: SCENE_JOB_RESERVATION_BLOCKED`. Replacing a same-name specification does
+not enter the frozen allowlist. The local-only `jobs._scene_turn` requires a fresh
+scheduler origin; no wire parameter, copied context or recovery flag grants it.
+Cached inspection exposes bounded progress/checkpoint/terminal receipts without
+evaluating the Scene. `rigid_body.evaluate_preview` fingerprints the exact whole
+world, proposed range and job limit; `rigid_body.evaluate_job_start` accepts that
+proposal only under renewed Blender authority. The nonbatchable job performs at
+most one checkpoint/domain phase per tick and keeps its owned pending checkpoint
+across turns. Successful completion restores caller time and retains the proposed
+cache range. Stops retain partial effects without automatic restoration or cleanup.
+The bounded `native_effects` receipt describes selected declared intervals; it is
+not complete native-state evidence. Unresolved Scene receipts remain discoverable
+after ordinary 32-entry display-history eviction. This evaluation API performs no
+BAKE/conversion and makes no cache-coverage, durability or native-preemption claim.
+Its typed Blender RPC native fixture and portable official MCP SDK tests are
+separate routes; installed native MCP end-to-end acceptance remains open.
 
 - Multiple requests may be in flight at the transport/client layer.
 - Writes on each socket are serialized so NDJSON frames never interleave.

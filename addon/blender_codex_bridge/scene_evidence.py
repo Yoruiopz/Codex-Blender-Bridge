@@ -533,6 +533,10 @@ class SceneEvidenceStore:
     def clear(self) -> None:
         self._snapshots.clear()
 
+    def has_snapshot(self, identifier: str) -> bool:
+        """Only retained availability; this does not reinspect Blender state."""
+        return identifier in self._snapshots
+
     def capture(self, bpy: Any, params: Mapping[str, Any], check=None) -> dict[str, Any]:
         names = params.get("object_names")
         if (

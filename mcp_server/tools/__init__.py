@@ -7,6 +7,8 @@ from collections.abc import Iterable
 from ..tool_registry import ToolRegistry
 from ._common import MCPToolBinding
 from .animation import AnimationTools
+from .animation_curve_inspection import AnimationCurveInspectionTools
+from .animation_curve_sampling import AnimationCurveSamplingTools
 from .animation_curves import AnimationCurveTools
 from .animation_lifecycle import ActionLifecycleTools
 from .artist import ArtistTools
@@ -27,6 +29,7 @@ from .interaction import InteractionTools
 from .layout import LayoutTools
 from .materials import MaterialTools
 from .mesh import MeshTools
+from .mesh_chains import MeshChainTools
 from .mesh_slide import MeshSlideTools
 from .mesh_surface import MeshSurfaceTools
 from .modifiers import ModifierTools
@@ -39,6 +42,7 @@ from .render import RenderTools
 from .rig_drivers import RigDriverTools
 from .rig_ik import RigIKTools
 from .rigging import RiggingTools
+from .rigid_body import RigidBodyTools
 from .scene import SceneTools
 from .scene_edit import SceneEditTools
 from .scene_variants import SceneVariantTools
@@ -57,6 +61,7 @@ def iter_bindings(registry: ToolRegistry) -> Iterable[MCPToolBinding]:
 
     bundles = (
         ArtistTools(registry),
+        RigidBodyTools(registry),
         WeightBrushTools(registry),
         AssetDeliveryTools(registry),
         AssetImportTools(registry),
@@ -77,6 +82,7 @@ def iter_bindings(registry: ToolRegistry) -> Iterable[MCPToolBinding]:
         ObjectTools(registry),
         TransformTools(registry),
         MeshTools(registry),
+        MeshChainTools(registry),
         MeshSlideTools(registry),
         MeshSurfaceTools(registry),
         SurfaceBrushTools(registry),
@@ -96,6 +102,8 @@ def iter_bindings(registry: ToolRegistry) -> Iterable[MCPToolBinding]:
         RigIKTools(registry),
         DeformationTools(registry),
         AnimationTools(registry),
+        AnimationCurveInspectionTools(registry),
+        AnimationCurveSamplingTools(registry),
         AnimationCurveTools(registry),
         ActionLifecycleTools(registry),
         RenderTools(registry),

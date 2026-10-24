@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..tool_registry import ToolRegistry
-from ._common import MCPToolBinding, params
+from ._common import MCPToolBinding, RotationQuaternion, params
 
 
 class TransformTools:
@@ -18,8 +18,9 @@ class TransformTools:
         location: list[float] | None = None,
         rotation: list[float] | None = None,
         scale: list[float] | None = None,
+        rotation_quaternion: RotationQuaternion | None = None,
     ) -> Any:
-        """Set any supplied absolute transform components; rotations are radians."""
+        """Set supplied absolute components; Euler rotation is in radians. Optional rotation_quaternion is four authored WXYZ values on an already-QUATERNION target in the reviewed static local single-user Mesh profile. It is exclusive with Euler rotation and mode changes. No normalization or conversion; Blender requires near-unit requested/Float32 values and an available complete six-channel retained intent, and validates ownership and live permissions."""
 
         return await self.registry.call(
             "transform.set",
@@ -28,6 +29,7 @@ class TransformTools:
                 location=location,
                 rotation=rotation,
                 scale=scale,
+                rotation_quaternion=rotation_quaternion,
             ),
         )
 

@@ -10,6 +10,8 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import Any
 
+from .entry_effects import bounded_entry_effects
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -27,7 +29,7 @@ def _bounded_single_effect(value: Any) -> dict[str, Any] | None:
     for key in (
         "publication_attempted", "file_published", "publication_outcome_unknown",
         "published_bytes_verified", "native_undo_removes_external_file", "crash_durability_verified",
-        "render_result_replaced",
+        "render_result_replaced", "render_result_replacement_possible",
     ):
         field = value.get(key)
         if type(field) is bool:
@@ -56,16 +58,58 @@ def _bounded_single_effect(value: Any) -> dict[str, Any] | None:
 
 
 MAX_EXTERNAL_ARTIFACTS = 4
+SCENE_RECOVERY_KINDS = frozenset({"collection_allocation_attempt", "collection_allocation", "collection_removal_attempt",
+                                  "world_allocation_attempt", "world_allocation", "embedded_world_graph_allocation"})
+
+
+def _bounded_scene_recovery(value: Mapping[str, Any]) -> dict[str, Any] | None:
+    count, restored, supplied = value.get("owned_write_attempts"), value.get("restoration_verified"), value.get("retained_effects")
+    if type(count) is not int or not 0 <= count <= 64 or type(restored) is not bool or not isinstance(supplied, list):
+        return None
+    effects: list[dict[str, Any]] = []
+    incomplete = value.get("retained_effects_incomplete") is True
+    for item in supplied[:16]:
+        if not isinstance(item, Mapping) or not isinstance(item.get("kind"), str) or item.get("kind") not in SCENE_RECOVERY_KINDS:
+            incomplete = True
+            continue
+        effect: dict[str, Any] = {"kind": item["kind"]}
+        key = "world" if item["kind"] == "embedded_world_graph_allocation" else "name"
+        name = item.get(key)
+        if isinstance(name, str) and name and len(name) <= 63 and not any(ord(char) < 32 for char in name):
+            try:
+                if len(name.encode("utf-8")) <= 63:
+                    effect[key] = name
+            except UnicodeError:
+                pass
+        incomplete = incomplete or key not in effect
+        if item["kind"] == "collection_allocation":
+            if type(item.get("linked")) is bool:
+                effect["linked"] = item["linked"]
+            else:
+                incomplete = True
+        if item["kind"] == "embedded_world_graph_allocation":
+            if item.get("automatic_identity_restoration_available") is False:
+                effect["automatic_identity_restoration_available"] = False
+            else:
+                incomplete = True
+        effects.append(effect)
+    return {"kind": "scene_mutation", "owned_write_attempts": count, "restoration_verified": restored,
+            "retained_effects": effects, "retained_effects_truncated": len(supplied) > 16 or value.get("retained_effects_truncated") is True,
+            "retained_effects_incomplete": bool(incomplete)}
 
 
 def bounded_recovery_evidence(value: Any) -> dict[str, Any] | None:
-    """Retain only bounded packed-image facts, separately from file effects.
+    """Retain typed bounded recovery facts, separately from external file effects.
 
     A retained in-memory snapshot is not a saved project or an external backup.
     Unknown fields and invalid values never become recovery proof in history.
     """
     if not isinstance(value, Mapping):
         return None
+    if value.get("kind") == "scene_mutation":
+        return _bounded_scene_recovery(value)
+    if value.get("kind") == "weight_mutation":
+        return _bounded_weight_recovery(value)
     result: dict[str, Any] = {}
     mode = value.get("mode")
     if isinstance(mode, str) and mode in {"CURRENT_PIXELS_SNAPSHOT", "LOADED_BUFFER", "PACKED_RECONSTRUCTION"}:
@@ -94,6 +138,59 @@ def bounded_recovery_evidence(value: Any) -> dict[str, Any] | None:
     if type(size) is int and 0 <= size <= 288 * 1024 * 1024:
         result["packed_bytes"] = size
     return result or None
+
+
+def _bounded_weight_recovery(value: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Copy a complete flat weight-write receipt; it grants no restore authority."""
+    method, name, stage = value.get("method"), value.get("object_name"), value.get("stage")
+    if (type(method) is not str or method not in {
+            "weights.brush_stroke", "weights.mirror_geometric", "weights.transfer_surface"}
+            or type(stage) is not str or stage not in {
+                "PREPARED", "FIELD_WRITE", "UPDATE", "RESTORE", "COMPLETE", "FAILED"}
+            or type(name) is not str or not name or len(name) > 63 or any(ord(c) < 32 for c in name)):
+        return None
+    try:
+        if len(name.encode("utf-8")) > 63:
+            return None
+    except UnicodeError:
+        return None
+    result: dict[str, Any] = {"kind": "weight_mutation", "method": method, "object_name": name, "stage": stage}
+    for key in ("execution_started", "possible_mutation", "rollback_verified", "verification_required",
+                "state_known", "retained_partial"):
+        field = value.get(key)
+        if type(field) is not bool:
+            return None
+        result[key] = field
+    for key, maximum in (("owned_membership_attempts", 4096), ("owned_membership_verified", 4096),
+                         ("restoration_attempts", 4096), ("restored_memberships", 4096),
+                         ("native_update_attempts", 6), ("native_update_verified", 6)):
+        field = value.get(key)
+        if type(field) is not int or not 0 <= field <= maximum:
+            return None
+        result[key] = field
+    refused = value.get("restoration_refused")
+    if refused is not None and (type(refused) is not str or refused not in {
+            "AUTHORITY_LOST", "STATE_CHANGED", "UNKNOWN_WRITE_RESULT", "INVALID_NATIVE_SCOPE"}):
+        return None
+    result["restoration_refused"] = refused
+    for key in ("before_sha256", "expected_sha256", "observed_sha256"):
+        field = value.get(key)
+        if field is None and key == "observed_sha256":
+            result[key] = None
+        elif type(field) is str and len(field) == 64 and all(c in "0123456789abcdef" for c in field):
+            result[key] = field
+        else:
+            return None
+    if (result["owned_membership_verified"] > result["owned_membership_attempts"]
+            or result["restored_memberships"] > result["restoration_attempts"]
+            or result["native_update_verified"] > result["native_update_attempts"]
+            or (result["state_known"] != (result["observed_sha256"] is not None))):
+        return None
+    if result["rollback_verified"] and (
+            not result["state_known"] or result["observed_sha256"] != result["before_sha256"]
+            or result["retained_partial"] or refused is not None):
+        return None
+    return result
 
 
 def bounded_external_effects(value: Any) -> dict[str, Any] | None:
@@ -138,10 +235,13 @@ class OperationRecord:
     job_evidence: dict[str, Any] | None = None
     external_effects: dict[str, Any] | None = None
     recovery_evidence: dict[str, Any] | None = None
+    entry_effects: dict[str, bool] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
         value["affected_objects"] = list(self.affected_objects)
+        if self.entry_effects is None:
+            value.pop("entry_effects")
         return value
 
 
@@ -221,6 +321,7 @@ class BridgeState:
         job_evidence: dict[str, Any] | None = None,
         external_effects: Mapping[str, Any] | None = None,
         recovery_evidence: Mapping[str, Any] | None = None,
+        entry_effects: Mapping[str, Any] | None = None,
     ) -> OperationRecord:
         record = OperationRecord(
             operation_id=f"op_{uuid.uuid4().hex[:10]}",
@@ -234,6 +335,7 @@ class BridgeState:
             job_evidence=job_evidence,
             external_effects=bounded_external_effects(external_effects),
             recovery_evidence=bounded_recovery_evidence(recovery_evidence),
+            entry_effects=bounded_entry_effects(entry_effects),
         )
         with self._lock:
             self._history.appendleft(record)

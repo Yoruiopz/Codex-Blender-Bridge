@@ -2,18 +2,22 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
+
+from pydantic import Field, StrictFloat
 
 from ..tool_registry import ToolDefinition, ToolRegistry, remote_tool
 from ._common import MCPToolBinding, params
+
+FocusDistance = Annotated[StrictFloat, Field(ge=0.0, le=1.0e9, allow_inf_nan=False)]
 
 SCENE_EDIT_TOOL_DATA: tuple[tuple[str, str, bool, tuple[str, ...]], ...] = (
     ("scene.configure", "Configure an explicit scene's camera, units, and gravity.", True, ("EDIT_SCENE",)),
     ("collection.create", "Create and link a collection under an explicit scene or parent.", True, ("EDIT_SCENE",)),
     ("collection.rename", "Rename an explicit collection without collisions.", True, ("EDIT_SCENE",)),
-    ("collection.delete", "Remove an explicitly confirmed collection and report unlinked contents.", True, ("EDIT_SCENE", "DELETE_OBJECTS")),
+    ("collection.delete", "Remove an explicitly confirmed empty collection within the current Scene.", True, ("EDIT_SCENE", "DELETE_OBJECTS")),
     ("camera.configure", "Configure camera optics, clipping, depth of field, and active-scene assignment.", True, ("EDIT_SCENE",)),
-    ("light.configure", "Configure a named Blender light's type, energy, color, and shape settings.", True, ("EDIT_SCENE",)),
+    ("light.configure", "Configure a named Blender light's energy, color, and supported settings within its current subtype.", True, ("EDIT_SCENE",)),
     ("world.configure", "Create, assign, and configure a scene world and Background node.", True, ("EDIT_SCENE",)),
 )
 SCENE_EDIT_TOOL_NAMES = tuple(item[0] for item in SCENE_EDIT_TOOL_DATA)
@@ -87,7 +91,7 @@ class SceneEditTools:
         collection_name: str,
         confirm_delete: bool = False,
     ) -> Any:
-        """Remove a collection only after explicit acknowledgement."""
+        """Remove an empty current-Scene collection after explicit acknowledgement."""
 
         return await self.registry.call(
             "collection.delete",
@@ -109,8 +113,9 @@ class SceneEditTools:
         aperture_fstop: float | None = None,
         scene_name: str | None = None,
         set_active_for_scene: bool | None = None,
+        focus_distance: FocusDistance | None = None,
     ) -> Any:
-        """Configure camera optics, clipping, depth of field, and scene assignment."""
+        """Configure camera optics, clipping, depth of field, and scene assignment. Optional focus_distance is 0 to 1e9 Blender coordinate units and requires no final focus object; explicitly clear an existing focus first. It does not enable depth of field."""
 
         return await self.registry.call(
             "camera.configure",
@@ -128,6 +133,7 @@ class SceneEditTools:
                 aperture_fstop=aperture_fstop,
                 scene_name=scene_name,
                 set_active_for_scene=set_active_for_scene,
+                focus_distance=focus_distance,
             ),
         )
 
@@ -141,7 +147,7 @@ class SceneEditTools:
         spot_size: float | None = None,
         spot_blend: float | None = None,
     ) -> Any:
-        """Configure a named light's type, energy, color, and shape."""
+        """Configure a named light within its current subtype; conversions are unsupported."""
 
         return await self.registry.call(
             "light.configure",

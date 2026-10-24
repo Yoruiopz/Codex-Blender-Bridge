@@ -3,15 +3,13 @@
 from __future__ import annotations
 
 import logging
-import math
-import threading
 import time
 import uuid
-from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
 
 from .errors import BridgeError, ErrorCode, invalid_argument
+from .job_controller import TERMINAL, CooperativeJobController
 from .permissions import Permission
 from .protocol import utc_timestamp
 from .request_lifecycle import RequestLifetime
@@ -21,7 +19,6 @@ from .utils import require_blender
 
 LOGGER = logging.getLogger(__name__)
 START_METHOD = "image.paint_job_start"
-TERMINAL = {"SUCCEEDED", "FAILED", "CANCELLED"}
 
 
 def _identity(image: Any) -> tuple:
@@ -105,22 +102,18 @@ class PaintJob:
                 "duration_ms": round(((self.finished or time.monotonic())-self.started)*1000, 3)}
 
 
-class PaintJobs:
-    """Shared paint/delivery scheduler (legacy class name); no concurrent mutators.
+class PaintJobs(CooperativeJobController):
+    """Image preparation/publication adapter using the shared job controller.
 
-    Domain drivers own their typed workflow, not networking or a second scheduler.
-    Network threads touch only the existing lifetime Events.
+    The existing runtime-facing identity, image summaries and terminal cleanup
+    policy stay here. Network threads touch only the existing lifetime Events.
     """
 
-    def __init__(self, context_factory, budget_ms=lambda: 4.):
-        self.context_factory, self.budget_ms = context_factory, budget_ms
-        self._main_thread = threading.get_ident()
-        self.active: PaintJob | None = None
-        self.history: deque[PaintJob] = deque(maxlen=32)
-
-    def _main(self):
-        if threading.get_ident() != self._main_thread:
-            raise BridgeError(ErrorCode.BLENDER_CONTEXT_ERROR, "Job control and execution require Blender's main thread.")
+    _logger = LOGGER
+    _emergency_message = "Painting job emergency-stopped."
+    _unexpected_failure_log = "Image job failed outside its typed error path"
+    _unexpected_failure_message = "Image job failed; inspect its recovery/file evidence."
+    _lifecycle_cancel_message = "Image job cancelled by bridge lifecycle."
 
     def _lifetime_check(self, job: PaintJob, context: Any):
         """Pure safe point after providers: Events, clock, job and registry only."""
@@ -444,112 +437,18 @@ class PaintJobs:
             job.state, job.result = "FAILED", None
             job.progress = {**job.progress, "phase": "failed"}
         finally:
-            self.history.appendleft(job)
-            if self.active is job:
-                self.active = None
+            self._retire(job)
 
-    def tick(self) -> bool:
-        self._main()
-        job = self.active
-        if job is None:
-            return False
-        context = self._context(job)
-        job.in_tick = True
-        try:
-            self._check(job, context)
-            snapshot = context.state.snapshot()
-            if snapshot["emergency_stopped"]:
-                raise BridgeError(ErrorCode.EMERGENCY_STOPPED, "Painting job emergency-stopped.")
-            if snapshot["paused"]:
-                if job.state != "PAUSED":
-                    job.state = "PAUSED"
-                    job.revision += 1
-                return True
-            if not job.lifetime.delivered.is_set():
-                return True
-            context.registry.prepare(job.method, context)
-            job.state = "RUNNING"
-            if job.work is None:
-                prepared = job.prepared
-                job.work = job.driver.steps(context, job, lambda callback: self._native_commit(job, context, callback)) if job.driver is not None else pixel_brush.paint_steps(prepared.pop("values"), prepared["width"], prepared["height"], prepared["strokes"],
-                    prepared["role"], srgb=prepared["srgb"], mask=prepared["mask"]["kernel"] if prepared["mask"] else None,
-                    associated=prepared["associated"],
-                    check=lambda: self._check(job, context))
-            budget = self.budget_ms()
-            budget = min(8., max(1., float(budget))) if isinstance(budget, (int, float)) and math.isfinite(budget) else 4.
-            deadline = time.perf_counter() + budget / 1000
-            while time.perf_counter() < deadline:
-                self._check(job, context)
-                flags = context.state.snapshot()
-                if flags["paused"] and not flags["emergency_stopped"]:
-                    job.state = "PAUSED"
-                    job.revision += 1
-                    return True
-                context.registry.prepare(job.method, context)
-                try:
-                    job.progress = next(job.work)
-                    job.revision += 1
-                except StopIteration as completed:
-                    if job.driver is None:
-                        self._commit(job, context, completed.value)
-                    else:
-                        job.result = completed.value
-                        self._finish(job, "SUCCEEDED")
-                    return False
-        except BridgeError as error:
-            cancelled = error.code in {ErrorCode.TIMEOUT.value, ErrorCode.EMERGENCY_STOPPED.value}
-            self._finish(job, "CANCELLED" if cancelled else "FAILED", error)
-        except Exception as error:
-            LOGGER.exception("Image job failed outside its typed error path")
-            self._finish(job, "FAILED", BridgeError(ErrorCode.OPERATION_FAILED, "Image job failed; inspect its recovery/file evidence.",
-                                                    {"exception_type": type(error).__name__}))
-        finally:
-            job.in_tick = False
-        return self.active is not None
+    def _make_work(self, job: PaintJob, context: Any):
+        prepared = job.prepared
+        return job.driver.steps(context, job, lambda callback: self._native_commit(job, context, callback)) if job.driver is not None else pixel_brush.paint_steps(prepared.pop("values"), prepared["width"], prepared["height"], prepared["strokes"],
+            prepared["role"], srgb=prepared["srgb"], mask=prepared["mask"]["kernel"] if prepared["mask"] else None,
+            associated=prepared["associated"],
+            check=lambda: self._check(job, context))
 
-    def inspect(self, job_id: str) -> dict:
-        self._main()
-        for job in ([self.active] if self.active else []) + list(self.history):
-            if job.job_id == job_id:
-                return job.summary()
-        raise invalid_argument("Job ID is missing or no longer retained in this bridge session.")
-
-    def list(self, limit=10) -> dict:
-        self._main()
-        jobs = ([self.active] if self.active else []) + list(self.history)
-        return {"jobs": [job.summary() for job in jobs[:limit]], "total": len(jobs), "truncated": len(jobs) > limit,
-                "max_active": 1, "terminal_history_limit": 32, "durable": False}
-
-    def status(self) -> dict:
-        """Minimal control/status evidence, not an INSPECT_SCENE bypass."""
-        self._main()
-        def compact(job):
-            return {key: value for key, value in job.summary().items()
-                    if key in {"job_id", "kind", "state", "terminal", "revision", "progress"}}
-        return {"active": compact(self.active) if self.active else None,
-                "last_terminal": compact(self.history[0]) if self.history else None,
-                "max_active": 1, "terminal_history_limit": 32, "durable": False}
-
-    def cancel(self, job_id: str) -> dict:
-        self._main()
-        summary = self.inspect(job_id)
-        if self.active is not None and self.active.job_id == job_id:
-            self.active.cancel_reason = "explicit cancellation"
-            self.active.state = "CANCELLING"
-            self.active.revision += 1
-            summary = self.active.summary()
-        return {"cancel_requested": not summary["terminal"], "job_id": job_id,
-                "state": summary["state"], "terminal": summary["terminal"],
-                "verification_required": True}
-
-    def cancel_all(self, reason: str):
-        self._main()
-        if self.active is not None:
-            job = self.active
-            job.cancel_reason = reason
-            if job.in_tick or job.in_commit:
-                # Native callbacks can re-enter stop/undo handlers. Do not release
-                # buffers underneath publication; unwind at the next safe point.
-                job.revision += 1
-                return
-            self._finish(job, "CANCELLED", BridgeError(ErrorCode.TIMEOUT, "Image job cancelled by bridge lifecycle.", {"reason": reason}))
+    def _complete_work(self, job: PaintJob, context: Any, value: Any):
+        if job.driver is None:
+            self._commit(job, context, value)
+        else:
+            job.result = value
+            self._finish(job, "SUCCEEDED")

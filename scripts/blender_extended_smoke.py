@@ -13,6 +13,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "addon"))
 
 import blender_codex_bridge  # noqa: E402
+from blender_codex_bridge.checkpoints import MARKER_KEY  # noqa: E402
+from blender_codex_bridge.errors import BridgeError  # noqa: E402
 from blender_codex_bridge.permissions import Permission, PermissionManager  # noqa: E402
 from blender_codex_bridge.runtime import get_runtime  # noqa: E402
 
@@ -133,28 +135,59 @@ def main() -> None:
                 "confirm_delete": True,
             },
         )
-        render_settings = runtime.dispatch(
-            "render.configure",
-            {
-                "scene_name": scene_name,
-                "width": 64,
-                "height": 64,
-                "resolution_percentage": 100,
-                "samples": 1,
-            },
-        )
-        rendered = runtime.dispatch(
-            "render.execute",
-            {
-                "scene_name": scene_name,
-                "file_format": "PNG",
-                "width": 64,
-                "height": 64,
-                "resolution_percentage": 100,
-            },
-        )
-        assert Path(rendered["filepath"]).is_file()
-        assert (rendered["width"], rendered["height"]) == (64, 64)
+        configure_params = {
+            "scene_name": scene_name,
+            "width": 64,
+            "height": 64,
+            "resolution_percentage": 100,
+            "samples": 1,
+        }
+        execute_params = {
+            "scene_name": scene_name,
+            "file_format": "PNG",
+            "width": 64,
+            "height": 64,
+            "resolution_percentage": 100,
+        }
+        if tuple(bpy.app.version) == (5, 2, 2) and bpy.app.build_hash == b"d13f752e3b9c":
+            # This exact build's SYSTEM settings have no admitted read-only raw
+            # reader. Refusal is the current contract, not rendering acceptance.
+            scene = bpy.context.scene
+            manager = runtime.checkpoints
+
+            def retained_render_state() -> tuple[object, ...]:
+                render = scene.render
+                return (
+                    render.engine, render.resolution_x, render.resolution_y,
+                    render.resolution_percentage, render.filepath,
+                    render.image_settings.file_format, render.image_settings.color_mode,
+                    render.film_transparent, scene.get(MARKER_KEY),
+                    manager._window.position, id(manager._pending), id(manager._editor_session),
+                    bpy.data.images.get("Render Result"),
+                )
+
+            before_render = retained_render_state()
+            for method, arguments in (("render.configure", configure_params), ("render.execute", execute_params)):
+                try:
+                    runtime.dispatch(method, arguments)
+                except BridgeError as error:
+                    assert error.code == "NOT_IMPLEMENTED", (method, error.code)
+                    assert error.context["render_scope_complete"] is False
+                    assert error.context["runtime_getter_fallback_used"] is False
+                else:
+                    raise AssertionError("The unqualified SYSTEM render profile was accepted")
+                assert retained_render_state() == before_render
+            render_settings = {"engine": scene.render.engine}
+            render_evidence = {
+                "status": "NOT_IMPLEMENTED", "unchanged_settings_and_checkpoint": True,
+                "rendering_accepted": False,
+            }
+        else:
+            render_settings = runtime.dispatch("render.configure", configure_params)
+            rendered = runtime.dispatch("render.execute", execute_params)
+            assert Path(rendered["filepath"]).is_file()
+            assert (rendered["width"], rendered["height"]) == (64, 64)
+            render_evidence = {"status": "rendered", "filepath": rendered["filepath"]}
 
         python_result = runtime.dispatch(
             "python.execute",
@@ -198,7 +231,7 @@ def main() -> None:
                     "light": light_state["light"],
                     "world": world["world"],
                     "render_engine": render_settings["engine"],
-                    "render": rendered["filepath"],
+                    "render": render_evidence,
                 },
                 sort_keys=True,
             )

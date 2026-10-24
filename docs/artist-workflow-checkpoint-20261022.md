@@ -296,6 +296,36 @@ both-version denial, successful application and recovery evidence; it does not e
 that all modifying domains are safe. The wider audit still has open scene, render and
 project-save findings.
 
+## Checkpoint admission and serialization research
+
+The next bounded development work retains a Scene/render authored plan before
+permission callbacks and reuses it across checkpoint creation, handler writes and
+finalization. Native undo's exact ParticleEdit weak-role transition is advanced
+only after a completed push; Scene.original and other identities remain literal.
+Marker compare-and-set preserves newer values, retained owner tokens prevent
+finalizing another edit, and unreviewed guarded batch composition refuses entry.
+Custom-property comparisons distinguish boolean, integer, float and signed zero.
+
+The [Scene contract](scene-edit-safety.md) explicitly reports incomplete bundled
+runtime preservation. The [render contract](render-boundaries.md) admits only a
+bounded static EEVEE/PNG profile on the reviewed 4.5 build; it refuses the reviewed
+5.2 build because hidden SYSTEM settings have no proven supported read-only reader.
+An existence check followed by native property resolution can still repair storage,
+so neither runtime getters nor pointer resolution supply that missing guarantee.
+
+Private [rigid-body Mesh/UV and external native-role projections](rigid-create-new-research.md)
+remain unwired to production admission. The [three-process asset experiment](portable-blend-worker-research.md)
+compares one tiny static asset and packed 2×2 images, restoring original fake-user
+flags. Blender 4.5 camera compatibility conversion is disclosed separately from raw
+storage preservation. It does not enable project saving or prove process containment.
+
+Per-increment frozen sources, logs and negative outcomes remain under
+`build/scene-checkpoint-finish-v3-20261022/`,
+`build/render-checkpoint-finish-v3-20261022/`,
+`build/rigid-scope-profile-validation-20261022-6/` in its isolated worktree,
+and `build/portable-blend-worker-validation-20261022/`. Their selected Linux
+results remain separate from combined-source qualification and Windows acceptance.
+
 ## Remaining gates
 
 Use the [execution plan](plan-1.0.md), [readiness gates](release-1.0-readiness.md)

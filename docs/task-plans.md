@@ -21,6 +21,108 @@ over an active plan, persistence and clear require `expected_revision`. Replacem
 invalidates its baseline; step status/note updates preserve it. Marking a step
 completed records a claim and does not certify its Blender result.
 
+## Step execution and protected observations
+
+`task.plan.preview_transform(..., step_id="revise")` optionally binds the preview
+to that exact current step and its runtime plan generation before application.
+The association cannot be supplied or retargeted at apply time. Status/note
+corrections preserve it; replacement, explicit load, clear, reset and native
+undo/redo invalidate old previews, even when plan/step IDs are reused.
+
+An optional `rotation_quaternion=[W, X, Y, Z]` previews authored quaternion
+components when the target already uses `QUATERNION` mode. Omit Euler `rotation`
+and every `rotation_mode` argument for this request; `transform.set` also refuses
+its legacy `rotation_euler` alias alongside the new field. The bounded
+[quaternion mutation profile](object-rna-safety.md#quaternion-assignments) applies
+to both direct assignment and preview/application. The request is not normalized
+or converted and requires complete qualified independent intent for all six
+core channels before a write. A step-linked preview retains those Float32 expectations for
+explicit [target-channel verification](artist-target-verification.md#quaternion-assignment-expectations);
+raw authored-channel agreement remains separate from evaluated or artistic
+acceptance. Existing transform inputs retain their previous contracts.
+
+Quaternion assignments require a standalone registered `transform.set` call or
+the explicit `task.plan.preview_transform` / `task.plan.apply_preview` sequence.
+`batch.plan` and `batch.execute` refuse `transform.set` entries containing
+`rotation_quaternion` with `NOT_IMPLEMENTED` before preparing the child. Existing
+Euler, location and scale batches retain their previous contracts.
+
+After the outer executor finishes its checkpoint handling and records the actual
+operation, `task.plan.inspect` exposes a runtime `step_evidence` journal. It retains
+at most 32 receipts FIFO, reports truncation and unexpected recording failure,
+and survives MCP reconnect. Receipts include the real outer `operation_id`,
+preview/revision provenance, completed/failed/rejected outcome, error code and
+measured checkpoint/recovery facts. A failed receipt can describe retained partial
+work; it is not rollback proof. Direct registry calls have no outer operation
+receipt. Existing unassociated previews remain valid and create no step receipt.
+
+`task.plan.compare(step_id="revise", expected_revision=...)` explicitly attaches
+the resulting observation to that step's latest retained receipt. A plain compare
+continues to return evidence without attaching it. An intervening bridge writer,
+plan/generation change, newer receipt or replaced baseline prevents attachment.
+These protected-comparison observations are labeled `protected_objects_only` and
+`user_goal_verified=false`: they say nothing about the edited target, appearance,
+artistic quality or step completion.
+
+An observation's `validity` is `recorded` while its runtime generation, bridge
+mutation revision and retained baseline still match, `stale` after invalidation,
+or `unknown` when its snapshot is no longer retained or availability is unknown.
+`recorded` describes retained evidence, not a fresh scene inspection; every
+observation reports `current_scene_verified=false`. Manual edits and unrelated
+native activity require another explicit comparison. Native undo/redo keeps
+operation receipts as historical facts and marks their observations stale;
+an explicit protected comparison can add a new observation without making that old operation
+current. Replacing/loading/clearing/resetting a plan discards the journal entirely.
+Saved schema-v1 stays passive and never includes receipts or observation IDs.
+
+The sidebar separates claimed step marks, execution outcomes, protected-only
+observation validity and historical target core-channel results. No operation or
+comparison implicitly completes a step.
+Portable tests cover the receipt and invalidation boundaries. The extended native
+`artist_loop` fixture passed on Linux Blender 4.5.14 and 5.2.2 at frozen source
+`cdbc1c5`; real manual undo/redo and known recovery are exercised separately by
+the interactive `undo_lifecycle` fixture on both builds. These results verify
+execution evidence and preservation within the reviewed profile, not artistic intent.
+
+### Explicit target-channel observations
+
+`task.plan.verify_transform(step_id, receipt_id, expected_revision)` separately
+compares a current step's latest successful completed preview receipt with its
+exact target's authored core transform channels. Its independent Float32
+expectation is retained before application, including untouched inactive rotation
+channels and signed zero, and exposed as `target_expectation`. Results distinguish
+matching/differing channels and a missing/replaced target; changed provenance,
+later writers and historical or unavailable expectation profiles refuse before
+channel reads.
+
+This read-only `INSPECT_SCENE` method adds a runtime `target_observation`, with
+scope `authored_core_transform_channels` and `user_goal_verified=false`. It creates
+no checkpoint and never completes a step. Successful calls add no
+operation-history entry; failed or rejected calls handled by the executor retain
+its existing failure audit. The existing journal's top-level
+`scope=protected_objects_only` remains a compatibility label for protected
+observations; `target_observation_scope=authored_core_transform_channels`
+labels the separate target evidence, and the target record has its own scope.
+Both kinds of observation remain historical and report
+`current_scene_verified=false` during inspection. The sidebar puts the **Target
+core channels:** heading and its status on separate lines, formatting the latest
+public receipt: a recorded match, difference, missing target or replacement
+remains historical. Stale evidence
+takes priority; unavailable expectations, not-yet-verified targets and absent
+legacy expectations receive distinct labels, while malformed or unknown records
+show unavailable evidence. This presentation adds no plan inspection,
+native/context read, verification, capture or save, and does not change protected
+observations or claimed completion. See the
+[sidebar evidence boundary](artist-target-verification.md#sidebar-evidence).
+
+The first target profile requires an unchanged rotation mode and compares only
+location, rotation mode, Euler/quaternion/axis-angle channels and scale. Unsupported
+mode conversion leaves existing preview/application behavior intact. Parent,
+delta, evaluated/world and visual outcomes require separate evidence. See the
+[target-verification contract](artist-target-verification.md) for exact bounds,
+receipt lifetime and native acceptance requirements. Its new source-matched native
+proof is separate from the earlier artist-loop results above.
+
 Protected scope is **advisory by default**. `task.plan.capture` explicitly snapshots
 exact protected objects; `task.plan.compare` reports changed, unchanged-within-scope
 or unknown evidence, including missing/replaced objects. Fields, budgets, eight-snapshot
@@ -108,6 +210,82 @@ The bounded loop is inspect → plan/capture protected evidence → enable → r
 preview → checkpoint/apply → compare → record correction → preview/apply again. Visual review,
 wider coverage and an authorized save while protection remains enabled are open UX-01
 requirements. Do not disable a user's negative constraints to bypass unsupported tools.
+
+## Native checkpoint admission for the artist profile
+
+Interactive native undo pushes poll particle editing even in Object Mode. On the
+reviewed Blender builds that poll can bind the Scene's weak particle Scene/Object
+roles to the frozen active Object. The original raw consumer fingerprint therefore
+refused a real first preview apply when Scene references changed from membership
+count 2 to membership plus this weak role, count 3. The refusal is retained as
+negative evidence; a passing background fixture did not exercise this boundary.
+
+Artist preview/protected-transform admission now retains one authored write Boundary
+before permission providers. The exact same Boundary follows native checkpoints,
+the exact nested preview transform, verified channel assignments, compensation and
+finalization. A frozen preview role-origin cannot be advanced or replaced; a
+separate call-owned role plan advances only during authenticated successful native
+push delivery and then must pass readonly comparison. An untrusted notification,
+failed/zero push, owner loss, newer authored value or changed preview cannot adopt
+a replacement baseline.
+
+The consumer projection removes only that separately proved weak particle Object
+reference. Camera use, ordinary membership counts and all other consumers remain
+literal. Writable ParticleEdit and ParticleBrush fields and brush identity are
+fingerprinted before and after binding. Both exact reviewed runtimes expose a null
+ParticleBrush curve getter; a non-null curve is refused rather than omitted. Runtime
+getters and changed native descriptors remain refused before those values are read.
+The particle adapter uses the existing artist profile for active-Object validation;
+particles and soft-body cache sources remain unsupported.
+
+Artist admission also accepts `(1, previous Object A)` before transforming active
+Object B when it can freeze a separate readonly witness for A. The immutable
+preview origin retains that exact witness through call-owned forks. Only an
+authenticated completed push predicts the weak reference's removal from A and
+addition to B; both Objects' Scene consumers are projected using that exact phase.
+The previous Object is not added to B's write-affected closure. A protected previous
+Object remains readonly, while a protected Object actually affected by B remains
+refused. Camera references, membership and all other consumers remain literal.
+Scene/render checkpoint admission retains its original strict initial-pair policy.
+
+The previous-owner witness currently accepts local static Empty/Mesh Objects under
+the existing artist profile. It measures the Object's authored channels, geometry,
+attributes, UV/color/group roles, native settings children and incoming Object
+consumer closure. It also measures exact Mesh/Material/node-tree direct consumers
+and up to sixteen Materials with at most eight native Principled/output nodes each,
+including socket defaults, links, interface state and typed custom values. Material
+evidence is limited to one MiB each and the entire witness to eight MiB. An incoming
+consumer may be B: its reference topology is frozen without freezing B's requested
+transform values. The existing 32-Object closure limits apply separately to B's
+write-affected closure and A's readonly consumer closure.
+
+The Mesh's clone/stencil UV selectors are admitted only as exact aliases into its
+own bounded UV-layer inventory. Their native pointer descriptors and fixed layer
+type are validated before reading them; the witness retains the selected layer's
+index, identity and name alongside its authored data and roles. A null selector is
+retained literally. Blender 4.5's native getters select existing CustomData layers,
+whereas the reviewed 5.2 getters can return null for unset UV-name selectors. A
+foreign, missing, renamed, replaced or reordered layer fails the retained proof;
+other non-null Mesh dependency pointers remain unsupported. The original 4.5 first-preview refusal at `40ad506` remains retained negative
+evidence. After the exact same-Mesh alias fix, `artist_multitarget` and
+`undo_lifecycle` passed on both Linux builds at `cdbc1c5`; the earlier 5.2 result
+is historical evidence for its own source.
+
+Unmeasured outbound sources are refused: custom ID references, non-null component
+source pointers, asset metadata, skin layers, material animation, image/group/object
+shader dependencies and nonempty material interfaces. The inherited literal artist
+profile does not certify unread bundled runtime settings or derived caches. Broader
+previous-owner types and dependency profiles remain mandatory full UX-01 work;
+these refusals do not remove them from the target. A→B→A, protected material drift,
+wrong-owner callbacks, stale origins and denied/failed pushes are covered by
+portable tests and focused native cases. At `cdbc1c5`, both Linux builds passed
+actual A→B→A edits with a protected previous owner and material-drift denial before
+checkpoint/write. Interactive undo retained operation provenance while invalidating
+reference and observation currency. At `bf3696f`, the separate Scene checkpoint
+fixture passed authenticated completion and native-push fault controls on both builds.
+Unarmed ordinary transforms keep their existing broad behavior; their
+entry-policy guard does not claim authored checkpoint admission. These are
+source-specific development results; full UX-01 and release gates remain open.
 
 ## Saved plan data
 

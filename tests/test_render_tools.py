@@ -11,6 +11,13 @@ import pytest
 from mcp_server.tools.render import RenderTools
 
 
+@pytest.fixture(autouse=True)
+def isolate_parameter_validation(addon_package: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """These old tests isolate typed validation; native admission has separate fixtures."""
+    module = importlib.import_module(f"{addon_package}.tools.render")
+    monkeypatch.setattr(module, "_validate_native_prepare", lambda scene: None)
+
+
 class RecordingRegistry:
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict[str, Any]]] = []
@@ -29,14 +36,16 @@ def test_render_registration_permissions(addon_package: str) -> None:
     module.register_tools(registry)
 
     assert registry.get("render.inspect").modifies is False
-    assert registry.get("render.configure").permissions == {
-        permissions.Permission.EDIT_RENDER
-    }
+    assert registry.get("render.configure").permissions == {permissions.Permission.EDIT_RENDER}
     assert registry.get("render.execute").permissions == {
         permissions.Permission.EDIT_RENDER,
         permissions.Permission.CAPTURE_VIEWPORT,
     }
     assert registry.get("render.execute").automatic_checkpoint is False
+    assert callable(registry.get("render.configure").checkpoint_admission_factory)
+    assert callable(registry.get("render.execute").checkpoint_admission_factory)
+    assert registry.get("render.configure").checkpoint_batch_reviewed is False
+    assert registry.get("render.execute").checkpoint_batch_reviewed is False
 
 
 def test_render_external_path_is_local_absolute_and_format_matched(
@@ -145,11 +154,11 @@ def test_render_configure_rejects_late_path_without_partial_mutation(
         )
 
     assert caught.value.code == "INVALID_ARGUMENT"
-    assert len(required) == 1
+    assert required == []  # Invalid pure path syntax runs no live provider.
     assert _render_snapshot(scene) == before
 
 
-def test_render_configure_checks_external_permission_before_any_mutation(
+def test_render_configure_checks_external_permission_before_any_path_probe(
     addon_package: str,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -161,18 +170,36 @@ def test_render_configure_checks_external_permission_before_any_mutation(
 
     class DenyingContext:
         @staticmethod
-        def require(_permission: Any) -> None:
+        def require(*_permissions: Any) -> None:
             raise errors.BridgeError(errors.ErrorCode.PERMISSION_DENIED, "denied")
 
     monkeypatch.setattr(module, "_scene", lambda _: scene)
     monkeypatch.setattr(module, "_enum_values", _enum_values)
+    boundary_module = importlib.import_module(f"{addon_package}.tools._render_boundary")
+
+    class FakeReader:
+        def __init__(self, *args: Any) -> None:
+            pass
+
+        def field(self, owner: Any, name: str) -> Any:
+            return getattr(owner, name)
+
+    for owner in (scene.render, scene.render.image_settings, scene.eevee):
+        owner.as_pointer = lambda owner=owner: id(owner)
+    monkeypatch.setattr(
+        module,
+        "require_blender",
+        lambda: SimpleNamespace(app=SimpleNamespace(build_hash=b"62c1db4208e8")),
+    )
+    monkeypatch.setattr(boundary_module.profile, "snapshot", lambda *_args, **_kwargs: ())
+    monkeypatch.setattr(boundary_module.profile, "Reader", FakeReader)
 
     with pytest.raises(Exception) as caught:
         module.configure_render(
             DenyingContext(),
             {
                 "scene_name": "Scene",
-                "engine": "CYCLES",
+                "engine": "BLENDER_EEVEE_NEXT",
                 "width": 1280,
                 "height": 720,
                 "resolution_percentage": 75,
@@ -218,7 +245,7 @@ def test_render_configure_prevalidates_format_color_compatibility(
     assert _render_snapshot(scene) == before
 
 
-def test_render_configure_rolls_back_if_dynamic_rna_rejects_prepared_enum(
+def test_unreviewed_render_enum_refused_before_any_native_setter(
     addon_package: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -251,7 +278,7 @@ def test_render_configure_rolls_back_if_dynamic_rna_rejects_prepared_enum(
     monkeypatch.setattr(module, "_scene", lambda _: scene)
     monkeypatch.setattr(module, "_enum_values", enum_values)
 
-    with pytest.raises(TypeError, match="context-sensitive enum rejected"):
+    with pytest.raises(module.BridgeError) as caught:
         module.configure_render(
             SimpleNamespace(require=lambda _permission: None),
             {
@@ -269,3 +296,4 @@ def test_render_configure_rolls_back_if_dynamic_rna_rejects_prepared_enum(
         )
 
     assert _render_snapshot(scene) == before
+    assert caught.value.code == "NOT_IMPLEMENTED"

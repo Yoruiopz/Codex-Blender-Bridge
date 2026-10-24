@@ -9,9 +9,16 @@ from collections import deque
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
+from itertools import islice
 from typing import Any
 
+from .checkpoint_completion import (
+    authenticated_checkpoint,
+    bind_native_push_guard,
+    issue_native_push_completion,
+)
 from .errors import BridgeError, ErrorCode
+from .scene_job_reservations import refused, reservation_service
 from .selection import clear_selection_references
 from .undo_window import UndoWindow
 from .utils import require_blender
@@ -54,21 +61,69 @@ class MeshEditSession:
     attempts: int = 1
 
 
+@dataclass(frozen=True, slots=True, eq=False)
+class OwnedPendingHandle:
+    pass
+
+
+@dataclass(slots=True)
+class _OwnedPending:
+    handle: OwnedPendingHandle
+    reservation: Any
+    service: Any
+    label: str
+    identifier: str
+    state: str = "CLAIMED"
+    step: Any = None
+    marker_writes: int = 0
+    native_snapshots: int = 0
+    last_marker: str | None = None
+    before_verified: bool = False
+    after_verified: bool = False
+    reason: str = ""
+    markers: Any = None
+
+
 @dataclass(slots=True)
 class _CheckpointGuard:
     """Trusted pure safe point for new bookkeeping, never failed-writer cleanup."""
 
     before_write: Callable[[], None]
+    after_read: Callable[[], None] | None = None
+    after_native_push: Callable[[], None] | None = None
     marker_writes: int = 0
     native_snapshots: int = 0
+    stopped: BridgeError | None = None
+    latest_marker: str | None = None
+    marker_observer: Any = None
 
     def check(self, next_write: str) -> None:
+        self._run(next_write, self.before_write)
+
+    def complete(self, next_write: str, compare: Callable[[], None] | None = None) -> None:
+        def prove() -> None:
+            if compare is not None:
+                compare()
+            if self.after_read is not None:
+                self.after_read()
+        self._run(next_write, prove)
+
+    def _run(self, next_write: str, callback: Callable[[], None]) -> None:
+        if self.stopped is not None:
+            raise self.stopped
         try:
-            self.before_write()
-        except BridgeError as error:
+            callback()
+        except Exception as cause:
+            if isinstance(cause, BridgeError):
+                error = cause
+            else:
+                LOGGER.exception("Checkpoint write guard failed")
+                error = BridgeError(ErrorCode.OPERATION_FAILED, "Checkpoint write admission could not be verified.",
+                                    {"verification_required": True})
             # Preserve the exact primary denial and measured partial state.
             # Owner loss never authorizes compensating marker writes.
-            error.context.update(checkpoint_authority_rejected=True, checkpoint_bookkeeping={
+            error.context["checkpoint_authority_rejected"] = True
+            error.context.setdefault("checkpoint_bookkeeping", {
                 "marker_writes_completed": self.marker_writes,
                 "native_snapshots_completed": self.native_snapshots,
                 "next_write_rejected": next_write,
@@ -76,7 +131,10 @@ class _CheckpointGuard:
             })
             if self.marker_writes or self.native_snapshots:
                 error.context.update(execution_started=True, possible_mutation=True, verification_required=True)
-            raise
+            self.stopped = error
+            if error is cause:
+                raise
+            raise error from cause
 
 
 class CheckpointManager:
@@ -92,6 +150,160 @@ class CheckpointManager:
         self._window = UndoWindow()
         self._expired_operations = 0
         self.recovery_in_progress = False
+        self._native_push_pending: dict[int, Any] = {}
+        self._owned_claim: Any = None
+        self._owned_pending: dict[int, Any] = {}
+
+    def capture_job_markers(self):
+        """Freeze the initial marker inventory before start providers."""
+        if self._pending is not None or self._editor_session is not None:
+            raise refused("OWNED_PENDING_CONFLICT")
+        self._refuse_owned()
+        return self._marker_evidence(require_blender())
+
+    def check_job_markers(self, expected: Any) -> None:
+        self._compare_markers(require_blender(), expected)
+
+    def claim_pending(self, reservation: Any, label: str, *, markers: Any = None):
+        """Metadata only. Never finish or overwrite another pending/editor step."""
+        if self._pending is not None or self._editor_session is not None or self._owned_busy():
+            raise refused("OWNED_PENDING_CONFLICT")
+        service = reservation_service(reservation)
+        service._owner(reservation)
+        handle = OwnedPendingHandle()
+        record = _OwnedPending(handle, reservation, service, label, "pending_"+uuid.uuid4().hex)
+        record.markers = markers
+        self._owned_pending[id(handle)] = record
+        self._owned_claim = record
+        return handle
+
+    def _owned_record(self, handle: Any):
+        record = self._owned_pending.get(id(handle))
+        if record is None or record.handle is not handle:
+            raise refused("OWNED_PENDING_LOST")
+        return record
+
+    def discard_unstarted_pending(self, reservation: Any, origin: Any) -> None:
+        """Abort only untouched acceptance metadata, with caller-local proof."""
+        service = reservation_service(reservation)
+        service.check_unaccepted(reservation, origin)
+        records = [record for record in self._owned_pending.values() if record.reservation is reservation]
+        if any(record.state != "CLAIMED" or record.step is not None or record.marker_writes or record.native_snapshots
+               for record in records):
+            raise refused("OWNED_PENDING_ABORT_REFUSED")
+        for record in records:
+            if self._owned_claim is record:
+                self._owned_claim = None
+            self._owned_pending.pop(id(record.handle))
+
+    def pending_status(self, handle: Any) -> dict[str, Any]:
+        record = self._owned_record(handle)
+        return {"pending_id": record.identifier, "state": record.state,
+                "marker_writes_completed": record.marker_writes, "native_snapshots_completed": record.native_snapshots,
+                "last_snapshot_marker": record.last_marker, "before_verified": record.before_verified,
+                "after_verified": record.after_verified, "native_cache_recovery_guaranteed": False,
+                "durable_backup_created": False}
+
+    def _owned_data_check(self, record: Any) -> None:
+        if (self._owned_claim is not record or self._pending is not record.step or self._editor_session is not None
+                or record.state == "INVALIDATED"):
+            raise refused("OWNED_PENDING_REPLACED")
+
+    def check_pending_owner(self, handle: Any, reservation: Any) -> None:
+        """Pure retained-handle proof, including canonical finalized unwind."""
+        record = self._owned_record(handle)
+        if record.reservation is not reservation:
+            raise refused("OWNED_PENDING_LOST")
+        if record.state == "FINALIZED":
+            if self._owned_claim is not None or self._pending is not None or self._editor_session is not None:
+                raise refused("OWNED_PENDING_REPLACED")
+        elif record.state in {"CLAIMED", "OPEN"}:
+            self._owned_data_check(record)
+        else:
+            raise refused("OWNED_PENDING_PHASE_REFUSED")
+
+    def check_pending_markers(self, handle: Any, turn: Any) -> None:
+        record = self._owned_record(handle)
+        self.check_pending_owner(handle, record.reservation)
+        record.service.check_pending_access(turn, record.reservation, self)
+        if record.markers is not None:
+            self._compare_markers(require_blender(), record.markers)
+        record.service.check_pending_access(turn, record.reservation, self)
+
+    def _owned_access(self, handle: Any, turn: Any, consumer: Any, operation: str):
+        if not self._owned_busy() and handle is None:
+            return None
+        if handle is None:
+            raise refused("OWNED_PENDING_CONFLICT")
+        record = self._owned_record(handle)
+        self._owned_data_check(record)
+        if record.state != ("CLAIMED" if operation == "before" else "OPEN"):
+            raise refused("OWNED_PENDING_PHASE_REFUSED")
+        record.service.checkpoint_access(turn, record.reservation, self, consumer)
+        if record.service._turn(turn).phase != "checkpoint_"+operation:
+            raise refused("OWNED_PENDING_PHASE_REFUSED")
+        return record
+
+    def _owned_guard(self, record: Any, before: Any, after: Any):
+        if record is None:
+            return before, after
+        if before is None or after is None:
+            raise refused("OWNED_PENDING_GUARD_REQUIRED")
+        def checked_before():
+            before()
+            self._owned_data_check(record)
+        def checked_after():
+            after()
+            self._owned_data_check(record)
+        return checked_before, checked_after
+
+    def _owned_observed(self, record: Any, guard: Any, operation: str, verified: bool) -> None:
+        if record is None:
+            return
+        if guard is not None:
+            record.marker_writes += guard.marker_writes
+            record.native_snapshots += guard.native_snapshots
+            if guard.native_snapshots and guard.latest_marker is not None:
+                record.last_marker = guard.latest_marker
+        if record.state == "INVALIDATED":
+            return  # Counts remain measured; reset never becomes a new baseline.
+        if operation == "before":
+            record.before_verified = verified
+            record.state = "OPEN" if verified else "PARTIAL"
+        else:
+            record.after_verified = verified
+            record.state = "FINALIZED" if verified else "PARTIAL"
+            if verified and self._owned_claim is record:
+                self._owned_claim = None
+
+    def abandon_pending(self, handle: Any, reservation: Any, reason: str, *, origin: Any = None) -> dict[str, Any]:
+        record = self._owned_record(handle)
+        if record.reservation is not reservation:
+            raise refused("OWNED_PENDING_LOST")
+        record.service.check_retirement(reservation, origin)
+        if self._pending is record.step and record.step is not None:
+            self._pending = None
+        if self._owned_claim is record:
+            self._owned_claim = None
+        if record.state != "FINALIZED":
+            record.state = "ABANDONED"
+        record.reason = reason
+        return self.pending_status(handle)
+
+    def release_pending(self, handle: Any, reservation: Any, *, origin: Any = None) -> None:
+        record = self._owned_record(handle)
+        if record.reservation is not reservation or record.state != "FINALIZED":
+            raise refused("OWNED_PENDING_LOST")
+        record.service.check_retirement(reservation, origin)
+        self._owned_pending.pop(id(handle))
+
+    def _refuse_owned(self) -> None:
+        if self._owned_busy():
+            raise refused("OWNED_PENDING_CONFLICT")
+
+    def _owned_busy(self) -> bool:
+        return self._owned_claim is not None or any(
+            record.state not in {"FINALIZED", "ABANDONED"} for record in self._owned_pending.values())
 
     @staticmethod
     def _ensure_undo_enabled(*, require_object_mode: bool = True) -> Any:
@@ -117,6 +329,7 @@ class CheckpointManager:
 
     def _stamp(self, blender: Any, *, guard: _CheckpointGuard | None = None) -> str:
         scene = blender.context.scene
+        expected = self._marker_evidence(blender) if guard is not None else None
         if scene.library is not None or scene.override_library is not None or not scene.is_editable:
             raise BridgeError(
                 ErrorCode.NOT_IMPLEMENTED, "Recovery requires a local editable scene."
@@ -145,16 +358,54 @@ class CheckpointManager:
         for item in owned:
             if guard is not None:
                 guard.check("delete_marker")
+                guard.complete("delete_marker", lambda expected=expected: self._compare_markers(blender, expected))
             del item[MARKER_KEY]
             if guard is not None:
                 guard.marker_writes += 1
+                expected = self._marker_delta(expected, item, None)
+                if guard.marker_observer is not None:
+                    guard.marker_observer(expected)
         token = self._prefix + uuid.uuid4().hex
         if guard is not None:
             guard.check("set_marker")
+            guard.complete("set_marker", lambda: self._compare_markers(blender, expected))
         scene[MARKER_KEY] = token
         if guard is not None:
             guard.marker_writes += 1
+            expected = self._marker_delta(expected, scene, token)
+            if guard.marker_observer is not None:
+                guard.marker_observer(expected)
+            guard.complete("verify_marker", lambda: self._compare_markers(blender, expected))
         return token
+
+    @staticmethod
+    def _identity(owner: Any) -> Any:
+        if owner is None:
+            return None
+        pointer = getattr(owner, "as_pointer", None)
+        return (int(pointer()), getattr(owner, "session_uid", None)) if callable(pointer) else (id(owner), None)
+
+    def _marker_evidence(self, blender: Any) -> Any:
+        scenes = tuple(islice(blender.data.scenes, MAX_SCENES + 1))
+        if len(scenes) > MAX_SCENES:
+            raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Checkpoint marker inventory exceeds its bounded Scene profile.")
+        records = []
+        for scene in scenes:
+            value = scene.get(MARKER_KEY)
+            if value is not None and (type(value) is not str or len(value) > 4096):
+                raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Reserved checkpoint metadata requires a bounded literal value.")
+            records.append((self._identity(scene), self._identity(scene.library), self._identity(scene.override_library),
+                            bool(scene.is_editable), MARKER_KEY in scene, value))
+        return self._identity(blender.context.scene), tuple(sorted(records))
+
+    def _compare_markers(self, blender: Any, expected: Any) -> None:
+        if self._marker_evidence(blender) != expected:
+            raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Checkpoint Scene ownership or reserved metadata changed; newer values are preserved.",
+                              {"checkpoint_marker_unchanged": False, "verification_required": True})
+
+    def _marker_delta(self, expected: Any, scene: Any, value: str | None) -> Any:
+        identity = self._identity(scene)
+        return expected[0], tuple((*record[:4], value is not None, value) if record[0] == identity else record for record in expected[1])
 
     def _marker(self, blender: Any) -> str | None:
         values = {
@@ -171,18 +422,34 @@ class CheckpointManager:
 
     def _snapshot(self, blender: Any, label: str, *, guard: _CheckpointGuard | None = None) -> str:
         token = self._stamp(blender, guard=guard) if guard is not None else self._stamp(blender)
+        if guard is not None:
+            guard.latest_marker = token
+        expected = self._marker_evidence(blender) if guard is not None else None
         # Resolve readers/operator wrappers before the final trusted safe point.
         undo_push, message = blender.ops.ed.undo_push, label[:120]
         step_limit = self._step_limit(blender)
         if guard is not None:
             guard.check("native_undo_push")
+            # Providers can change preferences after the entry check. Read the
+            # retained native settings, then finish with provider-free proof.
+            edit = getattr(getattr(blender.context, "preferences", None), "edit", None)
+            enabled = getattr(edit, "use_global_undo", True)
+            step_limit = self._step_limit(blender)
+            def compare() -> None:
+                if not enabled or step_limit == 0:
+                    raise BridgeError(ErrorCode.BLENDER_CONTEXT_ERROR,
+                                      "Native undo was disabled before the snapshot.")
+                self._compare_markers(blender, expected)
+            guard.complete("native_undo_push", compare)
         if "FINISHED" not in undo_push(message=message):
             raise BridgeError(
                 ErrorCode.OPERATION_FAILED, "Blender did not create the native snapshot."
             )
-        self._window.pushed(step_limit)
         if guard is not None:
             guard.native_snapshots += 1
+        self._window.pushed(step_limit)
+        if guard is not None and guard.after_native_push is not None:
+            guard._run("after_native_undo_push", lambda: issue_native_push_completion(self, guard))
         self._prune_expired_operations()
         return token
 
@@ -204,6 +471,7 @@ class CheckpointManager:
             targets.add(self._pending.before_marker)
         if self._editor_session is not None:
             targets.add(self._editor_session.before.before_marker)
+        targets.update(record.step.before_marker for record in self._owned_pending.values() if record.step is not None)
         self._window.retain(targets)
 
     def recovery_status(self, limit: int = 20) -> dict[str, Any]:
@@ -247,8 +515,13 @@ class CheckpointManager:
             "warning": "Only bridge pushes are counted. Manual/operator snapshots, memory limits, preference changes and editor stacks can expire other targets. Global recovery can undo interleaved work; labels are not durable backups.",
         }
 
-    def create(self, description: str = "Agent checkpoint", *, before_write: Callable[[], None] | None = None) -> dict[str, Any]:
-        guard = _CheckpointGuard(before_write) if before_write is not None else None
+    @authenticated_checkpoint
+    def create(self, description: str = "Agent checkpoint", *, before_write: Callable[[], None] | None = None,
+               after_read: Callable[[], None] | None = None, after_native_push: Callable[[], None] | None = None) -> dict[str, Any]:
+        self._refuse_owned()
+        guard = _CheckpointGuard(before_write, after_read, after_native_push) if before_write is not None else None
+        if guard is not None:
+            bind_native_push_guard(self, guard)
         blender = self._ensure_undo_enabled()
         description = (description or "Agent checkpoint").strip()[:120]
         token = self._snapshot(blender, f"Codex Checkpoint: {description}", guard=guard) if guard is not None else self._snapshot(blender, f"Codex Checkpoint: {description}")
@@ -267,83 +540,142 @@ class CheckpointManager:
         self._retain_targets()
         return checkpoint.to_dict()
 
-    def before_modification(self, tool_name: str, *, before_write: Callable[[], None] | None = None) -> bool:
-        guard = _CheckpointGuard(before_write) if before_write is not None else None
+    @authenticated_checkpoint
+    def before_modification(self, tool_name: str, *, before_write: Callable[[], None] | None = None,
+                            after_read: Callable[[], None] | None = None, after_native_push: Callable[[], None] | None = None,
+                            pending: Any = None, turn: Any = None) -> bool:
+        owned = self._owned_access(pending, turn, after_native_push, "before")
+        before_write, after_read = self._owned_guard(owned, before_write, after_read)
+        verified = False
+        guard = _CheckpointGuard(before_write, after_read, after_native_push) if before_write is not None else None
+        if guard is not None and owned is not None:
+            guard.marker_observer = lambda evidence: setattr(owned, "markers", evidence)
+        if guard is not None:
+            bind_native_push_guard(self, guard)
         try:
-            blender = self._ensure_undo_enabled(require_object_mode=False)
-            invalid_editor = False
-            if self._editor_session is not None:
-                if blender.context.mode == "OBJECT":
-                    self._finish_editor_session(guard)
-                elif not self._editor_matches(blender):
-                    invalid_editor = True
-            if blender.context.mode != "OBJECT":
-                # Keep earlier global checkpoints identifiable, but do not promise a
-                # per-operation boundary on an editor-specific undo stack.
-                self._stamp(blender, guard=guard) if guard is not None else self._stamp(blender)
-                self._pending = None
-                if invalid_editor:
-                    self._editor_session = None
-                    self._undo_steps.clear()
+            try:
+                blender = self._ensure_undo_enabled(require_object_mode=owned is not None)
+                invalid_editor = False
                 if self._editor_session is not None:
-                    self._editor_session.attempts += 1
-                else:
-                    self._undo_steps.clear()
+                    if blender.context.mode == "OBJECT":
+                        self._finish_editor_session(guard)
+                    elif not self._editor_matches(blender):
+                        invalid_editor = True
+                if blender.context.mode != "OBJECT":
+                    # Keep earlier global checkpoints identifiable, but do not promise a
+                    # per-operation boundary on an editor-specific undo stack.
+                    self._stamp(blender, guard=guard) if guard is not None else self._stamp(blender)
+                    self._pending = None
+                    if invalid_editor:
+                        self._editor_session = None
+                        self._undo_steps.clear()
+                    if self._editor_session is not None:
+                        self._editor_session.attempts += 1
+                    else:
+                        self._undo_steps.clear()
+                    return False
+                token = self._snapshot(blender, f"Codex Before: {tool_name}", guard=guard) if guard is not None else self._snapshot(blender, f"Codex Before: {tool_name}")
+                self._sequence += 1
+                if owned is not None:
+                    guard._run("record_owned_pending", lambda: self._owned_data_check(owned))
+                self._pending = UndoStep(tool_name, token, self._sequence)
+                if owned is not None:
+                    owned.step = self._pending
+                self._window.track(token)
+                self._retain_targets()
+                # Child operators must not carry BEFORE into intermediate snapshots.
+                self._stamp(blender, guard=guard) if guard is not None else self._stamp(blender)
+                verified = True
+                return True
+            except BridgeError as error:
+                if owned is not None or error.context.get("checkpoint_authority_rejected"):
+                    raise
+                if guard is None:
+                    self.clear()
                 return False
-            token = self._snapshot(blender, f"Codex Before: {tool_name}", guard=guard) if guard is not None else self._snapshot(blender, f"Codex Before: {tool_name}")
-            self._sequence += 1
-            self._pending = UndoStep(tool_name, token, self._sequence)
-            self._window.track(token)
-            self._retain_targets()
-            # Child operators must not carry BEFORE into intermediate snapshots.
-            self._stamp(blender, guard=guard) if guard is not None else self._stamp(blender)
-            return True
-        except BridgeError as error:
-            if error.context.get("checkpoint_authority_rejected"):
-                raise
-            self.clear()
-            return False
-        except RuntimeError:
-            self.clear()
-            return False
+            except RuntimeError:
+                if owned is not None:
+                    raise
+                if guard is None:
+                    self.clear()
+                return False
+        finally:
+            self._owned_observed(owned, guard, "before", verified)
 
-    def after_modification(self, tool_name: str) -> bool:
+    @authenticated_checkpoint
+    def after_modification(self, tool_name: str, *, before_write: Callable[[], None] | None = None,
+                           after_read: Callable[[], None] | None = None, after_native_push: Callable[[], None] | None = None,
+                            pending: Any = None, turn: Any = None) -> bool:
+        owned = self._owned_access(pending, turn, after_native_push, "after")
+        before_write, after_read = self._owned_guard(owned, before_write, after_read)
+        verified = False
+        guard = _CheckpointGuard(before_write, after_read, after_native_push) if before_write is not None else None
+        if guard is not None and owned is not None:
+            guard.marker_observer = lambda evidence: setattr(owned, "markers", evidence)
+        if guard is not None:
+            bind_native_push_guard(self, guard)
         pending = self._pending
-        self._pending = None
         if pending is None:
             return False
+        if guard is None:
+            self._pending = None
         try:
-            blender = self._ensure_undo_enabled(require_object_mode=False)
-            if blender.context.mode != "OBJECT":
-                active = getattr(blender.context, "active_object", None)
-                scene_uid = getattr(blender.context.scene, "session_uid", None)
-                object_uid = getattr(active, "session_uid", None)
-                if (
-                    blender.context.mode == "EDIT_MESH"
-                    and object_uid is not None
-                    and scene_uid is not None
-                    and len(blender.context.objects_in_mode) == 1
-                ):
-                    self._editor_session = MeshEditSession(
-                        pending,
-                        f"edit_{uuid.uuid4().hex}",
-                        scene_uid,
-                        object_uid,
-                        active.name,
-                    )
+            try:
+                blender = self._ensure_undo_enabled(require_object_mode=owned is not None)
+                if blender.context.mode != "OBJECT":
+                    active = getattr(blender.context, "active_object", None)
+                    scene_uid = getattr(blender.context.scene, "session_uid", None)
+                    object_uid = getattr(active, "session_uid", None)
+                    if (
+                        blender.context.mode == "EDIT_MESH"
+                        and object_uid is not None
+                        and scene_uid is not None
+                        and len(blender.context.objects_in_mode) == 1
+                    ):
+                        if guard is not None:
+                            guard.check("defer_editor_session")
+                        self._editor_session = MeshEditSession(
+                            pending,
+                            f"edit_{uuid.uuid4().hex}",
+                            scene_uid,
+                            object_uid,
+                            active.name,
+                        )
+                    else:
+                        if guard is not None:
+                            guard.check("invalidate_editor_session")
+                        self._editor_session = None
+                        self._undo_steps.clear()
+                    self._pending = None
+                    return False
+                if guard is not None:
+                    self._snapshot(blender, f"Codex After: {tool_name}", guard=guard)
                 else:
-                    self._editor_session = None
-                    self._undo_steps.clear()
+                    self._snapshot(blender, f"Codex After: {tool_name}")
+            except BridgeError as error:
+                if owned is not None or error.context.get("checkpoint_authority_rejected"):
+                    raise
+                LOGGER.exception("Could not finalize the native recovery snapshot")
+                if guard is None:
+                    self.clear()
                 return False
-            self._snapshot(blender, f"Codex After: {tool_name}")
-        except (BridgeError, RuntimeError):
-            LOGGER.exception("Could not finalize the native recovery snapshot")
-            self.clear()
-            return False
-        self._undo_steps.appendleft(UndoStep(tool_name, pending.before_marker, pending.sequence))
-        self._prune_expired_operations()
-        self._retain_targets()
-        return True
+            except RuntimeError:
+                if owned is not None:
+                    raise
+                LOGGER.exception("Could not finalize the native recovery snapshot")
+                if guard is None:
+                    self.clear()
+                return False
+            if owned is not None:
+                guard._run("finalize_owned_pending", lambda: self._owned_data_check(owned))
+            self._pending = None
+            self._undo_steps.appendleft(UndoStep(tool_name, pending.before_marker, pending.sequence))
+            self._prune_expired_operations()
+            self._retain_targets()
+            verified = True
+            return True
+        finally:
+            self._owned_observed(owned, guard, "after", verified)
 
     def _editor_matches(self, blender: Any) -> bool:
         session = self._editor_session
@@ -373,8 +705,13 @@ class CheckpointManager:
             "state": "deferred",
         }
 
-    def finish_editor_session(self, *, before_write: Callable[[], None] | None = None) -> dict[str, Any] | None:
-        guard = _CheckpointGuard(before_write) if before_write is not None else None
+    @authenticated_checkpoint
+    def finish_editor_session(self, *, before_write: Callable[[], None] | None = None,
+                              after_read: Callable[[], None] | None = None, after_native_push: Callable[[], None] | None = None) -> dict[str, Any] | None:
+        self._refuse_owned()
+        guard = _CheckpointGuard(before_write, after_read, after_native_push) if before_write is not None else None
+        if guard is not None:
+            bind_native_push_guard(self, guard)
         return self._finish_editor_session(guard)
 
     def _finish_editor_session(self, guard: _CheckpointGuard | None) -> dict[str, Any] | None:
@@ -385,12 +722,15 @@ class CheckpointManager:
             blender = self._ensure_undo_enabled(require_object_mode=False)
         except (BridgeError, RuntimeError):
             LOGGER.exception("Native recovery is unavailable for the mesh edit session")
-            self.clear()
+            if guard is None:
+                self.clear()
             return {**status, "state": "unavailable"}
         if blender.context.mode != "OBJECT":
             return None
         session = self._editor_session
         if not self._editor_matches_session(blender, session):
+            if guard is not None:
+                guard.check("invalidate_editor_session")
             self._editor_session = None
             self._undo_steps.clear()
             return {**status, "state": "invalidated"}
@@ -403,11 +743,13 @@ class CheckpointManager:
             if error.context.get("checkpoint_authority_rejected"):
                 raise
             LOGGER.exception("Could not finalize the mesh edit session")
-            self.clear()
+            if guard is None:
+                self.clear()
             return {**status, "state": "unavailable"}
         except RuntimeError:
             LOGGER.exception("Could not finalize the mesh edit session")
-            self.clear()
+            if guard is None:
+                self.clear()
             return {**status, "state": "unavailable"}
         self._editor_session = None
         self._undo_steps.appendleft(
@@ -511,6 +853,7 @@ class CheckpointManager:
     def restore_operation(
         self, *, check_cancelled: Callable[[], None] | None = None
     ) -> dict[str, Any]:
+        self._refuse_owned()
         if check_cancelled is not None:
             check_cancelled()
         group = self.finish_editor_session()
@@ -554,6 +897,7 @@ class CheckpointManager:
         }
 
     def undo_last(self) -> dict[str, Any]:
+        self._refuse_owned()
         """Legacy public contract: exactly one native global undo, not marker navigation."""
         if not self._undo_steps:
             raise BridgeError(
@@ -589,6 +933,7 @@ class CheckpointManager:
         }
 
     def restore_last(self, *, check_cancelled: Callable[[], None] | None = None) -> dict[str, Any]:
+        self._refuse_owned()
         if not self._checkpoints:
             raise BridgeError(ErrorCode.OPERATION_FAILED, "No agent checkpoint is available.")
         checkpoint = self._checkpoints[0]
@@ -608,6 +953,8 @@ class CheckpointManager:
         return [checkpoint.to_dict() for checkpoint in list(self._checkpoints)[: max(0, limit)]]
 
     def clear(self) -> None:
+        if self._owned_claim is not None:
+            self._owned_claim.state = "INVALIDATED"
         self._checkpoints.clear()
         self._undo_steps.clear()
         self._pending = None
@@ -617,6 +964,9 @@ class CheckpointManager:
 
     def detach(self) -> None:
         """Remove only this session's metadata on normal shutdown."""
+        if self._owned_claim is not None or any(item.state != "FINALIZED" for item in self._owned_pending.values()):
+            self.clear()
+            return
         try:
             blender = require_blender()
             for scene in blender.data.scenes:

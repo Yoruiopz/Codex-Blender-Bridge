@@ -30,6 +30,19 @@ Indices = Annotated[list[Annotated[StrictInt, Field(ge=0, lt=100_000)]], Field(m
 Masks = Annotated[list[Unit], Field(min_length=1, max_length=10_000)]
 
 
+def _distinct_indices(value: list[int]) -> list[int]:
+    if len(set(value)) != len(value):
+        raise ValueError("Mask sampling vertex indices must be distinct")
+    return value
+
+
+SampleIndices = Annotated[
+    list[Annotated[StrictInt, Field(ge=0, lt=100_000)]],
+    Field(min_length=1, max_length=1_024, strict=True, json_schema_extra={"uniqueItems": True}),
+    AfterValidator(_distinct_indices),
+]
+
+
 def _name(value: str) -> str:
     if not value.strip() or any(ord(char) < 32 for char in value) or len(value.encode("utf-8")) > 63:
         raise ValueError("Names must be nonblank and fit 63 UTF-8 bytes without control characters")
@@ -69,6 +82,7 @@ class ColorStroke(BaseModel):
 
 TOOL_DATA = (
     ("mesh.sculpt_brush", "Apply explicit-mask base-mesh PUSH/SMOOTH strokes with protected topology/UV/material evidence.", True, ("EDIT_MESH",)),
+    ("mesh.sculpt_mask_sample", "Sample a generated UV image into explicit sculpt-mask weights without changing mesh or image data.", False, ("INSPECT_SCENE",)),
     ("color_attribute.create", "Create a distinct FLOAT_COLOR POINT/CORNER attribute with verified full initialization.", True, ("EDIT_MESH",)),
     ("color_attribute.inspect", "Inspect paginated FLOAT_COLOR entries and a complete raw color digest.", False, ("INSPECT_SCENE",)),
     ("color_attribute.paint", "Paint linear RGBA MIX on explicit vertex-associated POINT/CORNER entries.", True, ("EDIT_MESH",)),
@@ -90,6 +104,15 @@ class SurfaceBrushTools:
         if mask_weights is not None:
             values["mask_weights"] = mask_weights
         return await self.registry.call("mesh.sculpt_brush", values)
+
+    async def mesh_sculpt_mask_sample(self, object_name: Name, uv_layer: Name, vertex_indices: SampleIndices,
+                                      image_name: Name, corner_reduction: Literal["MIN", "MAX", "MEAN"],
+                                      channel: Literal["R", "G", "B", "A"] = "R", invert: StrictBool = False) -> Any:
+        """Read a named Object Mode base mesh/UV layer and a local loaded unanimated GENERATED RGBA image into ordered numeric mask_weights for 1-1,024 explicit distinct vertices. Every requested vertex must have a UV corner; each relevant stored UV must be finite in [0,1]. Sample the raw R/G/B/A channel using normalized-UV pixel-centre bilinear interpolation with edge clamping, then explicitly reduce seam corners by MIN, MAX or MEAN. No color/alpha conversion. The complete chosen channel must be finite in [0,1], with each image dimension in1-4,096 and at most1,048,576 total pixels; mesh bounds are100k vertices/200k edges/300k corners. Shared/library mesh reads remain available; images must be local generated data. Return weights, corner/seam observations and frozen image/UV/topology fingerprints; stale input or context causes refusal. No image, geometry, selection, frame or checkpoint write. Weights are a snapshot, not a live image binding: resample after image/UV/topology changes, then explicitly pass the returned vertex_indices and mask_weights to mesh.sculpt_brush under its own edit/ownership checks. No 4K, full sculpt, durable backup or release acceptance claim."""
+        return await self.registry.call("mesh.sculpt_mask_sample", {
+            "object_name": object_name, "uv_layer": uv_layer, "vertex_indices": vertex_indices,
+            "image_name": image_name, "corner_reduction": corner_reduction, "channel": channel, "invert": invert,
+        })
 
     async def color_attribute_create(self, object_name: Name, attribute_name: Name,
                                      domain: Literal["POINT", "CORNER"] = "POINT", initial_color: Color | None = None) -> Any:
@@ -129,7 +152,7 @@ class SurfaceBrushTools:
             "confirm_remove": confirm_remove, "acknowledge_named_consumers": acknowledge_named_consumers})
 
     def bindings(self) -> tuple[MCPToolBinding, ...]:
-        methods: tuple[Callable[..., Any], ...] = (self.mesh_sculpt_brush, self.color_attribute_create, self.color_attribute_inspect,
+        methods: tuple[Callable[..., Any], ...] = (self.mesh_sculpt_brush, self.mesh_sculpt_mask_sample, self.color_attribute_create, self.color_attribute_inspect,
                                                 self.color_attribute_paint, self.color_attribute_rename, self.color_attribute_remove)
         return tuple(MCPToolBinding(data[0], method, method.__doc__ or "") for data, method in zip(TOOL_DATA, methods, strict=True))
 

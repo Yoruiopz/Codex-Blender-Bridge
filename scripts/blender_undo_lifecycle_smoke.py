@@ -46,6 +46,8 @@ def _checkpoint_preflight_case(entry, stop):
 
     manager, state = MeasuredManager(), BridgeState()
     registry = ToolRegistry(enabled_toolsets=("objects",))
+    batch.register_tools(registry)
+    registry.enable_toolset("batch")
     lifetime = RequestLifetime(ConnectionLifetime())
     request = Request("checkpoint-native-" + entry + stop, "object.fixture", {}, _lifecycle=lifetime)
     queued = QueuedRequest(request, deadline=float("inf"))
@@ -151,6 +153,9 @@ def _checkpoint_internal_case(route, where, kind):
         def __getattr__(self, name):
             return getattr(self.native, name)
 
+        def __contains__(self, key):
+            return key in self.native
+
         def get(self, key, default=None):
             value = self.native.get(key, default)
             if enabled and where == "marker_read" and key == MARKER_KEY:
@@ -245,6 +250,8 @@ def _handler_entry_case(route):
     calls, snapshots = [], []
     first_entered, scope_reads = [], []
     registry = ToolRegistry(enabled_toolsets=("objects",))
+    batch.register_tools(registry)
+    registry.enable_toolset("batch")
     state = BridgeState()
     lifetime = RequestLifetime(ConnectionLifetime())
     request = Request("native-last-handler-" + route, "object.fixture", {}, _lifecycle=lifetime)
@@ -351,7 +358,7 @@ def artist_history_handles(runtime):
     def pair():
         reference = runtime.dispatch("task.reference.resolve", {"source": "selection"})["reference_id"]
         preview = runtime.dispatch("task.plan.preview_transform", {
-            "reference_id": reference, "expected_revision": revision, "location": [5., 0., 0.],
+            "reference_id": reference, "expected_revision": revision, "location": [5., 0., 0.], "step_id": "revise",
         })["preview_id"]
         return reference, preview
 
@@ -379,6 +386,26 @@ def artist_history_handles(runtime):
         assert tuple(bpy.data.objects["Artist History Working"].location) == before
         retained()
 
+    # Retain a real outer executor receipt and a measured protected-only
+    # observation before native history moves. Neither is a completion claim.
+    _, receipt_preview = pair()
+    applied = runtime.dispatch("task.plan.apply_preview", {
+        "preview_id": receipt_preview, "expected_revision": revision})
+    receipt_operation = applied["operation"]["operation_id"]
+    receipt_id = applied["step_receipt_id"]
+
+    def receipt():
+        entries = runtime.dispatch("task.plan.inspect")["step_evidence"]["receipts"]
+        entry = next(item for item in entries if item["receipt_id"] == receipt_id)
+        assert entry["operation_id"] == receipt_operation
+        assert entry["success"] and entry["outcome"] == "completed"
+        assert store.plan["steps"][0]["status"] == "pending"
+        return entry
+
+    runtime.dispatch("task.plan.compare", {"step_id": "revise", "expected_revision": revision})
+    assert receipt()["protected_observation"]["validity"] == "recorded"
+    assert receipt()["history_state"] == "current_runtime_generation"
+    bpy.data.objects["Artist History Working"].location.x = 0.
     bpy.ops.ed.undo_push(message="Artist history exact zero pre-state")
     zero_reference, zero_preview = pair()
     zero_context, zero_profile = artist_loop._context(bpy), artist_loop._profile(boundary())
@@ -391,6 +418,8 @@ def artist_history_handles(runtime):
     assert bpy.ops.ed.undo() == {"FINISHED"}
     assert store.protection_generation > generation and not store.references and not store.previews
     assert bpy.data.objects["Artist History Working"].location.x == 0.
+    assert receipt()["history_state"] == "historical_after_generation_change"
+    assert receipt()["protected_observation"]["validity"] == "stale"
     undo_context_same = artist_loop._context(bpy) == zero_context
     undo_profile_same = artist_loop._profile(boundary()) == zero_profile
     stale(zero_reference, zero_preview)
@@ -402,10 +431,13 @@ def artist_history_handles(runtime):
         raise AssertionError("A pre-undo Boundary wrote after the policy epoch changed")
     assert bpy.data.objects["Artist History Working"].location.x == 0.
     redo_reference, redo_preview = pair()
+    runtime.dispatch("task.plan.compare", {"step_id": "revise", "expected_revision": revision})
+    assert receipt()["protected_observation"]["validity"] == "recorded"
     generation = store.protection_generation
     assert bpy.ops.ed.redo() == {"FINISHED"}
     assert store.protection_generation > generation and not store.references and not store.previews
     assert bpy.data.objects["Artist History Working"].location.x == 1.
+    assert receipt()["protected_observation"]["validity"] == "stale"
     redo_context_same = artist_loop._context(bpy) == one_context
     redo_profile_same = artist_loop._profile(boundary()) == one_profile
     stale(one_reference, one_preview)
@@ -426,6 +458,9 @@ def artist_history_handles(runtime):
     assert comparison["status"] == "unchanged_within_scope" and comparison["coverage_complete"]
     return {"manual_undo_redo_artist_handles_invalidated": True,
             "known_bridge_recovery_artist_handles_invalidated": True,
+            "actual_native_history_retains_step_operation_provenance": True,
+            "native_undo_redo_invalidates_step_protected_observations": True,
+            "step_status_remains_user_claim": True,
             "armed_plan_protection_baseline_retained": True,
             "pre_undo_boundary_epoch_rejected": True,
             "undo_same_native_context": undo_context_same, "undo_same_authored_profile": undo_profile_same,

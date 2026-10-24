@@ -9,6 +9,14 @@ from .animation import (
 from .animation import (
     load_animation_definitions as _load_base_animation_definitions,
 )
+from .animation_curve_inspection import TOOL_DATA as ANIMATION_CURVE_INSPECTION_TOOL_DATA
+from .animation_curve_inspection import (
+    load_definitions as _load_animation_curve_inspection_definitions,
+)
+from .animation_curve_sampling import TOOL_DATA as ANIMATION_CURVE_SAMPLING_TOOL_DATA
+from .animation_curve_sampling import (
+    load_definitions as _load_animation_curve_sampling_definitions,
+)
 from .animation_curves import TOOL_DATA as ANIMATION_CURVE_TOOL_DATA
 from .animation_curves import load_definitions as _load_animation_curve_definitions
 from .animation_lifecycle import DESTRUCTIVE_TOOL_NAMES as ACTION_DESTRUCTIVE_TOOL_NAMES
@@ -86,6 +94,8 @@ from .rig_ik import TOOL_DATA as RIG_IK_TOOL_DATA
 from .rig_ik import load_definitions as _load_rig_ik_definitions
 from .rigging import RIGGING_TOOL_DATA
 from .rigging import load_rigging_definitions as _load_base_rigging_definitions
+from .rigid_body import TOOL_DATA as RIGID_BODY_TOOL_DATA
+from .rigid_body import load_definitions as _load_rigid_body_definitions
 from .scene_edit import SCENE_EDIT_TOOL_DATA as BASE_SCENE_EDIT_TOOL_DATA
 from .scene_edit import load_definitions as _load_base_scene_edit_definitions
 from .scene_variants import TOOL_DATA as SCENE_VARIANT_TOOL_DATA
@@ -105,11 +115,13 @@ from .weight_brushes import load_definitions as _load_weight_brush_definitions
 ARTIST_TOOL_DATA = (*_BASE_ARTIST_TOOL_DATA, *((name, "weights", True, ("EDIT_MESH",), description)
                                        for name, description in WEIGHT_BRUSH_TOOL_DATA),
                     *((name, "animation_layers", modifies, permissions, description)
-                      for name, description, modifies, permissions in NLA_TOOL_DATA))
+                      for name, description, modifies, permissions in NLA_TOOL_DATA),
+                    *((name, "simulation", modifies, permissions, description)
+                      for name, description, modifies, permissions in RIGID_BODY_TOOL_DATA))
 
 
 def load_artist_definitions() -> tuple[ToolDefinition, ...]:
-    return (*_load_base_artist_definitions(), *_load_weight_brush_definitions(), *_load_nla_definitions())
+    return (*_load_base_artist_definitions(), *_load_weight_brush_definitions(), *_load_nla_definitions(), *_load_rigid_body_definitions())
 
 ASSET_DELIVERY_TOOL_DATA = (*BASE_ASSET_DELIVERY_TOOL_DATA, *ASSET_IMPORT_TOOL_DATA)
 ASSET_DELIVERY_TOOL_NAMES = tuple(item[0] for item in ASSET_DELIVERY_TOOL_DATA)
@@ -119,7 +131,7 @@ def load_asset_delivery_definitions() -> tuple[ToolDefinition, ...]:
     return (*_load_base_asset_delivery_definitions(), *_load_asset_import_definitions())
 
 ANIMATION_TOOL_DATA = (*ANIMATION_TOOL_DATA, *((name, description, True, ("EDIT_ANIMATION",))
-                                           for name, description in ANIMATION_CURVE_TOOL_DATA), *ACTION_LIFECYCLE_TOOL_DATA)
+                                           for name, description in ANIMATION_CURVE_TOOL_DATA), *ANIMATION_CURVE_INSPECTION_TOOL_DATA, *ANIMATION_CURVE_SAMPLING_TOOL_DATA, *ACTION_LIFECYCLE_TOOL_DATA)
 ANIMATION_TOOL_NAMES = tuple(item[0] for item in ANIMATION_TOOL_DATA)
 GEOMETRY_TOOL_DATA = (*GEOMETRY_TOOL_DATA, *GEOMETRY_GROUP_TOOL_DATA, *GEOMETRY_ZONE_TOOL_DATA)
 GEOMETRY_TOOL_NAMES = tuple(item[0] for item in GEOMETRY_TOOL_DATA)
@@ -143,7 +155,7 @@ def load_uv_definitions() -> tuple[ToolDefinition, ...]:
 
 
 def load_animation_definitions() -> tuple[ToolDefinition, ...]:
-    return (*_load_base_animation_definitions(), *_load_animation_curve_definitions(), *_load_action_lifecycle_definitions())
+    return (*_load_base_animation_definitions(), *_load_animation_curve_inspection_definitions(), *_load_animation_curve_sampling_definitions(), *_load_animation_curve_definitions(), *_load_action_lifecycle_definitions())
 
 
 def load_geometry_definitions() -> tuple[ToolDefinition, ...]:
@@ -158,9 +170,9 @@ def load_scene_edit_definitions() -> tuple[ToolDefinition, ...]:
     return (*_load_base_scene_edit_definitions(), *_load_scene_variant_definitions())
 
 CORE_REMOTE_TOOLS: tuple[tuple[str, str, bool, tuple[str, ...]], ...] = (
-    ("jobs.inspect", "Inspect session-local image-job progress, result/error and file/recovery evidence.", False, ("INSPECT_SCENE",)),
-    ("jobs.list", "List bounded session-local image jobs; no durable queue.", False, ("INSPECT_SCENE",)),
-    ("jobs.cancel", "Request safe-point image-job cancellation, not rollback; available while paused.", False, ()),
+    ("jobs.inspect", "Inspect session-local image or bounded rigid-evaluation job progress, result/error and retained effects.", False, ("INSPECT_SCENE",)),
+    ("jobs.list", "List bounded session-local image and rigid-evaluation jobs and retained Scene receipts; no durable queue.", False, ("INSPECT_SCENE",)),
+    ("jobs.cancel", "Request safe-point cancellation of an exact job, not rollback; available while paused.", False, ()),
     ("bridge.status", "Report Blender bridge, project, mode, and permission status.", False, ()),
     ("bridge.task.set", "Show the current high-level Codex task in Blender's UI.", False, ()),
     ("bridge.task.clear", "Clear the current high-level task from Blender's UI.", False, ()),
@@ -228,6 +240,8 @@ MESH_TOOL_DATA: tuple[tuple[str, str, bool], ...] = (
     ("mesh.edge_ring_inspect", "Preview paginated measured edges and expected topology for a complete connected quad ring.", False),
     ("mesh.loop_cut", "Cut the entire connected quad ring with evenly spaced cuts, including unselected faces.", True),
     ("mesh.bridge_loops", "Bridge two referenced closed boundary/wire loops without vertex merging; unequal loops produce triangles.", True),
+    ("mesh.bridge_chains_preview", "Preview two equal open chains with explicit endpoint correspondence and a bounded preservation fingerprint.", False),
+    ("mesh.bridge_chains", "Bridge an exact equal open-chain preview with quads and no vertex merge, preserving original supported custom data.", True),
     ("mesh.subdivide_selected", "Subdivide selected edges without smoothing under a conservative growth budget.", True),
     ("mesh.merge_by_distance", "Weld only selected vertices within an explicit local-space distance.", True),
     ("mesh.fill_holes", "Cap complete disjoint boundary loops with bounded n-gons; new face UVs start at zero.", True),

@@ -17,6 +17,13 @@ per-case execution mode, timeout/failure and native success evidence. A clean pr
 without a valid fixture marker is not a pass. Isolated scenes and config/scripts/datafiles/
 temporary recovery folders keep these tests separate from an existing user project.
 
+Current Windows testing is paused at the user's request. Historical Windows
+reports remain source-specific; current Linux checks and the private-desktop
+runner do not establish Windows qualification. The
+[2026-10-23 development checkpoint](artist-workflow-checkpoint-20261023.md) separates
+current source/report fingerprints from historical evidence; all fourteen release
+requirements remain open.
+
 The small background `project_save_denial` case proves public save refusals and
 late permission/caller/stop errors without Blender/save entry. Public `project.save`
 is [unavailable](project-save-safety.md). Feature writer/reader cases that need
@@ -24,6 +31,26 @@ is [unavailable](project-save-safety.md). Feature writer/reader cases that need
 native serialization. Their evidence marks `fixture_native_save=true` and
 `bridge_safe_project_save_verified=false`; a reopen pass cannot qualify safe
 production saving. Historical typed-save results belong to their older sources.
+
+`exclusive_mutation` is an opt-in interactive fixture for the structured-entry
+interlock used by `asset.import`. It attempts nested writes through executor,
+registry dispatch and prepared invocation from admission, permission, checkpoint,
+handler and actual Python-finalizer callbacks. It verifies rejection before the
+nested providers/checkpoints, read-only execution-display preservation, release
+on success/failure, measured native edits and actual native undo after the owned
+scope unwinds. It does not import assets, constrain arbitrary native/Python
+callbacks, preempt a native call or qualify whole-project recovery. Run the
+separate `asset_import` fixture on admitted builds for the actual import path.
+
+`uv_edit_storage` is an opt-in background research fixture (`--case uv_edit_storage`).
+It measures raw coordinate, transform and pin writes on two small UV maps, keeping
+live Edit Mode BMesh observations separate from the potentially stale Mesh RNA
+view. Getter inventories, legacy per-map or newer mesh-global UV selection,
+consumer reference counts, protected geometry, map roles and Float32 signed zeros
+are retained. Explicit mesh updates and mode exit/reentry are separate phases;
+wrapper identity is process-local evidence, not a persistent native identity
+guarantee. It invokes no production UV tool, checkpoint, recovery, capture or save.
+This prerequisite does not qualify guarded UV editing or any release gate.
 
 ## Fresh-process phases
 
@@ -58,6 +85,33 @@ partial interruptions and audited explicit disablement. Runtime-getter/handler p
 remain uninvoked. It neither renders nor saves and does not accept visual intent, protected
 delivery or the full UX-01 benchmark. The two-process `task_plans` fixture separately covers
 saved schema-v1 persistence/reopen without imported operational authority.
+The extended fixture also checks step-bound placement/correction and rejected-operation
+receipts against actual outer history IDs, protected-only comparison observations, fresh
+context/reconnect bookkeeping retention and passive saved-v1 exclusion. Its undo/redo
+receipt invalidation invokes the registered handler directly; it explicitly reports that
+this probe does not execute native undo. Frozen source `cdbc1c5` passed the extended
+`artist_loop`, `artist_multitarget` and interactive `undo_lifecycle` cases on Linux
+Blender 4.5.14 and 5.2.2. The latter two exercise actual native pushes and undo;
+these focused results retain the bounded static-prop profile and do not accept UX-01.
+The separate [object-framing fixture](viewport-framing-native.md) passed sixteen
+matched captures and independent host pixel checks at frozen source `447ef57`.
+
+The separate [Scene kernel fixture](scene-job-kernel.md) qualifies internal
+reservation/owned-checkpoint scheduling with five measured scenarios on each Linux
+build. It adds no public rigid-body job API. `readonly_context_probe` records the
+source-pinned getter side effect; [artist_public_entry_probe](artist-public-entry-probe.md)
+uses actual registered permission-denied calls. Its current host checks verify
+[optional context-effect metadata](entry-context-effects.md) in errors and history;
+portable regressions separately verify rejected-step receipt timing. Requested transforms, protected geometry and
+handler/checkpoint/native-push counts remain unchanged. This is diagnostic
+evidence; selection can still normalize before denial, and armed capture remains
+refused. See the dated checkpoint for exact tested sources.
+
+The loaded-participant [shader interface removal research](shader-interface-remove-probe.md)
+is a separate opt-in native probe with actual undo/redo and fresh-reader evidence.
+It changes no production interface operations. Its original fresh-created negative
+case and changed active UI socket identifiers remain explicit limitations; loaded
+setup serialization is owned fixture setup, not public project-save qualification.
 
 The interactive `undo_lifecycle` fixture additionally exercises real manual undo/redo and
 known bridge recovery while a protected plan remains active. It records whether native

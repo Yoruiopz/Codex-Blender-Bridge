@@ -18,7 +18,7 @@
     "SAFE-01": {
       "status": "open",
       "evidence": [],
-      "progress": "New checkpoint marker/native-push writes and every modifying handler entry have canonical final lifetime/toolset/stop checks after preflight. Complete per-tool dependency/ownership/permission/recovery audit remains open, including scene, render and legacy project-save findings."
+      "progress": "Checkpoint admission retains request identity and bounded authored expectations before callbacks through marker/native-push/handler finalization; newer markers and custom scalar/container values are compared literally. Unreviewed guarded batch composition refuses. Scene reports incomplete bundled runtime preservation; exact reviewed Blender 5.2 render mutations refuse because supported read-only SYSTEM comparison is unproven. Public project.save refuses before Blender/path access. Complete per-tool dependency/ownership/permission/recovery and Windows acceptance remain open. Typed asset.import now owns an exclusive structured-entry lease before admission/providers/checkpoints through native cleanup/finalization, with pure final ownership checks; focused Linux checks prove reentry rejection and native recovery. This does not constrain arbitrary native/Python callbacks or preempt native calls. Native checkpoint completion now uses scheduler-local, one-use events tied to the exact pending invocation and consumer; forged/replayed callbacks cannot advance authored expectations. Focused Linux Scene and artist fixtures verify real push completion and failures. Retained exclusive entries remain authoritative if diagnostic owner slots are lost. Known artist preflight context reads may normalize selection before a denied grant; optional bounded entry-effect evidence reaches errors, history and rejected step receipts without claiming prevention or an authored geometry edit."
     },
     "SAFE-02": {
       "status": "open",
@@ -33,7 +33,7 @@
     "JOB-01": {
       "status": "open",
       "evidence": [],
-      "progress": "One image scheduler now handles paint, delivery and packed recovery with pure final owner/deadline/cancellation checks after grant providers. Native tails remain non-preemptible; general simulation/bake jobs and production latency/memory acceptance remain."
+      "progress": "Image paint, delivery and packed-recovery adapters share the SceneJobs controller with the two public rigid_body.evaluate_preview/evaluate_job_start tools. The Scene reservation retains scheduler-only turn origin, coherent starter/driver grants, owned pending checkpoint and terminal/recovery receipts across yields. Frozen aacb39d passes the public typed Blender RPC fixture on both Linux builds: two successful three-body/three-frame jobs, eight early/late stop cases, retained partial effects without stopped-owner cleanup/restoration, and capacity refusal after eight unresolved receipts. Selected native-interval evidence is bounded and does not certify all native state. Separate portable official MCP SDK tests do not establish native MCP end-to-end acceptance. General solver/bake jobs, full declared scale, production latency/memory/recovery, Windows and installed A-F acceptance remain open."
     },
     "EVID-02": {
       "status": "open",
@@ -43,46 +43,46 @@
     "ASSET-01": {
       "status": "open",
       "evidence": [],
-      "progress": "Previewed explicit-rail vertex/edge slides and exact-corner UV align/stitch/island relax implemented; full reference-constrained modeling/retopology and reviewed production quality remain."
+      "progress": "Previewed explicit-rail vertex/edge slides, exact-corner UV align/stitch/island relax and typed previewed equal open-chain bridges implemented within bounded contracts. Broader open-chain/native-scale qualification, unequal/multi-loop correspondence, full reference-constrained modeling/retopology and reviewed production quality remain."
     },
     "LOOK-01": {
       "status": "open",
       "evidence": [],
-      "progress": "Typed fingerprinted shader interface rename/reorder/default preserves stable IDs and existing instances; static camera/light variants retain matched previews. Conversion/removal, animated maintenance and full look-development acceptance remain."
+      "progress": "Typed fingerprinted shader interface rename/reorder/default preserves stable IDs and existing instances; static camera/light variants retain matched previews. Conversion/removal, animated maintenance and full look-development acceptance remain. Separate source-frozen loaded-participant research passes twelve unused-socket removal/actual undo/redo cases and fresh readers on each Linux build without excluding runtime-status fields. Native active UI identifiers change in all cases, and fresh-created/post-load-context negatives remain retained. This is not a production REMOVE/conversion contract or UI-preservation qualification."
     },
     "PAINT-01": {
       "status": "open",
       "evidence": [],
-      "progress": "Explicit-mask sculpt/vertex/weight brushes and bounded orthographic surface texture strokes/stencils implemented; perspective/4K surface workflows, broader sculpt/paint and production/native-undo acceptance remain."
+      "progress": "Explicit-mask sculpt/vertex/weight brushes, generated-image sculpt masks and bounded orthographic surface texture strokes/stencils are implemented within their current limits. Perspective/4K-square surface and sculpt-mask workflows, broader sculpt/paint and production/native-undo acceptance remain."
     },
     "CHAR-01": {
       "status": "open",
       "evidence": [],
-      "progress": "Weight brushes, IK, Actions and NLA lifecycle now include guarded binding/rest/pose and a saved two-bone ribbon benchmark with sampled deformation/protected motion and matched captures. Broader control rigs, complete mutator audit and production character acceptance remain."
+      "progress": "Weight brushes, IK, Actions and NLA lifecycle include guarded binding/rest/pose and implemented character benchmark fixtures for sampled deformation, protected motion and matched captures. Their presence does not establish current-source or production acceptance. Broader control rigs, complete mutator audit and production character acceptance remain."
     },
     "SIM-01": {
       "status": "open",
       "evidence": [],
-      "progress": "Reviewed nested GN instances/copies, typed modifier constants, identifier-preserving zone/interface edits and guarded cloth cache lifecycle implemented; broader zone/solver/cache/bake jobs and production simulation remain."
+      "progress": "Reviewed nested GN instances/copies, modifier constants, identifier-preserving zone/interface edits and guarded cloth caches are joined by three whole-world BOX rigid inspection/cache tools and two public bounded evaluation-job tools. The new unbaked memory-only static profile uses a plain active Empty, proposed range and complete admitted world; broader ordinary startup consumers and private Mesh/UV/native-role research remain unqualified or unwired. Frozen aacb39d passes the public RPC fixture on both Linux builds with moving and zero-gravity complete matrices matching fresh references, stopped partial receipts and no bake claim. Source/evidence audit passes; a separate same-source 16-result composition report and its independent source/marker/artifact audit also pass. Cache coverage, cooperative baking, setup, constraints/broader dependencies, disk caches, full 16-body/32-frame scale, production simulation, native MCP end-to-end, Windows and installed A-F acceptance remain open."
     },
     "UX-01": {
       "status": "open",
       "evidence": [],
-      "progress": "Revisioned saved plans, exact references, reviewed transform previews/corrections and opt-in runtime protected static-prop transforms implemented. Undo/redo invalidates handles while preserving policy. Visual references, wider protected authoring, protected save/delivery and full artist acceptance remain."
+      "progress": "Revisioned saved plans, exact references, reviewed transform previews/corrections and opt-in runtime protected static-prop transforms implemented. Optional step-linked finalized outer operation receipts and protected-only observations are runtime bounded. Both Linux builds pass actual multi-target native pushes with a protected previous-owner witness, material-drift denial and interactive manual undo/redo with stale observation/reference invalidation. Optional object framing passes sixteen axis/aspect captures, restored context and independent pixel bounds; capture while protection is armed still refuses. Saved v1 remains passive; visual references, wider protected authoring, protected save/delivery and full artist acceptance remain. Source-matched Linux composition verifies the optional four-boolean error/history diagnostic; portable tests separately prove rejected-step receipt timing before terminal recording. It reports possible context synchronization, not prevention; handler rejection can coexist with normalized selection. The protected inspect-plan-edit-visual-verify loop remains incomplete."
     },
     "DELIVER-01": {
       "status": "open",
       "evidence": [],
-      "progress": "Stored-relative/fresh-process textures, bounded packed image recovery, reviewed GLB/FBX export and approved-source static GLB/material-free FBX import implemented. General textured FBX, skinning/animation import, full packaging and production acceptance remain."
+      "progress": "Stored-relative/fresh-process textures, bounded packed image recovery, reviewed GLB/FBX export and approved-source static GLB/material-free FBX import implemented. Public project.save is unavailable while native side effects remain unbounded. A tiny fresh-worker static-asset probe restores fake-user flags and discloses native camera conversion; it is not production saving or containment. Safe project save, general textured FBX, skinning/animation import, full packaging and production acceptance remain. Native import on the exact reviewed Blender 5.2 build remains quarantined; success on another build or 4.5 does not widen that admission."
     },
     "RC-01": {
       "status": "open",
       "evidence": [],
-      "progress": "Qualification checker and manual gated publication workflow implemented; Windows 11 machine unavailable, exact packaged A-F and upgrade/rollback acceptance absent."
+      "progress": "Qualification checker and manual gated publication workflow are implemented. Meaningful reviewed increments are authorized for versioned GitHub prereleases at roughly a 2-3 hour cadence with matching packages/checksums and source-specific validation. Published 0.3.0 (22 September) remains alpha; the forthcoming 0.4.0 prerelease candidate is not published. Windows-specific compatibility/testing is DEFERRED until full functionality is implemented on available Linux 4.5.14/5.2.2; Windows remains unverified and is not a blocker to this implementation pass. Complete Windows native, exact packaged A-F and upgrade/rollback acceptance remain future stable-release gates. Linux selected-case evidence and prereleases do not close any stable 1.0 release gate."
     }
   },
   "quality_matrix": null,
   "native_matrices": [],
   "installed_scenarios": [],
-  "support_selection_status": "Provisional development versions only. Windows is unqualified; select and record exact 4.5 LTS and newest compatible stable 5.x patches again at candidate freeze."
+  "support_selection_status": "Available Linux 4.5.14/5.2.2 versions are for implementation validation only. Windows-specific compatibility/testing is DEFERRED until full functionality is implemented; Windows remains unverified and is not a blocker to this implementation pass. Future Windows 11 stable-release qualification is unchanged: select and record exact 4.5 LTS and newest compatible stable 5.x patches again at candidate freeze."
 }

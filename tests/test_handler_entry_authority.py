@@ -14,6 +14,8 @@ def env(addon_package):
     registry_mod, queue, protocol = module("tool_registry"), module("command_queue"), module("protocol")
     permissions, plans = module("permissions"), module("task_plans")
     registry = registry_mod.ToolRegistry(enabled_toolsets=("objects",))
+    module("tools.batch").register_tools(registry)
+    registry.enable_toolset("batch")
     state, lifetime_mod = module("state").BridgeState(), module("request_lifecycle")
     lifetime = lifetime_mod.RequestLifetime(lifetime_mod.ConnectionLifetime())
     request = protocol.Request("last-preflight", "object.fixture", {}, _lifecycle=lifetime)
@@ -26,9 +28,13 @@ def env(addon_package):
         provider_action[0]()
         return {"TRANSFORM_OBJECTS": True}
 
-    def checkpoint(_label, *, before_write):
+    def checkpoint(_label, *, before_write, after_read=None, after_native_push=None):
         before_write()
+        if after_read is not None:
+            after_read()
         markers.append("before")
+        if after_native_push is not None:
+            after_native_push()
         return True
 
     checkpoints = NS(before_modification=checkpoint,
@@ -149,11 +155,15 @@ def test_batch_local_budget_stops_next_checkpoint_write_or_handler(env, monkeypa
         if where == "provider" and len(reads) == 2:
             clock[0] = 2.
 
-    def checkpoint(_label, *, before_write):
+    def checkpoint(_label, *, before_write, after_read=None, after_native_push=None):
         if where == "checkpoint_reader":
             clock[0] = 2.
         before_write()
+        if after_read is not None:
+            after_read()
         env.markers.append("before")
+        if after_native_push is not None:
+            after_native_push()
         if where == "after_checkpoint":
             clock[0] = 2.
         return True
@@ -169,9 +179,6 @@ def test_batch_local_budget_stops_next_checkpoint_write_or_handler(env, monkeypa
 
 
 def test_rejected_batch_wrapper_does_not_finalize_old_editor_work(env):
-    batch = env.module("tools.batch")
-    batch.register_tools(env.registry)
-    env.registry.enable_toolset("batch")
     env.registry.register("object.fixture", lambda *_: env.calls.append("late child"), toolset="objects", modifies=True,
                           permissions=(env.permissions.Permission.TRANSFORM_OBJECTS,))
     env.provider_action[0] = lambda: cancel(env)

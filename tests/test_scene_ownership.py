@@ -7,13 +7,14 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from test_scene_edit_tools import _install_field_boundary
 
 
 def _camera(*, users: int = 1) -> Any:
     return SimpleNamespace(
         name="Camera Data", users=users, type="PERSP", lens=35.0, sensor_width=36.0,
         clip_start=0.1, clip_end=1000.0, ortho_scale=6.0,
-        dof=SimpleNamespace(use_dof=False, focus_object=None, aperture_fstop=2.8),
+        dof=SimpleNamespace(use_dof=False, focus_object=None, focus_distance=10.0, aperture_fstop=2.8),
     )
 
 
@@ -73,6 +74,7 @@ def test_shared_camera_can_be_assigned_without_editing_its_data(
     addon_package: str, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module = importlib.import_module(f"{addon_package}.tools.scene_edit")
+    _install_field_boundary(module, monkeypatch)
     data = _camera(users=2)
     target = SimpleNamespace(name="Target", type="CAMERA", data=data)
     scene = SimpleNamespace(name="Scene", objects={target.name: target}, camera=None)
@@ -86,7 +88,7 @@ def test_shared_camera_can_be_assigned_without_editing_its_data(
 
 
 def _world_fixture(module: Any, monkeypatch: pytest.MonkeyPatch, *, users: int = 1) -> tuple[Any, Any]:
-    world = SimpleNamespace(name="World", users=users, use_nodes=False, color=(0.1, 0.2, 0.3), node_tree=None)
+    world = SimpleNamespace(name="World", users=users, use_fake_user=False, use_nodes=False, color=(0.1, 0.2, 0.3), node_tree=None)
     scene = SimpleNamespace(name="Scene", world=world)
     bpy = SimpleNamespace(data=SimpleNamespace(worlds=SimpleNamespace(get=lambda _name: world)))
     monkeypatch.setattr(module, "require_blender", lambda: bpy)
@@ -136,6 +138,7 @@ def test_world_fake_user_does_not_count_as_protected_scene(
     addon_package: str, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module = importlib.import_module(f"{addon_package}.tools.scene_edit")
+    _install_field_boundary(module, monkeypatch)
     scene, world = _world_fixture(module, monkeypatch, users=2)
     world.use_fake_user = True
 
@@ -149,6 +152,7 @@ def test_shared_world_explicit_assignment_without_edits_is_allowed(
     addon_package: str, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module = importlib.import_module(f"{addon_package}.tools.scene_edit")
+    _install_field_boundary(module, monkeypatch)
     scene, world = _world_fixture(module, monkeypatch, users=2)
     scene.world = None
 

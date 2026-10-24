@@ -1,11 +1,17 @@
 # Working toward 1.0.0
 
 Status: **not release-ready**. This is an acceptance plan, not a feature announcement
-or a promise of a release date. Published 0.3.0 remains alpha; `main` contains unreleased work.
-No version bump or publication happens merely because the tool count increases.
+or a promise of a release date. Published 0.3.0 (22 September) remains alpha;
+`main` contains unreleased work. The forthcoming 0.4.0 prerelease candidate is not
+published. Meaningful, reviewed increments are authorized for versioned GitHub
+prereleases at roughly a 2–3 hour cadence, with matching packages, checksums and
+source-specific validation. Tool counts and elapsed time do not establish readiness.
+Prereleases do not bypass any stable 1.0 gate.
 
 Follow the [1.0 execution plan](plan-1.0.md) for milestone dependencies, prioritized work,
-end-to-end scenarios and evidence requirements. This document defines the acceptance gates.
+end-to-end scenarios and evidence requirements. The [implementation completion
+checklist](implementation-completion.md) defines the finite remaining functional work
+and its Linux completion checks. This document defines the stable-release acceptance gates.
 
 The [machine-readable ledger](release-1.0-ledger.json) records all fourteen mandatory
 requirements as open. Use the [evidence qualification gate](release-evidence.md) to check
@@ -31,19 +37,19 @@ No current release should be described as a complete human-equivalent artist.
 
 | Artist responsibility | Existing foundation | Remaining structured-workflow gaps |
 | --- | --- | --- |
-| Understand a brief and references | Scene/selection/object inspection, task display; [revisioned plans, scene persistence, exact references and opt-in protected transforms](task-plans.md) | Visual references, wider enforced constraints, protected save/delivery, scene units/scale checks, ambiguity resolution benchmarks |
-| Model and repair assets | Primitives, arbitrary meshes, selection-scoped edits, modifiers; [repair](mesh-repair.md), [cuts/bridging](mesh-loops.md), [diagnostics](mesh-analysis.md), [previewed explicit-rail vertex/edge slides](mesh-uv-refinement.md), [scoped base-reference projection](mesh-surface-projection.md) | Open/multi-loop bridging, explicit unequal correspondence, broader retopology, localized/cross-object/evaluated diagnostics, outward/custom normals, shape-key/shared-data workflows and broad protected editing |
-| Sculpt and paint | [UV-image brushes and raw masks](texture-painting.md), canvas/pixel inspection; [explicit-mask PUSH/SMOOTH and POINT/CORNER colors](surface-brushes.md), [weight brushes](weight-brushes.md), [bounded orthographic surface strokes/stencils](image-surface-paint.md) | Viewport/perspective painting, 4K surface workflows, painted/texture-derived sculpt masks, broader blends/roles, multires and full production sculpt/paint feedback |
+| Understand a brief and references | Scene/selection/object inspection, task display; [revisioned plans, scene persistence, exact references and opt-in protected transforms](task-plans.md); [explicit target core-channel observations](artist-target-verification.md) | Visual references, wider enforced constraints, broader target/dependency verification, protected save/delivery, scene units/scale checks, ambiguity resolution benchmarks |
+| Model and repair assets | Primitives, arbitrary meshes, selection-scoped edits, modifiers; [repair](mesh-repair.md), [cuts/closed bridges and previewed equal open-chain bridges](mesh-loops.md), [diagnostics](mesh-analysis.md), [previewed explicit-rail vertex/edge slides](mesh-uv-refinement.md), [scoped base-reference projection](mesh-surface-projection.md) | Broader open/multi-loop bridging and native qualification, explicit unequal correspondence, broader retopology, localized/cross-object/evaluated diagnostics, outward/custom normals, shape-key/shared-data workflows and broad protected editing |
+| Sculpt and paint | [UV-image brushes and raw masks](texture-painting.md), canvas/pixel inspection; [explicit-mask PUSH/SMOOTH and POINT/CORNER colors](surface-brushes.md), [generated-image sculpt masks](surface-brushes.md#sample-a-painted-uv-image-into-a-sculpt-mask), [weight brushes](weight-brushes.md), [bounded orthographic surface strokes/stencils](image-surface-paint.md) | Viewport/perspective painting, 4K surface workflows, broader texture sources and 4K sculpt masks, broader blends/roles, multires and full production sculpt/paint feedback |
 | UV and textures | [Authoring](uv-authoring.md), [UV evidence](uv-analysis.md), [align/stitch/island relax](mesh-uv-refinement.md), [approved loading/binding](image-assets.md), [refresh/relocation](image-revisions.md), [paint/digests](texture-painting.md), stored-relative FILE reopen, [loaded/unloaded FILE recovery](image-portability.md) and [cooperative 4K snapshots/recovery](image-recovery-jobs.md) | UV-editor selection, cross-object/evaluated atlases, broader quality acceptance, full painting/baking, broader formats and production durable-pixel acceptance |
 | Materials and look development | Principled controls, isolated copies, approved images, [nested paths/groups](shader-groups.md), [reviewed properties/ramps](shader-settings.md), [interface preview/rename/reorder/default](shader-interface-lifecycle.md), bounded nested evidence and [reference-prop fixture](field-scanner-workflow.md) | Interface conversion/removal and animated maintenance, broader properties, deep asset lifecycle, complete nested dependency preservation, production materials/look development |
 | Procedural modeling | Reviewed GN graphs/zones; [nested instances/copies and modifier constants](geometry-node-groups.md), [identifier-preserving zone conversion/interface edits](geometry-zone-lifecycle.md) | Broader nested/interface lifecycle, disk baking, evaluated diagnostics and broader node types |
-| Rig and skin | Armatures/bones/poses/constraints/binding; numeric weights; [brushes, geometric mirror and barycentric surface transfer](weight-brushes.md), [bounded IK controls and current-frame deformation measurements](rig-ik-deformation.md) | Broader skinning/deformation diagnosis, control-rig authoring and protected character benchmark |
-| Animate | Frames/keyframes, NLA clips/tracks; [Action copies and curve handles/interpolation](animation-curves.md), [numeric controls and non-scripted bone drivers](rig-drivers.md), [bounded Action lifecycle](action-lifecycle.md) and [NLA clips/transitions/reordering](nla-lifecycle.md) | Broader Action/constraint/control-rig combinations, complete mutator safety audit and protected multi-frame revisions |
-| Simulate | Scoped cloth setup/configuration and bounded in-memory bake/free | Fluid/rigid-body/other solvers, dependencies, disk caches, asynchronous progress/cancellation and production-scale validation |
+| Rig and skin | Armatures/bones/poses/constraints/binding; numeric weights; [brushes, geometric mirror and barycentric surface transfer](weight-brushes.md), [bounded IK controls and current-frame deformation measurements](rig-ik-deformation.md), [implemented protected character benchmark](character-revision.md) | Broader skinning/deformation diagnosis, control-rig authoring and current-source production character qualification; an implemented benchmark is not complete acceptance |
+| Animate | Frames/keyframes, NLA clips/tracks; [Action copies, curve handles/interpolation and direct stored-curve samples](animation-curves.md), [numeric controls and non-scripted bone drivers](rig-drivers.md), [bounded Action lifecycle](action-lifecycle.md) and [NLA clips/transitions/reordering](nla-lifecycle.md) | Broader Action/constraint/control-rig combinations, complete mutator safety audit, evaluated character motion and protected multi-frame revisions |
+| Simulate | Scoped cloth setup/configuration, bounded in-memory bake/free, three rigid-body cache tools and two public [bounded evaluation job tools](rigid-body-evaluation-jobs.md) using the [Scene job kernel](scene-job-kernel.md) | Cooperative bake/coverage proof, broader solvers/dependencies, disk caches, native scale/memory/recovery and installed end-to-end qualification |
 | Stage and light | Collections, world, camera/light settings, layout; [persistent static-scene variants and matched previews](cinematic-variants.md) | Broader composition/navigation and lighting workflows, asset-scale and placement constraints, reviewed artistic acceptance |
 | Render and composite | Render settings/execution, captures; reviewed compositor graph editing | Broader nodes/image assets, passes, color/output workflows, render diagnostics and job/progress management |
 | Deliver production assets | Safe native project saving is [blocked](project-save-safety.md); [cooperative texture export/reimport](texture-delivery.md), fresh texture/project reopen, [packed recovery](image-portability.md), [material-free static/skinned GLB/FBX export and fresh reimport](asset-delivery.md), [approved-source static GLB/material-free FBX import](asset-import.md) | Safe authorized project save and portable `.blend` delivery; broader skinned/animated/material asset import, textured FBX exchange, complete dependency packaging, broader recovery/formats and production validation |
-| Operate interactively | Status/history/permissions/stop/pause; [4K painting jobs](painting-jobs.md); [persistent plans/exact references/guarded transform previews and corrections](task-plans.md) and [static-scene variants](cinematic-variants.md) | Visual references, wider protected authoring/previews, protected save, broad durable variants and general long-operation/bake jobs |
+| Operate interactively | Status/history/permissions/stop/pause; [4K painting jobs](painting-jobs.md), [bounded rigid evaluation jobs](rigid-body-evaluation-jobs.md); [persistent plans/exact references/guarded transform previews and corrections](task-plans.md) and [static-scene variants](cinematic-variants.md) | Visual references, wider protected authoring/previews, protected save, broad durable variants and general long-operation/bake jobs |
 | Work safely and improve results | Checkpoints, batch failure evidence, bounded [structural comparisons](scene-evidence.md) including optional rigs/animation/nested shaders; per-domain ownership guards | Enforced complete preservation, remaining mutator/recovery audits, mixed-editor/pressure evidence, aesthetic iteration and whole-project benchmarks |
 
 Each row needs representative end-to-end tasks with observable success, failure and recovery
@@ -68,11 +74,16 @@ The confirmed 1.0 qualification target is Windows 11 x64 on Blender 4.5 LTS and 
 compatible stable 5.x at candidate freeze, with exact patch versions recorded. The current
 development manifest still declares 4.2; this is not a newly qualified 1.0 support claim.
 Historical Windows checks exercised 4.5.1 LTS and 5.1.2, while this implementation session
-has Linux development runners for 4.3.2, 4.5.14 LTS and 5.2.2 LTS. Their results remain
+uses Linux development runners for 4.5.14 LTS and 5.2.2. Their results remain
 separate from Windows qualification; source-matched outcomes and failures are retained in
-the [development checkpoint](artist-workflow-checkpoint-20261022.md). The user confirmed that no Windows test machine is available.
-Native Windows and installed-package acceptance remain blocked; other platforms remain
-unqualified for 1.0. Align the manifest and support claims only at candidate qualification.
+the historical [development checkpoint](artist-workflow-checkpoint-20261022.md) and
+the [2026-10-23 checkpoint](artist-workflow-checkpoint-20261023.md). Windows-specific
+compatibility and testing are **DEFERRED until the full functionality is implemented**
+on the available Linux 4.5.14/5.2.2 runners. Windows remains **unverified** and is not
+a blocker to this implementation pass. Complete Windows native and installed-package
+acceptance remains a future stable-release gate; Linux development results do not qualify
+Windows or other platforms for 1.0. Align the manifest and support claims only at
+candidate qualification.
 
 ## Release gates
 
@@ -80,10 +91,10 @@ unqualified for 1.0. Align the manifest and support claims only at candidate qua
 | --- | --- | --- |
 | Target and data ownership | Every modifying domain documents shared data, linked libraries, overrides, active/multi-object modes and hidden scope; rejects unsupported cases before mutation | Mesh/UV/material, object/data/Action and collection/parenting guards exist with bounded regressions; complete per-tool/dependency audit, protected enforcement and recovery acceptance remain |
 | Recoverable edits | Deliberate mid-operation faults, canceled callers, operator failures and manual undo interleaving leave truthful history and verifiable recovery state | Checkpoints/batches are not transactions. [Conservative capacity reporting/pruning](native-recovery.md) and a long/manual-eviction fixture exist; memory-pressure, production-scale mixed-editor/domain, durable recovery and UI acceptance remain open. Never expand user preferences silently |
-| Preserved context | Each representative workflow proves unchanged mode, selection, active object, visibility, UV layer and unrelated data where promised | Selection preservation has coverage; UV layer activation and operator context need broader audit |
+| Preserved context | Each representative workflow proves unchanged mode, selection, active object, visibility, UV layer and unrelated data where promised | Bounded restoration has coverage, but known preflight getters can normalize selection before denial; entry diagnostics report possibility and do not prevent it. UV layer activation/operator context and full preservation remain open |
 | Bounded evidence | Explicit truncation, stable pagination rules, large-scene fixtures and measured time/memory reports | Hard limits exist; add performance baselines and inspect partial-result handling across domains |
 | End-to-end workflows | Modeling, materials/nodes, UVs, rigging, animation, scene layout and rendering each have an install-to-result scenario with pre/post evidence | Current factory-startup smokes cover portions, not complete production acceptance |
-| Visual verification | Retained, matched viewport/render evidence for appearance-sensitive acceptance scenarios | Isolated preview exists; add repeatable comparisons and interactive viewport coverage |
+| Visual verification | Retained, matched viewport/render evidence for appearance-sensitive acceptance scenarios | Exact-object framing has matched captures and independent projection/pixel checks; protected capture still refuses, and complete appearance-sensitive artist acceptance remains open |
 | Protocol and authorization | Versioned compatibility, reconnect, malformed/oversized frames, duplicate IDs, timeout/cancel, pause/stop and Python gates pass adversarial tests | Core tests exist; expand live disconnect and recovery scenarios; no LAN listener |
 | Installation and upgrade | Fresh ZIP/wheel/plugin installation, previous-release upgrade, rollback, paths with spaces and disconnected/restarted Blender tested on claimed platforms | Package/metadata/checksum/clean-wheel CI exists; interactive install and platform matrix remain open |
 | Public contracts | Registry, schemas, README, permission matrix, error codes, limitations and migration notes agree for the release commit | Generated inventory is checked; audit full parameter/error contracts and freeze supported surface before RC |
@@ -103,6 +114,28 @@ per-write compensation checks. They do not retroactively close this historical i
 current-source adversarial proof and the remaining per-tool/dependency audit are still required.
 
 ## Delivery sequence
+
+The current UX-01 increment adds optional immutable step links to existing transform
+previews, bounded runtime receipts from the actual finalized outer operations, and
+explicit protected-only comparison observations. Reconnect retains them; undo/redo
+invalidates observation currency, and plan replacement/load/reset discards them.
+Sidebar execution evidence remains separate from claimed completion. The saved-v1
+document stays passive. Portable boundary tests and the extended native artist-loop
+fixture are described in [task plans](task-plans.md). Both Linux builds have passed
+the extended artist, multi-target native-push and interactive undo fixtures; their
+source-specific evidence is recorded in the [dated checkpoint](artist-workflow-checkpoint-20261023.md).
+Object framing also has independent projection/pixel evidence. Capture while
+protection is armed still refuses. Native context getters can normalize selection
+before a permission denial; [bounded entry diagnostics](entry-context-effects.md)
+report that possibility and do not prevent it. The Scene reservation and
+owned-checkpoint kernel now supports public bounded rigid evaluation. Its exact
+`aacb39d` public RPC fixture passes on both Linux builds with two successful jobs,
+eight stopped jobs and retained-receipt capacity refusal per build. This evaluates
+three-body/three-frame worlds; it does not establish cache coverage, asynchronous
+baking, the full 16-body/32-frame bounds, production memory/latency or installed
+MCP-to-Blender acceptance. Portable official SDK tests are separate evidence.
+See the [adapter contract and source/report](rigid-body-evaluation-jobs.md).
+This does not close SIM-01, JOB-01, UX-01 or any full-artist release gate.
 
 1. **Safety baseline:** close ownership/context gaps, add regression fixtures, strengthen failure evidence.
 2. **Daily workflows:** finish targeted structured editing gaps and add whole-task acceptance scenarios.

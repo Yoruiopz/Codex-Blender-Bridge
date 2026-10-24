@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from pydantic import StrictBool
+
 from ..tool_registry import ToolRegistry
 from ._common import MCPToolBinding, params
 
@@ -19,8 +21,9 @@ class ViewportTools:
         include_overlays: bool = True,
         object_name: str | None = None,
         resolution: list[int] | None = None,
+        frame_object: StrictBool = False,
     ) -> Any:
-        """Capture a viewport PNG for qualitative visual verification."""
+        """Capture a viewport PNG; optionally frame an exact named object in a desktop Object-mode view. Temporary settings are restored; Render Result is replaced."""
 
         return await self.registry.call(
             "viewport.capture",
@@ -30,6 +33,7 @@ class ViewportTools:
                 include_overlays=include_overlays,
                 object_name=object_name,
                 resolution=resolution,
+                frame_object=frame_object,
             ),
         )
 

@@ -1,0 +1,427 @@
+"""Importing native fixture helpers must never start their owned experiment."""
+
+from __future__ import annotations
+
+import importlib
+import os
+import runpy
+import socket
+import sys
+import threading
+from pathlib import Path
+from types import ModuleType
+from types import SimpleNamespace as NS
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[1]
+HELPERS = (
+    "scripts.blender_rigid_timer_probe_smoke",
+    "scripts.blender_rigid_lifecycle_probe_smoke",
+    "scripts.blender_scene_job_kernel_smoke",
+    "scripts.blender_rigid_evaluation_jobs_smoke",
+    "scripts.blender_simulation_cache_probe_smoke",
+    "scripts.blender_camera_focus_smoke",
+    "scripts.blender_animation_curve_sampling_smoke",
+    "scripts.blender_surface_publication_probe",
+    "scripts.blender_sculpt_mask_smoke",
+    "scripts.blender_character_revision_smoke",
+    "scripts.blender_artist_target_verification_smoke",
+    "scripts.blender_artist_sidebar_smoke",
+    "scripts.blender_artist_quaternion_storage_smoke",
+    "scripts.blender_artist_quaternion_smoke",
+    "scripts.blender_uv_edit_storage_smoke",
+    "scripts.blender_uv_edit_boundary_probe",
+    "scripts.native_character_revision_evidence",
+    "scripts.native_character_evidence",
+    "scripts.native_cache_evidence",
+)
+
+
+@pytest.fixture
+def fixture_imports(addon_package, monkeypatch):
+    events = []
+
+    def forbidden(name):
+        def call(*_args, **_kwargs):
+            events.append(name)
+            pytest.fail(f"Fixture import unexpectedly ran {name}")
+        return call
+
+    def module(name, **values):
+        value = ModuleType(name)
+        value.__dict__.update(values)
+        monkeypatch.setitem(sys.modules, name, value)
+        return value
+
+    permissions = importlib.import_module(f"{addon_package}.permissions")
+    errors = importlib.import_module(f"{addon_package}.errors")
+    package = module("blender_codex_bridge", register=forbidden("addon.register"), __path__=[])
+    module("blender_codex_bridge.errors", BridgeError=errors.BridgeError)
+    module("blender_codex_bridge.permissions", Permission=permissions.Permission,
+           PermissionManager=forbidden("PermissionManager construction"))
+    module("blender_codex_bridge.command_queue", QueuedRequest=forbidden("QueuedRequest construction"))
+    module("blender_codex_bridge.protocol", Request=forbidden("Request construction"))
+    module("blender_codex_bridge.request_lifecycle", RequestLifetime=NS(local=forbidden("local request")))
+    module("blender_codex_bridge.runtime", get_runtime=forbidden("get_runtime"))
+    module("blender_codex_bridge.scene_job_reservations", TURN_METHOD="jobs._scene_turn")
+    module("blender_codex_bridge.tool_registry", check_final_mutation=forbidden("mutation gate"))
+    tools = module("blender_codex_bridge.tools", __path__=[])
+    for name in ("_rigid_body_scope", "_scene_checkpoint_roles", "surface_brushes", "rig_ik"):
+        setattr(tools, name, module(f"blender_codex_bridge.tools.{name}"))
+    tools.rigid_body = module("blender_codex_bridge.tools.rigid_body", _Boundary=type("Boundary", (), {}),
+                              PERMISSIONS=(permissions.Permission.EDIT_SCENE,))
+    package.tools = tools
+    timers = []
+
+    def register(callback, **kwargs):
+        timers.append((callback.__name__, kwargs))
+
+    module("bpy", app=NS(timers=NS(register=register)),
+           ops=NS(wm=NS(quit_blender=forbidden("quit_blender"))))
+    monkeypatch.setattr(threading, "Thread", forbidden("worker construction"))
+    monkeypatch.setattr(socket, "create_connection", forbidden("socket connection"))
+    for name in ("write_text", "write_bytes", "mkdir", "replace"):
+        monkeypatch.setattr(Path, name, forbidden(f"Path.{name}"))
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    monkeypatch.syspath_prepend(str(ROOT))
+    scripts = importlib.import_module("scripts")
+    previous = {name: getattr(scripts, name.rsplit(".", 1)[1], None) for name in HELPERS}
+    for name in HELPERS:
+        monkeypatch.delitem(sys.modules, name, raising=False)
+    try:
+        yield NS(events=events, timers=timers)
+    finally:
+        for name in HELPERS:
+            sys.modules.pop(name, None)
+            attribute = name.rsplit(".", 1)[1]
+            if previous[name] is not None:
+                setattr(scripts, attribute, previous[name])
+            elif hasattr(scripts, attribute):
+                delattr(scripts, attribute)
+
+
+@pytest.mark.parametrize("name,helper", [
+    ("scripts.blender_rigid_timer_probe_smoke", "checkpointed_cache"),
+    ("scripts.blender_rigid_lifecycle_probe_smoke", "make_scene"),
+    ("scripts.blender_scene_job_kernel_smoke", "RigidDriver"),
+    ("scripts.blender_rigid_evaluation_jobs_smoke", "Fixture"),
+    ("scripts.blender_simulation_cache_probe_smoke", "values"),
+    ("scripts.blender_camera_focus_smoke", "main"),
+    ("scripts.blender_animation_curve_sampling_smoke", "main"),
+    ("scripts.blender_surface_publication_probe", "main"),
+    ("scripts.blender_sculpt_mask_smoke", "main"),
+    ("scripts.blender_character_revision_smoke", "main"),
+    ("scripts.blender_artist_target_verification_smoke", "main"),
+    ("scripts.blender_artist_sidebar_smoke", "main"),
+    ("scripts.blender_artist_quaternion_storage_smoke", "main"),
+    ("scripts.blender_artist_quaternion_smoke", "main"),
+    ("scripts.blender_uv_edit_storage_smoke", "main"),
+    ("scripts.blender_uv_edit_boundary_probe", "main"),
+    ("scripts.native_character_revision_evidence", "lbs_vertices"),
+])
+def test_importing_helper_fixture_does_not_start_experiment(fixture_imports, name, helper):
+    imported = importlib.import_module(name)
+    assert callable(getattr(imported, helper))
+    assert fixture_imports.timers == [] and fixture_imports.events == []
+
+
+@pytest.mark.parametrize("name,expected", [
+    ("blender_rigid_timer_probe_smoke.py", [("heartbeat", {"first_interval": .01}), ("tick", {"first_interval": 1.})]),
+    ("blender_scene_job_kernel_smoke.py", [("setup", {"first_interval": 1.})]),
+    ("blender_rigid_evaluation_jobs_smoke.py", [("setup", {"first_interval": 1.})]),
+])
+def test_explicit_fixture_entrypoint_schedules_only_its_own_timers(fixture_imports, name, expected):
+    runpy.run_path(str(ROOT / "scripts" / name), run_name="__main__")
+    assert fixture_imports.timers == expected and fixture_imports.events == []
+
+
+@pytest.mark.parametrize("script", ["blender_artist_quaternion_storage_smoke.py", "blender_artist_quaternion_smoke.py",
+                                  "blender_uv_edit_storage_smoke.py", "blender_uv_edit_boundary_probe.py"])
+def test_owned_background_entry_never_acquires_process_exit(fixture_imports, monkeypatch, script):
+    def forbidden_exit(_status):
+        pytest.fail("An unowned invocation must not terminate its Blender process")
+
+    monkeypatch.setattr(os, "_exit", forbidden_exit)
+    with pytest.raises(AssertionError, match="Use the isolated background runner"):
+        runpy.run_path(str(ROOT / "scripts" / script), run_name="__main__")
+    assert fixture_imports.timers == [] and fixture_imports.events == []
+
+
+@pytest.mark.parametrize("global_selection,empty_secondary_pin", [(False, False), (True, False), (True, True)])
+def test_uv_object_reader_copies_each_property_before_native_handle_invalidation(
+    fixture_imports, monkeypatch, global_selection, empty_secondary_pin,
+):
+    script = importlib.import_module("scripts.blender_uv_edit_storage_smoke")
+    events = []
+    mesh = NS(generation=0)
+
+    def descriptor(kind, *, length=0, fixed=None):
+        return NS(type=kind, array_length=length, is_runtime=False, is_registered=False,
+                  fixed_type=NS(identifier=fixed))
+
+    class Float2AttributeValue:
+        bl_rna = NS(properties={"vector": descriptor("FLOAT", length=2)})
+
+        def __init__(self, generation, field, index, value):
+            self.generation, self.field, self.index, self.raw = generation, field, index, value
+
+        @property
+        def vector(self):
+            assert self.generation == mesh.generation, "UV collection survived a later allocating getter"
+            events.append(("copy", self.field, self.index))
+            return self.raw
+
+    class BoolAttributeValue(Float2AttributeValue):
+        bl_rna = NS(properties={"value": descriptor("BOOLEAN")})
+
+        @property
+        def value(self):
+            assert self.generation == mesh.generation, "Boolean collection survived a later allocating getter"
+            events.append(("copy", self.field, self.index))
+            return self.raw
+
+    buffers = {name: {"uv": [(index * .25, -0. if index == 0 else .5) for index in range(8)],
+                      "pin": [index % 3 == 0 for index in range(8)],
+                      "vertex_selection": [index % 2 == 0 for index in range(8)],
+                      "edge_selection": [index % 2 == 1 for index in range(8)]} for name in script.MAPS}
+    if empty_secondary_pin:
+        buffers[script.MAPS[1]]["pin"] = []
+
+    class MeshUVLoopLayer:
+        bl_rna = NS(properties={field: descriptor("COLLECTION", fixed="Float2AttributeValue" if field == "uv" else "BoolAttributeValue")
+                                for field in ("uv", "pin", "vertex_selection", "edge_selection")})
+
+        def __init__(self, name):
+            self.name, self.generation = name, mesh.generation
+
+        def __getattr__(self, field):
+            assert self.generation == mesh.generation, "UV-layer handle survived a materializing getter"
+            assert field in buffers[self.name]
+            events.append(("getter", self.name, field))
+            mesh.generation += 1
+            kind = Float2AttributeValue if field == "uv" else BoolAttributeValue
+            return [kind(mesh.generation, field, index, value) for index, value in enumerate(buffers[self.name][field])]
+
+    def fresh_layer(name):
+        events.append(("fresh_layer", name))
+        return MeshUVLoopLayer(name)
+
+    monkeypatch.setattr(script.bpy, "types", NS(MeshUVLoopLayer=MeshUVLoopLayer,
+                        Float2AttributeValue=Float2AttributeValue, BoolAttributeValue=BoolAttributeValue), raising=False)
+    mesh.uv_layers = NS(get=fresh_layer)
+    mesh.loops = [NS(vertex_index=index % 6, edge_index=index % 7) for index in range(8)]
+    mesh.polygons = [NS(index=0, loop_indices=range(4)), NS(index=1, loop_indices=range(4, 8))]
+    proof = object.__new__(script.Proof)
+    proof.work, proof.global_selection = NS(data=mesh), global_selection
+    proof.data = {"object_property_copies": []}
+    proof.access, proof.flush = lambda _label, callback: callback(), lambda: None
+    result = proof.read_maps("mock_object", edit=False)
+    fields = ("uv", "pin") if global_selection else ("uv", "pin", "vertex_selection", "edge_selection")
+    assert [event for event in events if event[0] == "getter"] == [
+        ("getter", name, field) for name in script.MAPS for field in fields]
+    assert len([event for event in events if event[0] == "fresh_layer"]) == len(fields) * 2
+    cursor = 0
+    for name in script.MAPS:
+        for field in fields:
+            assert events[cursor:cursor + 2] == [("fresh_layer", name), ("getter", name, field)]
+            cursor += 2
+            for index in range(len(buffers[name][field])):
+                assert events[cursor] == ("copy", field, index)
+                cursor += 1
+    assert cursor == len(events)
+    for name in script.MAPS:
+        assert len(result[name]) == 8
+        for index, corner in enumerate(result[name]):
+            assert corner["uv"] == list(buffers[name]["uv"][index])
+            assert corner["float32_le"] == script.pair_bits(buffers[name]["uv"][index])
+            assert corner["pin_uv"] is (buffers[name]["pin"][index] if buffers[name]["pin"] else None)
+            assert ("select" in corner) is (not global_selection)
+    assert result[script.MAPS[0]][0]["float32_le"][1] == "00000080"
+    copied = proof.data["object_property_copies"]
+    assert len(copied) == len(fields) * 2
+    assert all(row["raw_length"] == len(row["plain_values"]) and row["mesh_loop_count"] == 8 for row in copied)
+    if empty_secondary_pin:
+        assert next(row for row in copied if row["map"] == script.MAPS[1] and row["property"] == "pin")["plain_values"] == []
+
+
+@pytest.mark.parametrize("malformed", ["runtime_descriptor", "wrong_pin_item_type"])
+def test_uv_object_reader_refuses_malformed_descriptors_or_item_types_before_value_read(
+    fixture_imports, monkeypatch, malformed,
+):
+    script = importlib.import_module("scripts.blender_uv_edit_storage_smoke")
+    reads = []
+    boolean = NS(type="BOOLEAN", array_length=0, is_runtime=False, is_registered=False)
+
+    class BoolAttributeValue:
+        bl_rna = NS(properties={"value": boolean})
+
+        @property
+        def value(self):
+            reads.append("value")
+            pytest.fail("Malformed native data must be refused before reading a value")
+
+    class Float2AttributeValue:
+        pass
+
+    class MeshUVLoopLayer:
+        bl_rna = NS(properties={"pin": NS(type="COLLECTION", is_runtime=malformed == "runtime_descriptor",
+            is_registered=False, fixed_type=NS(identifier="BoolAttributeValue"))})
+
+        @property
+        def pin(self):
+            reads.append("pin_getter")
+            return [Float2AttributeValue()]
+
+    monkeypatch.setattr(script.bpy, "types", NS(MeshUVLoopLayer=MeshUVLoopLayer,
+                        BoolAttributeValue=BoolAttributeValue), raising=False)
+    mesh = NS(uv_layers=NS(get=lambda _name: MeshUVLoopLayer()))
+    with pytest.raises(AssertionError):
+        script.copy_object_uv_property(mesh, script.MAPS[0], "pin")
+    assert reads == ([] if malformed == "runtime_descriptor" else ["pin_getter"])
+
+
+@pytest.fixture
+def scene_worker(fixture_imports, monkeypatch):
+    script = importlib.import_module("scripts.blender_scene_job_kernel_smoke")
+
+    def run(*, retire_at="stop", drift=None):
+        state = NS(case=None, terminal=False, progressed=False, pending_stop=None, polls_left=0,
+                   body_a_x=0., resumes=[], waits=[], observations=[], recorded={}, requests=[],
+                   stopped_observations=0, final_verified=False, clients_closed=0, sleeps=[])
+
+        def stop():
+            state.pending_stop = state.case
+            state.terminal = retire_at == "stop"
+            state.polls_left = 1
+
+        def summary():
+            if state.pending_stop and not state.terminal:
+                if state.polls_left:
+                    state.polls_left -= 1
+                else:
+                    state.terminal = True
+            value = {"job_id": state.case, "terminal": state.terminal,
+                     "state": "SUCCEEDED" if state.case == "complete" and state.terminal else
+                              "FAILED" if state.terminal else "RUNNING",
+                     "revision": int(state.progressed)+int(state.terminal)}
+            if state.pending_stop:
+                value["error"] = {"code": {"cancel": "TIMEOUT", "permission": "PERMISSION_DENIED",
+                    "disconnect": "TIMEOUT", "external_edit": "INVALID_ARGUMENT"}[state.case],
+                    "context": {"connection_disconnected": state.case == "disconnect"}}
+            return value
+
+        class Client:
+            def __init__(self, port):
+                assert port == 12345
+
+            def call(self, method, **params):
+                if method == script.START:
+                    assert params == {"case": state.case}
+                    return {"accepted": True, "job_id": state.case, "terminal": False}
+                if method == script.INSPECT:
+                    assert params == {"job_id": state.case}
+                    return summary()
+                if method == "bridge.status":
+                    return {}
+                assert method == "jobs.cancel" and params == {"job_id": state.case}
+                stop()
+                return {"cancel_requested": True}
+
+            def request(self, method):
+                assert method in {script.FOREIGN, script.EVALUATE}
+                state.requests.append((state.case, method))
+                return {"ok": False, "error": {"code": "OPERATION_FAILED",
+                    "context": {"reason": "SCENE_JOB_RESERVATION_BLOCKED"}}}
+
+            def close(self):
+                state.clients_closed += 1
+                if state.case == "disconnect" and not state.terminal:
+                    stop()
+
+        def control(action, **params):
+            if action == "prepare_case":
+                state.case, state.terminal, state.progressed = params["case"], False, False
+                state.pending_stop, state.body_a_x, state.stopped_observations = None, 0., 0
+            elif action == "resume":
+                assert not state.pending_stop, "A stopped owner has no later timer turn"
+                state.resumes.append(state.case)
+                state.progressed = True
+                state.terminal = state.case == "complete"
+            elif action == "observe":
+                assert params == {"case": state.case}
+                value = {"last_domain_phase": "frame_2_set" if state.progressed else None,
+                         "domain_phase_count": int(state.progressed), "native_call_count": 33,
+                         "undo_push_count": 1, "checkpoint_stamp_count": 3,
+                         "scene_marker": "owned-before", "frame": [2, 0.],
+                         "caller_context_restored": False, "body_a_x": state.body_a_x}
+                if state.pending_stop:
+                    state.stopped_observations += 1
+                    if state.case == "external_edit" and drift:
+                        when = 2 if drift == "late_native_call_count" else 1
+                        if state.stopped_observations == when:
+                            field = "native_call_count" if drift == "late_native_call_count" else drift
+                            value[field] = {"scene_marker": "foreign", "frame": [3, 0.],
+                                "caller_context_restored": True, "body_a_x": .25}.get(field, 999)
+                state.observations.append((state.case, bool(state.pending_stop), value.copy()))
+                return value
+            elif action in {"deny_animation", "external_edit"}:
+                if action == "external_edit":
+                    state.body_a_x += .125
+                stop()
+            elif action == "allow_animation":
+                assert state.terminal
+            elif action == "record_terminal":
+                assert params["case"] == state.case and params["terminal"]["terminal"]
+                state.recorded[state.case] = params["terminal"]
+            else:
+                assert action == "final_verify" and len(state.recorded) == 5
+                state.final_verified = True
+
+        def wait(timeout):
+            assert timeout == 10 and state.resumes[-1] == state.case
+            assert not state.pending_stop, "A retired owner cannot signal TURN_DONE"
+            state.waits.append(state.case)
+            return True
+
+        clock = iter(range(1000))
+        monkeypatch.setattr(script, "Client", Client)
+        monkeypatch.setattr(script, "control", control)
+        monkeypatch.setattr(script, "TURN_DONE", NS(wait=wait))
+        monkeypatch.setattr(script, "DONE", threading.Event())
+        monkeypatch.setattr(script, "RESULT", {})
+        monkeypatch.setattr(script, "time", NS(perf_counter=lambda: 0.,
+                            monotonic=lambda: next(clock), sleep=state.sleeps.append))
+        script.scenario(12345)
+        assert script.DONE.is_set()
+        return state, script.RESULT
+
+    return run
+
+
+@pytest.mark.parametrize("retire_at", ["stop", "poll"])
+def test_scene_worker_polls_all_stopped_owners_without_resuming(scene_worker, retire_at):
+    state, result = scene_worker(retire_at=retire_at)
+    assert "failure" not in result, result.get("failure")
+    cases = ["complete", "cancel", "permission", "disconnect", "external_edit"]
+    assert state.resumes == state.waits == cases
+    assert list(result["terminal_outcomes"]) == list(state.recorded) == cases
+    assert state.final_verified and state.clients_closed == 2
+    assert len(result["entry_refusals"]) == len(state.requests) == 10
+    for case in cases[1:]:
+        observations = [row for name, stopped, row in state.observations if name == case and stopped]
+        assert len(observations) == 2  # Immediate and delayed no-tail assertions both ran.
+        assert all(row["native_call_count"] == 33 for row in observations)
+        assert all(row["caller_context_restored"] is False for row in observations)
+    assert state.recorded["external_edit"]["error"]["code"] == "INVALID_ARGUMENT"
+
+
+@pytest.mark.parametrize("drift", [
+    "domain_phase_count", "native_call_count", "undo_push_count", "checkpoint_stamp_count",
+    "scene_marker", "frame", "caller_context_restored", "body_a_x", "late_native_call_count",
+])
+def test_scene_worker_keeps_stopped_evidence_assertions(scene_worker, drift):
+    state, result = scene_worker(drift=drift)
+    assert "AssertionError" in result.get("failure", ""), result
+    assert "external_edit" not in state.recorded and not state.final_verified
+    assert state.resumes == ["complete", "cancel", "permission", "disconnect", "external_edit"]

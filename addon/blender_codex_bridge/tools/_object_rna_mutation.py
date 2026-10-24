@@ -11,6 +11,7 @@ import math
 from collections.abc import Sequence
 from typing import Any
 
+from ..entry_effects import mark_view_layer_sync_possible
 from ..errors import BridgeError, ErrorCode, invalid_argument
 from ..permissions import Permission
 from ..tool_registry import check_final_mutation
@@ -163,8 +164,9 @@ def _data_state(obj: Any) -> Any:
     return base
 
 
-def _object_state(obj: Any, *, transform: bool = False, omit: str | None = None, artist_profile: bool = False) -> Any:
-    exclude = DERIVED | (TRANSFORMS if transform else frozenset())
+def _object_state(obj: Any, *, transform: bool = False, omit: str | None = None, artist_profile: bool = False,
+                  exclude_object_rna: frozenset[str] = frozenset()) -> Any:
+    exclude = DERIVED | (TRANSFORMS if transform else frozenset()) | exclude_object_rna
     if artist_profile:
         from ._artist_scope_profile import IGNORED_OBJECT_RUNTIME
         exclude |= IGNORED_OBJECT_RUNTIME
@@ -179,18 +181,20 @@ def _object_state(obj: Any, *, transform: bool = False, omit: str | None = None,
             tuple((slot.link, scope.action_token(slot.material)) for slot in _items(getattr(obj, "material_slots", ()), 128, "material slots")))
 
 
-def object_state(obj: Any, *, omit: frozenset[str] = frozenset()) -> tuple[Any, ...]:
+def object_state(obj: Any, *, omit: frozenset[str] = frozenset(), exclude_object_rna: frozenset[str] = frozenset()) -> tuple[Any, ...]:
     """Named immutable projections for other domains' separate mutation proofs.
 
     Omissions are internal literal field names, never caller-supplied scope.
     A caller must independently measure every omitted field it modifies.
+    Object RNA exclusions are also internal; the calling domain must validate
+    their descriptors and prove they are irrelevant before suppressing reads.
     """
     names = ("identity", "name", "data_identity", "rna", "channels", "custom", "modifiers", "constraints", "collections",
              "animation", "pose", "data", "vertex_groups", "material_slots")
     unknown = omit-set(names)
     if unknown:
         raise ValueError("Unknown internal object snapshot projection")
-    return tuple((name, state) for name, state in zip(names, _object_state(obj), strict=True) if name not in omit)
+    return tuple((name, state) for name, state in zip(names, _object_state(obj, exclude_object_rna=exclude_object_rna), strict=True) if name not in omit)
 
 
 def _native_mesh_metadata(base: Any, mesh: Any) -> Any:
@@ -299,7 +303,8 @@ def _predicted_delta(before: Any, predicted: Any, observed: Any) -> bool:
 
 class Boundary:
     """Compare-and-swap proof with live authority before every owned write."""
-    def __init__(self, bpy: Any, context: Any, method: str, obj: Any, *, kind: str | None = None, transform: bool = False, artist_profile: bool = False):
+    def __init__(self, bpy: Any, context: Any, method: str, obj: Any, *, kind: str | None = None, transform: bool = False, artist_profile: bool = False,
+                 checkpoint_roles: Any = None):
         require_local_object(obj, operation=method)
         if context is None or not all(hasattr(context, name) for name in ("require", "state", "check_cancelled")):
             raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Object mutation requires a live permission/state context.")
@@ -311,8 +316,16 @@ class Boundary:
         if self.artist_review:
             artist_loop.require_reviewed_mutator(context, method, reviewed=transform and method in artist_loop.TRANSFORM_METHODS)
             artist_loop.pre_closure(bpy)
+        self.checkpoint_roles = checkpoint_roles
+        if self.artist_review and self.checkpoint_roles is None:
+            from ._artist_role_witness import capture
+            from ._scene_checkpoint_roles import Plan
+            self.checkpoint_roles = Plan(bpy, bpy.context.scene,
+                active_validator=lambda host, active: artist_loop.require_profile(host, (active,)), include_brush=True,
+                previous_owner_factory=capture)
         self.session = self._session()
         self.objects, self.references = _closure(bpy, obj)
+        self.references = self._references(self.references)
         if self.artist_review:
             artist_loop.require_profile(bpy, self.objects)
             artist_loop.check_affected(context, bpy, self.objects, stamp=self.artist_stamp)
@@ -329,9 +342,15 @@ class Boundary:
 
     def _session(self) -> Any:
         ctx = self.bpy.context
-        return (scope.action_token(ctx.scene), scope.key(ctx.view_layer), self.bpy.data.filepath, ctx.mode,
+        prefix = (scope.action_token(ctx.scene), scope.key(ctx.view_layer), self.bpy.data.filepath)
+        mark_view_layer_sync_possible()
+        session = (*prefix, ctx.mode,
                 tuple(scope.action_token(item) for item in _items(getattr(ctx, "selected_objects", ()), 1024, "selection")),
                 scope.action_token(ctx.view_layer.objects.active), getattr(ctx.scene, "frame_current", None), getattr(ctx.scene, "frame_subframe", None))
+        return session if self.checkpoint_roles is None else (*session, self.checkpoint_roles.authored())
+
+    def _references(self, references: Any) -> Any:
+        return references if self.checkpoint_roles is None else self.checkpoint_roles.object_references(references)
 
     def _protected(self) -> Any:
         return tuple(_object_state(item, transform=self.transform and item == self.obj, omit=self.kind if item == self.obj else None,
@@ -372,6 +391,10 @@ class Boundary:
 
     def check(self) -> None:
         self._authority()
+        self.check_after_read()
+
+    def check_after_read(self, *, final: bool = True) -> None:
+        """Read-only CAS; an admission applies its own exact binding final gate."""
         from . import artist_loop
         review = self.artist_review or artist_loop.needs_review(self.context)
         try:
@@ -382,7 +405,7 @@ class Boundary:
                 artist_loop.require_profile(self.bpy, objects)
                 artist_loop.check_affected(self.context, self.bpy, objects, stamp=self.artist_stamp)
             stable = (self._session() == self.session and tuple(scope.action_token(item) for item in objects) == tuple(scope.action_token(item) for item in self.objects)
-                      and references == self.references and self._protected() == self.protected and self._owned() == self.expected
+                      and self._references(references) == self.references and self._protected() == self.protected and self._owned() == self.expected
                       and self.bpy.data.objects.get(self.obj.name) == self.obj)
             for source, snapshot, references in self.extra:
                 require_object_scope(self.bpy, source, operation=self.method)
@@ -391,13 +414,19 @@ class Boundary:
             stable = False
         if not stable:
             raise invalid_argument("Object identity, content, context or consumers changed; further writes and compensation are refused.", scope_complete=False)
-        self.final()
+        if final:
+            self.final()
 
     def final(self) -> None:
         """Latch canonical lifetime loss without rerunning live providers."""
         if self.stopped is not None:
             raise self.stopped
         try:
+            if self.artist_review:
+                from ._artist_checkpoint_admission import current
+                admission = current(self.context, strict=True)
+                if admission is not None:
+                    admission.check_write_identity()
             check_final_mutation(self.context, self.method)
         except BridgeError as error:
             if error.code in {ErrorCode.PERMISSION_DENIED.value, ErrorCode.TOOLSET_DISABLED.value, ErrorCode.TIMEOUT.value,

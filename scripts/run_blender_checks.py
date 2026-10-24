@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 CASES = {
+    "exclusive_mutation": ("blender_exclusive_mutation_smoke.py", "BLENDER_EXCLUSIVE_MUTATION_OK "),
     "project_save_denial": ("blender_project_save_denial_smoke.py", "BLENDER_PROJECT_SAVE_DENIAL_OK "),
     "core": ("blender_smoke.py", "BLENDER_CODEX_SMOKE_OK "),
     "extended": ("blender_extended_smoke.py", "BRIDGE_EXTENDED_SMOKE "),
@@ -60,13 +61,23 @@ CASES = {
     "image_reopen": ("blender_image_reopen_smoke.py", "BLENDER_IMAGE_REOPEN_READER_OK "),
     "image_portability_probe": ("blender_image_portability_smoke.py", "BLENDER_IMAGE_PORTABILITY_PROBE_READER_OK "),
     "animation_curves": ("blender_animation_curves_smoke.py", "BLENDER_CODEX_ANIMATION_CURVES_SMOKE_OK "),
+    "curve_sampling": ("blender_animation_curve_sampling_smoke.py", "BLENDER_ANIMATION_CURVE_SAMPLING_OK "),
+    "surface_publication_probe": ("blender_surface_publication_probe.py", "BLENDER_SURFACE_PUBLICATION_PROBE_OK "),
     "geometry_node_groups": ("blender_geometry_node_groups_smoke.py", "BLENDER_GEOMETRY_NODE_GROUPS_OK "),
     "task_plans": ("blender_task_plans_smoke.py", "BLENDER_TASK_PLANS_READER_OK "),
     "artist_loop": ("blender_artist_loop_smoke.py", "BLENDER_ARTIST_LOOP_OK "),
+    "artist_target_verification": ("blender_artist_target_verification_smoke.py", "BLENDER_ARTIST_TARGET_VERIFICATION_OK "),
+    "artist_target_sidebar": ("blender_artist_sidebar_smoke.py", "BLENDER_ARTIST_TARGET_SIDEBAR_OK "),
+    "artist_quaternion_storage": ("blender_artist_quaternion_storage_smoke.py", "BLENDER_ARTIST_QUATERNION_STORAGE_OK "),
+    "artist_quaternion": ("blender_artist_quaternion_smoke.py", "BLENDER_ARTIST_QUATERNION_OK "),
+    "uv_edit_storage": ("blender_uv_edit_storage_smoke.py", "BLENDER_UV_EDIT_STORAGE_OK "),
+    "uv_edit_boundary_probe": ("blender_uv_edit_boundary_probe.py", "BLENDER_UV_EDIT_BOUNDARY_PROBE_OK "),
+    "artist_multitarget": ("blender_artist_multitarget_smoke.py", "BLENDER_ARTIST_MULTITARGET_OK "),
     "asset_delivery": ("blender_asset_delivery_smoke.py", "BLENDER_ASSET_DELIVERY_READER_OK "),
     "weight_brushes": ("blender_weight_brushes_smoke.py", "BLENDER_CODEX_WEIGHT_BRUSHES_SMOKE_OK "),
     "rig_drivers": ("blender_rig_drivers_smoke.py", "BLENDER_RIG_DRIVERS_OK "),
     "surface_brushes": ("blender_surface_brushes_smoke.py", "BLENDER_SURFACE_BRUSHES_OK "),
+    "sculpt_mask": ("blender_sculpt_mask_smoke.py", "BLENDER_SCULPT_MASK_OK "),
     "mesh_uv_refinement": ("blender_mesh_uv_refinement_smoke.py", "BLENDER_MESH_UV_REFINEMENT_OK "),
     "rig_ik": ("blender_rig_ik_smoke.py", "BLENDER_CODEX_RIG_IK_SMOKE_OK "),
     "mesh_surface_projection": ("blender_mesh_surface_projection_smoke.py", "BLENDER_MESH_SURFACE_PROJECTION_OK "),
@@ -75,6 +86,9 @@ CASES = {
     "surface_projection_probe": ("blender_surface_projection_probe_smoke.py", "BLENDER_CODEX_SURFACE_PROJECTION_PROBE_OK "),
     "simulation_cache_probe": ("blender_simulation_cache_probe_smoke.py", "BLENDER_SIMULATION_CACHE_PROBE_OK "),
     "surface_paint": ("blender_surface_paint_smoke.py", "BLENDER_SURFACE_PAINT_OK "),
+    "viewport_framing": ("blender_viewport_framing_smoke.py", "BLENDER_VIEWPORT_FRAMING_OK "),
+    "readonly_context_probe": ("blender_readonly_context_probe_smoke.py", "BLENDER_READONLY_CONTEXT_PROBE_OK "),
+    "artist_public_entry_probe": ("blender_artist_public_entry_probe_smoke.py", "BLENDER_ARTIST_PUBLIC_ENTRY_PROBE_OK "),
     "uv_selection_storage": ("blender_uv_selection_storage_smoke.py", "BLENDER_UV_SELECTION_STORAGE_OK "),
     "action_lifecycle_probe": ("blender_action_lifecycle_probe_smoke.py", "BLENDER_CODEX_ACTION_LIFECYCLE_PROBE_OK "),
     "asset_import_probe": ("blender_asset_import_probe_smoke.py", "BLENDER_ASSET_IMPORT_PROBE_READER_OK "),
@@ -90,10 +104,14 @@ CASES = {
     "image_recovery_jobs": ("blender_image_recovery_jobs_smoke.py", "BLENDER_IMAGE_RECOVERY_JOBS_READER_OK "),
     "image_recovery_jobs_large": ("blender_image_recovery_jobs_large_smoke.py", "BLENDER_IMAGE_RECOVERY_JOBS_LARGE_READER_OK "),
     "installed_addon_probe": ("blender_installed_addon_probe_smoke.py", "BLENDER_INSTALLED_ADDON_PROBE_OK "),
+    "asset_import_admission": ("blender_asset_import_admission_smoke.py", "BLENDER_ASSET_IMPORT_ADMISSION_OK "),
     "object_drivers": ("blender_object_drivers_smoke.py", "BLENDER_CODEX_OBJECT_DRIVERS_OK "),
     "shader_interface_probe": ("blender_shader_interface_probe_smoke.py", "BLENDER_SHADER_INTERFACE_PROBE_READER_OK "),
+    "shader_remove_probe": ("blender_shader_remove_probe_smoke.py", "BLENDER_SHADER_REMOVE_PROBE_READER_OK "),
+    "shader_remove_loaded_probe": ("blender_shader_remove_probe_smoke.py", "BLENDER_SHADER_REMOVE_LOADED_PROBE_READER_OK "),
     "animation_mutations": ("blender_animation_mutations_smoke.py", "BLENDER_ANIMATION_MUTATIONS_OK "),
     "character_nla": ("blender_character_nla_smoke.py", "BLENDER_CHARACTER_NLA_READER_OK "),
+    "character_revision": ("blender_character_revision_smoke.py", "BLENDER_CHARACTER_REVISION_OK "),
     "rig_binding_probe": ("blender_rig_binding_probe_smoke.py", "BLENDER_RIG_BINDING_PROBE_OK "),
     "rig_binding": ("blender_rig_binding_smoke.py", "BLENDER_RIG_BINDING_OK "),
     "rig_binding_reopen": ("blender_rig_binding_reopen_smoke.py", "BLENDER_RIG_BINDING_READER_OK "),
@@ -102,6 +120,29 @@ CASES = {
     "rig_edit_reopen": ("blender_rig_edit_boundaries_smoke.py", "BLENDER_RIG_EDIT_READER_OK "),
     "object_rna_mutations": ("blender_object_rna_mutations_smoke.py", "BLENDER_CODEX_OBJECT_RNA_MUTATIONS_OK "),
     "shader_interface": ("blender_shader_interface_smoke.py", "BLENDER_SHADER_INTERFACE_READER_OK "),
+    "rigid_lifecycle_probe": ("blender_rigid_lifecycle_probe_smoke.py", "BLENDER_RIGID_LIFECYCLE_PROBE_READER_OK "),
+    "rigid_timer_probe": ("blender_rigid_timer_probe_smoke.py", "BLENDER_RIGID_TIMER_PROBE_OK "),
+    "scene_job_kernel": ("blender_scene_job_kernel_smoke.py", "BLENDER_SCENE_JOB_KERNEL_OK "),
+    "rigid_evaluation_jobs": ("blender_rigid_evaluation_jobs_smoke.py", "BLENDER_RIGID_EVALUATION_JOBS_OK "),
+    "rigid_body_scope": ("blender_rigid_body_scope_smoke.py", "BLENDER_RIGID_BODY_SCOPE_OK "),
+    "rigid_evaluation_dependencies": ("blender_rigid_evaluation_dependencies_smoke.py", "BLENDER_RIGID_EVALUATION_DEPENDENCIES_OK "),
+    "rigid_runtime_getters": ("blender_rigid_runtime_getters_smoke.py", "BLENDER_RIGID_RUNTIME_GETTERS_OK "),
+    "rigid_create_new_probe": ("blender_rigid_create_new_probe_smoke.py", "BLENDER_RIGID_CREATE_NEW_PROBE_OK "),
+    "portable_blend_writer_probe": ("blender_portable_blend_worker_probe_smoke.py", "BLENDER_PORTABLE_BLEND_WORKER_WRITER_OK "),
+    "portable_blend_worker_probe": ("blender_portable_blend_worker_probe_smoke.py", "BLENDER_PORTABLE_BLEND_WORKER_WORKER_OK "),
+    "portable_blend_reader_probe": ("blender_portable_blend_worker_probe_smoke.py", "BLENDER_PORTABLE_BLEND_WORKER_READER_OK "),
+    "rigid_startup_defaults_probe": ("blender_rigid_startup_defaults_probe_smoke.py", "BLENDER_RIGID_STARTUP_DEFAULTS_PROBE_OK "),
+    "rigid_scope_profile_probe": ("blender_rigid_scope_profile_probe_smoke.py", "BLENDER_RIGID_SCOPE_PROFILE_PROBE_OK "),
+    "scene_edit_probe": ("blender_scene_edit_probe_smoke.py", "BLENDER_SCENE_EDIT_PROBE_OK "),
+    "scene_collection_scope": ("blender_scene_collection_scope_smoke.py", "BLENDER_SCENE_COLLECTION_SCOPE_OK "),
+    "scene_edit_boundaries": ("blender_scene_edit_boundaries_smoke.py", "BLENDER_SCENE_EDIT_BOUNDARIES_OK "),
+    "camera_focus": ("blender_camera_focus_smoke.py", "BLENDER_CAMERA_FOCUS_OK "),
+    "scene_checkpoint_admission": ("blender_scene_checkpoint_admission_smoke.py", "BLENDER_SCENE_CHECKPOINT_ADMISSION_OK "),
+    "render_scope_probe": ("blender_render_scope_probe_smoke.py", "BLENDER_RENDER_SCOPE_PROBE_OK "),
+    "render_boundaries": ("blender_render_boundaries_smoke.py", "BLENDER_RENDER_BOUNDARIES_OK "),
+    "render_adversarial": ("blender_render_adversarial_smoke.py", "BLENDER_RENDER_ADVERSARIAL_OK "),
+    "render_boundaries_interactive": ("blender_render_boundaries_smoke.py", "BLENDER_RENDER_BOUNDARIES_OK "),
+    "render_checkpoint_probe": ("blender_render_checkpoint_probe_smoke.py", "BLENDER_RENDER_CHECKPOINT_PROBE_OK "),
 }
 # Each phase must exit successfully before a new process can consume its artifacts.
 PHASED_CASES = {
@@ -120,10 +161,13 @@ PHASED_CASES = {
     "image_recovery_jobs": ("BLENDER_IMAGE_RECOVERY_JOBS_WRITER_OK ", "BLENDER_IMAGE_RECOVERY_JOBS_READER_OK "),
     "image_recovery_jobs_large": ("BLENDER_IMAGE_RECOVERY_JOBS_LARGE_WRITER_OK ", "BLENDER_IMAGE_RECOVERY_JOBS_LARGE_READER_OK "),
     "shader_interface_probe": ("BLENDER_SHADER_INTERFACE_PROBE_WRITER_OK ", "BLENDER_SHADER_INTERFACE_PROBE_READER_OK "),
+    "shader_remove_probe": ("BLENDER_SHADER_REMOVE_PROBE_WRITER_OK ", "BLENDER_SHADER_REMOVE_PROBE_READER_OK "),
+    "shader_remove_loaded_probe": ("BLENDER_SHADER_REMOVE_LOADED_PROBE_WRITER_OK ", "BLENDER_SHADER_REMOVE_LOADED_PROBE_READER_OK "),
     "character_nla": ("BLENDER_CHARACTER_NLA_WRITER_OK ", "BLENDER_CHARACTER_NLA_READER_OK "),
     "shader_interface": ("BLENDER_SHADER_INTERFACE_WRITER_OK ", "BLENDER_SHADER_INTERFACE_READER_OK "),
     "rig_edit_reopen": ("BLENDER_RIG_EDIT_WRITER_OK ", "BLENDER_RIG_EDIT_READER_OK "),
     "rig_binding_reopen": ("BLENDER_RIG_BINDING_WRITER_OK ", "BLENDER_RIG_BINDING_READER_OK "),
+    "rigid_lifecycle_probe": ("BLENDER_RIGID_LIFECYCLE_PROBE_WRITER_OK ", "BLENDER_RIGID_LIFECYCLE_PROBE_READER_OK "),
 }
 OPT_IN_CASES = set(PHASED_CASES)
 OPT_IN_CASES.add("surface_projection_probe")
@@ -132,12 +176,53 @@ OPT_IN_CASES.add("action_lifecycle_probe")
 OPT_IN_CASES.add("cinematic_variant_probe")
 OPT_IN_CASES.add("nla_lifecycle_probe")
 OPT_IN_CASES.add("installed_addon_probe")
+OPT_IN_CASES.add("asset_import_admission")
 OPT_IN_CASES.add("rig_binding_probe")
 OPT_IN_CASES.add("rig_binding")
 OPT_IN_CASES.add("rig_edit_probe")
+OPT_IN_CASES.add("rigid_body_scope")
+OPT_IN_CASES.add("rigid_evaluation_dependencies")
+OPT_IN_CASES.add("rigid_runtime_getters")
+OPT_IN_CASES.add("rigid_create_new_probe")
+OPT_IN_CASES.add("rigid_timer_probe")
+OPT_IN_CASES.add("scene_job_kernel")
+OPT_IN_CASES.add("rigid_evaluation_jobs")
+PORTABLE_BLEND_RESEARCH_PHASES = {
+    "portable_blend_writer_probe": "writer",
+    "portable_blend_worker_probe": "worker",
+    "portable_blend_reader_probe": "reader",
+}
+OPT_IN_CASES.update(PORTABLE_BLEND_RESEARCH_PHASES)
+OPT_IN_CASES.add("rigid_startup_defaults_probe")
+OPT_IN_CASES.add("rigid_scope_profile_probe")
+OPT_IN_CASES.add("scene_edit_probe")
+OPT_IN_CASES.add("scene_collection_scope")
+OPT_IN_CASES.add("scene_edit_boundaries")
+OPT_IN_CASES.add("camera_focus")
+OPT_IN_CASES.add("curve_sampling")
+OPT_IN_CASES.add("surface_publication_probe")
+OPT_IN_CASES.add("sculpt_mask")
+OPT_IN_CASES.add("character_revision")
+OPT_IN_CASES.add("artist_target_verification")
+OPT_IN_CASES.add("artist_target_sidebar")
+OPT_IN_CASES.add("artist_quaternion_storage")
+OPT_IN_CASES.add("artist_quaternion")
+OPT_IN_CASES.add("uv_edit_storage")
+OPT_IN_CASES.add("uv_edit_boundary_probe")
+OPT_IN_CASES.add("scene_checkpoint_admission")
+OPT_IN_CASES.add("render_scope_probe")
+OPT_IN_CASES.add("render_boundaries")
+OPT_IN_CASES.add("render_adversarial")
+OPT_IN_CASES.add("render_boundaries_interactive")
+OPT_IN_CASES.add("render_checkpoint_probe")
 INTERACTIVE_CASES = {"undo_lifecycle", "mesh_edit_recovery", "mesh_repair", "uv_authoring", "prop_workflow", "uv_analysis", "mesh_analysis", "image_assets", "shader_groups", "undo_capacity", "shader_settings", "image_revisions", "field_scanner", "texture_paint"}
 
 
+INTERACTIVE_CASES.add("exclusive_mutation")
+OPT_IN_CASES.add("exclusive_mutation")
+INTERACTIVE_CASES.add("artist_multitarget")
+INTERACTIVE_CASES.add("artist_target_sidebar")
+OPT_IN_CASES.add("artist_multitarget")
 INTERACTIVE_CASES.add("paint_jobs")
 INTERACTIVE_CASES.add("large_paint")
 INTERACTIVE_CASES.add("image_masks")
@@ -147,14 +232,29 @@ INTERACTIVE_CASES.add("image_delivery")
 INTERACTIVE_CASES.add("mesh_uv_refinement")
 INTERACTIVE_CASES.add("mesh_surface_projection")
 INTERACTIVE_CASES.add("surface_paint")
+INTERACTIVE_CASES.add("viewport_framing")
+OPT_IN_CASES.add("viewport_framing")
+INTERACTIVE_CASES.add("readonly_context_probe")
+OPT_IN_CASES.add("readonly_context_probe")
+INTERACTIVE_CASES.add("artist_public_entry_probe")
+OPT_IN_CASES.add("artist_public_entry_probe")
 INTERACTIVE_CASES.add("simulation_cache_probe")
 INTERACTIVE_CASES.add("nla_lifecycle_probe")
 INTERACTIVE_CASES.add("cinematic_variants")
 INTERACTIVE_CASES.add("nla_lifecycle")
 INTERACTIVE_CASES.add("character_nla")
 INTERACTIVE_CASES.add("shader_interface")
+INTERACTIVE_CASES.add("shader_remove_probe")
+INTERACTIVE_CASES.add("shader_remove_loaded_probe")
 INTERACTIVE_CASES.add("image_recovery_jobs")
 INTERACTIVE_CASES.add("image_recovery_jobs_large")
+INTERACTIVE_CASES.update({"portable_blend_writer_probe", "portable_blend_reader_probe"})
+INTERACTIVE_CASES.add("rigid_startup_defaults_probe")
+INTERACTIVE_CASES.add("rigid_scope_profile_probe")
+INTERACTIVE_CASES.add("rigid_timer_probe")
+INTERACTIVE_CASES.add("scene_job_kernel")
+INTERACTIVE_CASES.add("rigid_evaluation_jobs")
+INTERACTIVE_CASES.add("render_boundaries_interactive")
 
 
 def success_payload(output: str, marker: str) -> dict | None:
@@ -185,9 +285,13 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
         "--factory-startup",
         "--python-exit-code",
         "1",
+        "--python-expr",
+        "import sys; sys.dont_write_bytecode = True",
         "--python",
         str(script),
     ]
+    if case in {"artist_quaternion_storage", "artist_quaternion", "uv_edit_storage", "uv_edit_boundary_probe"}:
+        command.insert(1, "--disable-autoexec")
     interactive = case in INTERACTIVE_CASES
     if interactive:
         command.remove("--background")
@@ -196,6 +300,8 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
         if bundle is None or phase_marker is None:
             raise ValueError("Phased cases require an owned bundle and success marker")
         command.extend(["--", "--bridge-phase", phase, "--bridge-bundle", str(bundle)])
+        if case == "shader_remove_loaded_probe":
+            command.append("--bridge-loaded-fixture")
         marker = phase_marker
     # Blender writes quit.blend on normal UI exit. Keep it outside the user's temp recovery.
     temporary = output / f"{label}-temp"
@@ -208,6 +314,27 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
         directory = temporary / folder
         directory.mkdir()
         environment[key] = str(directory)
+    launch_cwd = ROOT
+    if case in PORTABLE_BLEND_RESEARCH_PHASES:
+        # Research-only operational profile. This is not an OS/network sandbox.
+        # Do not inherit credential variables or arbitrary Python/Blender paths.
+        environment = {key: os.environ[key] for key in (
+            "PATH", "LANG", "LC_ALL", "DISPLAY", "XAUTHORITY", "LD_LIBRARY_PATH",
+            "LIBGL_ALWAYS_SOFTWARE", "GALLIUM_DRIVER", "MESA_LOADER_DRIVER_OVERRIDE",
+            "LP_NUM_THREADS",
+        ) if key in os.environ}
+        for key in ("HOME", "BLENDER_USER_CONFIG", "BLENDER_USER_SCRIPTS", "BLENDER_USER_DATAFILES",
+                    "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_RUNTIME_DIR"):
+            directory = temporary / ("worker-profile-" + key.lower())
+            directory.mkdir(mode=0o700)
+            environment[key] = str(directory)
+        environment.update(TEMP=str(temporary), TMP=str(temporary), TMPDIR=str(temporary),
+                           BRIDGE_TEST_PROCESS_TOKEN=process_instance,
+                           BRIDGE_TEST_PORTABLE_BLEND_PHASE=PORTABLE_BLEND_RESEARCH_PHASES[case],
+                           GSETTINGS_BACKEND="memory", NO_AT_BRIDGE="1")
+        launch_cwd = temporary / "working"
+        launch_cwd.mkdir(mode=0o700)
+        command.insert(1, "--disable-autoexec")
     log = output / f"{label}.log"
     start = time.monotonic()
     result = {
@@ -231,11 +358,11 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
             if interactive and sys.platform == "win32":
                 from scripts.windows_test_process import run_isolated
 
-                process = run_isolated(command, cwd=ROOT, stdout=stream,
+                process = run_isolated(command, cwd=launch_cwd, stdout=stream,
                                        timeout=timeout, env=environment)
             else:
                 process = subprocess.run(
-                    command, cwd=ROOT, stdout=stream, stderr=subprocess.STDOUT,
+                    command, cwd=launch_cwd, stdout=stream, stderr=subprocess.STDOUT,
                     timeout=timeout, check=False, env=environment,
                     creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
                 )

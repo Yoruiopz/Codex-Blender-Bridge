@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import re
 from pathlib import Path
 from zipfile import ZipFile
 
@@ -42,8 +43,9 @@ def test_archive_rejects_undiscoverable_or_mismatched_metadata(tmp_path, replace
         for item in source.infolist():
             payload = source.read(item)
             if item.filename == "blender_codex_bridge/__init__.py":
-                assert b'"version": (0, 3, 0)' in payload
-                payload = payload.replace(b'"version": (0, 3, 0)', replacement)
+                version_literal = re.search(rb'"version": \([0-9]+, [0-9]+, [0-9]+\)', payload)
+                assert version_literal is not None
+                payload = payload.replace(version_literal[0], replacement, 1)
             target.writestr(item, payload)
     with pytest.raises(ValueError, match=message):
         module.validate_archive(changed)

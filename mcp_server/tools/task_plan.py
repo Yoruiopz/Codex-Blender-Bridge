@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
+from pydantic import Field, StrictInt, StrictStr
 from typing_extensions import TypedDict
 
 from ..tool_registry import ToolDefinition, ToolRegistry, remote_tool
-from ._common import MCPToolBinding, params
+from ._common import MCPToolBinding, RotationQuaternion, params
 from .scene import EvidenceField
 
 StepStatus = Literal["pending", "in_progress", "completed", "blocked"]
 ReferenceSource = Literal["selection", "objects"]
 RotationMode = Literal["XYZ", "XZY", "YXZ", "YZX", "ZXY", "ZYX", "QUATERNION", "AXIS_ANGLE"]
+VerifyStepID = Annotated[StrictStr, Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]{1,64}$")]
+VerifyReceiptID = Annotated[StrictStr, Field(min_length=45, max_length=45, pattern=r"^step_receipt_[a-f0-9]{32}$")]
+VerifyRevision = Annotated[StrictInt, Field(ge=1, le=1_000_000_000)]
 
 
 class _RequiredStep(TypedDict):
@@ -31,6 +35,7 @@ TOOL_DATA = (
     ("task.plan.update", False, ("INSPECT_SCENE",), "Correct an exact step's status/note at the expected plan revision."),
     ("task.plan.capture", False, ("INSPECT_SCENE",), "Capture bounded structural evidence for exact protected scope without enabling enforcement."),
     ("task.plan.compare", False, ("INSPECT_SCENE",), "Explicitly compare protected scope with its transient baseline; incomplete coverage is not preservation proof."),
+    ("task.plan.verify_transform", False, ("INSPECT_SCENE",), "Compare a current step receipt's independently retained intended core transform channels with the exact target; never completes the step."),
     ("task.plan.persist", True, ("INSPECT_SCENE", "EDIT_SCENE"), "Explicitly store validated plan JSON in a scene property; never saves the project."),
     ("task.plan.load", False, ("INSPECT_SCENE",), "Explicitly validate/load saved scene JSON as plan data; never executes text or restores session baselines."),
     ("task.plan.clear", False, ("INSPECT_SCENE",), "Clear runtime plan only; scene-stored JSON remains until explicitly replaced."),
@@ -65,9 +70,16 @@ class TaskPlanTools:
         """Capture exact current protected objects for explicit structural comparison; scope is advisory and evidence can be incomplete."""
         return await self.registry.call("task.plan.capture", params(fields=fields, max_elements=max_elements))
 
-    async def task_plan_compare(self, max_elements: int | None = None) -> Any:
-        """Compare the plan's protected baseline; user goal/appearance and unmeasured data remain unverified."""
-        return await self.registry.call("task.plan.compare", params(max_elements=max_elements))
+    async def task_plan_compare(self, max_elements: int | None = None, step_id: str | None = None, expected_revision: int | None = None) -> Any:
+        """Compare the plan's protected baseline. Optional step_id plus current expected_revision attaches this protected-objects-only observation to that step's latest retained outer operation receipt. Receipt observations are historical facts, may become stale/unknown, and never verify target edits, appearance or completion."""
+        return await self.registry.call("task.plan.compare", params(max_elements=max_elements, step_id=step_id, expected_revision=expected_revision))
+
+    async def task_plan_verify_transform(self, step_id: VerifyStepID, receipt_id: VerifyReceiptID,
+                                         expected_revision: VerifyRevision) -> Any:
+        """Explicitly compare one current step's latest successful completed preview receipt with the exact target's authored core transform channels. Independent Float32 expectations were retained before application; all six core channels, including inactive rotations and signed zero, are compared. Requires the current plan revision and live INSPECT_SCENE only; allowed during pause/stop. Changed provenance, undo generations, later writers, active jobs and unsupported expectation profiles refuse. Reports channels_match/channels_differ/target_missing/target_replaced and retains a historical runtime observation; no native writes, checkpoints, automatic repair or step completion. Successful calls add no operation-history entry; failed/rejected calls handled by the executor retain its existing failure audit. Protected preservation, parent/delta/evaluated transforms, appearance and artistic intent are separate evidence."""
+        return await self.registry.call("task.plan.verify_transform", {
+            "step_id": step_id, "receipt_id": receipt_id, "expected_revision": expected_revision,
+        })
 
     async def task_plan_persist(self, expected_revision: int, confirm: bool = False) -> Any:
         """With explicit confirmation and EDIT_SCENE, store validated JSON in the scene for a later authorized save. Does not save or write external files."""
@@ -91,10 +103,12 @@ class TaskPlanTools:
 
     async def task_plan_preview_transform(self, reference_id: str, expected_revision: int, object_name: str | None = None,
                                           location: list[float] | None = None, rotation: list[float] | None = None,
-                                          scale: list[float] | None = None, rotation_mode: RotationMode | None = None) -> Any:
-        """Preview one referenced object's exact transform.set channels and affected-consumer scope. Read-only; never grants or requires transform authority."""
+                                          scale: list[float] | None = None, rotation_mode: RotationMode | None = None, step_id: str | None = None,
+                                          rotation_quaternion: RotationQuaternion | None = None) -> Any:
+        """Preview one referenced object's exact transform.set channels and affected-consumer scope. Optional rotation_quaternion is four authored WXYZ values, exclusive with rotation/rotation_mode; the target must already be QUATERNION in the reviewed static local single-user Mesh profile. No normalization or conversion; Blender requires near-unit requested/Float32 values and an available complete six-channel retained intent. Optional step_id freezes provenance for this exact current step/runtime generation; apply cannot retarget it. Status/note corrections do not imply completion. Read-only; never grants or requires transform authority."""
         return await self.registry.call("task.plan.preview_transform", params(reference_id=reference_id, expected_revision=expected_revision,
-                                        object_name=object_name, location=location, rotation=rotation, scale=scale, rotation_mode=rotation_mode))
+                                        object_name=object_name, location=location, rotation=rotation, scale=scale, rotation_mode=rotation_mode, step_id=step_id,
+                                        rotation_quaternion=rotation_quaternion))
 
     async def task_plan_apply_preview(self, preview_id: str, expected_revision: int) -> Any:
         """Consume and apply one current preview after live permission and exact authored/context/consumer checks; stale previews fail closed."""

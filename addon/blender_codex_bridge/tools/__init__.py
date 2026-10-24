@@ -10,6 +10,8 @@ def register_all(registry: ToolRegistry) -> None:
 
     from . import (
         animation,
+        animation_curve_inspection,
+        animation_curve_sampling,
         animation_curves,
         animation_layers,
         animation_lifecycle,
@@ -37,6 +39,7 @@ def register_all(registry: ToolRegistry) -> None:
         materials,
         mesh,
         mesh_analysis,
+        mesh_chains,
         mesh_loops,
         mesh_repair,
         mesh_slide,
@@ -51,8 +54,11 @@ def register_all(registry: ToolRegistry) -> None:
         rig_drivers,
         rig_ik,
         rigging,
+        rigid_body,
+        rigid_body_jobs,
         scene_edit,
         scene_variants,
+        sculpt_masks,
         shader_groups,
         shader_interface,
         shader_settings,
@@ -72,12 +78,16 @@ def register_all(registry: ToolRegistry) -> None:
 
     core.register_tools(registry)
     task_plan.register_tools(registry)
+    animation_curve_inspection.register_tools(registry)
+    animation_curve_sampling.register_tools(registry)
     animation_curves.register_tools(registry)
     animation_lifecycle.register_tools(registry)
     asset_delivery.register_tools(registry)
     asset_import.register_tools(registry)
     for module in (animation_layers, compositor, simulation, weights):
         module.register_tools(registry)
+    rigid_body.register(registry)
+    rigid_body_jobs.register(registry)
     nla_lifecycle.register_tools(registry)
     weight_brushes.register_tools(registry)
     batch.register_tools(registry)
@@ -91,11 +101,13 @@ def register_all(registry: ToolRegistry) -> None:
     mesh.register_tools(registry)
     face_attributes.register_tools(registry)
     mesh_analysis.register_tools(registry)
+    mesh_chains.register_tools(registry)
     mesh_loops.register_tools(registry)
     mesh_repair.register_tools(registry)
     mesh_slide.register_tools(registry)
     mesh_surface.register_tools(registry)
     surface_brushes.register_tools(registry)
+    sculpt_masks.register_tools(registry)
     materials.register_tools(registry)
     images.register_tools(registry)
     image_paint.register_tools(registry)

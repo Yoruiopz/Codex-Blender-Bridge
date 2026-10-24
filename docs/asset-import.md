@@ -23,6 +23,22 @@ retain their separate pointer evidence.
 
 ## Current admission contract
 
+Typed `asset.import` is quarantined on Blender **5.2.2**, source build
+**`d13f752e3b9c`** (full commit `d13f752e3b9c4f8c261cda552b1021f8bcc0382c`).
+That exact runtime identity returns `NOT_IMPLEMENTED` with reason
+`KNOWN_NATIVE_IMPORT_LIFETIME_FAILURE` before an automatic checkpoint, source read,
+temporary input allocation or native import. Request parameters cannot override it.
+The metadata-only guard also covers direct handler entry. `asset.import_preview`
+remains available under its existing read permissions and source restrictions.
+
+Retained Linux runs on this build crashed in native Python cyclic collection during
+the typed import sequence. Keeping bridge-owned IDs alive before collection did not
+make the sequence reliable. The causal lifetime defect remains unresolved; this
+refusal is containment, not an import/recovery fix or a Blender support policy.
+Other runtime identities retain the existing path; absence from this exact-build
+quarantine does not establish compatibility. Full production import remains an open
+1.0 capability gate.
+
 Input must be one ordinary existing local `.glb` or `.fbx`, inside the approved source folder,
 with no symbolic links or reparse points in its ancestry. Volume roots, devices and network
 paths are excluded. The complete file is limited to 64 MiB. Import requires Object Mode,
@@ -49,6 +65,18 @@ animation, broader material roles and their conversion/delivery evidence remain 
 unfinished 1.0 work. These tools do not silently discard those capabilities.
 
 ## Ownership, execution and recovery
+
+`asset.import` owns an exclusive structured-mutation lease before admission,
+permission providers and checkpoint creation, retaining it through native import,
+compensation and finalization. Reentrant bridge mutators are refused before their
+own providers/checkpoints, even when a callback reuses the same context or requests
+local recovery. Read-only inspection/status and pause/stop controls remain available.
+Live write gates also verify exact lease ownership after callbacks and final content
+checks; lost ownership retains resources rather than authorizing cleanup. Only the
+owning scope releases its exact lease after native work returns. Ordinary batches,
+artist transform composition and painting-job interleaving keep their existing
+contracts. The lease does not constrain direct native/Python behavior, preempt a
+native call, remove the known-build quarantine or implement safe project saving.
 
 The native importer reopens a private complete input copy, created in a task-owned temporary
 directory outside the approved READ folder. On POSIX its directory/file modes are 0700/0600.
@@ -105,9 +133,27 @@ image bindings, geometry, transforms, units and timing must match. Dirty protect
 checked within the writer; their independent durable recovery is not certified by this fixture.
 No operator success is described as visual or artist acceptance.
 
-Both Linux Blender 4.5.14 and 5.2.2 passed this bounded paired fixture. Reports and retained
-negative GC-isolation runs are under `build/next-wave-import-*` in the task workspace. Frozen
-source/package qualification must be recorded separately. Windows installation/native checks,
+Earlier receipts recorded paired-fixture passes on Linux Blender 4.5.14 and 5.2.2.
+Later frozen runs retained native crashes on the exact 5.2.2 build above, including a
+failed candidate that collected while bridge-owned IDs were still live. Those earlier
+passes do not override the negative evidence. Reports and retained negative GC-isolation
+runs are under `build/next-wave-import-*` and the import triage receipts in the task workspace.
+Frozen source/package qualification must be recorded separately. Windows installation/native checks,
 4K/constrained-memory import, human visual review, mixed manual editing, cancellation/disconnect
 and history-eviction recovery remain open; this foundation does not close the production
 1.0 delivery gate.
+
+The separate opt-in `asset_import_admission` native fixture verifies only exact-build
+refusal before checkpoint/source/staging/native work and preservation of native IDs,
+context and bridge checkpoint bookkeeping after fixture setup. Its non-quarantined
+control checks only runtime matching. It does not exercise source preview or successful
+import. The full `asset_import` fixture remains unchanged and fails on this build;
+an admission-fixture pass must never replace import or recovery acceptance.
+
+The source-matched admission fixture at `a60c509fb99fe30c9201f6f96dad09278678e657`
+passed on Linux Blender 4.5.14 and 5.2.2 in two isolated background processes.
+The 5.2.2 case verifies four structured refusals (GLB/FBX, dispatch/direct), while the
+4.5.14 case verifies that the metadata guard does not match. Report SHA-256:
+`3a0cec978fd1db1b1812665a3f43f14e7eb9cfb5ba26776c4a03161d0357f629`.
+Neither result certifies an import. The unsuccessful cycle-release candidate and its
+negative native evidence remain separately retained and are not integrated.
