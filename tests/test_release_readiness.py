@@ -9,6 +9,7 @@ from zipfile import ZipFile
 
 import pytest
 
+from mcp_server import __version__
 from mcp_server.tool_registry import create_default_registry
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -50,7 +51,7 @@ def test_inventory_cli_uses_its_checkout_over_another_installed_package(tmp_path
 
 
 def test_release_components_match() -> None:
-    assert load_script("build_release").release_version(ROOT) == "0.3.0"
+    assert load_script("build_release").release_version(ROOT) == __version__
 
 
 @pytest.mark.parametrize("name,metadata_version,runtime_version,valid", [

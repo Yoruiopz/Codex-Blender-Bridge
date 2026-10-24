@@ -4,27 +4,33 @@ Let Codex inspect and edit Blender through local, permission-controlled MCP tool
 Work with objects, meshes, materials, UVs, rigs, animation, lights and renders, with
 status, permissions and recovery controls inside Blender.
 
-**[Download 0.3.0 alpha](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.3.0)** ·
+**[0.4.0 alpha prerelease candidate](docs/releases/0.4.0.md)** ·
+[Previous 0.3.0 downloads](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.3.0) ·
 [Install](#install--no-source-build-needed) · [Troubleshooting](docs/troubleshooting.md) ·
 [Contribute](CONTRIBUTING.md)
 
 This is **alpha software**. Try it on a disposable scene or a copy of your project.
-The published **0.3.0** packages provide **108 MCP tools**. The current development branch
-adds unreleased tools and safety changes, listed in the generated inventory below.
-Development builds still use 0.3.0 metadata; they are not the published release and must
-be installed as matching add-on/server builds from one checkout.
+This source prepares **0.4.0**, with **266 MCP tools**, bounded artist workflows and safety
+changes since 0.3.0. Candidate metadata does not establish packaged-release acceptance;
+use matching add-on, MCP server and optional plugin artifacts from one accepted build.
+The previously published **0.3.0** packages remain available with their original **108 tools**.
 
 **1.0 is not ready.** Follow the [development status](docs/development-status.md),
 [roadmap](docs/roadmap.md) and [release plan](docs/plan-1.0.md).
-Current Linux development evidence does not qualify Windows 11, Blender 4.5 LTS/stable 5.x,
-or the installed end-to-end workflows required by the [release gates](docs/release-1.0-readiness.md).
+Windows compatibility work and Windows testing are **deferred**. Linux development evidence
+does not qualify Windows 11, the Windows Blender 4.5 LTS/stable 5.x matrix, or the installed
+end-to-end workflows required by the [release gates](docs/release-1.0-readiness.md).
 
 ## Install — no source build needed
 
-For the published alpha you need Blender **4.2+**, standalone **Python 3.10+**, and a
-local Codex client with MCP support. Blender's bundled Python does not run the MCP server.
-The declared minimum is not a guarantee that every Blender version or platform is tested;
-see [0.3.0 release notes](docs/releases/0.3.0.md) for release-specific evidence.
+The instructions below install the previously published **0.3.0 alpha**. The **0.4.0 source
+candidate** has [separate notes and qualification limits](docs/releases/0.4.0.md); this page
+does not claim that its release assets have been published.
+
+You need Blender **4.2+**, standalone **Python 3.10+**, and a local Codex client with MCP
+support. Blender's bundled Python does not run the MCP server. The declared minimum is not
+a guarantee that every Blender version or platform is tested; see the
+[0.3.0 release notes](docs/releases/0.3.0.md) for that release's evidence.
 
 ### 1. Download the packages
 
@@ -91,6 +97,25 @@ Read the [security model](docs/security.md) and [recovery limits](docs/native-re
 
 ## Features
 
+### 0.4.0 candidate additions
+
+The source candidate adds artist plans, exact runtime references, reviewed transform
+preview/apply and independent target-channel observations. Step marks and historical receipts
+do not certify the user's goal. It also adds bounded mesh repair and UV authoring, explicit
+sculpt/vertex-color brushes, weight brushes and geometric transfer, Action/F-curve inspection
+and sampling, reviewed rig controls, nested node workflows and bounded jobs. Quaternion
+assignment preserves raw WXYZ components within a strict existing-mode static-mesh profile.
+See the [0.4.0 notes](docs/releases/0.4.0.md) and each linked domain contract for limits.
+
+Safety changes narrow unsupported ownership, checkpoint, callback and recovery paths.
+**`project.save` is unavailable**, protected viewport capture and shader-interface removal
+remain unsupported, and the known Blender 5.2.2 import quarantine stays in place. Private UV
+Edit Mode storage/planning research does not enable a public guard or qualify UV editing.
+Candidate export/weight recovery changes still require their exact native validation; no
+production-delivery or character-workflow acceptance follows from the tool inventory.
+
+### Previously published 0.3.0 alpha
+
 The **published 0.3.0 alpha** includes inspection and viewport evidence, object lifecycle and
 transforms, selection-scoped mesh editing, materials and shader nodes, UV unwrap/packing,
 reviewed modifiers and constraints, rigging/keyframes, scene/camera/light/world/render tools,
@@ -98,7 +123,7 @@ and explicit saving. Its 20 additions provide selection/mode control, filtered q
 bulk origin-based layout, ordered batches and allowlisted Geometry Nodes editing.
 See [release notes](docs/releases/0.3.0.md) and [workflow examples](docs/agent-workflows.md).
 
-### Faster agent workflows in 0.3.0
+### Earlier 0.3.0 agent workflows
 
 Use precise queries, compact inspection and small batches to reduce round trips. A batch plan
 checks availability and permissions, not simulated scene results. Blender executes serially;
@@ -106,20 +131,21 @@ inspect partial failures before retrying. See [batch and Geometry Nodes limits](
 
 <a id="unreleased-structured-uv-seams"></a>
 
-Unreleased mesh/UV, painting, shader, character, procedural, simulation and delivery work is
-tracked in [development status](docs/development-status.md), including the
+Candidate mesh/UV, painting, shader, character, procedural, simulation and delivery contracts
+are tracked in [development status](docs/development-status.md), including the
 [structured UV-seam contract](docs/development-status.md#unreleased-structured-uv-seams).
-These features are absent from the published downloads unless their release notes say otherwise.
+They are absent from the 0.3.0 downloads. The private UV planner/probe remains research.
 
 Current development contracts include [packed recovery jobs](docs/image-recovery-jobs.md),
 [shader interface plans](docs/shader-interface-lifecycle.md),
 [guarded rig edits](docs/rig-edit-boundaries.md) and the
 [two-bone animation benchmark](docs/character-nla.md).
 
-### Complete tool inventory — main branch
+### Complete tool inventory — current source
 
-This generated inventory describes the **development branch**, including unreleased tools.
-It is checked against the registry in CI. It does not describe the 108-tool 0.3.0 download.
+This generated inventory describes the **0.4.0 candidate source**, including bounded tools
+whose acceptance remains subject to their documented limits. It is checked against the
+registry in CI. It does not describe the 108-tool 0.3.0 download.
 The local recovery UI also has an add-on-only action, not an extra MCP tool.
 
 <!-- BEGIN GENERATED MCP TOOLS -->

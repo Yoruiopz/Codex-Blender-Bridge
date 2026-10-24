@@ -10,7 +10,7 @@ from contextlib import suppress
 bl_info = {
     "name": "Blender Codex Bridge",
     "author": "Blender Codex Bridge contributors",
-    "version": (0, 3, 0),
+    "version": (0, 4, 0),
     "blender": (4, 2, 0),
     "location": "View3D > Sidebar > Codex Bridge",
     "description": "Local, permissioned structured bridge between Codex and Blender",

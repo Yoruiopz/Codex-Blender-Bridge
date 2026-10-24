@@ -24,13 +24,13 @@ def runner():
 def test_all_existing_smokes_are_in_registry(runner):
     assert {filename for filename, _ in runner.CASES.values()} == {
         p.name for p in (ROOT / "scripts").glob("blender_*smoke.py")
-    } | {"blender_surface_publication_probe.py"}
+    } | {"blender_surface_publication_probe.py", "blender_uv_edit_boundary_probe.py"}
 
 
 @pytest.mark.parametrize("case", [
     "core", "undo_lifecycle", "camera_focus", "curve_sampling", "surface_publication_probe", "sculpt_mask",
     "character_revision", "artist_target_verification", "artist_target_sidebar", "artist_quaternion_storage", "artist_quaternion",
-    "uv_edit_storage",
+    "uv_edit_storage", "uv_edit_boundary_probe",
 ])
 def test_factory_fixture_bytecode_prelude_runs_before_script(runner, monkeypatch, tmp_path, case):
     monkeypatch.setattr(runner.sys, "platform", "linux")
@@ -42,7 +42,7 @@ def test_factory_fixture_bytecode_prelude_runs_before_script(runner, monkeypatch
         assert command[expression + 1] == "import sys; sys.dont_write_bytecode = True"
         assert command[script + 1] == str(ROOT / "scripts" / runner.CASES[case][0])
         assert "--factory-startup" in command
-        if case in {"artist_quaternion_storage", "artist_quaternion", "uv_edit_storage"}:
+        if case in {"artist_quaternion_storage", "artist_quaternion", "uv_edit_storage", "uv_edit_boundary_probe"}:
             assert command.index("--disable-autoexec") < script
         assert command[command.index("--python-exit-code") + 1] == "1"
         assert ("--background" in command) is (case not in runner.INTERACTIVE_CASES)
@@ -62,6 +62,7 @@ def test_factory_fixture_bytecode_prelude_runs_before_script(runner, monkeypatch
     assert "artist_quaternion_storage" in runner.OPT_IN_CASES and "artist_quaternion_storage" not in runner.INTERACTIVE_CASES
     assert "artist_quaternion" in runner.OPT_IN_CASES and "artist_quaternion" not in runner.INTERACTIVE_CASES
     assert "uv_edit_storage" in runner.OPT_IN_CASES and "uv_edit_storage" not in runner.INTERACTIVE_CASES
+    assert "uv_edit_boundary_probe" in runner.OPT_IN_CASES and "uv_edit_boundary_probe" not in runner.INTERACTIVE_CASES
 
 
 @pytest.mark.parametrize(

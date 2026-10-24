@@ -1,11 +1,17 @@
 # Working toward 1.0.0
 
 Status: **not release-ready**. This is an acceptance plan, not a feature announcement
-or a promise of a release date. Published 0.3.0 remains alpha; `main` contains unreleased work.
-No version bump or publication happens merely because the tool count increases.
+or a promise of a release date. Published 0.3.0 (22 September) remains alpha;
+`main` contains unreleased work. The forthcoming 0.4.0 prerelease candidate is not
+published. Meaningful, reviewed increments are authorized for versioned GitHub
+prereleases at roughly a 2–3 hour cadence, with matching packages, checksums and
+source-specific validation. Tool counts and elapsed time do not establish readiness.
+Prereleases do not bypass any stable 1.0 gate.
 
 Follow the [1.0 execution plan](plan-1.0.md) for milestone dependencies, prioritized work,
-end-to-end scenarios and evidence requirements. This document defines the acceptance gates.
+end-to-end scenarios and evidence requirements. The [implementation completion
+checklist](implementation-completion.md) defines the finite remaining functional work
+and its Linux completion checks. This document defines the stable-release acceptance gates.
 
 The [machine-readable ledger](release-1.0-ledger.json) records all fourteen mandatory
 requirements as open. Use the [evidence qualification gate](release-evidence.md) to check
@@ -37,7 +43,7 @@ No current release should be described as a complete human-equivalent artist.
 | UV and textures | [Authoring](uv-authoring.md), [UV evidence](uv-analysis.md), [align/stitch/island relax](mesh-uv-refinement.md), [approved loading/binding](image-assets.md), [refresh/relocation](image-revisions.md), [paint/digests](texture-painting.md), stored-relative FILE reopen, [loaded/unloaded FILE recovery](image-portability.md) and [cooperative 4K snapshots/recovery](image-recovery-jobs.md) | UV-editor selection, cross-object/evaluated atlases, broader quality acceptance, full painting/baking, broader formats and production durable-pixel acceptance |
 | Materials and look development | Principled controls, isolated copies, approved images, [nested paths/groups](shader-groups.md), [reviewed properties/ramps](shader-settings.md), [interface preview/rename/reorder/default](shader-interface-lifecycle.md), bounded nested evidence and [reference-prop fixture](field-scanner-workflow.md) | Interface conversion/removal and animated maintenance, broader properties, deep asset lifecycle, complete nested dependency preservation, production materials/look development |
 | Procedural modeling | Reviewed GN graphs/zones; [nested instances/copies and modifier constants](geometry-node-groups.md), [identifier-preserving zone conversion/interface edits](geometry-zone-lifecycle.md) | Broader nested/interface lifecycle, disk baking, evaluated diagnostics and broader node types |
-| Rig and skin | Armatures/bones/poses/constraints/binding; numeric weights; [brushes, geometric mirror and barycentric surface transfer](weight-brushes.md), [bounded IK controls and current-frame deformation measurements](rig-ik-deformation.md) | Broader skinning/deformation diagnosis, control-rig authoring and protected character benchmark |
+| Rig and skin | Armatures/bones/poses/constraints/binding; numeric weights; [brushes, geometric mirror and barycentric surface transfer](weight-brushes.md), [bounded IK controls and current-frame deformation measurements](rig-ik-deformation.md), [implemented protected character benchmark](character-revision.md) | Broader skinning/deformation diagnosis, control-rig authoring and current-source production character qualification; an implemented benchmark is not complete acceptance |
 | Animate | Frames/keyframes, NLA clips/tracks; [Action copies, curve handles/interpolation and direct stored-curve samples](animation-curves.md), [numeric controls and non-scripted bone drivers](rig-drivers.md), [bounded Action lifecycle](action-lifecycle.md) and [NLA clips/transitions/reordering](nla-lifecycle.md) | Broader Action/constraint/control-rig combinations, complete mutator safety audit, evaluated character motion and protected multi-frame revisions |
 | Simulate | Scoped cloth setup/configuration, bounded in-memory bake/free, three rigid-body cache tools and two public [bounded evaluation job tools](rigid-body-evaluation-jobs.md) using the [Scene job kernel](scene-job-kernel.md) | Cooperative bake/coverage proof, broader solvers/dependencies, disk caches, native scale/memory/recovery and installed end-to-end qualification |
 | Stage and light | Collections, world, camera/light settings, layout; [persistent static-scene variants and matched previews](cinematic-variants.md) | Broader composition/navigation and lighting workflows, asset-scale and placement constraints, reviewed artistic acceptance |
@@ -68,13 +74,16 @@ The confirmed 1.0 qualification target is Windows 11 x64 on Blender 4.5 LTS and 
 compatible stable 5.x at candidate freeze, with exact patch versions recorded. The current
 development manifest still declares 4.2; this is not a newly qualified 1.0 support claim.
 Historical Windows checks exercised 4.5.1 LTS and 5.1.2, while this implementation session
-has Linux development runners for 4.3.2, 4.5.14 LTS and 5.2.2 LTS. Their results remain
+uses Linux development runners for 4.5.14 LTS and 5.2.2. Their results remain
 separate from Windows qualification; source-matched outcomes and failures are retained in
 the historical [development checkpoint](artist-workflow-checkpoint-20261022.md) and
-the [2026-10-23 checkpoint](artist-workflow-checkpoint-20261023.md). Windows testing
-is paused at the user's request while development continues on Linux. Native
-Windows and installed-package acceptance remain open; other platforms remain
-unqualified for 1.0. Align the manifest and support claims only at candidate qualification.
+the [2026-10-23 checkpoint](artist-workflow-checkpoint-20261023.md). Windows-specific
+compatibility and testing are **DEFERRED until the full functionality is implemented**
+on the available Linux 4.5.14/5.2.2 runners. Windows remains **unverified** and is not
+a blocker to this implementation pass. Complete Windows native and installed-package
+acceptance remains a future stable-release gate; Linux development results do not qualify
+Windows or other platforms for 1.0. Align the manifest and support claims only at
+candidate qualification.
 
 ## Release gates
 

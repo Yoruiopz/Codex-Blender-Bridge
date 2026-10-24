@@ -71,6 +71,7 @@ CASES = {
     "artist_quaternion_storage": ("blender_artist_quaternion_storage_smoke.py", "BLENDER_ARTIST_QUATERNION_STORAGE_OK "),
     "artist_quaternion": ("blender_artist_quaternion_smoke.py", "BLENDER_ARTIST_QUATERNION_OK "),
     "uv_edit_storage": ("blender_uv_edit_storage_smoke.py", "BLENDER_UV_EDIT_STORAGE_OK "),
+    "uv_edit_boundary_probe": ("blender_uv_edit_boundary_probe.py", "BLENDER_UV_EDIT_BOUNDARY_PROBE_OK "),
     "artist_multitarget": ("blender_artist_multitarget_smoke.py", "BLENDER_ARTIST_MULTITARGET_OK "),
     "asset_delivery": ("blender_asset_delivery_smoke.py", "BLENDER_ASSET_DELIVERY_READER_OK "),
     "weight_brushes": ("blender_weight_brushes_smoke.py", "BLENDER_CODEX_WEIGHT_BRUSHES_SMOKE_OK "),
@@ -207,6 +208,7 @@ OPT_IN_CASES.add("artist_target_sidebar")
 OPT_IN_CASES.add("artist_quaternion_storage")
 OPT_IN_CASES.add("artist_quaternion")
 OPT_IN_CASES.add("uv_edit_storage")
+OPT_IN_CASES.add("uv_edit_boundary_probe")
 OPT_IN_CASES.add("scene_checkpoint_admission")
 OPT_IN_CASES.add("render_scope_probe")
 OPT_IN_CASES.add("render_boundaries")
@@ -288,7 +290,7 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
         "--python",
         str(script),
     ]
-    if case in {"artist_quaternion_storage", "artist_quaternion", "uv_edit_storage"}:
+    if case in {"artist_quaternion_storage", "artist_quaternion", "uv_edit_storage", "uv_edit_boundary_probe"}:
         command.insert(1, "--disable-autoexec")
     interactive = case in INTERACTIVE_CASES
     if interactive:

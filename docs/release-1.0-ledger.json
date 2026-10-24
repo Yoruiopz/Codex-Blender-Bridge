@@ -53,12 +53,12 @@
     "PAINT-01": {
       "status": "open",
       "evidence": [],
-      "progress": "Explicit-mask sculpt/vertex/weight brushes and bounded orthographic surface texture strokes/stencils implemented; perspective/4K surface workflows, broader sculpt/paint and production/native-undo acceptance remain."
+      "progress": "Explicit-mask sculpt/vertex/weight brushes, generated-image sculpt masks and bounded orthographic surface texture strokes/stencils are implemented within their current limits. Perspective/4K-square surface and sculpt-mask workflows, broader sculpt/paint and production/native-undo acceptance remain."
     },
     "CHAR-01": {
       "status": "open",
       "evidence": [],
-      "progress": "Weight brushes, IK, Actions and NLA lifecycle now include guarded binding/rest/pose and a saved two-bone ribbon benchmark with sampled deformation/protected motion and matched captures. Broader control rigs, complete mutator audit and production character acceptance remain."
+      "progress": "Weight brushes, IK, Actions and NLA lifecycle include guarded binding/rest/pose and implemented character benchmark fixtures for sampled deformation, protected motion and matched captures. Their presence does not establish current-source or production acceptance. Broader control rigs, complete mutator audit and production character acceptance remain."
     },
     "SIM-01": {
       "status": "open",
@@ -78,11 +78,11 @@
     "RC-01": {
       "status": "open",
       "evidence": [],
-      "progress": "Qualification checker and manual gated publication workflow implemented; Windows testing is paused at the user's request. Exact packaged A-F and upgrade/rollback acceptance remain absent. Linux selected-case evidence does not close any release gate."
+      "progress": "Qualification checker and manual gated publication workflow are implemented. Meaningful reviewed increments are authorized for versioned GitHub prereleases at roughly a 2-3 hour cadence with matching packages/checksums and source-specific validation. Published 0.3.0 (22 September) remains alpha; the forthcoming 0.4.0 prerelease candidate is not published. Windows-specific compatibility/testing is DEFERRED until full functionality is implemented on available Linux 4.5.14/5.2.2; Windows remains unverified and is not a blocker to this implementation pass. Complete Windows native, exact packaged A-F and upgrade/rollback acceptance remain future stable-release gates. Linux selected-case evidence and prereleases do not close any stable 1.0 release gate."
     }
   },
   "quality_matrix": null,
   "native_matrices": [],
   "installed_scenarios": [],
-  "support_selection_status": "Provisional development versions only. Windows is unqualified; select and record exact 4.5 LTS and newest compatible stable 5.x patches again at candidate freeze."
+  "support_selection_status": "Available Linux 4.5.14/5.2.2 versions are for implementation validation only. Windows-specific compatibility/testing is DEFERRED until full functionality is implemented; Windows remains unverified and is not a blocker to this implementation pass. Future Windows 11 stable-release qualification is unchanged: select and record exact 4.5 LTS and newest compatible stable 5.x patches again at candidate freeze."
 }

@@ -11,6 +11,33 @@ historical; current feature reopen fixtures use labeled owned setup serializatio
 Safe authorized saving and portable `.blend` delivery remain mandatory open
 requirements, with no scope reduction. See [the safety contract](project-save-safety.md).
 
+## Current implementation priorities — 2026-10-24
+
+The [29-item implementation checklist](implementation-completion.md) is the
+current finite worklist for the full agreed artist workflow. Finish the existing
+safety/recovery boundaries and required save/protected-visual alternatives, then
+complete asset/look/paint, character and procedural/cinematic workflows in
+parallel as each domain becomes safe. Integrate scenarios A–F through actual
+structured tools and installed packages; do not substitute tool counts, private
+research or isolated happy paths for functional completion.
+
+Implementation checks use available Linux Blender **4.5.14** and **5.2.2**.
+**Windows-specific compatibility/testing is deferred until implementation is
+complete, remains unverified, and is not a blocker to this implementation pass.**
+It remains a mandatory future stable 1.0 qualification gate. Existing save,
+protected-capture, shader REMOVE, animation-provider reproduction and exact-build
+5.2 import holds remain; required capabilities need separately reviewed safe
+designs/alternatives, not retries or weaker evidence.
+
+Meaningful versioned GitHub **pre-releases are authorized**, on an approximately
+two-to-three-hour review cadence. The **0.4.0 candidate is planned, not published**;
+the latest published **0.3.0 alpha** dates to 2026-09-22. Build matching components
+and checksums from a clean reviewed increment, disclose limits and unverified
+Windows status, and verify downloaded bytes. Preserve previous releases. Present
+an exact merge proposal where required; merge permission is not blanket. The
+[stable release gates](release-evidence.md) and historical evidence below are
+unchanged. See the checklist for current foundations and work still in progress.
+
 ## Outcome and scope
 
 Ship a downloadable, installable, consent-first bridge that lets an agent complete full
@@ -78,6 +105,9 @@ prerequisites, with explicit file ownership and integration checks.
 
 All items below are open unless matching implementation and evidence are recorded below. “Implemented”
 and “accepted for release” are separate states.
+Use the [current implementation checklist](implementation-completion.md) for
+cross-domain dependencies and concrete completion checks; the fourteen IDs below
+remain the requirement ledger.
 
 | Order / ID | Concrete next deliverable | Acceptance / dependency |
 | --- | --- | --- |
@@ -112,15 +142,18 @@ An [original reference-constrained scanner](field-scanner-workflow.md) now integ
 modeling, shell/display UVs, nested materials, texture variants and staged native recovery.
 PAINT-01 now includes generated linear/data canvases, bounded copy-on-write UV-image strokes,
 raw-channel image masks with inversion/bilinear resampling, pixel digests/samples and a painted
-display revision in the reference workflow. Surface/viewport projection, stencils, sculpt/vertex
-masks/brushes, weight brushes and complete paint acceptance remain open.
+display revision in the reference workflow. Bounded orthographic surface strokes/stencils,
+sculpt/color/weight brushes and generated-image sculpt masks are now implemented.
+Perspective and 4K-square surface/mask workflows, broader paint/sculpt feedback and
+complete artist acceptance remain open.
 JOB-01 now has source-frozen [cooperative painting jobs](painting-jobs.md): progress/cancel,
 live source/consent revalidation, guarded publication and tile-bounded coverage for 4K canvases.
 Full source/output arrays remain; measured native tail stalls prevent real-time/production acceptance.
 DELIVER-01 now has internal streaming PNG/float-EXR codecs and native alpha/4K raw round-trip
 fixtures, plus an explicit [delivery execution contract](texture-delivery.md). Internal approved-folder
 staging now seals complete stream hashes and publishes without overwrite, with live edit/file/save
-grants, Windows directory pins and scoped cleanup. This is not a registered export API;
+grants, Windows directory pins and scoped cleanup. The registered
+`image.export_job_start` uses the cooperative delivery path;
 reviewed public plain FLOAT RGBA EXR/large PNG import now uses the shared streaming reader.
 Typed cooperative export/reimport now joins the codecs, staging and shared reader, with
 complete decoded-channel checks and explicit external effects in terminal jobs/history.

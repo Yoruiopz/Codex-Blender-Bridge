@@ -31,6 +31,7 @@ HELPERS = (
     "scripts.blender_artist_quaternion_storage_smoke",
     "scripts.blender_artist_quaternion_smoke",
     "scripts.blender_uv_edit_storage_smoke",
+    "scripts.blender_uv_edit_boundary_probe",
     "scripts.native_character_revision_evidence",
     "scripts.native_character_evidence",
     "scripts.native_cache_evidence",
@@ -116,6 +117,7 @@ def fixture_imports(addon_package, monkeypatch):
     ("scripts.blender_artist_quaternion_storage_smoke", "main"),
     ("scripts.blender_artist_quaternion_smoke", "main"),
     ("scripts.blender_uv_edit_storage_smoke", "main"),
+    ("scripts.blender_uv_edit_boundary_probe", "main"),
     ("scripts.native_character_revision_evidence", "lbs_vertices"),
 ])
 def test_importing_helper_fixture_does_not_start_experiment(fixture_imports, name, helper):
@@ -135,7 +137,7 @@ def test_explicit_fixture_entrypoint_schedules_only_its_own_timers(fixture_impor
 
 
 @pytest.mark.parametrize("script", ["blender_artist_quaternion_storage_smoke.py", "blender_artist_quaternion_smoke.py",
-                                  "blender_uv_edit_storage_smoke.py"])
+                                  "blender_uv_edit_storage_smoke.py", "blender_uv_edit_boundary_probe.py"])
 def test_owned_background_entry_never_acquires_process_exit(fixture_imports, monkeypatch, script):
     def forbidden_exit(_status):
         pytest.fail("An unowned invocation must not terminate its Blender process")
