@@ -8,7 +8,7 @@ from pydantic import Field, StrictInt, StrictStr
 from typing_extensions import TypedDict
 
 from ..tool_registry import ToolDefinition, ToolRegistry, remote_tool
-from ._common import MCPToolBinding, params
+from ._common import MCPToolBinding, RotationQuaternion, params
 from .scene import EvidenceField
 
 StepStatus = Literal["pending", "in_progress", "completed", "blocked"]
@@ -103,10 +103,12 @@ class TaskPlanTools:
 
     async def task_plan_preview_transform(self, reference_id: str, expected_revision: int, object_name: str | None = None,
                                           location: list[float] | None = None, rotation: list[float] | None = None,
-                                          scale: list[float] | None = None, rotation_mode: RotationMode | None = None, step_id: str | None = None) -> Any:
-        """Preview one referenced object's exact transform.set channels and affected-consumer scope. Optional step_id freezes provenance for this exact current step/runtime generation; apply cannot retarget it. Status/note corrections do not imply completion. Read-only; never grants or requires transform authority."""
+                                          scale: list[float] | None = None, rotation_mode: RotationMode | None = None, step_id: str | None = None,
+                                          rotation_quaternion: RotationQuaternion | None = None) -> Any:
+        """Preview one referenced object's exact transform.set channels and affected-consumer scope. Optional rotation_quaternion is four authored WXYZ values, exclusive with rotation/rotation_mode; the target must already be QUATERNION in the reviewed static local single-user Mesh profile. No normalization or conversion; Blender requires near-unit requested/Float32 values and an available complete six-channel retained intent. Optional step_id freezes provenance for this exact current step/runtime generation; apply cannot retarget it. Status/note corrections do not imply completion. Read-only; never grants or requires transform authority."""
         return await self.registry.call("task.plan.preview_transform", params(reference_id=reference_id, expected_revision=expected_revision,
-                                        object_name=object_name, location=location, rotation=rotation, scale=scale, rotation_mode=rotation_mode, step_id=step_id))
+                                        object_name=object_name, location=location, rotation=rotation, scale=scale, rotation_mode=rotation_mode, step_id=step_id,
+                                        rotation_quaternion=rotation_quaternion))
 
     async def task_plan_apply_preview(self, preview_id: str, expected_revision: int) -> Any:
         """Consume and apply one current preview after live permission and exact authored/context/consumer checks; stale previews fail closed."""

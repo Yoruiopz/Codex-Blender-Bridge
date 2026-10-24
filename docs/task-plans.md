@@ -29,6 +29,24 @@ The association cannot be supplied or retargeted at apply time. Status/note
 corrections preserve it; replacement, explicit load, clear, reset and native
 undo/redo invalidate old previews, even when plan/step IDs are reused.
 
+An optional `rotation_quaternion=[W, X, Y, Z]` previews authored quaternion
+components when the target already uses `QUATERNION` mode. Omit Euler `rotation`
+and every `rotation_mode` argument for this request; `transform.set` also refuses
+its legacy `rotation_euler` alias alongside the new field. The bounded
+[quaternion mutation profile](object-rna-safety.md#quaternion-assignments) applies
+to both direct assignment and preview/application. The request is not normalized
+or converted and requires complete qualified independent intent for all six
+core channels before a write. A step-linked preview retains those Float32 expectations for
+explicit [target-channel verification](artist-target-verification.md#quaternion-assignment-expectations);
+raw authored-channel agreement remains separate from evaluated or artistic
+acceptance. Existing transform inputs retain their previous contracts.
+
+Quaternion assignments require a standalone registered `transform.set` call or
+the explicit `task.plan.preview_transform` / `task.plan.apply_preview` sequence.
+`batch.plan` and `batch.execute` refuse `transform.set` entries containing
+`rotation_quaternion` with `NOT_IMPLEMENTED` before preparing the child. Existing
+Euler, location and scale batches retain their previous contracts.
+
 After the outer executor finishes its checkpoint handling and records the actual
 operation, `task.plan.inspect` exposes a runtime `step_evidence` journal. It retains
 at most 32 receipts FIFO, reports truncation and unexpected recording failure,

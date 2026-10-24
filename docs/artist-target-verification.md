@@ -61,10 +61,36 @@ Location and scale edits can be observed in any existing mode; Euler assignments
 require that the target already uses that same Euler mode. Rotation-mode
 conversion and unqualified numeric/clamping cases retain an unavailable
 expectation reason. Verification then returns `NOT_IMPLEMENTED` before reading
-target channels. The existing preview/apply contract remains available under its
-own checks; an unavailable verification profile does not narrow that contract.
+target channels. For existing location, Euler, scale and mode inputs, an
+unavailable verification profile does not narrow their preview/apply contract.
 
-Those numeric limits qualify the captured original/requested expectation. Later
+### Quaternion assignment expectations
+
+`transform.set` and `task.plan.preview_transform` accept an optional
+`rotation_quaternion=[W, X, Y, Z]` for a target already in `QUATERNION` mode. Omit
+Euler `rotation`, the setter's legacy `rotation_euler` alias and `rotation_mode`
+when supplying it. No normalization, mode conversion or sign
+canonicalization occurs. The independently predicted Float32 components remain
+the expected authored result; equivalent quaternion signs are not treated as
+identical stored channels.
+
+The new field has a narrower [mutation profile](object-rna-safety.md#quaternion-assignments).
+Both requested and independently rounded quaternions must have a Euclidean norm
+within `1e-6` of one. Components must be finite and within `[-1, 1]`; raw and
+rounded nonzero magnitudes must be at least `2^-126`, while either signed zero is
+supported. Existing location, Euler, scale and mode inputs retain their previous
+contracts. Verification still compares all six core fields, including inactive
+Euler/axis-angle channels; it does not certify evaluated orientation,
+deformation, appearance, the artistic goal or durable recovery.
+
+The new quaternion field additionally requires a complete qualified immutable
+intent for all six core channels before writing. Captured original/requested
+numeric components must meet the normal Float32/signed-zero profile, magnitude
+limit of 1,000,000 and native hard-range checks above. An unavailable intent
+returns `NOT_IMPLEMENTED` before assignment; the new field cannot proceed by
+leaving target verification unavailable.
+
+The expectation's numeric limits qualify the captured original/requested values. Later
 manual drift to a finite native Float32 value outside that expectation range can
 still be reported as `channels_differ` when the static reader remains supported.
 The observer does not silently adopt that drift as the expected result.

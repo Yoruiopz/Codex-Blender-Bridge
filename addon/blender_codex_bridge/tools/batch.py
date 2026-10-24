@@ -103,6 +103,13 @@ def _shape(context: ToolContext, params: Mapping[str, Any]) -> list[tuple[str, T
         if spec.checkpoint_admission_factory is not None and not spec.checkpoint_batch_reviewed:
             raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "This guarded tool has no reviewed batch authored-state composition; use separate registered calls.",
                               {"execution_started": False, "checkpoint_batch_composition_reviewed": False, "step_index": index})
+        if method == "transform.set" and "rotation_quaternion" in arguments:
+            # Quaternion source/intent must be captured before child providers.
+            # This batch path resolves child providers before its first factory;
+            # keep the new field separate until that composition is qualified.
+            raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Absolute quaternion authoring requires a separate registered call; its batch authored-state composition is not qualified.",
+                              {"execution_started": False, "checkpoint_batch_composition_reviewed": False,
+                               "step_index": index, "method": method, "parameter": "rotation_quaternion"})
         ids.add(identifier)
         prepared.append((identifier, spec, arguments))
     return prepared

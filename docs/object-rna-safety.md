@@ -92,3 +92,53 @@ on Blender 4.5 LTS and 5.2, with Python adversarial tests in
 component lifecycle, live stops between fields, measured ordinary-failure
 compensation, native application, protected objects and context. Linux evidence
 does not qualify Windows or the release acceptance scenarios.
+
+## Quaternion assignments
+
+The optional `rotation_quaternion=[W, X, Y, Z]` field on `transform.set` and
+`task.plan.preview_transform` assigns four authored components without
+normalization, conversion or sign canonicalization. The target must already use
+`QUATERNION` mode. Omit Euler `rotation`, the setter's legacy `rotation_euler`
+alias and `rotation_mode` when supplying it. The restriction applies only to the
+new field; existing transform inputs retain their previous behavior and
+permissions.
+
+Use a standalone registered `transform.set` call or the explicit
+`task.plan.preview_transform` / `task.plan.apply_preview` sequence for this field.
+`batch.plan` and `batch.execute` return `NOT_IMPLEMENTED` for any `transform.set`
+entry containing `rotation_quaternion`, before child preparation, permission
+providers, factories, checkpoints or handlers run. The batch's own entry
+permission providers retain their normal behavior. Existing Euler, location and
+scale batches retain their previous contracts.
+
+The request contains exactly four finite numbers; booleans are not numbers for
+this contract. Both the requested values and their independent Float32 rounding
+must satisfy `abs(sqrt(sum(component^2)) - 1) <= 1e-6`. Component magnitudes cannot
+exceed one. Raw and rounded nonzero magnitudes must be at least `2^-126`; either
+signed zero is supported. Malformed shape, booleans, nonfinite, zero-length and
+nonunit requests return `INVALID_ARGUMENT`. Finite requests outside the supported
+storage profile return `NOT_IMPLEMENTED`.
+
+The new field also requires a complete qualified immutable intent for all six
+authored core channels before a write. Every captured original/requested numeric
+component must meet the [target expectation profile](artist-target-verification.md#compared-channels-and-expectation-profile):
+normal Float32 or signed zero, magnitude at most 1,000,000 and native hard ranges
+without clamping. An unavailable intent returns `NOT_IMPLEMENTED` before
+assignment, rather than allowing an edit without complete independent expected
+channels.
+
+This new-field profile requires a local editable static Mesh Object with one Mesh
+data user and one scene owner. Every rotation-axis, W and four-dimensional
+rotation lock flag must be clear, even for an unchanged value. Parenting,
+children, constraints, modifiers, animation and shape keys are unsupported;
+delta transforms must be identity. Incoming consumers remain subject to the
+reviewed mutation boundary. The Blender-side gate remains authoritative for
+direct calls and preview/apply; the optional argument grants no additional
+permission. These restrictions do not qualify general rig, dependency or
+rotation-conversion workflows.
+
+Independent Float32 prediction and complete measured preservation remain
+required. Raw channel agreement is separate from evaluated orientation and
+artistic acceptance; neither an in-memory snapshot nor checkpoint history is a
+durable backup. Seven-case native-storage research at `112f7d6` is historical
+prerequisite evidence, not acceptance of the typed setter/preview workflow.

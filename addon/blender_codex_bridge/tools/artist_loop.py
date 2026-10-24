@@ -20,7 +20,7 @@ from ..errors import BridgeError, ErrorCode, invalid_argument
 from ..permissions import Permission
 from ..request_lifecycle import RequestLifetime
 from ..task_plans import get_task_plans, text
-from ..tool_registry import ToolContext, ToolRegistry
+from ..tool_registry import ToolContext, ToolRegistry, _checkpoint_parameters
 from ..utils import reject_unknown_params, require_blender, vector3
 from . import _animation_scope as scope
 from ._artist_scope_profile import pre_closure, require_profile
@@ -249,6 +249,9 @@ def check_preview_origin(boundary: Boundary) -> None:
 
 def _preview_params(params: Mapping[str, Any], obj: Any) -> dict[str, Any]:
     parsed: dict[str, Any] = {"object_name": obj.name}
+    if "rotation_quaternion" in params:
+        from .transforms import quaternion_request
+        parsed["rotation_quaternion"] = list(quaternion_request(params))
     for field in ("location", "rotation", "scale"):
         if field in params:
             parsed[field] = list(vector3(params[field], field))
@@ -257,7 +260,7 @@ def _preview_params(params: Mapping[str, Any], obj: Any) -> dict[str, Any]:
         if not isinstance(mode, str) or mode.upper() not in EULER_MODES | {"QUATERNION", "AXIS_ANGLE"}:
             raise invalid_argument("Unsupported rotation_mode.")
         parsed["rotation_mode"] = mode.upper()
-    if not any(field in parsed for field in ("location", "rotation", "scale")):
+    if not any(field in parsed for field in ("location", "rotation", "rotation_quaternion", "scale")):
         raise invalid_argument("Preview requires location, rotation or scale.")
     if "rotation" in parsed and mode is not None and parsed["rotation_mode"] not in EULER_MODES:
         raise invalid_argument("Three-component rotation values require an Euler rotation mode.")
@@ -267,12 +270,19 @@ def _preview_params(params: Mapping[str, Any], obj: Any) -> dict[str, Any]:
 
 
 def preview_transform(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
-    reject_unknown_params(params, {"reference_id", "expected_revision", "object_name", "location", "rotation", "scale", "rotation_mode", "step_id"})
+    reject_unknown_params(params, {"reference_id", "expected_revision", "object_name", "location", "rotation", "rotation_quaternion", "scale", "rotation_mode", "step_id"})
+    quaternion_facts = None
+    if "rotation_quaternion" in params:
+        from .transforms import quaternion_request
+        quaternion_request(params)
+        quaternion_facts = _checkpoint_parameters(params)
     store = get_task_plans(context.state)
     store.check_revision(params.get("expected_revision"))
     association = associate(store, params["step_id"]) if "step_id" in params else None
     bpy = require_blender()
     _inspect_gate(context)
+    if quaternion_facts is not None and _checkpoint_parameters(params) != quaternion_facts:
+        raise invalid_argument("Quaternion preview parameters changed during inspection; preview again.")
     store.check_revision(params.get("expected_revision"))
     objects = _reference(context, bpy, params.get("reference_id"))
     requested = params.get("object_name")
@@ -284,7 +294,11 @@ def preview_transform(context: ToolContext, params: Mapping[str, Any]) -> dict[s
     affected, _references = _closure(bpy, obj)
     require_profile(bpy, affected)
     parsed = _preview_params(params, obj)
-    boundary = Boundary(bpy, context, "transform.set", obj, transform=True, artist_profile=True)
+    if quaternion_facts is not None:
+        from .transforms import quaternion_boundary
+        boundary = quaternion_boundary(bpy, context, "transform.set", obj, parsed)
+    else:
+        boundary = Boundary(bpy, context, "transform.set", obj, transform=True, artist_profile=True)
     require_profile(bpy, boundary.objects)
     check_affected(context, bpy, boundary.objects)
     before = dict(boundary.expected)
@@ -295,19 +309,34 @@ def preview_transform(context: ToolContext, params: Mapping[str, Any]) -> dict[s
     for field in ("location", "rotation", "scale"):
         if field in parsed:
             desired["rotation_euler" if field == "rotation" else field] = tuple(parsed[field])
+    if quaternion_facts is not None:
+        desired["rotation_quaternion"] = tuple(parsed["rotation_quaternion"])
     # Locked components use the same contract as the actual transform handler.
     for field in ("location", "rotation_euler", "scale"):
         locks = getattr(obj, "lock_rotation" if field == "rotation_euler" else f"lock_{field}", ())
         if any(locked and old != new for locked, old, new in zip(locks, before[field], desired[field], strict=False)):
             raise invalid_argument("Preview does not bypass locked transform components.", property=field)
-    changes = [{"field": field, "before": before[field], "requested": desired[field]} for field in before if before[field] != desired[field]]
-    target_intent = capture_intent(bpy, obj, parsed) if association is not None else None
+    if quaternion_facts is not None:
+        from .transforms import QUATERNION_BITS, _core_bits
+        before_bits, desired_bits = dict(_core_bits(before.items())), dict(_core_bits(desired.items()))
+        changed = [field for field in before if field != QUATERNION_BITS and
+                   (before[field] != desired[field] or (field == "rotation_quaternion" and before_bits[field] != desired_bits[field]))]
+        target_intent = boundary.quaternion_intent
+    else:
+        changed = [field for field in before if before[field] != desired[field]]
+        target_intent = capture_intent(bpy, obj, parsed) if association is not None else None
+    changes = [{"field": field, "before": before[field], "requested": desired[field]} for field in changed]
     preview = {"reference_id": params["reference_id"], "params": parsed, "profile": _profile(boundary),
                "policy_stamp": policy_stamp(context), "plan_id": store.require_plan()["plan_id"], "step_association": association,
                "checkpoint_roles": boundary.checkpoint_roles.origin(), "target_intent": target_intent}
+    if quaternion_facts is not None:
+        from .transforms import QuaternionPreviewOrigin
+        preview["quaternion_origin"] = QuaternionPreviewOrigin(_checkpoint_parameters(parsed), target_intent)
     if association is not None and not matches(store, association):
         raise invalid_argument("The plan step changed during preview; resolve it again.")
     final_lifetime_gate(context)
+    if quaternion_facts is not None and _checkpoint_parameters(params) != quaternion_facts:
+        raise invalid_argument("Quaternion preview parameters changed before publication; preview again.")
     identifier = _keep(store.previews, "preview_", preview, MAX_PREVIEWS)
     return {"preview_id": identifier, "step_id": association.step_id if association is not None else None,
             "target_expectation": public_intent(target_intent) if target_intent is not None else None,
@@ -342,6 +371,8 @@ def preview_boundary(context: ToolContext, params: Mapping[str, Any], *, checkpo
         raise BridgeError(ErrorCode.TOOLSET_DISABLED, "The preview's transform toolset is disabled.",
                           {"tool": "transform.set", "toolset": transform_spec.toolset})
     preview = store.previews[identifier]
+    from .transforms import check_quaternion_preview
+    quaternion_origin = check_quaternion_preview(preview)
     check_apply(context, identifier, preview, params)
     bpy = require_blender()
     if preview["policy_stamp"] != policy_stamp(context) or preview["plan_id"] != store.require_plan()["plan_id"]:
@@ -360,8 +391,13 @@ def preview_boundary(context: ToolContext, params: Mapping[str, Any], *, checkpo
     pre_closure(bpy)
     affected, _references = _closure(bpy, obj)
     require_profile(bpy, affected)
-    boundary = Boundary(bpy, context, "transform.set", obj, transform=True, artist_profile=True,
-                        checkpoint_roles=checkpoint_roles)
+    if quaternion_origin is not None:
+        from .transforms import quaternion_boundary
+        boundary = quaternion_boundary(bpy, context, "transform.set", obj, preview["params"],
+                                       intent=quaternion_origin.intent, checkpoint_roles=checkpoint_roles)
+    else:
+        boundary = Boundary(bpy, context, "transform.set", obj, transform=True, artist_profile=True,
+                            checkpoint_roles=checkpoint_roles)
     require_profile(bpy, boundary.objects)
     check_affected(context, bpy, boundary.objects, stamp=preview["policy_stamp"])
     if _profile(boundary) != preview["profile"]:

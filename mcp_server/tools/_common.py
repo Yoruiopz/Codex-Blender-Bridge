@@ -4,7 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Annotated, Any
+
+from pydantic import Field, StrictFloat
+
+RotationQuaternion = Annotated[
+    list[Annotated[StrictFloat, Field(allow_inf_nan=False)]],
+    Field(min_length=4, max_length=4, strict=True),
+]
 
 
 def params(**values: Any) -> dict[str, Any]:

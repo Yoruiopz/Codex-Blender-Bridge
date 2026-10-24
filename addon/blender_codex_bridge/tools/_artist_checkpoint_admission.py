@@ -12,7 +12,7 @@ from weakref import ref
 
 from ..errors import invalid_argument
 from ..task_plans import get_task_plans
-from ..tool_registry import check_final_mutation
+from ..tool_registry import _checkpoint_parameters, check_final_mutation
 from ..utils import require_blender
 
 _CAPTURES: dict[int, list[Any]] = {}
@@ -33,7 +33,8 @@ def _remember(admission: Admission) -> Admission:
 
 class Admission:
     def __init__(self, context: Any, method: str, *, boundary: Any = None,
-                 preview: Any = None, params: Any = None, parent: Any = None):
+                 preview: Any = None, params: Any = None, parent: Any = None,
+                 quaternion_origin: Any = None):
         from . import artist_loop
         self.context, self.method, self.boundary = context, method, boundary
         self._boundary_identity = boundary
@@ -59,6 +60,10 @@ class Admission:
         self.preview_values = None if preview is None else {
             name: deepcopy(preview[name]) for name in ("params", "profile", "reference_id", "policy_stamp", "plan_id", "step_association")}
         self.transform_spec = context.registry.get("transform.set") if preview is not None else None
+        self.quaternion_origin = quaternion_origin if parent is None else parent.quaternion_origin
+        self._quaternion_origin_identity = self.quaternion_origin
+        self._quaternion_intent_identity = None if self.quaternion_origin is None else self.quaternion_origin.intent
+        self._quaternion_params = params if preview is None else preview["params"]
 
     @property
     def roles(self) -> Any:
@@ -100,9 +105,28 @@ class Admission:
         if self.parent is not None:
             self.parent._check_preview_owner()
         self._check_preview_owner()
+        self._check_quaternion_owner()
+
+    def _check_quaternion_owner(self) -> None:
+        """Preserve creation-time raw bits and independent intent, without RNA."""
+        from .transforms import QuaternionBoundary, check_quaternion_preview
+        origin = self._quaternion_origin_identity
+        if self.quaternion_origin is not origin:
+            raise invalid_argument("The original quaternion request proof was replaced.")
+        if origin is None:
+            return
+        if (type(self.boundary) is not QuaternionBoundary
+                or self.boundary.quaternion_intent is not self._quaternion_intent_identity
+                or origin.intent is not self._quaternion_intent_identity
+                or _checkpoint_parameters(self._quaternion_params) != origin.parameters):
+            raise invalid_argument("The retained quaternion parameters or independent intent changed.")
+        if (self.preview is not None and (self.preview["params"] is not self._quaternion_params
+                or check_quaternion_preview(self.preview) is not origin)):
+            raise invalid_argument("The original quaternion preview proof was replaced.")
 
     def _check_preview_owner(self) -> None:
         context = self.context
+        self._check_quaternion_owner()
         if self.preview is not None:
             from ..artist_step_evidence import check_apply
             if (self.store.require_plan()["revision"] != self.revision
@@ -194,16 +218,43 @@ def factory(method: str, context: Any, params: Mapping[str, Any]) -> Admission:
                 or preview is None or not enclosing.consumed or enclosing.store.applying_preview is not preview
                 or dict(params) != enclosing.preview_values["params"]):
             raise invalid_argument("Nested artist transform is not the exact retained preview application.")
+        if (enclosing.quaternion_origin is not None
+                and _checkpoint_parameters(params) != enclosing.quaternion_origin.parameters):
+            raise invalid_argument("Nested quaternion parameters differ from the original preview request.")
         enclosing.check_after_read()
-        return _remember(Admission(context, method, boundary=enclosing.boundary, parent=enclosing))
+        return _remember(Admission(context, method, boundary=enclosing.boundary, parent=enclosing, params=params))
     if method == "task.plan.apply_preview":
         store = get_task_plans(context.state)
         identifier = params.get("preview_id")
         preview = store.previews.get(identifier) if type(identifier) is str else None
         if preview is None:
             raise invalid_argument("Preview is missing, consumed or evicted; preview again.")
+        from .transforms import check_quaternion_preview
+        quaternion_origin = check_quaternion_preview(preview)
         boundary = artist_loop.preview_boundary(context, params)
-        return _remember(Admission(context, method, boundary=boundary, preview=preview, params=params))
+        if check_quaternion_preview(preview) is not quaternion_origin:
+            raise invalid_argument("Quaternion preview origin changed during admission capture.")
+        return _remember(Admission(context, method, boundary=boundary, preview=preview, params=params,
+                                   quaternion_origin=quaternion_origin))
+    if method == "transform.set" and "rotation_quaternion" in params:
+        from ..utils import reject_unknown_params, vector3
+        from .transforms import QuaternionPreviewOrigin, quaternion_boundary, quaternion_request
+        quaternion_request(params)
+        reject_unknown_params(params, {"object_name", "location", "rotation_quaternion", "scale"})
+        for name in ("location", "scale"):
+            if name in params:
+                vector3(params[name], name)
+        facts = _checkpoint_parameters(params)
+        bpy = require_blender()
+        name = params.get("object_name")
+        if type(name) is not str:
+            raise invalid_argument("Quaternion authoring requires an exact object_name.")
+        obj = artist_loop._objects(bpy, [name])[0]
+        boundary = quaternion_boundary(bpy, context, method, obj, params)
+        if _checkpoint_parameters(params) != facts:
+            raise invalid_argument("Quaternion parameters changed during admission capture.")
+        return _remember(Admission(context, method, boundary=boundary, params=params,
+                                   quaternion_origin=QuaternionPreviewOrigin(facts, boundary.quaternion_intent)))
     if not artist_loop.needs_review(context):
         return _remember(Admission(context, method))
     bpy = require_blender()

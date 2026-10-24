@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import os
 import runpy
 import socket
 import sys
@@ -27,6 +28,8 @@ HELPERS = (
     "scripts.blender_character_revision_smoke",
     "scripts.blender_artist_target_verification_smoke",
     "scripts.blender_artist_sidebar_smoke",
+    "scripts.blender_artist_quaternion_storage_smoke",
+    "scripts.blender_artist_quaternion_smoke",
     "scripts.native_character_revision_evidence",
     "scripts.native_character_evidence",
     "scripts.native_cache_evidence",
@@ -109,6 +112,8 @@ def fixture_imports(addon_package, monkeypatch):
     ("scripts.blender_character_revision_smoke", "main"),
     ("scripts.blender_artist_target_verification_smoke", "main"),
     ("scripts.blender_artist_sidebar_smoke", "main"),
+    ("scripts.blender_artist_quaternion_storage_smoke", "main"),
+    ("scripts.blender_artist_quaternion_smoke", "main"),
     ("scripts.native_character_revision_evidence", "lbs_vertices"),
 ])
 def test_importing_helper_fixture_does_not_start_experiment(fixture_imports, name, helper):
@@ -125,6 +130,17 @@ def test_importing_helper_fixture_does_not_start_experiment(fixture_imports, nam
 def test_explicit_fixture_entrypoint_schedules_only_its_own_timers(fixture_imports, name, expected):
     runpy.run_path(str(ROOT / "scripts" / name), run_name="__main__")
     assert fixture_imports.timers == expected and fixture_imports.events == []
+
+
+@pytest.mark.parametrize("script", ["blender_artist_quaternion_storage_smoke.py", "blender_artist_quaternion_smoke.py"])
+def test_quaternion_unowned_entry_never_acquires_process_exit(fixture_imports, monkeypatch, script):
+    def forbidden_exit(_status):
+        pytest.fail("An unowned invocation must not terminate its Blender process")
+
+    monkeypatch.setattr(os, "_exit", forbidden_exit)
+    with pytest.raises(AssertionError, match="Use the isolated background runner"):
+        runpy.run_path(str(ROOT / "scripts" / script), run_name="__main__")
+    assert fixture_imports.timers == [] and fixture_imports.events == []
 
 
 @pytest.fixture

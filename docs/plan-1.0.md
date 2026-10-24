@@ -2034,3 +2034,26 @@ This advances UX-01 with **266 MCP tools**, components **0.3.0 alpha**, all four
 release requirements OPEN and Windows testing paused. Protected save, durable
 recovery, broader target/dependency/visual evidence and installed A–F remain
 required.
+
+### 2026-10-23 — Bounded authored quaternion assignments
+
+`transform.set` and `task.plan.preview_transform` gain optional
+`rotation_quaternion=[W, X, Y, Z]` for an already-`QUATERNION` target. The new field
+excludes Euler rotation inputs and every `rotation_mode` argument. It retains
+independent Float32 expectations without normalization, mode conversion or sign
+canonicalization. A complete qualified immutable six-channel intent is required
+before writing. The bounded numeric and static single-user Mesh
+[mutation profile](object-rna-safety.md#quaternion-assignments) applies only to the
+new field; ordinary transform inputs retain their existing contracts.
+
+Seven-case native-storage research at `112f7d6` is historical prerequisite
+evidence, not typed-workflow acceptance. Source-matched portable checks and
+native setter/preview/application/explicit-verification evidence remain required,
+with measured protected/context preservation and refusal/recovery behavior.
+Authored core-channel results do not establish evaluated orientation, artistic
+acceptance, native global undo or durable recovery.
+
+This advances the bounded transform portion of UX-01 with **266 MCP tools**,
+components **0.3.0 alpha**, all fourteen release requirements OPEN and Windows
+testing paused. Protected save, wider character/dependency/visual workflows and
+installed scenarios A–F remain required.

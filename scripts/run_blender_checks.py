@@ -68,6 +68,8 @@ CASES = {
     "artist_loop": ("blender_artist_loop_smoke.py", "BLENDER_ARTIST_LOOP_OK "),
     "artist_target_verification": ("blender_artist_target_verification_smoke.py", "BLENDER_ARTIST_TARGET_VERIFICATION_OK "),
     "artist_target_sidebar": ("blender_artist_sidebar_smoke.py", "BLENDER_ARTIST_TARGET_SIDEBAR_OK "),
+    "artist_quaternion_storage": ("blender_artist_quaternion_storage_smoke.py", "BLENDER_ARTIST_QUATERNION_STORAGE_OK "),
+    "artist_quaternion": ("blender_artist_quaternion_smoke.py", "BLENDER_ARTIST_QUATERNION_OK "),
     "artist_multitarget": ("blender_artist_multitarget_smoke.py", "BLENDER_ARTIST_MULTITARGET_OK "),
     "asset_delivery": ("blender_asset_delivery_smoke.py", "BLENDER_ASSET_DELIVERY_READER_OK "),
     "weight_brushes": ("blender_weight_brushes_smoke.py", "BLENDER_CODEX_WEIGHT_BRUSHES_SMOKE_OK "),
@@ -201,6 +203,8 @@ OPT_IN_CASES.add("sculpt_mask")
 OPT_IN_CASES.add("character_revision")
 OPT_IN_CASES.add("artist_target_verification")
 OPT_IN_CASES.add("artist_target_sidebar")
+OPT_IN_CASES.add("artist_quaternion_storage")
+OPT_IN_CASES.add("artist_quaternion")
 OPT_IN_CASES.add("scene_checkpoint_admission")
 OPT_IN_CASES.add("render_scope_probe")
 OPT_IN_CASES.add("render_boundaries")
@@ -282,6 +286,8 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
         "--python",
         str(script),
     ]
+    if case in {"artist_quaternion_storage", "artist_quaternion"}:
+        command.insert(1, "--disable-autoexec")
     interactive = case in INTERACTIVE_CASES
     if interactive:
         command.remove("--background")

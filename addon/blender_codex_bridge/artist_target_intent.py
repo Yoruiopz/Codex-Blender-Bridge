@@ -22,6 +22,7 @@ EULER_MODES = frozenset({"XYZ", "XZY", "YXZ", "YZX", "ZXY", "ZYX"})
 ROTATION_MODES = EULER_MODES | {"QUATERNION", "AXIS_ANGLE"}
 MIN_NORMAL = float.fromhex("0x1p-126")
 MAX_MAGNITUDE = 1_000_000.
+QUATERNION_NORM_TOLERANCE = 1e-6
 Channels = tuple[tuple[str, str | tuple[float, ...]], ...]
 Bits = tuple[tuple[str, str | tuple[str, ...]], ...]
 
@@ -159,29 +160,35 @@ def capture_intent(bpy: Any, obj: Any, parsed_params: dict[str, Any]) -> TargetI
     """
     name, uid, pointer = None, None, None
     before, before_bits = (), ()
-    requested = tuple(field for field in ("location", "rotation", "scale", "rotation_mode") if field in parsed_params)
+    requested = tuple(field for field in ("location", "rotation", "scale", "rotation_mode", "rotation_quaternion") if field in parsed_params)
     try:
         properties = _properties(bpy, obj)
         name, uid, pointer = _identity(properties, obj)
         descriptors = _channel_properties(properties)
         before, before_bits = _read_channels(obj, descriptors)
         values, encoded = dict(before), dict(before_bits)
+        if "rotation_quaternion" in parsed_params:
+            if any(field in parsed_params for field in ("rotation", "rotation_euler", "rotation_mode")):
+                _unsupported("quaternion_rotation_arguments_conflict")
+            if values["rotation_mode"] != "QUATERNION":
+                _unsupported("quaternion_existing_mode_required")
         mode = parsed_params.get("rotation_mode", values["rotation_mode"])
         if mode != values["rotation_mode"] or ("rotation" in parsed_params and mode not in EULER_MODES):
             _unsupported("rotation_mode_conversion_unavailable")
-        if not any(field in parsed_params for field in ("location", "rotation", "scale")):
+        if not any(field in parsed_params for field in ("location", "rotation", "scale", "rotation_quaternion")):
             _unsupported("no_requested_transform_channels")
         for field, old in before:
             if field != "rotation_mode":
                 for value in old:
                     _qualified(value)
-        for request, field in (("location", "location"), ("rotation", "rotation_euler"), ("scale", "scale")):
+        for request, field, width in (("location", "location", 3), ("rotation", "rotation_euler", 3),
+                                     ("scale", "scale", 3), ("rotation_quaternion", "rotation_quaternion", 4)):
             if request not in parsed_params:
                 continue
             raw = parsed_params[request]
-            if type(raw) not in (list, tuple) or len(raw) != 3:
+            if type(raw) not in (list, tuple) or len(raw) != width:
                 _unsupported("unqualified_requested_vector:" + field)
-            expected, binaries = [], []
+            original, expected, binaries = [], [], []
             for value in raw:
                 if type(value) not in (int, float):
                     _unsupported("unqualified_requested_number:" + field)
@@ -192,14 +199,22 @@ def capture_intent(bpy: Any, obj: Any, parsed_params: dict[str, Any]) -> TargetI
                 if not math.isfinite(value):
                     _unsupported("unqualified_requested_number:" + field)
                 _qualified(value)
+                if field == "rotation_quaternion" and abs(value) > 1.:
+                    _unsupported("quaternion_component_outside_profile")
                 if not descriptors[field].hard_min <= value <= descriptors[field].hard_max:
                     _unsupported("requested_native_clamping_unavailable:" + field)
                 rounded, binary = _float32(value)
                 _qualified(rounded)
                 if not descriptors[field].hard_min <= rounded <= descriptors[field].hard_max:
                     _unsupported("requested_native_clamping_unavailable:" + field)
+                original.append(value)
                 expected.append(rounded)
                 binaries.append(binary)
+            if field == "rotation_quaternion":
+                if abs(math.sqrt(sum(value * value for value in original)) - 1.) > QUATERNION_NORM_TOLERANCE:
+                    _unsupported("quaternion_norm_outside_profile")
+                if abs(math.sqrt(sum(value * value for value in expected)) - 1.) > QUATERNION_NORM_TOLERANCE:
+                    _unsupported("quaternion_rounded_norm_outside_profile")
             values[field], encoded[field] = tuple(expected), tuple(binaries)
         return TargetIntent(availability="available", reason=None, object_name=name, session_uid=uid, pointer=pointer,
             before_channels=before, expected_channels=tuple((field, values[field]) for field in CORE_FIELDS),
