@@ -10,7 +10,12 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from .checkpoint_completion import claim_binding_completion, native_push_consumer
+from .checkpoint_completion import (
+    check_marker_context,
+    claim_binding_completion,
+    claim_binding_marker_completion,
+    native_push_consumer,
+)
 from .entry_effects import (
     annotate_entry_error,
     bind_entry_audit,
@@ -175,6 +180,7 @@ class CheckpointAdmissionBinding:
     enclosing: tuple[Any, ...] | None = None
     active: bool = True
     stopped: BridgeError | None = None
+    marker_write_callback: Callable[[Any], None] | None = None
 
     def matches(self, spec: ToolSpec, params: Mapping[str, Any], context: ToolContext) -> bool:
         return (self.active and self.context is context and self.registry is context.registry and self.spec is spec
@@ -204,6 +210,16 @@ class CheckpointAdmissionBinding:
             if self.readonly_callback is not None:
                 self.readonly_callback()
         self._check(completed)
+
+    def after_marker_write(self, event: Any = None) -> None:
+        """Receive only the opaque observation earned by a canonical stamp write."""
+        if self.stopped is not None:
+            raise self.stopped
+        claim_binding_marker_completion(self, event)
+        callback = self.marker_write_callback
+        if callback is None:
+            raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Checkpoint marker consumer is unavailable.")
+        self._check(lambda: callback(event))
 
     def _enclosing_after_read(self) -> None:
         if self.enclosing is None or self.enclosing[0] is None:
@@ -279,6 +295,7 @@ def check_final_mutation(context: ToolContext, method: str, *, allow_recovery: b
     Lifetime, identity and toolset checks also protect readonly handler entry;
     only an exact retained nonmodifying spec omits mutation pause/stop gates.
     """
+    check_marker_context(context)
     lifetime = getattr(context, "request_lifecycle", None)
     if lifetime is not None:
         lifetime.check()
@@ -621,6 +638,7 @@ class ToolRegistry:
         try:
             readonly = None if callback is None else getattr(callback, "check_after_read", None)
             native_push = None if callback is None else getattr(callback, "after_native_push", None)
+            marker_write = None if callback is None else getattr(callback, "after_marker_write", None)
         except Exception as cause:
             LOGGER.exception("Checkpoint read-only admission descriptor failed")
             raise BridgeError(ErrorCode.OPERATION_FAILED, "Checkpoint read-only admission could not be prepared.",
@@ -632,13 +650,16 @@ class ToolRegistry:
         if native_push is not None and not callable(native_push):
             raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Checkpoint native completion hook is not callable.",
                               {"checkpoint_admission_valid": False, "execution_started": False})
+        if marker_write is not None and not callable(marker_write):
+            raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Checkpoint marker completion hook is not callable.",
+                              {"checkpoint_admission_valid": False, "execution_started": False})
         call_id = object()
         predecessor = previous[0]
         enclosing = previous if (isinstance(predecessor, CheckpointAdmissionBinding)
                                  and predecessor.active and predecessor.context is context) else None
         binding = None if callback is None else CheckpointAdmissionBinding(
             context, spec.name, params, call_id, callback, frozen_params, readonly,
-            native_push, self, spec, enclosing)
+            native_push, self, spec, enclosing, marker_write_callback=marker_write)
         context.checkpoint_admission, context.checkpoint_call_id = binding, call_id
         context.checkpoint_method, context.checkpoint_params = spec.name, params
         cleanup = None

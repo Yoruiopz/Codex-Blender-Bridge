@@ -1,6 +1,7 @@
 # Explicit sculpt masks and vertex-color brushes
 
-Unreleased development tools, not in 0.3.0. These tools perform actual bounded
+Bounded structured tools introduced after 0.3.0, with the 4K mask-read profile in
+the 0.5.0 source candidate. These tools perform actual bounded
 geometry/color edits through typed APIs. They do not claim complete sculpting,
 viewport/surface-projected texture painting, multires or full artist acceptance.
 
@@ -51,7 +52,7 @@ Object Mode. Inspection can read shared or library meshes; the later sculpt edit
 still applies its own local, single-user ownership checks.
 
 The image must be local, loaded, unanimated **GENERATED** four-channel RGBA data,
-with each dimension from 1 to 4,096 and at most 1,048,576 total pixels. The complete
+with each dimension from 1 to 4,096 and at most 16,777,216 total pixels (4,096²). The complete
 chosen raw R/G/B/A channel must be finite in `[0,1]`. File images, UDIMs, sequences and evaluated image animation are
 outside this bounded contract; no file is loaded and no external path is read.
 Stored channel values receive no color-space or alpha conversion.
@@ -73,8 +74,27 @@ changes. A later sculpt call does not revalidate the earlier image fingerprint.
 Sampling changes no image, geometry, selection, frame or checkpoint. It refuses
 changed input/context rather than returning a mixture of old pixels and newer
 UVs. Mesh inspection is bounded to 100,000 vertices, 200,000 edges and 300,000
-corners. This adds a bounded painted-mask workflow; 4K masks, production sculpt
-quality and complete artist/recovery acceptance remain open release work.
+corners. Complete RGBA and selected-channel hashes cover the entire image, not
+only sampled UV corners. Selected-channel copying uses bounded chunks of at most
+4,096 Float32 values; validation also checks the complete channel at pure request
+safe points. The original RGBA copy is released before the independent final
+full-image read and mesh/UV/context comparison.
+
+This remains a **synchronous read**, with no job ID, asynchronous progress or
+`jobs.cancel` support. Cancellation, disconnect and deadline flags are checked
+between bounded CPU steps. Native pixel capture, allocation, bulk copying and
+complete hashing can block until their current call returns; these checks do
+not make them preemptible. Inspection remains available while edits are paused
+or emergency-stopped. Pure checks retain the exact read-only tool identity and
+toolset; they do not invoke permission providers during the final frozen proof.
+
+At 4,096², the RGBA copy is 256 MiB and the selected channel is 64 MiB, plus
+bounded copy scratch and mesh/UV evidence. This roughly 320 MiB array estimate
+excludes Blender/native/GPU buffers, Python/allocator overhead and unrelated
+images; it is not a process-memory guarantee or an out-of-core algorithm.
+Final combined-source native 4K qualification, constrained-memory acceptance,
+reviewed production sculpt quality and complete artist/recovery acceptance remain
+open release work; this admission profile does not close PAINT-01 or A05.
 
 ## Color attribute lifecycle and painting
 

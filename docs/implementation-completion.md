@@ -1,6 +1,6 @@
 # Full artist implementation checklist
 
-Current direction, **2026-10-24**: finish the entire agreed artist workflow through
+Current direction, **2026-10-25**: finish the entire agreed artist workflow through
 structured tools. The 29 items below define the remaining implementation work;
 they are not a tool-count target, a scope reduction or release acceptance.
 All fourteen [release requirements](release-1.0-ledger.json) remain **OPEN**.
@@ -11,10 +11,12 @@ testing are deferred until implementation is complete, remain unverified, and do
 not block this implementation pass.** Windows 11 and installed-package acceptance
 remain mandatory for the later stable 1.0 candidate.
 
-The published **0.3.0 alpha** dates to 2026-09-22. A **0.4.0 pre-release candidate
-is planned, not published**. Meaningful versioned GitHub pre-releases are
-authorized on an approximately two-to-three-hour review cadence; this is not a
-deadline to publish unreviewed changes. Stable 1.0 criteria are unchanged.
+The published [**0.4.0 alpha**](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.4.0)
+dates to 2026-10-24 at 04:30:48 UTC, from `4470d88`. Earlier releases remain available.
+The [0.5.0 source candidate](releases/0.5.0.md) is not yet published. Meaningful
+versioned GitHub prereleases are authorized on an approximately two-to-three-hour
+review cadence; this is not a deadline to publish unreviewed changes. Stable 1.0
+criteria are unchanged.
 
 ## Current foundations and unfinished work
 
@@ -23,18 +25,22 @@ nested materials, image jobs/recovery, orthographic surface strokes/stencils,
 sculpt/color/weight tools, bounded rigs/animation, GN/rigid evaluation, plans,
 receipts and target verification already exist within documented limits. Their
 results are tied to specific sources; they do not establish complete current-source
-workflow acceptance. Surface painting and sculpt-mask sampling still have a
-1,048,576-total-pixel limit; a 4,096 axis limit is not 4K-square support. Rigid
-evaluation is not baking, and current asset exchange remains limited.
+workflow acceptance. The 0.5.0 source admits 4,096-square inputs for bounded
+surface jobs and generated-image sculpt-mask reads; synchronous surface painting
+retains its 1,048,576-pixel limit. Final combined-source, memory, interruption and
+installed qualification remain pending, with visual/constrained-memory acceptance
+still required. Rigid evaluation is not baking, and asset exchange remains limited.
 
 The registered quaternion workflow at `c49cd0f` is a bounded authored-channel
 foundation. UV storage/reader results at `e96362f` and `093aeb9` are historical
-source-specific native research, not a public UV safety guard. The private UV
-intent plan has **47 focused portable checks** and source review, but is not wired
-into a public handler and has no native qualification. The UV boundary prerequisite
-has **75 focused checks/static validation** and source review; its native run is still pending at
-this checkpoint. Export and weight per-write safety corrections are in progress;
-they do not close a requirement or establish complete native acceptance.
+source-specific native research. The current source integrates a retained-intent
+[guard for three direct UV tools](uv-edit-safety.md), with exact Float32 comparisons,
+fresh leaf resolution and attempted-field compensation within a restricted profile.
+Final reconstructed combined-source qualification remains pending; full F02,
+native undo, durable recovery and appearance acceptance remain open. Published
+0.4.0 export and weight corrections retain their bounded evidence and limits.
+Curve, cloth-job and material-recovery work under separate review is not included
+in this 0.5.0 candidate; no operational cloth-job claim follows from this checklist.
 
 Each item needs the relevant success, permission-denial, invalid-context,
 protected/context-preservation, injected-failure, interruption/manual-interleaving

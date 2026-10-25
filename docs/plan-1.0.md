@@ -4,14 +4,14 @@ Status: active, **not release-ready**. Planning baseline: `3ad11a3`, 2026-09-27.
 This is the current execution plan; `implementation-plan.md` describes the historical MVP.
 The [readiness gates](release-1.0-readiness.md) remain the release acceptance contract.
 
-**Native-save blocker:** unreleased `project.save` now refuses both current-file
+**Native-save blocker:** `project.save` refuses both current-file
 Save and Save As. Hidden C asset-catalog callbacks and runtime save effects are
 not bounded by existing path/permission checks. Earlier typed-save results are
 historical; current feature reopen fixtures use labeled owned setup serialization.
 Safe authorized saving and portable `.blend` delivery remain mandatory open
 requirements, with no scope reduction. See [the safety contract](project-save-safety.md).
 
-## Current implementation priorities — 2026-10-24
+## Current implementation priorities — 2026-10-25
 
 The [29-item implementation checklist](implementation-completion.md) is the
 current finite worklist for the full agreed artist workflow. Finish the existing
@@ -30,8 +30,11 @@ protected-capture, shader REMOVE, animation-provider reproduction and exact-buil
 designs/alternatives, not retries or weaker evidence.
 
 Meaningful versioned GitHub **pre-releases are authorized**, on an approximately
-two-to-three-hour review cadence. The **0.4.0 candidate is planned, not published**;
-the latest published **0.3.0 alpha** dates to 2026-09-22. Build matching components
+two-to-three-hour review cadence. The latest published
+[**0.4.0 alpha**](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.4.0)
+dates to 2026-10-24 at 04:30:48 UTC from `4470d88`. The bounded
+[0.5.0 candidate](releases/0.5.0.md) is not yet published and requires final
+combined-source, native and installed-package qualification. Build matching components
 and checksums from a clean reviewed increment, disclose limits and unverified
 Windows status, and verify downloaded bytes. Preserve previous releases. Present
 an exact merge proposal where required; merge permission is not blanket. The
@@ -65,8 +68,8 @@ the repository public-facing, using GitHub as needed; this supersedes the earlie
 constraint. Prepare public documentation and contributor/support entry points and make the
 GitHub repository public. The user subsequently made it public; anonymous repository,
 documentation and existing release downloads were verified. This is separate from qualifying or publishing 1.0. Distribute
-matched packages through GitHub releases. Preserve the current 0.3.0 release until
-all acceptance gates pass; no release date has been set.
+matched packages through GitHub releases. Preserve all earlier releases, including
+0.3.0 and 0.4.0; no stable release date has been set.
 
 The machine-readable [requirement ledger](release-1.0-ledger.json) deliberately starts open.
 The [qualification checker](release-evidence.md) validates source/package provenance and retained
@@ -81,7 +84,8 @@ acceptance evidence; native smoke reports themselves remain `NOT_ASSESSED`.
   They do not prove interactive UI installation, real undo interleaving or artistic quality.
 - The manifest's 4.2 minimum is not verified by the local matrix. Test it or explicitly resolve
   supported versions before RC. Do not infer Linux/macOS Blender support from Python CI.
-- Published 0.3.0 remains alpha. Do not replace its artifacts or publish 1.0 early.
+- Published 0.4.0 remains alpha, with older releases still available. Do not
+  replace accepted artifacts or publish 1.0 early.
   Public-facing repository work is now authorized; it does not close any release gate.
 
 ## Milestones and dependencies

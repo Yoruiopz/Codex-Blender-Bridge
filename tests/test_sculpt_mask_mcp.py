@@ -111,6 +111,7 @@ def test_official_sdk_requires_explicit_seam_policy_and_validates_before_forward
             async with Client(runtime.server) as client:
                 tool, = [tool for tool in (await client.list_tools()).tools if tool.name == METHOD]
                 assert tool.annotations.read_only_hint is True and tool.annotations.destructive_hint is False
+                assert "16,777,216" in tool.description and "Synchronous read only" in tool.description
                 schema = tool.input_schema
                 assert schema["required"] == ["object_name", "uv_layer", "vertex_indices", "image_name", "corner_reduction"]
                 fields = schema["properties"]

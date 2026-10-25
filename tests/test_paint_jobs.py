@@ -317,3 +317,82 @@ def test_controlled_private_allocation_failure_does_not_allocate_scene_image(job
     assert result["state"] == "FAILED" and result["error"]["code"] == "OPERATION_FAILED"
     assert not result["execution_started"] and result["error"]["context"]["possible_mutation"] is False
     assert len(env.images) == 1 and not env.manager.history[0].prepared and env.manager.history[0].work is None
+
+
+def test_surface_job_routes_large_profile_and_releases_source_after_precommit_cancel(jobs, monkeypatch):
+    from test_image_surface_paint import parameters, setup_fake
+
+    env = jobs
+    surface = importlib.import_module(env.module.__package__ + ".tools.image_surface_paint")
+    setup_fake(surface, env.bpy, monkeypatch)
+    surface.register_tools(env.context().registry)
+    env.images[0].size = [1025, 1024]
+    env.images[0].pixels.values = array("f", [.2, .4, .6, 1.])*(1025*1024)
+    accepted = env.manager.start_surface_paint(env.context(), parameters(), 300.)
+    assert accepted["workload"]["image_size"] == [1025, 1024]
+    assert accepted["workload"]["large_image_requires_job"]
+    assert accepted["workload"]["maximum_source_or_stencil_pixels"] == 16_777_216
+    assert accepted["workload"]["maximum_candidate_pixel_tests"] == 33_554_432
+    assert accepted["workload"]["baseline_copy_bytes"] == 0
+    assert not accepted["projection_work_started"] and not env.marks
+    env.manager.cancel(accepted["job_id"])
+    done = finish(env)
+    assert done["state"] == "CANCELLED" and not done["execution_started"]
+    assert env.manager.history[0].prepared == {} and env.manager.history[0].driver is None
+    assert env.images.get("Projected") is None
+
+
+@pytest.mark.parametrize("stage", ["output", "owners"])
+def test_surface_private_allocation_failure_keeps_scene_and_terminal_evidence_truthful(jobs, monkeypatch, stage):
+    from test_image_surface_paint import parameters, setup_fake
+
+    env = jobs
+    surface = importlib.import_module(env.module.__package__ + ".tools.image_surface_paint")
+    setup_fake(surface, env.bpy, monkeypatch)
+    surface.register_tools(env.context().registry)
+    env.manager.start_surface_paint(env.context(), parameters(), 60.)
+    module, kind = (env.paint.brush, "f") if stage == "output" else (surface, "i")
+    original = module.array
+
+    def allocate(code, *args):
+        if code == kind:
+            raise MemoryError("controlled private surface buffer failure; no host pressure")
+        return original(code, *args)
+
+    monkeypatch.setattr(module, "array", allocate)
+    done = finish(env)
+    assert done["state"] == "FAILED" and done["error"]["code"] == "OPERATION_FAILED"
+    assert not done["execution_started"] and not done["error"]["context"]["possible_mutation"]
+    assert env.images.get("Projected") is None and not env.marks
+    assert not env.manager.history[0].prepared and env.manager.history[0].driver is None
+
+
+@pytest.mark.parametrize("loss", ["cancel", "emergency", "pause"])
+def test_surface_late_publication_loss_retains_image_and_finalized_boundary(jobs, monkeypatch, loss):
+    from test_image_surface_paint import parameters, setup_fake
+
+    env = jobs
+    surface = importlib.import_module(env.module.__package__ + ".tools.image_surface_paint")
+    setup_fake(surface, env.bpy, monkeypatch)
+    surface.register_tools(env.context().registry)
+    env.grants["DELETE_OBJECTS"] = False
+    update = Image.update
+
+    def lose_after_update(image):
+        update(image)
+        if image.name != "Projected":
+            return
+        if loss == "cancel":
+            env.manager.cancel_all("owned late surface cancellation")
+        elif loss == "emergency":
+            env.context().state.set_emergency_stopped(True)
+        else:
+            env.context().state.set_paused(True)
+
+    monkeypatch.setattr(Image, "update", lose_after_update)
+    env.manager.start_surface_paint(env.context(), parameters(), 60.)
+    done = finish(env)
+    assert done["state"] == ("FAILED" if loss == "pause" else "CANCELLED")
+    assert done["execution_started"] and done["undo_boundary_finalized"]
+    assert done["error"]["context"]["possible_mutation"] and done["result"] is None
+    assert env.images.get("Projected") is not None and env.manager.history[0].prepared == {}

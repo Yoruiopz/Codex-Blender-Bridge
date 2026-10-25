@@ -32,6 +32,8 @@ HELPERS = (
     "scripts.blender_artist_quaternion_smoke",
     "scripts.blender_uv_edit_storage_smoke",
     "scripts.blender_uv_edit_boundary_probe",
+    "scripts.blender_large_surface_paint_smoke",
+    "scripts.blender_uv_edit_guard_smoke",
     "scripts.native_character_revision_evidence",
     "scripts.native_character_evidence",
     "scripts.native_cache_evidence",
@@ -118,6 +120,8 @@ def fixture_imports(addon_package, monkeypatch):
     ("scripts.blender_artist_quaternion_smoke", "main"),
     ("scripts.blender_uv_edit_storage_smoke", "main"),
     ("scripts.blender_uv_edit_boundary_probe", "main"),
+    ("scripts.blender_large_surface_paint_smoke", "main"),
+    ("scripts.blender_uv_edit_guard_smoke", "main"),
     ("scripts.native_character_revision_evidence", "lbs_vertices"),
 ])
 def test_importing_helper_fixture_does_not_start_experiment(fixture_imports, name, helper):
@@ -137,7 +141,7 @@ def test_explicit_fixture_entrypoint_schedules_only_its_own_timers(fixture_impor
 
 
 @pytest.mark.parametrize("script", ["blender_artist_quaternion_storage_smoke.py", "blender_artist_quaternion_smoke.py",
-                                  "blender_uv_edit_storage_smoke.py", "blender_uv_edit_boundary_probe.py"])
+                                  "blender_uv_edit_storage_smoke.py", "blender_uv_edit_boundary_probe.py", "blender_uv_edit_guard_smoke.py"])
 def test_owned_background_entry_never_acquires_process_exit(fixture_imports, monkeypatch, script):
     def forbidden_exit(_status):
         pytest.fail("An unowned invocation must not terminate its Blender process")
@@ -145,6 +149,280 @@ def test_owned_background_entry_never_acquires_process_exit(fixture_imports, mon
     monkeypatch.setattr(os, "_exit", forbidden_exit)
     with pytest.raises(AssertionError, match="Use the isolated background runner"):
         runpy.run_path(str(ROOT / "scripts" / script), run_name="__main__")
+    assert fixture_imports.timers == [] and fixture_imports.events == []
+
+
+def test_large_surface_entry_refuses_unowned_ui_before_exit_authority(fixture_imports, monkeypatch):
+    monkeypatch.setattr(os, "_exit", lambda _status: pytest.fail("Unowned entry acquired process-exit authority"))
+    with pytest.raises(AssertionError, match="Use the isolated private interactive runner"):
+        runpy.run_path(str(ROOT / "scripts/blender_large_surface_paint_smoke.py"), run_name="__main__")
+    assert fixture_imports.timers == [] and fixture_imports.events == []
+
+
+def test_large_surface_independent_sample_oracle_and_packed_digest(fixture_imports):
+    import hashlib
+    import struct
+    from array import array
+
+    script = importlib.import_module("scripts.blender_large_surface_paint_smoke")
+    assert script.SIZE == 4096
+    assert script.stencil_rgba(63) == (0., .25, .5, 1.)
+    assert script.stencil_rgba(64) == (1., .25, .5, 1.)
+    assert script.oracle_rgba(2016, 2048) == (.5625, .375, .25, 1.)
+    assert script.oracle_rgba(2048, 2048) == script.SOURCE  # Zero stencil stripe on the triangulation seam.
+    assert script.oracle_rgba(2016, 2304) == script.SOURCE  # Beyond the hard capsule.
+    assert script.oracle_rgba(0, 4095) == script.SOURCE
+    raw = array("f", [-0., 1., .5, -1.])
+    assert script.digest(raw) == hashlib.sha256(struct.pack("<4f", -0., 1., .5, -1.)).hexdigest()
+    assert fixture_imports.timers == [] and fixture_imports.events == []
+
+
+@pytest.mark.parametrize("outcome", ["enabled", "cancelled", "missing_entry", "missing_preferences", "auto_start"])
+def test_large_surface_setup_requires_normal_enable_and_live_preferences(fixture_imports, monkeypatch, outcome):
+    script = importlib.import_module("scripts.blender_large_surface_paint_smoke")
+    events, addons = [], {}
+    prefs = NS(auto_start=outcome == "auto_start")
+
+    def enable(*, module):
+        assert module == "blender_codex_bridge"
+        events.append("normal_addon_enable")
+        assert not addons
+        if outcome == "cancelled":
+            return {"CANCELLED"}
+        if outcome != "missing_entry":
+            addons[module] = NS(preferences=prefs)
+        return {"FINISHED"}
+
+    def live_preferences():
+        events.append("live_preferences")
+        assert "blender_codex_bridge" in addons, "Direct registration provides no enabled entry"
+        return None if outcome == "missing_preferences" else addons["blender_codex_bridge"].preferences
+
+    preferences = ModuleType("blender_codex_bridge.preferences")
+    preferences.get_preferences = live_preferences
+    monkeypatch.setitem(sys.modules, preferences.__name__, preferences)
+    monkeypatch.setattr(script.bpy, "context", NS(preferences=NS(addons=addons)), raising=False)
+    monkeypatch.setattr(script.bpy.ops, "preferences", NS(addon_enable=enable), raising=False)
+    if outcome == "enabled":
+        assert script.enable_fixture_addon() is prefs
+    else:
+        with pytest.raises(AssertionError):
+            script.enable_fixture_addon()
+    assert events == (["normal_addon_enable"] if outcome in {"cancelled", "missing_entry"}
+                      else ["normal_addon_enable", "live_preferences"])
+    assert fixture_imports.timers == [] and fixture_imports.events == []
+
+
+@pytest.mark.parametrize("exit_status", [0, 1])
+def test_large_surface_periodic_proof_keeps_all_rows_and_flushes_final_immediately(
+    fixture_imports, monkeypatch, exit_status,
+):
+    import hashlib
+    import json
+
+    script = importlib.import_module("scripts.blender_large_surface_paint_smoke")
+    clock, exits = NS(now=0.), []
+    monkeypatch.setattr(script, "time", NS(perf_counter=lambda: clock.now))
+
+    class Sink:
+        def __init__(self):
+            self.writes = []
+
+        def exists(self):
+            return False
+
+        def write_bytes(self, raw):
+            self.writes.append((clock.now, bytes(raw)))
+            return len(raw)
+
+    main, summary = Sink(), Sink()
+    fixture = script.Fixture.__new__(script.Fixture)
+    fixture.proof_snapshots = script.ProofSnapshots(main, summary)
+    fixture.events, fixture.controls = script.queue.Queue(), script.queue.Queue()
+    fixture.done = NS(is_set=lambda: False)
+    fixture.originals = []
+    fixture.phase = "normal"
+    fixture.started = fixture.last_tick = fixture.last_memory = 0.
+    fixture.memory = lambda _label: None
+    fixture.data = {"calls": [], "jobs": [], "controls": [], "completed": False,
+                    "timer_gaps": {"count": 0, "sum_seconds": 0., "largest": []}}
+    fixture.flush()
+    rows = []
+    for index in range(1, 302):
+        clock.now = index / 100
+        row = {"kind": "call", "id": index, "raw_result": {"unchanged": [index, -0.]}}
+        rows.append(row)
+        fixture.events.put(row)
+        assert fixture.tick() == .01  # Control/timer processing keeps its original cadence.
+    assert [at for at, _raw in main.writes] == [0., 1., 2., 3.]
+    assert fixture.data["calls"] == rows
+    assert fixture.proof_snapshots.metrics["largest_periodic_request_age_seconds"] <= 1.
+    # Native-helper/control callers use this unchanged immediate default.
+    fixture.data["critical_control"] = {"retained": True}
+    fixture.flush()
+    assert main.writes[-1][0] == 3.01
+    fixture.data["completed"] = exit_status == 0
+    if exit_status:
+        fixture.data["failure"] = "Retained modeled fixture failure"
+    fixture.flush()  # Final success/failure evidence before the existing marker.
+    marker_hash = hashlib.sha256(main.writes[-1][1]).hexdigest()
+    exit_module = ModuleType("blender_artist_sidebar_smoke")
+    exit_module.owned_process_exit = exits.append
+    monkeypatch.setitem(sys.modules, exit_module.__name__, exit_module)
+    fixture.finish(exit_status)
+    assert exits == [exit_status]
+    assert hashlib.sha256(main.writes[-1][1]).hexdigest() == marker_hash
+    final = json.loads(main.writes[-1][1])
+    assert final["calls"] == rows and len(final["calls"]) == 301
+    assert final["critical_control"] == {"retained": True}
+    assert final.get("failure") == ("Retained modeled fixture failure" if exit_status else None)
+    metrics = json.loads(summary.writes[-1][1])
+    assert metrics["snapshot_count"] == len(main.writes) == 7
+    assert metrics["periodic_snapshot_count"] == 3 and metrics["immediate_snapshot_count"] == 4
+    assert metrics["periodic_requests"] == 301 and metrics["coalesced_periodic_requests"] == 298
+    assert metrics["bytes_written"] == metrics["bytes_serialized"] == sum(len(raw) for _at, raw in main.writes)
+    assert fixture_imports.timers == [] and fixture_imports.events == []
+
+
+def test_large_surface_proof_io_records_actual_cost_and_timer_delay(fixture_imports, monkeypatch):
+    import json
+
+    script = importlib.import_module("scripts.blender_large_surface_paint_smoke")
+    clock = NS(now=0.)
+    monkeypatch.setattr(script, "time", NS(perf_counter=lambda: clock.now))
+    original_canonical = script.canonical
+
+    def measured_canonical(data):
+        raw = original_canonical(data)
+        clock.now += .005
+        return raw
+
+    monkeypatch.setattr(script, "canonical", measured_canonical)
+
+    class Sink:
+        def __init__(self):
+            self.writes = []
+
+        def exists(self):
+            return False
+
+        def write_bytes(self, raw):
+            self.writes.append(bytes(raw))
+            clock.now += .002
+            return len(raw)
+
+    main, summary = Sink(), Sink()
+    snapshots = script.ProofSnapshots(main, summary)
+    snapshots.flush({"calls": [{"id": 1}]})
+    clock.now = .99
+    snapshots.flush({"calls": [{"id": 1}, {"id": 2}]}, periodic=True)
+    assert len(main.writes) == 1
+    clock.now = 2.5  # A blocked native interval is exposed, never reported as a 1s guarantee.
+    snapshots.flush({"calls": [{"id": 1}, {"id": 2}]}, periodic=True)
+    snapshots.finish()
+    metrics = json.loads(summary.writes[-1])
+    assert metrics["snapshot_count"] == metrics["snapshot_attempts"] == 2
+    assert metrics["serialization_seconds"] == pytest.approx(.010)
+    assert metrics["write_seconds"] == pytest.approx(.004)
+    assert metrics["bytes_written"] == sum(map(len, main.writes))
+    assert metrics["largest_periodic_request_age_seconds"] == pytest.approx(2.493)
+    assert json.loads(main.writes[-1])["calls"] == [{"id": 1}, {"id": 2}]
+def test_uv_guard_fixture_oracle_rounds_requested_f32_and_preserves_other_fields(fixture_imports):
+    script = importlib.import_module("scripts.blender_uv_edit_guard_smoke")
+    before = {"Primary": [
+        {"face": 0, "corner": 0, "uv": [0., -0.], "float32_le": script.bits((0., -0.)), "pin_uv": False},
+        {"face": 0, "corner": 1, "uv": [.25, .5], "float32_le": script.bits((.25, .5)), "pin_uv": True}],
+        "Protected": [{"face": 0, "corner": 0, "uv": [.5, .75], "float32_le": script.bits((.5, .75)), "pin_uv": True}]}
+    params = {"uv_layer": "Primary", "updates": [{"face_index": 0, "corner_index": 0, "uv": [-0., .1]}]}
+    output = script.expected_maps(before, "coordinates_set", params)
+    assert output["Primary"][0]["float32_le"] == ["00000080", "cdcccc3d"]
+    assert output["Primary"][1] == before["Primary"][1] and output["Protected"] == before["Protected"]
+    transformed = script.expected_maps(before, "transform", {"uv_layer": "Primary", "offset": [.1, .2]})
+    assert transformed["Primary"][0]["float32_le"] == ["cdcccc3d", "cdcc4c3e"]
+    assert transformed["Primary"][1] == before["Primary"][1]
+    pinned = script.expected_maps(before, "pin", {"uv_layer": "Primary", "corners": [{"face_index": 0, "corner_index": 0}], "pinned": True})
+    assert pinned["Primary"][0]["pin_uv"] is True
+    assert pinned["Primary"][0]["float32_le"] == before["Primary"][0]["float32_le"]
+    assert fixture_imports.timers == [] and fixture_imports.events == []
+
+
+def test_uv_guard_fixture_unknown_setter_model_releases_leaf_before_fault(fixture_imports):
+    script = importlib.import_module("scripts.blender_uv_edit_guard_smoke")
+    fixture = NS(mode="unknown_setter", armed=True, restoring=False, snapshot_reads=7, trace=[])
+    target = NS(uv=(0., 0.))
+    setter = script.Setter(fixture, target, (0, 0, 0, 0), "uv")
+    with pytest.raises(RuntimeError, match="same-field unknown setter"):
+        setter.uv = (.1, .2)
+    assert setter.target is None and target.uv == (.9375, -.3125)
+    assert fixture.trace[0]["snapshots_since_resolve"] == 0
+    assert fixture.trace[0]["delegate_calls"] == 1 and fixture.trace[0]["completed"]
+    assert fixture_imports.timers == [] and fixture_imports.events == []
+
+
+@pytest.mark.parametrize("profile", ["leaf", "no_leaf", "multiple", "nested", "linked", "override", "readonly", "full"])
+def test_uv_guard_fixture_links_both_meshes_only_to_existing_direct_local_leaf(fixture_imports, profile):
+    script = importlib.import_module("scripts.blender_uv_edit_guard_smoke")
+    links = []
+
+    class Members:
+        def __len__(self):
+            return 255 if profile == "full" else 3
+
+        def link(self, obj):
+            links.append(obj)
+
+    def forbidden_master_link(_obj):
+        pytest.fail("Fixture must not link a UV owner to the non-leaf factory master")
+
+    master = NS(objects=NS(link=forbidden_master_link))
+    leaf = NS(children=[object()] if profile == "nested" else [], objects=Members(),
+              library=object() if profile == "linked" else None,
+              override_library=object() if profile == "override" else None,
+              is_editable=profile != "readonly")
+    master.children = [] if profile == "no_leaf" else [leaf, object()] if profile == "multiple" else [leaf]
+    work, peer = object(), object()
+    if profile == "leaf":
+        assert script.link_fixture_meshes(NS(collection=master), work, peer) is leaf
+        assert links == [work, peer] and master.children == [leaf] and leaf.children == []
+    else:
+        with pytest.raises(AssertionError):
+            script.link_fixture_meshes(NS(collection=master), work, peer)
+        assert not links
+    assert fixture_imports.timers == [] and fixture_imports.events == []
+
+
+@pytest.mark.parametrize("create_entry", [True, False])
+def test_uv_guard_fixture_uses_normal_addon_enable_before_live_preferences(fixture_imports, monkeypatch, create_entry):
+    script = importlib.import_module("scripts.blender_uv_edit_guard_smoke")
+    events, entries = [], {}
+    prefs, runtime = NS(auto_start=False), object()
+    preferences = ModuleType("blender_codex_bridge.preferences")
+
+    def get_preferences():
+        events.append("preferences")
+        addon = entries.get("blender_codex_bridge")
+        return None if addon is None else addon.preferences
+
+    preferences.get_preferences = get_preferences
+    monkeypatch.setitem(sys.modules, preferences.__name__, preferences)
+    monkeypatch.setattr(sys.modules["blender_codex_bridge.runtime"], "get_runtime", lambda: events.append("runtime") or runtime)
+
+    def enable(*, module):
+        assert module == "blender_codex_bridge"
+        events.append("enable")
+        if create_entry:
+            entries[module] = NS(preferences=prefs)
+        return {"FINISHED"}
+
+    monkeypatch.setattr(script.bpy, "context", NS(preferences=NS(addons=entries)), raising=False)
+    monkeypatch.setattr(script.bpy.ops, "preferences", NS(addon_enable=enable), raising=False)
+    if create_entry:
+        assert script.enable_addon() == (runtime, prefs)
+        assert events == ["enable", "preferences", "runtime"]
+    else:
+        with pytest.raises(AssertionError, match="Enabled add-on entry is missing"):
+            script.enable_addon()
+        assert events == ["enable"]
     assert fixture_imports.timers == [] and fixture_imports.events == []
 
 

@@ -9,12 +9,16 @@ from collections import deque
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
+from functools import partial
 from itertools import islice
 from typing import Any
 
 from .checkpoint_completion import (
     authenticated_checkpoint,
+    authenticated_marker,
     bind_native_push_guard,
+    check_marker_write,
+    issue_marker_write_completion,
     issue_native_push_completion,
 )
 from .errors import BridgeError, ErrorCode
@@ -96,6 +100,17 @@ class _CheckpointGuard:
     stopped: BridgeError | None = None
     latest_marker: str | None = None
     marker_observer: Any = None
+    marker_completion: bool = False
+    marker_write_attempts: int = 0
+    marker_write_outcome_unknown: bool = False
+
+    def write_marker(self, next_write: str, write: Callable[[], None]) -> None:
+        if not self.marker_completion:
+            write()
+            return
+        self.marker_write_attempts += 1
+        self.marker_write_outcome_unknown = True
+        self._run(next_write, write)
 
     def check(self, next_write: str) -> None:
         self._run(next_write, self.before_write)
@@ -129,7 +144,10 @@ class _CheckpointGuard:
                 "next_write_rejected": next_write,
                 "compensation_performed": False,
             })
-            if self.marker_writes or self.native_snapshots:
+            if self.marker_write_outcome_unknown:
+                error.context["checkpoint_bookkeeping"].update(
+                    marker_write_attempts=self.marker_write_attempts, marker_write_outcome_unknown=True)
+            if self.marker_writes or self.native_snapshots or self.marker_write_outcome_unknown:
                 error.context.update(execution_started=True, possible_mutation=True, verification_required=True)
             self.stopped = error
             if error is cause:
@@ -327,6 +345,7 @@ class CheckpointManager:
             raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Recovery supports at most 200 scenes.")
         return blender
 
+    @authenticated_marker
     def _stamp(self, blender: Any, *, guard: _CheckpointGuard | None = None) -> str:
         scene = blender.context.scene
         expected = self._marker_evidence(blender) if guard is not None else None
@@ -359,22 +378,34 @@ class CheckpointManager:
             if guard is not None:
                 guard.check("delete_marker")
                 guard.complete("delete_marker", lambda expected=expected: self._compare_markers(blender, expected))
-            del item[MARKER_KEY]
+            if guard is not None:
+                check_marker_write(self, guard)
+                guard.write_marker("delete_marker", partial(item.__delitem__, MARKER_KEY))
+            else:
+                del item[MARKER_KEY]
             if guard is not None:
                 guard.marker_writes += 1
                 expected = self._marker_delta(expected, item, None)
+                guard._run("after_marker_write", partial(issue_marker_write_completion, self, guard, expected))
                 if guard.marker_observer is not None:
                     guard.marker_observer(expected)
+                guard.marker_write_outcome_unknown = False
         token = self._prefix + uuid.uuid4().hex
         if guard is not None:
             guard.check("set_marker")
             guard.complete("set_marker", lambda: self._compare_markers(blender, expected))
-        scene[MARKER_KEY] = token
+        if guard is not None:
+            check_marker_write(self, guard)
+            guard.write_marker("set_marker", lambda: scene.__setitem__(MARKER_KEY, token))
+        else:
+            scene[MARKER_KEY] = token
         if guard is not None:
             guard.marker_writes += 1
             expected = self._marker_delta(expected, scene, token)
+            guard._run("after_marker_write", lambda: issue_marker_write_completion(self, guard, expected))
             if guard.marker_observer is not None:
                 guard.marker_observer(expected)
+            guard.marker_write_outcome_unknown = False
             guard.complete("verify_marker", lambda: self._compare_markers(blender, expected))
         return token
 

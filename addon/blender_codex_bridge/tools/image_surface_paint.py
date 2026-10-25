@@ -25,7 +25,9 @@ from . import pixel_brush as brush
 from .material_scope import local_editable
 
 REQUIRED = (Permission.EDIT_MATERIALS, Permission.INSPECT_SCENE)
-MAX_PIXELS = 1_048_576
+MAX_PIXELS = brush.MAX_SYNC_PIXELS
+MAX_JOB_PIXELS = brush.MAX_PIXELS
+MAX_JOB_TESTS = 2 * MAX_JOB_PIXELS
 MAX_VERTICES, MAX_FACES, MAX_LOOPS = 4096, 2048, 12288
 MAX_TARGET_TRIANGLES, MAX_TOTAL_TRIANGLES = 512, 1024
 MAX_CANDIDATES, MAX_RAY_TESTS, MAX_STROKE_TESTS = 2_000_000, 2_000_000, 2_000_000
@@ -38,6 +40,46 @@ class Triangle:
     face: int
     world: tuple
     uv: tuple | None
+
+
+@dataclass(frozen=True)
+class _ProjectionLimits:
+    pixels: int
+    candidates: int
+    rays: int
+    segments: int
+
+
+def _limits(prepared=None, *, allow_large=False):
+    if prepared is not None and "limits" in prepared:
+        return prepared["limits"]
+    return (_ProjectionLimits(MAX_JOB_PIXELS, MAX_JOB_TESTS, MAX_JOB_TESTS, MAX_JOB_TESTS)
+            if allow_large else _ProjectionLimits(MAX_PIXELS, MAX_CANDIDATES, MAX_RAY_TESTS, MAX_STROKE_TESTS))
+
+
+def workload(prepared):
+    """Conservative simultaneous private arrays, including guarded readbacks."""
+    limits = _limits(prepared)
+    pixels = prepared["width"] * prepared["height"]
+    source_bytes = pixels * 16
+    mask = prepared.get("mask")
+    channel_bytes = len(mask["kernel"]["values"]) * 4 if mask else 0
+    stencil_bytes = channel_bytes * 4
+    scratch = min(brush.TILE_SIZE, prepared["width"]) * min(brush.TILE_SIZE, prepared["height"]) * array("i").itemsize
+    return {"image_size": [prepared["width"], prepared["height"]],
+            "frozen_source_pixel_bytes": source_bytes,
+            "maximum_source_or_stencil_pixels": limits.pixels,
+            "maximum_candidate_pixel_tests": limits.candidates,
+            "maximum_visibility_triangle_tests": limits.rays,
+            "maximum_stroke_segment_tests": limits.segments,
+            "large_image_requires_job": pixels > MAX_PIXELS or bool(mask and channel_bytes // 4 > MAX_PIXELS),
+            "ownership_tile_size": brush.TILE_SIZE, "maximum_ownership_scratch_bytes": scratch,
+            "baseline_copy_bytes": 0, "stencil_channel_bytes": channel_bytes,
+            "kernel_pixel_buffers_peak_estimate_bytes": 2 * source_bytes + channel_bytes + scratch + 12,
+            # Source/output/native-output readback plus one sequential input
+            # verification readback, including checks reentered by _read.
+            "private_pixel_buffers_peak_estimate_bytes": 3 * source_bytes + channel_bytes + max(source_bytes, stencil_bytes) + scratch + 12,
+            "estimate_excludes": "Geometry/plan Python objects, Blender/native/GPU/undo/file buffers and allocator overhead; includes sequential input and output readbacks"}
 
 
 def _id(value):
@@ -60,6 +102,24 @@ def _sub(a, b):
 
 def _dot(a, b):
     return sum(x * y for x, y in zip(a, b, strict=True))
+
+
+def _sub3(a, b):
+    return a[0]-b[0], a[1]-b[1], a[2]-b[2]
+
+
+def _dot3(a, b):
+    # Retain sum's ordered products/default start, including its version-specific
+    # float summation and signed-zero behavior. Chained additions are different.
+    return sum((a[0]*b[0], a[1]*b[1], a[2]*b[2]))
+
+
+def _world_point(bary, world):
+    a, b, c = world
+    first, second, third = bary
+    return (sum((first*a[0], second*b[0], third*c[0])),
+            sum((first*a[1], second*b[1], third*c[1])),
+            sum((first*a[2], second*b[2], third*c[2])))
 
 
 def _cross(a, b):
@@ -212,7 +272,7 @@ def _strokes(raw):
     return parsed
 
 
-def prepare_surface(context, params):
+def prepare_surface(context, params, *, allow_large=False):
     fields = {"image_name", "new_name", "object_name", "uv_layer", "face_indices", "projector", "strokes", "stencil", "occluder_objects"}
     reject_unknown_params(params, fields)
     source_name, new_name = images._name(params, "image_name"), images._name(params, "new_name")
@@ -238,8 +298,9 @@ def prepare_surface(context, params):
     role, srgb = image_paint.source_role(source)
     if role == "DATA" and any(stroke["blend"] != "MIX" or any(value > 1 for value in stroke["color"]) for stroke in strokes):
         raise invalid_argument("DATA projection supports MIX RGBA [0,1] only.")
-    values, width, height, file = image_paint._read(context, source, modifying=True, maximum_pixels=MAX_PIXELS)
-    stencil = image_masks.freeze(context, bpy, stencil_spec, read=image_paint._read, maximum_pixels=MAX_PIXELS,
+    limits = _limits(allow_large=allow_large)
+    values, width, height, file = image_paint._read(context, source, modifying=True, maximum_pixels=limits.pixels)
+    stencil = image_masks.freeze(context, bpy, stencil_spec, read=image_paint._read, maximum_pixels=limits.pixels,
                                 source=source, source_values=values, source_file=file)
     records, target_triangles = [], []
     for name, layer in [(object_name, uv_name), *((name, None) for name in occluders)]:
@@ -260,7 +321,7 @@ def prepare_surface(context, params):
                 "source_identity": image_masks.identity(source), "source_metadata": image_masks.metadata(source),
                 "role": role, "srgb": srgb, "associated": image_paint.source_associated(source), "mask": stencil,
                 "projector": projector, "strokes": strokes, "records": records, "triangles": target_triangles,
-                "target_id": records[0]["object_id"], "faces": frozenset(faces), "tests": 0}
+                "target_id": records[0]["object_id"], "faces": frozenset(faces), "tests": 0, "limits": limits}
     _gate(context)
     # Refresh derived world transforms only after bounded finite geometry validation.
     # Recollect after update, because dependency-graph callbacks may change inputs.
@@ -291,10 +352,14 @@ def validate_inputs(context, prepared):
     if image_masks.identity(source) != prepared["source_identity"] or image_masks.metadata(source) != prepared["source_metadata"]:
         raise BridgeError(ErrorCode.OPERATION_FAILED, "Projection image identity/metadata changed.", {"stale_source": True})
     image_paint.source_role(source)
-    values, w, h, file = image_paint._read(context, source, modifying=True, maximum_pixels=MAX_PIXELS)
+    limits = _limits(prepared)
+    values, w, h, file = image_paint._read(context, source, modifying=True, maximum_pixels=limits.pixels)
     if (w, h, file, brush.digest(values)) != (prepared["width"], prepared["height"], prepared["source_file"], prepared["source_digest"]):
         raise BridgeError(ErrorCode.OPERATION_FAILED, "Projection image pixels or approved FILE proof changed.", {"stale_source": True})
-    image_masks.validate(context, bpy, prepared.get("mask"), read=image_paint._read)
+    del values  # Do not retain this complete RGBA while reading a distinct stencil.
+    def read_mask(context, image, **kwargs):
+        return image_paint._read(context, image, maximum_pixels=limits.pixels, **kwargs)
+    image_masks.validate(context, bpy, prepared.get("mask"), read=read_mask)
 
 
 def _bary(point, uv):
@@ -304,6 +369,21 @@ def _bary(point, uv):
         raise invalid_argument("Degenerate UV triangles are not supported.")
     first = ((b[1]-c[1])*(point[0]-c[0])+(c[0]-b[0])*(point[1]-c[1]))/denominator
     second = ((c[1]-a[1])*(point[0]-c[0])+(a[0]-c[0])*(point[1]-c[1]))/denominator
+    return first, second, 1-first-second
+
+
+def _uv_terms(uv):
+    a, b, c = uv
+    by_cy, cx_bx = b[1]-c[1], c[0]-b[0]
+    ax_cx, ay_cy = a[0]-c[0], a[1]-c[1]
+    return c[0], c[1], by_cy, cx_bx, c[1]-a[1], ax_cx, by_cy*ax_cx+cx_bx*ay_cy
+
+
+def _bary_prepared(point, terms):
+    cx, cy, by_cy, cx_bx, cy_ay, ax_cx, denominator = terms
+    px_cx, py_cy = point[0]-cx, point[1]-cy
+    first = (by_cy*px_cx+cx_bx*py_cy)/denominator
+    second = (cy_ay*px_cx+ax_cx*py_cy)/denominator
     return first, second, 1-first-second
 
 
@@ -321,33 +401,33 @@ def sample_stencil(mask, u, v):
 
 def ray_triangle(origin, direction, triangle):
     a, b, c = triangle.world
-    edge1, edge2 = _sub(b, a), _sub(c, a)
+    edge1, edge2 = _sub3(b, a), _sub3(c, a)
     h = _cross(direction, edge2)
-    determinant = _dot(edge1, h)
+    determinant = _dot3(edge1, h)
     if abs(determinant) < 1e-12:
         return None
     inverse = 1/determinant
-    s = _sub(origin, a)
-    u = inverse*_dot(s, h)
+    s = _sub3(origin, a)
+    u = inverse*_dot3(s, h)
     if u < -1e-10 or u > 1+1e-10:
         return None
     q = _cross(s, edge1)
-    v = inverse*_dot(direction, q)
+    v = inverse*_dot3(direction, q)
     if v < -1e-10 or u+v > 1+1e-10:
         return None
-    distance = inverse*_dot(edge2, q)
+    distance = inverse*_dot3(edge2, q)
     return distance if distance >= 0 else None
 
 
 def _world_bary(point, triangle):
     a, b, c = triangle.world
-    ab, ac, ap = _sub(b, a), _sub(c, a), _sub(point, a)
-    aa, bb, cc = _dot(ab, ab), _dot(ab, ac), _dot(ac, ac)
+    ab, ac, ap = _sub3(b, a), _sub3(c, a), _sub3(point, a)
+    aa, bb, cc = _dot3(ab, ab), _dot3(ab, ac), _dot3(ac, ac)
     denominator = aa*cc-bb*bb
     if denominator <= 0:
         raise invalid_argument("Numerically unresolved world triangle correspondence.")
-    second = (cc*_dot(ap, ab)-bb*_dot(ap, ac))/denominator
-    third = (aa*_dot(ap, ac)-bb*_dot(ap, ab))/denominator
+    second = (cc*_dot3(ap, ab)-bb*_dot3(ap, ac))/denominator
+    third = (aa*_dot3(ap, ac)-bb*_dot3(ap, ab))/denominator
     return 1-second-third, second, third
 
 
@@ -366,18 +446,42 @@ def _coverage(u, v, stroke, projector):
     return fraction*fraction*(3-2*fraction)*stroke["opacity"]
 
 
+def _stroke_segments(stroke, projector):
+    points = [(a*projector["width"], b*projector["height"]) for a, b in stroke["points"]]
+    segments = []
+    for a, b in zip(points, points[1:] or points, strict=len(points) == 1):
+        dx, dy = b[0]-a[0], b[1]-a[1]
+        segments.append((a[0], a[1], dx, dy, sum((dx*dx, dy*dy))))
+    return tuple(segments)
+
+
+def _coverage_prepared(u, v, stroke, projector, segments):
+    px, py = u*projector["width"], v*projector["height"]
+    distance = float("inf")
+    for ax, ay, dx, dy, length in segments:
+        rx, ry = px-ax, py-ay
+        t = max(0., min(1., sum((rx*dx, ry*dy))/length)) if length else 0.
+        distance = min(distance, math.hypot(rx-t*dx, ry-t*dy))
+    if distance >= stroke["radius"]:
+        return 0.
+    fraction = 1. if distance <= stroke["radius"]*stroke["hardness"] else (stroke["radius"]-distance)/(stroke["radius"]*(1-stroke["hardness"]))
+    return fraction*fraction*(3-2*fraction)*stroke["opacity"]
+
+
 def projection_steps(prepared, check=lambda: None):
     """CPU-only frozen geometry, overlap, raster, visibility and image calculations."""
     triangles, target_id = prepared["triangles"], prepared["target_id"]
     targets = [(index, triangle) for index, triangle in enumerate(triangles) if triangle.object_id == target_id]
     selected = [(index, triangle) for index, triangle in targets if triangle.face in prepared["faces"]]
+    uv_terms = []
     for count, triangle in enumerate(triangles):
         check()
-        normal = _cross(_sub(triangle.world[1], triangle.world[0]), _sub(triangle.world[2], triangle.world[0]))
-        if _dot(normal, normal) <= 1e-24:
+        normal = _cross(_sub3(triangle.world[1], triangle.world[0]), _sub3(triangle.world[2], triangle.world[0]))
+        if _dot3(normal, normal) <= 1e-24:
             raise invalid_argument("Degenerate world triangles are not supported for projection/occlusion.")
         if triangle.uv is not None:
             _bary(triangle.uv[0], triangle.uv)
+        uv_terms.append(_uv_terms(triangle.uv) if triangle.uv is not None else None)
         yield {"phase": "validating_geometry", "completed": count+1, "total": len(triangles)}
     pairs = 0
     for offset, (_index, first) in enumerate(targets):
@@ -402,110 +506,144 @@ def projection_steps(prepared, check=lambda: None):
                 raise invalid_argument("Complete selected stencil channel must be finite within [0,1].")
     result, _ = yield from brush.paint_steps(prepared["values"], width, height, [], prepared["role"],
                                             srgb=prepared["srgb"], associated=prepared["associated"], check=check)
-    baseline = array("f", result)
-    owners = array("i", [-1])*(width*height)
+    limits = _limits(prepared)
     projector, strokes = prepared["projector"], prepared["strokes"]
+    stroke_segments = [(stroke, _stroke_segments(stroke, projector)) for stroke in strokes]
     candidates = ray_tests = stroke_tests = visible = occluded = backfacing = 0
+    regions = []
     for triangle_index, triangle in selected:
         minimum = [max(0, math.ceil(min(uv[axis] for uv in triangle.uv)*(width, height)[axis]-.5)) for axis in range(2)]
         maximum = [min((width, height)[axis]-1, math.floor(max(uv[axis] for uv in triangle.uv)*(width, height)[axis]-.5)) for axis in range(2)]
-        normal = _cross(_sub(triangle.world[1], triangle.world[0]), _sub(triangle.world[2], triangle.world[0]))
-        front = _dot(normal, projector["direction"]) < -1e-12
-        for y in range(minimum[1], maximum[1]+1):
-            for x in range(minimum[0], maximum[0]+1):
-                candidates += 1
-                if candidates > MAX_CANDIDATES:
-                    raise invalid_argument("Projection exceeds 2M UV candidate tests; narrow resolution/face scope.")
-                if candidates % 128 == 0:
-                    check()
-                    yield {"phase": "projecting", "completed": candidates, "total": MAX_CANDIDATES}
-                uv = ((x+.5)/width, (y+.5)/height)
-                bary = _bary(uv, triangle.uv)
-                if min(bary) < -1e-10:
-                    continue
-                world = tuple(sum(bary[i]*triangle.world[i][axis] for i in range(3)) for axis in range(3))
-                pixel = y*width+x
-                if owners[pixel] >= 0:
-                    prior = triangles[owners[pixel]]
-                    old_bary = _bary(uv, prior.uv)
-                    old_world = tuple(sum(old_bary[i]*prior.world[i][axis] for i in range(3)) for axis in range(3))
-                    if math.dist(world, old_world) > projector["depth_epsilon"]:
-                        raise invalid_argument("A texel centre maps to distinct surface points on a UV boundary.")
-                    old_normal = _cross(_sub(prior.world[1], prior.world[0]), _sub(prior.world[2], prior.world[0]))
-                    if front != (_dot(old_normal, projector["direction"]) < -1e-12):
-                        raise invalid_argument("UV-boundary samples have ambiguous front-facing classification.")
-                    continue
-                owners[pixel] = triangle_index
-                if not front:
-                    backfacing += 1
-                    continue
-                relative = _sub(world, projector["origin"])
-                u = .5+_dot(relative, projector["right"])/projector["width"]
-                v = .5+_dot(relative, projector["up"])/projector["height"]
-                depth = _dot(relative, projector["direction"])
-                if not (0 <= u <= 1 and 0 <= v <= 1 and projector["near"] <= depth <= projector["far"]):
-                    continue
-                coverages = []
-                for stroke in strokes:
-                    old_stroke_tests = stroke_tests
-                    stroke_tests += max(1, len(stroke["points"])-1)
-                    if stroke_tests > MAX_STROKE_TESTS:
-                        raise invalid_argument("Projection exceeds 2M stroke-segment tests.")
-                    value = _coverage(u, v, stroke, projector)
-                    if stroke_tests//128 != old_stroke_tests//128:
-                        check()
-                        yield {"phase": "stroke_coverage", "completed": stroke_tests, "total": MAX_STROKE_TESTS}
-                    if stencil is not None:
-                        value *= sample_stencil(stencil, u, v)
-                    coverages.append(value)
-                if not any(coverages):
-                    continue
-                origin = tuple(world[axis]-projector["direction"][axis]*(depth-projector["near"]) for axis in range(3))
-                hits = []
-                for other in triangles:
-                    ray_tests += 1
-                    if ray_tests > MAX_RAY_TESTS:
-                        raise invalid_argument("Projection exceeds 2M visibility triangle tests; narrow footprint/occluders.")
-                    if ray_tests % 128 == 0:
-                        check()
-                        yield {"phase": "checking_visibility", "completed": ray_tests, "total": MAX_RAY_TESTS}
-                    distance = ray_triangle(origin, projector["direction"], other)
-                    if distance is not None and distance <= depth-projector["near"]+projector["depth_epsilon"]:
-                        hits.append((distance, other))
-                if not hits:
-                    raise invalid_argument("The projected point has no independently verified surface ray hit.")
-                nearest = min(distance for distance, _ in hits)
-                if nearest < depth-projector["near"]-projector["depth_epsilon"]:
-                    occluded += 1
-                    continue
-                if any(other.object_id != target_id for distance, other in hits if abs(distance-nearest) <= projector["depth_epsilon"]):
-                    raise invalid_argument("Coincident target/occluder visibility is ambiguous.")
-                if any(other is not triangle and (min(bary) > 1e-10 or min(_world_bary(world, other)) > 1e-10)
-                       for distance, other in hits if abs(distance-nearest) <= projector["depth_epsilon"]):
-                    raise invalid_argument("Coincident target triangle interiors have ambiguous visibility.")
-                visible += 1
-                offset = pixel*4
-                for stroke, value in zip(strokes, coverages, strict=True):
-                    color = stroke["color"]
-                    if prepared["role"] == "DATA":
-                        for channel in range(4):
-                            result[offset+channel] = result[offset+channel]*(1-value)+color[channel]*value
-                    elif value:
-                        value *= color[3]
-                        if stroke["blend"] == "ERASE_ALPHA":
-                            result[offset+3] *= 1-value
-                        else:
-                            alpha = value+result[offset+3]*(1-value)
-                            if alpha:
-                                for channel in range(3):
-                                    result[offset+channel] = (color[channel]*value+result[offset+channel]*result[offset+3]*(1-value))/alpha
-                            result[offset+3] = alpha
+        normal = _cross(_sub3(triangle.world[1], triangle.world[0]), _sub3(triangle.world[2], triangle.world[0]))
+        regions.append((triangle_index, triangle, minimum, maximum, _dot3(normal, projector["direction"]) < -1e-12))
+    max_owners_bytes = 0
+    tile_size = brush.TILE_SIZE
+    total_tiles = math.ceil(width / tile_size) * math.ceil(height / tile_size)
+    for ty in range(0, height, tile_size):
+        for tx in range(0, width, tile_size):
+            check()
+            yield {"phase": "raster_tiles", "completed": (ty // tile_size)*math.ceil(width / tile_size)+tx // tile_size,
+                   "total": total_tiles}
+            tw, th = min(tile_size, width-tx), min(tile_size, height-ty)
+            relevant = [row for row in regions if row[2][0] <= tx+tw-1 and row[3][0] >= tx
+                        and row[2][1] <= ty+th-1 and row[3][1] >= ty]
+            if not relevant:
+                continue
+            # Every triangle that can own this texel participates in its tile,
+            # retaining the complete UV-boundary proof and original native order.
+            owners = array("i", [-1]) * (tw * th)
+            max_owners_bytes = max(max_owners_bytes, len(owners) * owners.itemsize)
+            for triangle_index, triangle, minimum, maximum, front in relevant:
+                terms = uv_terms[triangle_index]
+                for y in range(max(ty, minimum[1]), min(ty+th-1, maximum[1])+1):
+                    for x in range(max(tx, minimum[0]), min(tx+tw-1, maximum[0])+1):
+                        candidates += 1
+                        if candidates > limits.candidates:
+                            raise invalid_argument(f"Projection exceeds {limits.candidates:,} UV candidate tests; narrow face scope or split the work.", limit=limits.candidates, observed=candidates)
+                        if candidates % 128 == 0:
+                            check()
+                            yield {"phase": "projecting", "completed": candidates, "total": limits.candidates}
+                        uv = ((x+.5)/width, (y+.5)/height)
+                        bary = _bary_prepared(uv, terms)
+                        if min(bary) < -1e-10:
+                            continue
+                        world = _world_point(bary, triangle.world)
+                        pixel = y*width+x
+                        owner_index = (y-ty)*tw+x-tx
+                        if owners[owner_index] >= 0:
+                            prior = triangles[owners[owner_index]]
+                            old_bary = _bary_prepared(uv, uv_terms[owners[owner_index]])
+                            old_world = _world_point(old_bary, prior.world)
+                            if math.dist(world, old_world) > projector["depth_epsilon"]:
+                                raise invalid_argument("A texel centre maps to distinct surface points on a UV boundary.")
+                            old_normal = _cross(_sub3(prior.world[1], prior.world[0]), _sub3(prior.world[2], prior.world[0]))
+                            if front != (_dot3(old_normal, projector["direction"]) < -1e-12):
+                                raise invalid_argument("UV-boundary samples have ambiguous front-facing classification.")
+                            continue
+                        owners[owner_index] = triangle_index
+                        if not front:
+                            backfacing += 1
+                            continue
+                        relative = _sub3(world, projector["origin"])
+                        u = .5+_dot3(relative, projector["right"])/projector["width"]
+                        v = .5+_dot3(relative, projector["up"])/projector["height"]
+                        depth = _dot3(relative, projector["direction"])
+                        if not (0 <= u <= 1 and 0 <= v <= 1 and projector["near"] <= depth <= projector["far"]):
+                            continue
+                        coverages = []
+                        for stroke, segments in stroke_segments:
+                            old_stroke_tests = stroke_tests
+                            stroke_tests += max(1, len(stroke["points"])-1)
+                            if stroke_tests > limits.segments:
+                                raise invalid_argument(f"Projection exceeds {limits.segments:,} stroke-segment tests.", limit=limits.segments, observed=stroke_tests)
+                            value = _coverage_prepared(u, v, stroke, projector, segments)
+                            if stroke_tests//128 != old_stroke_tests//128:
+                                check()
+                                yield {"phase": "stroke_coverage", "completed": stroke_tests, "total": limits.segments}
+                            if stencil is not None:
+                                value *= sample_stencil(stencil, u, v)
+                            coverages.append(value)
+                        if not any(coverages):
+                            continue
+                        origin = tuple(world[axis]-projector["direction"][axis]*(depth-projector["near"]) for axis in range(3))
+                        hits = []
+                        for other in triangles:
+                            ray_tests += 1
+                            if ray_tests > limits.rays:
+                                raise invalid_argument(f"Projection exceeds {limits.rays:,} visibility triangle tests; narrow footprint/occluders.", limit=limits.rays, observed=ray_tests)
+                            if ray_tests % 128 == 0:
+                                check()
+                                yield {"phase": "checking_visibility", "completed": ray_tests, "total": limits.rays}
+                            distance = ray_triangle(origin, projector["direction"], other)
+                            if distance is not None and distance <= depth-projector["near"]+projector["depth_epsilon"]:
+                                hits.append((distance, other))
+                        if not hits:
+                            raise invalid_argument("The projected point has no independently verified surface ray hit.")
+                        nearest = min(distance for distance, _ in hits)
+                        if nearest < depth-projector["near"]-projector["depth_epsilon"]:
+                            occluded += 1
+                            continue
+                        if any(other.object_id != target_id for distance, other in hits if abs(distance-nearest) <= projector["depth_epsilon"]):
+                            raise invalid_argument("Coincident target/occluder visibility is ambiguous.")
+                        if any(other is not triangle and (min(bary) > 1e-10 or min(_world_bary(world, other)) > 1e-10)
+                               for distance, other in hits if abs(distance-nearest) <= projector["depth_epsilon"]):
+                            raise invalid_argument("Coincident target triangle interiors have ambiguous visibility.")
+                        visible += 1
+                        offset = pixel*4
+                        for stroke, value in zip(strokes, coverages, strict=True):
+                            color = stroke["color"]
+                            if prepared["role"] == "DATA":
+                                for channel in range(4):
+                                    result[offset+channel] = result[offset+channel]*(1-value)+color[channel]*value
+                            elif value:
+                                value *= color[3]
+                                if stroke["blend"] == "ERASE_ALPHA":
+                                    result[offset+3] *= 1-value
+                                else:
+                                    alpha = value+result[offset+3]*(1-value)
+                                    if alpha:
+                                        for channel in range(3):
+                                            result[offset+channel] = (color[channel]*value+result[offset+channel]*result[offset+3]*(1-value))/alpha
+                                    result[offset+3] = alpha
+            del owners  # Release before the next tile's allocation, not after it.
     changed, examples = 0, []
+    baseline_rgb = array("f", [0., 0., 0.])
     for pixel in range(width*height):
         if pixel % 256 == 0:
             check()
             yield {"phase": "comparing", "completed": pixel, "total": width*height}
-        if any(result[pixel*4+channel] != baseline[pixel*4+channel] for channel in range(4)):
+        offset = pixel * 4
+        if prepared["srgb"] or prepared["associated"]:
+            alpha = prepared["values"][offset+3]
+            for channel in range(3):
+                value = prepared["values"][offset+channel]
+                baseline_rgb[channel] = (brush.srgb_to_linear(value) if prepared["srgb"]
+                                         else value / alpha if alpha else 0.)
+            differs = (any(result[offset+channel] != baseline_rgb[channel] for channel in range(3))
+                       or result[offset+3] != alpha)
+        else:
+            differs = any(result[offset+channel] != prepared["values"][offset+channel] for channel in range(4))
+        if differs:
             changed += 1
             if len(examples) < 64:
                 examples.append([pixel % width, pixel//width])
@@ -515,8 +653,8 @@ def projection_steps(prepared, check=lambda: None):
                     "visible_painted_candidates": visible, "occluded_candidates": occluded, "backfacing_candidates": backfacing,
                     "uv_overlap_pairs_checked": pairs, "shared_uv_boundary_samples_deduplicated": True,
                     "source_srgb_converted_to_linear": prepared["srgb"], "source_associated_converted_to_straight": prepared["associated"],
-                    "private_pixel_buffers_peak_estimate_bytes": 3*len(result)*result.itemsize+len(owners)*owners.itemsize+(len(stencil["values"])*4 if stencil else 0),
-                    "estimate_excludes": "Geometry/plan Python objects, input readbacks, Blender/native/GPU/undo/file buffers and allocator overhead"}
+                    **workload(prepared), "ownership_scratch_max_bytes": max_owners_bytes,
+                    "comparison_pixels": width*height}
 
 
 def _commit_context(context, prepared, job=None):
@@ -646,4 +784,4 @@ def register_tools(registry):
                       description="Project bounded orthographic world strokes/raw stencils through explicit opaque geometry into a NEW UV image, preserving source/geometry; verify pixels and appearance.")
     registry.register("image.paint_surface_job_start", paint_surface_job_start, toolset="materials", modifies=True, permissions=REQUIRED,
                       automatic_checkpoint=False, batchable=False,
-                      description="Freeze bounded surface-paint inputs, then yield private overlap/projection/visibility/stencil work in the existing image job lifecycle; poll final pixel/recovery evidence.")
+                      description="Accept source/stencil buffers up to 4096 square for bounded orthographic surface painting; poll cooperative job progress and final pixel/recovery evidence. Native 4K deadline/memory qualification requires direct evidence.")

@@ -110,6 +110,8 @@ def bounded_recovery_evidence(value: Any) -> dict[str, Any] | None:
         return _bounded_scene_recovery(value)
     if value.get("kind") == "weight_mutation":
         return _bounded_weight_recovery(value)
+    if value.get("kind") == "uv_mutation":
+        return _bounded_uv_recovery(value)
     result: dict[str, Any] = {}
     mode = value.get("mode")
     if isinstance(mode, str) and mode in {"CURRENT_PIXELS_SNAPSHOT", "LOADED_BUFFER", "PACKED_RECONSTRUCTION"}:
@@ -183,6 +185,74 @@ def _bounded_weight_recovery(value: Mapping[str, Any]) -> dict[str, Any] | None:
             return None
     if (result["owned_membership_verified"] > result["owned_membership_attempts"]
             or result["restored_memberships"] > result["restoration_attempts"]
+            or result["native_update_verified"] > result["native_update_attempts"]
+            or (result["state_known"] != (result["observed_sha256"] is not None))):
+        return None
+    if result["rollback_verified"] and (
+            not result["state_known"] or result["observed_sha256"] != result["before_sha256"]
+            or result["retained_partial"] or refused is not None):
+        return None
+    return result
+
+
+def _bounded_uv_recovery(value: Any) -> dict[str, Any] | None:
+    """Copy scalar UV recovery facts, never native handles or restore authority."""
+    if (type(value) is not dict or len(value) > 64
+            or any(type(key) is not str for key in value)):
+        return None
+    if (type(value.get("kind")) is not str or value["kind"] != "uv_mutation"
+            or "observed_sha256" not in value or "restoration_refused" not in value):
+        return None
+    method, stage = value.get("method"), value.get("stage")
+    if (type(method) is not str or method not in {"uv.coordinates_set", "uv.transform", "uv.pin"}
+            or type(stage) is not str or stage not in {
+                "PREPARED", "FIELD_WRITE", "UPDATE", "RESTORE", "COMPLETE", "FAILED"}):
+        return None
+    result: dict[str, Any] = {"kind": "uv_mutation", "method": method, "stage": stage}
+    for key in ("object_name", "uv_layer"):
+        field = value.get(key)
+        if type(field) is not str or not field or len(field) > 63 or any(ord(c) < 32 for c in field):
+            return None
+        try:
+            if len(field.encode("utf-8")) > 63:
+                return None
+        except UnicodeError:
+            return None
+        result[key] = field
+    for key in ("object_session_uid", "mesh_session_uid", "object_pointer", "mesh_pointer"):
+        field = value.get(key)
+        if type(field) is not int or not 1 <= field <= 2**64 - 1:
+            return None
+        result[key] = field
+    for key in ("execution_started", "possible_mutation", "rollback_verified", "verification_required",
+                "state_known", "retained_partial"):
+        field = value.get(key)
+        if type(field) is not bool:
+            return None
+        result[key] = field
+    for key, maximum in (("owned_field_attempts", 4096), ("owned_field_verified", 4096),
+                         ("restoration_attempts", 4096), ("restored_fields", 4096),
+                         ("native_update_attempts", 2), ("native_update_verified", 2)):
+        field = value.get(key)
+        if type(field) is not int or not 0 <= field <= maximum:
+            return None
+        result[key] = field
+    refused = value.get("restoration_refused")
+    if refused is not None and (type(refused) is not str or refused not in {
+            "AUTHORITY_LOST", "STATE_CHANGED", "UNKNOWN_WRITE_RESULT", "INVALID_NATIVE_SCOPE",
+            "SESSION_INVALIDATED"}):
+        return None
+    result["restoration_refused"] = refused
+    for key in ("before_sha256", "expected_sha256", "observed_sha256"):
+        field = value.get(key)
+        if field is None and key == "observed_sha256":
+            result[key] = None
+        elif type(field) is str and len(field) == 64 and all(c in "0123456789abcdef" for c in field):
+            result[key] = field
+        else:
+            return None
+    if (result["owned_field_verified"] > result["owned_field_attempts"]
+            or result["restored_fields"] > result["restoration_attempts"]
             or result["native_update_verified"] > result["native_update_attempts"]
             or (result["state_known"] != (result["observed_sha256"] is not None))):
         return None

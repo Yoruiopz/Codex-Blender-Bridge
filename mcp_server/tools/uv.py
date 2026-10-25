@@ -14,9 +14,9 @@ from ._common import MCPToolBinding, params
 TOOL_DATA: tuple[tuple[str, str, bool], ...] = (
     ("uv.analyze", "Measure bounded triangulated UV overlap/winding, pixel anisotropy and world-unit texel density, with explicit completeness.", False),
     ("uv.capture_layout", "Capture a bounded UV-coordinate PNG without scene/UI/render changes; not a quality verdict.", False),
-    ("uv.coordinates_set", "Set exact face-corner UV coordinates within a validated face selection reference.", True),
-    ("uv.transform", "Transform selected-face UV corners using explicit pivot, scale, rotation and offset; respect pins by default.", True),
-    ("uv.pin", "Pin or unpin selected-face UV corners without changing their coordinates.", True),
+    ("uv.coordinates_set", "Set explicit face-corner UVs within a validated face reference. Bounded standalone local Edit Mode admission and exact before/after checks; inspect reported partial state after failure.", True),
+    ("uv.transform", "Scale scoped UVs about a pivot, rotate, then offset; respect pins by default. Bounded standalone local Edit Mode admission and exact before/after checks; inspect partial failures.", True),
+    ("uv.pin", "Pin or unpin scoped UV corners while preserving coordinates. Bounded standalone local Edit Mode admission and exact before/after checks; inspect reported partial state after failure.", True),
     ("uv.layer_create", "Create a zero UV layer or copy UVs/pins in Object Mode; copy per-layer selection where available, otherwise preserve mesh-global selection.", True),
     ("uv.layer_rename", "Rename an Object Mode UV layer; named consumers are not rewritten.", True),
     ("uv.layer_activate", "Activate an Object Mode UV layer and optionally make it the render/clone layer.", True),
@@ -88,7 +88,7 @@ class UVTools:
     async def uv_coordinates_set(
         self, object_name: str, uv_layer: str, selection_id: str, updates: list[UVCoordinateUpdate],
     ) -> Any:
-        """Set 1-20,000 unique face/corner UVs on one local single-user active Edit Mode mesh. Requires a face selection reference; indices outside it are rejected before mutation. Coordinates are finite within +/-1e6, explicitly editable even when pinned. Preserves pins, selection and other layers; reinspect afterwards."""
+        """Set explicit unique face/corner UVs within a validated face selection reference; corners outside it are refused. Coordinates remain explicitly editable when pinned. Standalone calls require an admitted local single-user active Edit Mode mesh. Live authority and exact retained before/after checks guard edits while preserving pins, selection and other layers. Unsupported state is refused; interruption or failure can leave reported partial state. Reinspect before retrying."""
         return await self.registry.call("uv.coordinates_set", params(
             object_name=object_name, uv_layer=uv_layer, selection_id=selection_id, updates=updates,
         ))
@@ -99,7 +99,7 @@ class UVTools:
         pivot: list[StrictFloat] | None = None, rotation: StrictFloat = 0.0, respect_pins: StrictBool = True,
         corners: list[UVCorner] | None = None,
     ) -> Any:
-        """Transform selected/referenced-face UVs on one local single-user active Edit Mode mesh. Optional exact corners require a face selection_id. Scale about explicit pivot (default origin), rotate counterclockwise in radians, then offset. Two-component vectors default to zero offset/pivot and unit scale. Skip pinned corners by default. No implicit island/UV-editor selection, packing or layer activation."""
+        """Transform selected/referenced-face UVs; optional exact corners require a face selection_id. Scale about explicit pivot (default origin), rotate counterclockwise in radians, then offset; defaults are zero offset/pivot and unit scale. Skip pinned corners by default. Standalone calls require an admitted local single-user active Edit Mode mesh with live authority and exact retained before/after checks, preserving selection and other layers. Unsupported state is refused; interruption or failure can leave reported partial state. Reinspect before retrying. Scope comes from faces, never implicit UV-editor selection."""
         return await self.registry.call("uv.transform", params(
             object_name=object_name, uv_layer=uv_layer, selection_id=selection_id,
             offset=offset, scale=scale, pivot=pivot, rotation=rotation, respect_pins=respect_pins,
@@ -110,7 +110,7 @@ class UVTools:
         self, object_name: str, uv_layer: str, pinned: StrictBool = True, selection_id: str | None = None,
         corners: list[UVCorner] | None = None,
     ) -> Any:
-        """Pin/unpin selected/referenced-face UVs on one local single-user active Edit Mode mesh; preserve coordinates, selection and other layers. Optional exact corners require a face selection_id and allow individual anchors. Never infer scope from UV-editor selection."""
+        """Pin/unpin selected/referenced-face UV corners while preserving coordinates, selection and other layers. Optional exact corners require a face selection_id and allow individual anchors; never infer scope from UV-editor selection. Standalone calls require an admitted local single-user active Edit Mode mesh with live authority and exact retained before/after checks. Unsupported state is refused; interruption or failure can leave reported partial state. Reinspect before retrying."""
         return await self.registry.call("uv.pin", params(
             object_name=object_name, uv_layer=uv_layer, pinned=pinned, selection_id=selection_id,
             corners=corners,

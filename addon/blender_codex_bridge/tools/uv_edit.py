@@ -2,18 +2,15 @@
 
 from __future__ import annotations
 
-import logging
-import math
 import struct
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
 from typing import Any
 
 from ..errors import BridgeError, ErrorCode, invalid_argument
 from ..permissions import Permission
 from ..selection import validate_selection_reference
 from ..tool_registry import ToolContext, ToolRegistry
-from ..utils import bool_param, float_param, int_param, reject_unknown_params
+from ..utils import float_param, int_param
 from ._mesh_safety import require_local_single_user_mesh
 from .interaction import _active_edit_mesh
 from .mesh import _id_name
@@ -25,15 +22,6 @@ except ImportError:  # pragma: no cover
 
 MAX_CORNERS = 20_000
 MAX_UV = 1_000_000.0
-
-
-@dataclass(frozen=True)
-class CornerEdit:
-    face_index: int
-    corner_index: int
-    loop: Any
-    uv: tuple[float, float] | None = None
-    pinned: bool | None = None
 
 
 def _pair(value: Any, parameter: str) -> tuple[float, float]:
@@ -96,131 +84,28 @@ def _corners(params: Mapping[str, Any], faces: list[Any]) -> list[tuple[Any, int
     return resolved
 
 
-def _same_uv(first: Sequence[float], second: Sequence[float]) -> bool:
-    return all(a == b or (math.isnan(a) and math.isnan(b)) for a, b in zip(first, second, strict=True))
-
-
-def _apply(context: ToolContext, obj: Any, layer: Any, edits: list[CornerEdit]) -> dict[str, Any]:
-    before = [(edit, tuple(edit.loop[layer].uv), bool(edit.loop[layer].pin_uv)) for edit in edits]
-    changed_uv = sum(edit.uv is not None and not _same_uv(edit.uv, uv) for edit, uv, _ in before)
-    changed_pin = sum(edit.pinned is not None and edit.pinned != pin for edit, _, pin in before)
-    _check(context)
-    if changed_uv or changed_pin:
-        try:
-            for index, (edit, _uv, _pin) in enumerate(before):
-                if index % 256 == 0:
-                    _check(context)
-                if edit.uv is not None:
-                    edit.loop[layer].uv = edit.uv
-                if edit.pinned is not None:
-                    edit.loop[layer].pin_uv = edit.pinned
-            bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
-            _check(context)
-            if any((edit.uv is not None and not _same_uv(edit.loop[layer].uv, edit.uv))
-                   or (edit.pinned is not None and bool(edit.loop[layer].pin_uv) != edit.pinned)
-                   for edit in edits):
-                raise RuntimeError("UV postcondition mismatch")
-        except Exception as error:
-            logging.getLogger(__name__).exception("UV authoring failed on %s", obj.name)
-            restored = False
-            try:
-                for edit, uv, pin in before:
-                    edit.loop[layer].uv = uv
-                    edit.loop[layer].pin_uv = pin
-                bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
-                restored = all(_same_uv(edit.loop[layer].uv, uv) and bool(edit.loop[layer].pin_uv) == pin
-                               for edit, uv, pin in before)
-            except Exception:
-                logging.getLogger(__name__).exception("UV local rollback failed on %s", obj.name)
-            raise BridgeError(
-                error.code if isinstance(error, BridgeError) else ErrorCode.OPERATION_FAILED,
-                "UV authoring failed; inspect the operation and its recovery evidence.",
-                {"object": obj.name, "affected_objects": [obj.name], "uv_layer": layer.name,
-                 "execution_started": True, "verification_required": True, "rollback_verified": restored},
-            ) from error
-    coordinates = [tuple(edit.loop[layer].uv) for edit in edits]
-    finite = all(math.isfinite(value) for uv in coordinates for value in uv)
-    return {
-        "object": obj.name, "affected_objects": [obj.name], "uv_layer": layer.name,
-        "changed": bool(changed_uv or changed_pin), "coordinate_changes": changed_uv, "pin_changes": changed_pin,
-        "target_corners": len(edits), "pinned_corners_after": sum(bool(edit.loop[layer].pin_uv) for edit in edits),
-        "bounds_scope": "target_corners", "bounds_after": {
-            "min": [min(uv[i] for uv in coordinates) for i in range(2)],
-            "max": [max(uv[i] for uv in coordinates) for i in range(2)],
-        } if coordinates and finite else None,
-        "corners": [{"face_index": edit.face_index, "corner_index": edit.corner_index} for edit in edits[:64]],
-        "corners_truncated": len(edits) > 64, "selection_changed": False, "topology_changed": False,
-        "active_layer_changed": False, "verification_required": True,
-        "warnings": [] if finite else ["Some targeted UV coordinates are non-finite; use coordinates_set to repair them."],
-    }
-
-
 def coordinates_set(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
-    reject_unknown_params(params, {"object_name", "uv_layer", "selection_id", "updates"})
-    updates = params.get("updates")
-    if not isinstance(updates, list) or not 1 <= len(updates) <= MAX_CORNERS:
-        raise invalid_argument("'updates' must contain 1-20,000 face/corner/UV records.")
-    prepared = []
-    seen = set()
-    for update in updates:
-        if not isinstance(update, Mapping) or set(update) != {"face_index", "corner_index", "uv"}:
-            raise invalid_argument("Each update requires exactly face_index, corner_index and uv.")
-        face = int_param(update, "face_index", 0, minimum=0, maximum=200_000)
-        corner = int_param(update, "corner_index", 0, minimum=0, maximum=200_000)
-        key = (face, corner)
-        if key in seen:
-            raise invalid_argument("A face corner may appear only once per coordinate edit.")
-        seen.add(key)
-        prepared.append((face, corner, _pair(update["uv"], "uv")))
-    obj, _bm, layer, faces = _scope(params, require_reference=True)
-    scoped = {face.index: face for face in faces}
-    edits = []
-    for face_index, corner_index, uv in prepared:
-        face = scoped.get(face_index)
-        if face is None or corner_index >= len(face.loops):
-            raise BridgeError(ErrorCode.INVALID_SELECTION, "A coordinate update is outside the referenced face/corner scope.")
-        edits.append(CornerEdit(face_index, corner_index, face.loops[corner_index], uv=uv))
-    return _apply(context, obj, layer, edits)
+    from ..uv_edit_guard import current
+    return current(context, "uv.coordinates_set", params).execute()
 
 
 def transform(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
-    reject_unknown_params(params, {"object_name", "uv_layer", "selection_id", "corners", "offset", "scale", "pivot", "rotation", "respect_pins"})
-    offset = _pair(params.get("offset", [0, 0]), "offset")
-    scale = _pair(params.get("scale", [1, 1]), "scale")
-    pivot = _pair(params.get("pivot", [0, 0]), "pivot")
-    rotation = float_param(params, "rotation", 0, minimum=-math.tau * 1_000, maximum=math.tau * 1_000)
-    respect_pins = bool_param(params, "respect_pins", True)
-    obj, _bm, layer, faces = _scope(params, require_reference=params.get("corners") is not None)
-    edits = []
-    skipped = 0
-    cosine, sine = math.cos(rotation), math.sin(rotation)
-    for face, index, loop in _corners(params, faces):
-        if respect_pins and loop[layer].pin_uv:
-            skipped += 1
-            continue
-        uv = _pair(tuple(loop[layer].uv), "existing_uv")
-        x, y = (uv[0] - pivot[0]) * scale[0], (uv[1] - pivot[1]) * scale[1]
-        target = _pair([pivot[0] + offset[0] + cosine * x - sine * y,
-                        pivot[1] + offset[1] + sine * x + cosine * y], "transformed_uv")
-        edits.append(CornerEdit(face.index, index, loop, uv=target))
-    result = _apply(context, obj, layer, edits)
-    result["skipped_pinned_corners"] = skipped
-    result["transform_order"] = "pivot-relative scale, counterclockwise rotation (radians), then offset"
-    return result
+    from ..uv_edit_guard import current
+    return current(context, "uv.transform", params).execute()
 
 
 def pin(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
-    reject_unknown_params(params, {"object_name", "uv_layer", "selection_id", "corners", "pinned"})
-    pinned = bool_param(params, "pinned", True)
-    obj, _bm, layer, faces = _scope(params, require_reference=params.get("corners") is not None)
-    return _apply(context, obj, layer, [CornerEdit(face.index, index, loop, pinned=pinned)
-        for face, index, loop in _corners(params, faces)])
+    from ..uv_edit_guard import current
+    return current(context, "uv.pin", params).execute()
 
 
 def register_tools(registry: ToolRegistry) -> None:
+    from ..uv_edit_guard import factory
     for name, handler, description in (
         ("uv.coordinates_set", coordinates_set, "Set exact face-corner UVs within a validated face selection reference."),
         ("uv.transform", transform, "Transform selected-face UV corners by explicit pivot, scale, rotation and offset; respect pins by default."),
         ("uv.pin", pin, "Pin or unpin UV corners of selected faces without changing their coordinates."),
     ):
-        registry.register(name, handler, permissions=(Permission.EDIT_MESH,), toolset="uv", modifies=True, description=description)
+        registry.register(name, handler, permissions=(Permission.EDIT_MESH,), toolset="uv", modifies=True,
+                          description=description, checkpoint_admission_factory=lambda context, params, method=name:
+                          factory(method, context, params), exclusive_mutation=True)

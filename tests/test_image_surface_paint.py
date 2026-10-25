@@ -6,7 +6,10 @@ import asyncio
 import copy
 import importlib
 import math
+import struct
+import weakref
 from array import array
+from dataclasses import replace
 from types import SimpleNamespace as NS
 
 import pytest
@@ -45,6 +48,144 @@ def consume(work):
             phases.append(next(work)["phase"])
         except StopIteration as done:
             return done.value, phases
+
+
+@pytest.mark.parametrize("a,b", [
+    ((-0., 0., -0.), (1., -1., 1.)),
+    ((1e8, 1., -1e8), (1e8, 1., 1e8)),
+    ((.1, -.2, .3), (.7, .8, -.9)),
+    ((1e-9, -1e9, 1e-6), (-1e9, 1e-9, -.125)),
+])
+def test_fixed_vector_math_preserves_builtin_sum_bits_and_default_start(surface, a, b):
+    assert struct.pack("<d", surface._dot3(a, b)) == struct.pack("<d", surface._dot(a, b))
+    assert struct.pack("<3d", *surface._sub3(a, b)) == struct.pack("<3d", *surface._sub(a, b))
+    world = (a, b, (-b[0], -a[1], -0.))
+    for bary in ((.1, .2, .7), (1., -0., 0.), (.5, .5, -1e-10)):
+        expected = tuple(sum(bary[i]*world[i][axis] for i in range(3)) for axis in range(3))
+        assert struct.pack("<3d", *surface._world_point(bary, world)) == struct.pack("<3d", *expected)
+
+
+@pytest.mark.parametrize("uv", [
+    ((-0., 0.), (1., -0.), (1., 1.)),
+    ((0., 0.), (1., 1.), (-0., 1.)),
+    ((1., 1.), (1., -0.), (0., 0.)),
+    ((-.1234567, .7654321), (.9876543, -.3456789), (.4567891, .8912345)),
+    ((-1000.25, 2000.5), (3000.125, -4000.25), (999.75, 1333.125)),
+])
+def test_cached_uv_terms_preserve_full_float64_barycentric_bits(surface, uv):
+    terms = surface._uv_terms(uv)
+    for point in (*uv, (-0., 0.), (.5, .5), (.1, .9), (1e-13, -1e-13), (1.+1e-13, 1.-1e-13)):
+        actual = surface._bary_prepared(point, terms)
+        expected = surface._bary(point, uv)
+        assert struct.pack("<3d", *actual) == struct.pack("<3d", *expected)
+
+
+@pytest.mark.parametrize("points", [
+    [[.5, .5]],
+    [[-0., 0.], [.2, .8], [.2, .8], [1., 1.]],
+    [[(index % 2)*.75, ((index*7) % 13)/13] for index in range(128)],
+])
+@pytest.mark.parametrize("hardness", [0., .371, 1.])
+def test_cached_stroke_segments_preserve_complete_coverage_float64_bits(surface, points, hardness):
+    stroke = surface._strokes([{**STROKE, "points": points, "hardness": hardness,
+                                "opacity": .123456789, "radius_world": .421357}])[0]
+    for width, height in ((2., 2.), (1.234567, 7.654321)):
+        projector = {"width": width, "height": height}
+        segments = surface._stroke_segments(stroke, projector)
+        assert len(segments) == max(1, len(points)-1)
+        for u, v in ((-0., 0.), (.5, .5), (.1, .9), (.25, .125), (1., 1.), (1e-13, 1.-1e-13)):
+            actual = surface._coverage_prepared(u, v, stroke, projector, segments)
+            expected = surface._coverage(u, v, stroke, projector)
+            assert struct.pack("<d", actual) == struct.pack("<d", expected)
+
+
+@pytest.mark.parametrize("case", [
+    "plain", "stencil", "inverted_stencil", "polyline", "single_point", "edge_ambiguity",
+    "uv_overlap", "coincident_occluder", "occluded", "backfacing", "signed_zero",
+    "srgb", "associated", "zero_alpha", "degenerate_uv", "degenerate_world",
+    "candidate_limit", "ray_limit", "segment_limit", "invalid_stencil",
+])
+def test_cached_projection_preserves_full_pixels_refusals_and_safe_point_sequence(surface, monkeypatch, case):
+    prepared = frozen(surface, width=65, height=3)
+    prepared["strokes"] = surface._strokes([{**STROKE, "points": [[.2, .4], [.8, .6]],
+                                            "radius_world": .431357, "hardness": .37, "opacity": .37}])
+    if case in {"stencil", "inverted_stencil", "invalid_stencil"}:
+        channel = array("f", [0., .2, .4, .6, .8, 1.])
+        if case == "invalid_stencil":
+            channel[-1] = float("nan")
+        prepared["mask"] = {"kernel": {"width": 3, "height": 2, "values": channel,
+                                       "invert": case == "inverted_stencil"}}
+    if case == "polyline":
+        prepared["strokes"] = surface._strokes([
+            {**STROKE, "points": [[.1, .1], [.3, .7], [.3, .7], [.9, .9]], "opacity": .7},
+            {**STROKE, "points": [[.8, .2]], "hardness": 0., "opacity": .3},
+        ])
+    if case == "single_point":
+        prepared["strokes"] = surface._strokes([STROKE])
+    if case == "edge_ambiguity":
+        split = 32.5/65
+        triangles = []
+        for left, right, depth in ((0., split, 0.), (split, 1., .1)):
+            uv = ((left, 0.), (right, 0.), (right, 1.), (left, 1.))
+            world = tuple((2*u-1, 2*v-1, depth) for u, v in uv)
+            for a, b, c in ((0, 1, 2), (0, 2, 3)):
+                triangles.append(surface.Triangle(1, 0, (world[a], world[b], world[c]), (uv[a], uv[b], uv[c])))
+        prepared["triangles"] = triangles
+        prepared["strokes"][0]["opacity"] = 0.  # Whole ownership proof still applies outside paint.
+    if case == "uv_overlap":
+        prepared["triangles"].append(replace(prepared["triangles"][0], face=7))
+    if case in {"coincident_occluder", "occluded"}:
+        depth = 0. if case == "coincident_occluder" else .5
+        for triangle in list(prepared["triangles"]):
+            prepared["triangles"].append(surface.Triangle(9, 0, tuple((x, y, z+depth) for x, y, z in triangle.world), None))
+    if case == "backfacing":
+        prepared["triangles"] = [replace(t, world=(t.world[0], t.world[2], t.world[1]), uv=(t.uv[0], t.uv[2], t.uv[1]))
+                                 for t in prepared["triangles"]]
+    if case == "signed_zero":
+        prepared["values"] = array("f", [-0., 0., -0., 1.])*(65*3)
+        prepared["triangles"] = [replace(t, world=tuple((x, y, -0.) for x, y, _z in t.world)) for t in prepared["triangles"]]
+        prepared["strokes"][0]["opacity"] = 0.
+    if case in {"srgb", "associated", "zero_alpha"}:
+        rgba = [.5, .25, 1., .5] if case == "srgb" else [.1, .2, .3, .5] if case == "associated" else [0., 0., 0., 0.]
+        prepared.update(role="COLOR", srgb=case == "srgb", associated=case != "srgb", values=array("f", rgba)*(65*3))
+        prepared["strokes"] = surface._strokes([{**STROKE, "color": [2., .2, .7, .37],
+                                                "blend": "ERASE_ALPHA" if case == "zero_alpha" else "MIX"}])
+    if case == "degenerate_uv":
+        prepared["triangles"][0] = replace(prepared["triangles"][0], uv=((0., 0.),)*3)
+    if case == "degenerate_world":
+        prepared["triangles"][0] = replace(prepared["triangles"][0], world=((0., 0., 0.), (1., 1., 1.), (2., 2., 2.)))
+    if case in {"candidate_limit", "ray_limit", "segment_limit"}:
+        field = {"candidate_limit": "candidates", "ray_limit": "rays", "segment_limit": "segments"}[case]
+        prepared["strokes"][0]["radius"] = 3.
+        prepared["limits"] = replace(surface._limits(), **{field: 1})
+
+    def run(data):
+        checks, progress, before = [], [], data["values"].tobytes()
+        work = surface.projection_steps(data, lambda: checks.append(True))
+        try:
+            while True:
+                progress.append(next(work))
+        except StopIteration as finished:
+            values, evidence = finished.value
+            outcome = ("result", values.tobytes(), evidence)
+        except surface.BridgeError as error:
+            outcome = ("error", error.code, error.message, error.context)
+        assert data["values"].tobytes() == before
+        return outcome, progress, len(checks), data.get("tests")
+
+    optimized = run(copy.deepcopy(prepared))
+    with monkeypatch.context() as reference:
+        reference.setattr(surface, "_sub3", surface._sub)
+        reference.setattr(surface, "_dot3", surface._dot)
+        reference.setattr(surface, "_world_point", lambda bary, world: tuple(
+            sum(bary[i]*world[i][axis] for i in range(3)) for axis in range(3)))
+        reference.setattr(surface, "_uv_terms", lambda uv: uv)
+        reference.setattr(surface, "_bary_prepared", surface._bary)
+        reference.setattr(surface, "_stroke_segments", lambda _stroke, _projector: None)
+        reference.setattr(surface, "_coverage_prepared", lambda u, v, stroke, projector, _segments:
+                          surface._coverage(u, v, stroke, projector))
+        expected = run(copy.deepcopy(prepared))
+    assert optimized == expected
 
 
 def parameters(**extra):
@@ -179,8 +320,9 @@ def test_work_budgets_fail_before_publication_and_preserve_input(surface, monkey
     prepared = frozen(surface)
     prepared["strokes"][0]["radius"] = 3.
     monkeypatch.setattr(surface, bound, 1)
-    with pytest.raises(surface.BridgeError, match="2M"):
+    with pytest.raises(surface.BridgeError, match="Projection exceeds 1 ") as caught:
         consume(surface.projection_steps(prepared))
+    assert caught.value.context == {"limit": 1, "observed": 2}
     assert prepared["values"] == array("f", [0., 0., 0., 1.])*64
 
 
@@ -500,3 +642,201 @@ def test_surface_schema_is_strict_and_mcp_routes_only_reviewed_method():
             OrthographicProjector.model_validate({**PROJECTOR, **change})
     with pytest.raises(ValidationError):
         SurfaceStroke.model_validate({**STROKE, "radius_world": True})
+
+
+@pytest.mark.parametrize("size", [63, 64, 65, 129])
+def test_tiled_projection_matches_complete_independent_disk_at_tile_edges(surface, size):
+    prepared = frozen(surface, width=size, height=size)
+    prepared["strokes"][0]["radius"] = .61327
+    source = prepared["values"].tobytes()
+    (actual, evidence), _phases = consume(surface.projection_steps(prepared))
+    expected, examples = array("f"), []
+    for y in range(size):
+        for x in range(size):
+            inside = math.hypot(-1+2*(x+.5)/size, -1+2*(y+.5)/size) < .61327
+            expected.extend([1., .25, .5, 1.] if inside else [0., 0., 0., 1.])
+            if inside:
+                examples.append([x, y])
+    assert actual.tobytes() == expected.tobytes()
+    assert prepared["values"].tobytes() == source
+    assert evidence["painted_pixels"] == len(examples)
+    assert evidence["changed_pixel_examples"] == examples[:64]
+    assert evidence["baseline_copy_bytes"] == 0
+    assert evidence["ownership_scratch_max_bytes"] <= 64*64*4
+    assert evidence["candidate_pixel_tests"] == 2*size*size
+
+
+def test_owners_are_released_before_next_tile_and_no_full_baseline_is_allocated(surface, monkeypatch):
+    prepared = frozen(surface, width=129, height=65)
+    prior_owner = []
+    allocations = []
+
+    class CheckedArray(array):
+        def __mul__(self, count):
+            if self.typecode == "i":
+                assert count <= 64*64
+                assert not prior_owner or prior_owner[-1]() is None
+            result = super().__mul__(count)
+            if self.typecode == "i":
+                prior_owner.append(weakref.ref(result))
+                allocations.append(len(result)*result.itemsize)
+            return result
+
+    def allocate(kind, values=()):
+        if kind == "f":
+            assert len(values) <= 3, "a full normalized baseline was allocated"
+        return CheckedArray(kind, values)
+
+    monkeypatch.setattr(surface, "array", allocate)
+    (_actual, evidence), _phases = consume(surface.projection_steps(prepared))
+    assert len(allocations) == 6 and max(allocations) == 16384
+    assert all(ref() is None for ref in prior_owner)
+    assert evidence["ownership_scratch_max_bytes"] == 16384
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_shared_uv_ambiguity_on_a_tile_edge_is_never_pruned(surface, reverse):
+    size, split = 129, 64.5/129
+    prepared = frozen(surface, width=size, height=1)
+    triangles = []
+    for left, right, depth in ((0., split, 0.), (split, 1., .1)):
+        uv = ((left, 0.), (right, 0.), (right, 1.), (left, 1.))
+        world = tuple((2*u-1, 2*v-1, depth) for u, v in uv)
+        for a, b, c in ((0, 1, 2), (0, 2, 3)):
+            triangles.append(surface.Triangle(1, 0, (world[a], world[b], world[c]), (uv[a], uv[b], uv[c])))
+    prepared["triangles"] = list(reversed(triangles)) if reverse else triangles
+    prepared["strokes"][0]["opacity"] = 0.  # Ambiguity outside actual paint still refuses.
+    with pytest.raises(surface.BridgeError, match="distinct surface points"):
+        consume(surface.projection_steps(prepared))
+
+
+@pytest.mark.parametrize("srgb,associated,rgba,expected", [
+    (True, False, [.5, .25, 1., .5], [.21404114048223255, .05087608817155679, 1., .5]),
+    (False, True, [.1, .2, .3, .5], [.2, .4, .6, .5]),
+    (False, True, [0., 0., 0., 0.], [0., 0., 0., 0.]),
+    (False, False, [.2, .4, .6, 0.], [.2, .4, .6, 0.]),
+])
+def test_baseline_free_comparison_excludes_normalization_from_brush_counts(surface, srgb, associated, rgba, expected):
+    prepared = frozen(surface, width=65, height=3, role="COLOR", srgb=srgb, associated=associated,
+                      values=array("f", rgba)*(65*3))
+    prepared["strokes"][0]["opacity"] = 0.
+    (actual, evidence), _phases = consume(surface.projection_steps(prepared))
+    assert actual == array("f", expected)*(65*3)
+    assert evidence["painted_pixels"] == 0 and evidence["changed_pixel_examples"] == []
+    assert evidence["baseline_copy_bytes"] == 0 and evidence["comparison_pixels"] == 195
+
+
+@pytest.mark.parametrize("phase", ["raster_tiles", "projecting", "stroke_coverage", "checking_visibility", "comparing"])
+def test_each_tiled_private_phase_remains_cancellable_without_changing_inputs(surface, phase):
+    prepared = frozen(surface, width=65, height=65)
+    before = prepared["values"].tobytes()
+    checks, arm = [], []
+
+    def check():
+        checks.append(1)
+        if arm:
+            raise surface.BridgeError("TIMEOUT", "owned cancellation")
+
+    work = surface.projection_steps(prepared, check)
+    try:
+        while next(work)["phase"] != phase:
+            pass
+        arm.append(True)
+        with pytest.raises(surface.BridgeError, match="owned cancellation"):
+            consume(work)
+    finally:
+        work.close()
+    assert checks and prepared["values"].tobytes() == before
+
+
+def test_sync_and_job_profiles_preserve_distinct_finite_work_budgets(surface):
+    prepared = frozen(surface)
+    prepared["strokes"][0]["radius"] = 3.
+    prepared["limits"] = replace(surface._limits(), candidates=127)
+    with pytest.raises(surface.BridgeError) as caught:
+        consume(surface.projection_steps(prepared))
+    assert caught.value.context == {"limit": 127, "observed": 128}
+    prepared["limits"] = surface._limits(allow_large=True)
+    (_actual, evidence), _phases = consume(surface.projection_steps(prepared))
+    assert evidence["candidate_pixel_tests"] == 128
+    assert evidence["maximum_candidate_pixel_tests"] == 33_554_432
+    assert evidence["maximum_visibility_triangle_tests"] == 33_554_432
+    assert evidence["maximum_stroke_segment_tests"] == 33_554_432
+    assert surface._limits().pixels == 1_048_576
+    assert surface.brush.size(4096, 4096, maximum_pixels=prepared["limits"].pixels) == (4096, 4096)
+    for dimensions in ((4097, 4096), (4096, 4097)):
+        with pytest.raises(surface.BridgeError):
+            surface.brush.size(*dimensions, maximum_pixels=prepared["limits"].pixels)
+
+
+@pytest.mark.parametrize("field", ["candidates", "rays", "segments"])
+def test_job_profile_still_refuses_each_actual_counter_overrun(surface, field):
+    prepared = frozen(surface)
+    prepared["strokes"][0]["radius"] = 3.
+    prepared["limits"] = replace(surface._limits(allow_large=True), **{field: 1})
+    with pytest.raises(surface.BridgeError) as caught:
+        consume(surface.projection_steps(prepared))
+    assert caught.value.context == {"limit": 1, "observed": 2}
+
+
+def test_only_job_admission_reads_complete_source_above_sync_cap(live):
+    env = live
+    image = env.images[0]
+    image.size = [1025, 1024]
+    image.pixels.values = array("f", [.2, .4, .6, 1.])*(1025*1024)
+    digest = env.paint.brush.digest(image.pixels.values)
+    with pytest.raises(env.surface.BridgeError, match="1,048,576"):
+        env.surface.prepare_surface(env.context, parameters())
+    prepared = env.surface.prepare_surface(env.context, parameters(), allow_large=True)
+    assert prepared["width"]*prepared["height"] > 1_048_576
+    assert env.paint.brush.digest(prepared["values"]) == digest
+    assert prepared["limits"].pixels == 16_777_216 and len(env.images) == 1
+
+
+def test_job_preparation_also_admits_distinct_stencil_above_sync_cap(live):
+    env = live
+    stencil = Image("Stencil")
+    stencil.size = [1025, 1024]
+    stencil.pixels.values = array("f", [.25, .5, .75, 1.])*(1025*1024)
+    env.images.append(stencil)
+    args = parameters(stencil={"image_name": "Stencil", "channel": "G"})
+    with pytest.raises(env.surface.BridgeError, match="1,048,576"):
+        env.surface.prepare_surface(env.context, args)
+    prepared = env.surface.prepare_surface(env.context, args, allow_large=True)
+    assert prepared["mask"]["kernel"]["width"] == 1025
+    assert len(prepared["mask"]["kernel"]["values"]) == 1025*1024
+    assert all(value == .5 for value in prepared["mask"]["kernel"]["values"])
+    assert env.surface.workload(prepared)["large_image_requires_job"]
+
+
+def test_input_validation_releases_source_readback_before_reading_stencil(live, monkeypatch):
+    env = live
+    env.images.append(Image("Stencil"))
+    prepared = env.surface.prepare_surface(env.context, parameters(stencil={"image_name": "Stencil"}))
+    read, source_refs = env.paint._read, []
+
+    def observed(context, image, **kwargs):
+        if image.name == "Stencil":
+            assert source_refs and source_refs[-1]() is None
+        result = read(context, image, **kwargs)
+        if image.name == "Original":
+            source_refs.append(weakref.ref(result[0]))
+        return result
+
+    monkeypatch.setattr(env.paint, "_read", observed)
+    env.surface.validate_inputs(env.context, prepared)
+    assert len(source_refs) == 1 and source_refs[0]() is None
+
+
+def test_memory_ledger_counts_reentrant_readbacks_and_large_stencil_without_allocating_4k(surface):
+    class ChannelLength:
+        def __len__(self):
+            return 4096*4096
+
+    prepared = {"width": 4096, "height": 4096, "limits": surface._limits(allow_large=True),
+                "mask": {"kernel": {"values": ChannelLength()}}}
+    evidence = surface.workload(prepared)
+    assert evidence["frozen_source_pixel_bytes"] == 256*1024**2
+    assert evidence["kernel_pixel_buffers_peak_estimate_bytes"] == 576*1024**2+16384+12
+    assert evidence["private_pixel_buffers_peak_estimate_bytes"] == 1088*1024**2+16384+12
+    assert "input and output readbacks" in evidence["estimate_excludes"]

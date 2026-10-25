@@ -11,8 +11,8 @@ has no authoritative selected-loop count. Full context preservation is bounded
 to 200,000 mesh elements and 200,000 corners. Operator, restoration and final
 mesh-update failures retain separate evidence; inspect before retrying.
 
-Main adds seven structured tools beyond unwrap, Smart Project, packing and inspection.
-They are not included in the 0.3.0 downloads. All require Blender's `EDIT_MESH` permission
+The seven authoring/lifecycle tools below were added after the published 0.3.0 alpha.
+All require Blender's `EDIT_MESH` permission
 and the enabled `uv` toolset. No Python/file permissions or object deletion are needed.
 
 ## Coordinates, transforms and pins
@@ -20,10 +20,16 @@ and the enabled `uv` toolset. No Python/file permissions or object deletion are 
 These three tools require one explicitly named, active, local, non-override, single-user
 mesh in **single-object Edit Mode** and an existing, explicitly named `uv_layer`.
 They use BMesh directly: no operator, implicit layer activation or selection changes.
+The new [bounded edit guard](uv-edit-safety.md) restricts the complete native mesh,
+storage and consumer profile. It is integrated into the 0.5.0 source candidate;
+final combined-source native and installed qualification remains pending. This
+bounded implementation does not complete F02, native undo or durable recovery.
+Use standalone calls. These guarded children are refused by `batch.plan` and
+`batch.execute`; the public argument shapes and permission requirements are unchanged.
 
 | Tool | Inputs and behavior |
 | --- | --- |
-| `uv.coordinates_set` | `updates`: records with `face_index`, `corner_index` and a two-number `uv`. Requires `selection_id`; every corner must belong to its referenced face scope. Duplicate corners, invalid/hidden scope and invalid coordinates reject the **whole** edit before mutation. Explicit coordinate placement can move a pinned corner, without changing its pin. |
+| `uv.coordinates_set` | `updates`: records with `face_index`, `corner_index` and a two-number `uv`. Requires `selection_id`; every corner must belong to its referenced face scope. Duplicate corners, invalid/hidden scope and invalid coordinates reject the requested UV edit before its field writes. Explicit coordinate placement can move a pinned corner, without changing its pin. |
 | `uv.transform` | Two-component `offset`, `scale` and `pivot`, plus counterclockwise `rotation` in radians. Order: scale relative to pivot, rotate, then offset. Defaults are origin pivot, unit scale, zero rotation/offset. `respect_pins=true` skips pinned corners; set false explicitly to move them. |
 | `uv.pin` | `pinned=true` pins the scoped corners; false unpins. Coordinates are unchanged. Use it to establish individual unwrap anchors or pin an entire face/island scope. |
 
@@ -33,24 +39,31 @@ the UV editor's implicit selection. Both accept optional `corners`, a list of ex
 stay within its faces. Use bounded `uv.inspect(include_coordinates=true)` pages to obtain
 face/corner indices, and `mesh.select_components` for an explicit face reference.
 
-At most 20,000 scoped face corners are accepted; index records must be unique. The containing
-mesh must fit component inspection's 200,000-element budget. UV values, vector components
-and transformed results must be finite within ±1,000,000. Blender stores float32 UVs; the tool
-quantizes expected values and checks the resulting storage. UVs are not clamped to [0,1], so
-explicit tiled/UDIM-space work is possible. Large requests also remain subject to transport
-frame limits; submit smaller coherent edits when necessary. The new authoring MCP inputs reject
+Index records must be unique. Native admission is narrower than the former 20,000-corner
+authoring path and generic component-inspection limits; use the complete-mesh, map and
+joint verification bounds in the [guard profile](uv-edit-safety.md#admitted-profile).
+Source, request and result values must fit that numeric/storage profile. Vector pairs
+are rounded to Float32 before transform arithmetic, and resulting stored values are
+independently checked by Float32 bits, including signed zero. UVs are not clamped to [0,1],
+so admitted tiled coordinates are possible. Requests also remain subject to transport
+frame limits. The authoring MCP inputs reject
 boolean/string coercion for numeric/boolean controls and reject extra corner-record fields;
 Blender independently validates typed arguments immediately before execution.
 
-Selection references protect geometry identity/topology and face scope, **not UV-value
-concurrency**. Reinspect after UV edits, topology changes, scene/layer/mode changes or undo.
-Do not reuse old coordinates as if the UV editor were locked.
+Selection references identify geometry/topology and face scope; they do not lock UV values.
+The guard freezes one original plan before providers/checkpointing and compares the complete
+supported authored state and expected write prefix before each native edit. Reinspect after
+UV edits, topology/map changes, scene/layer/mode changes or undo; old references are not locks.
 
-All writes are precomputed. A failure or deadline during writing attempts a local restoration
-of the targeted coordinates and pins, reporting `rollback_verified`; if recovery cannot be
-verified, stop and reinspect. Session recovery remains available after returning to Object
-Mode; these are not independent native undo steps inside an open editor. A no-op (including
-all corners skipped because pinned) does not update mesh data.
+Only known owned field writes can be compensated while live authority and the complete
+expected state still match. Authority loss, cancellation, stop, drift or an unknown native
+outcome stops further writes, including restoration and mesh updates. Inspect reported partial
+state before retrying; `rollback_verified` requires measured original-state equality. Coordinate
+edits never restore untouched pins, and pin edits never restore untouched UVs. No-op edits
+(including all corners skipped because pinned) issue no UV/pin writes or unnecessary mesh update;
+normal checkpoint/history bookkeeping remains visible. The measured Edit Mode marker-only
+checkpoint is not an independent native undo boundary or a durable backup. See the
+[failure/history contract](uv-edit-safety.md#failure-recovery-and-history).
 
 Results report coordinate/pin change counts, targeted and skipped corners, target-only bounds,
 bounded corner identifiers, and preservation/verification metadata. No result declares a UV
@@ -59,6 +72,7 @@ layout artistically acceptable or proves absence of overlap/distortion.
 ## Layer lifecycle
 
 These four tools require a local, editable, non-override, single-user mesh and **Object Mode**.
+The new three-mutator edit guard does not qualify this separate lifecycle path.
 They do not switch modes, affect topology or make the mesh single-user automatically. Limits:
 eight UV layers and 200,000 mesh corners. Names are exact, non-empty and at most 63 UTF-8 bytes.
 Collisions with mesh attributes and reserved UV companion attributes are rejected.
@@ -88,12 +102,14 @@ not a promise of local transactional rollback.
 Inspect ownership, scene/selection and UV state first; snapshot protected objects and fields.
 Create/copy/rename the desired layer in Object Mode, activate intentionally, then create a
 logical checkpoint and enter Edit Mode through `context.set_mode`. Resolve face/corner scope,
-author UVs and pins, independently reinspect, return to Object Mode to finalize grouped
-recovery, compare protected data and review a relevant visual capture. Save only if authorized.
+author admitted UVs and pins, independently reinspect, compare protected data and review a
+relevant visual capture. A mode change does not itself verify native recovery. Recheck recovery
+capabilities and evidence explicitly; save only through a supported authorized save path.
 See [recovery](mesh-edit-recovery.md) and [bounded scene comparisons](scene-evidence.md).
 
-`blender_uv_authoring_smoke.py` exercises all seven tools and permission denials on Windows
-Blender 4.5.1 and 5.1.2. It covers first/last layer lifecycle, source copy including versioned UV
+Historical runs of `blender_uv_authoring_smoke.py` exercised the earlier seven-tool
+implementation and permission denials on Windows Blender 4.5.1 and 5.1.2. They covered
+first/last layer lifecycle, source copy including versioned UV
 selection, role preservation, name/companion collisions, confirmed removal recovery, individual
 anchors, exact corner movement, pivot/scale/rotation, out-of-scope rejection, real BMesh update
 fault rollback, protected geometry/materials/UV layers and grouped native recovery. A disposable
@@ -102,5 +118,7 @@ to the edited face, while the other face and geometry remain fixed. The distorte
 intentional coordinate-edit test, not an approved unwrap or texel-density result. No user
 project is used or saved. [UV-coordinate layout captures](mesh-loops.md#uv-coordinate-visual-evidence)
 now provide atlas evidence, and [UV analysis](uv-analysis.md) adds bounded overlap/stretch/density
-checks. UV-editor view/selection tooling, relax/stitch/alignment, cross-object/evaluated atlas
-checks, broader quality coverage and production asset acceptance remain open.
+checks. Bounded [alignment/stitch/island relaxation](mesh-uv-refinement.md) also exist under
+their separate profiles. UV-editor view/selection tooling, cross-object/evaluated atlases,
+broader quality coverage and production asset acceptance remain open. None of these historical
+results accepts the new direct-edit guard, its recovery or current Windows compatibility.

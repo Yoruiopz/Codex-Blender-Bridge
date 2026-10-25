@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import importlib
 import math
 import struct
+import weakref
 from array import array
 from dataclasses import replace
 from types import SimpleNamespace as NS
@@ -451,7 +453,7 @@ def test_unsupported_or_inconsistent_mesh_scope_precedes_pixel_read(sampler, cha
         ("has_data", False),
         ("library", object()),
         ("override_library", object()),
-        ("size", (4096, 257)),
+        ("size", (4096, 4097)),
         ("size", (0, 1)),
         ("size", (1.0, 1)),
         ("size", (4097, 1)),
@@ -701,3 +703,168 @@ def test_final_toolset_or_exact_spec_loss_is_checked_without_new_provider_calls(
     with pytest.raises(sampler.module.BridgeError) as caught:
         sample(sampler)
     assert caught.value.code == code and fired == [True]
+
+
+@pytest.mark.parametrize("size", [(4096, 4096), (4096, 257), (1, 4096)])
+def test_image_policy_admits_exact_4k_without_allocating_or_reading_native_pixels(sampler, size):
+    class LengthOnlyPixels:
+        def __len__(self):
+            return size[0] * size[1] * 4
+
+        def foreach_get(self, _target):
+            pytest.fail("This policy test must not claim an actual 4K read")
+
+    sampler.image.size = size
+    sampler.image.pixels = LengthOnlyPixels()
+    image, metadata = sampler.module._image(sampler.bpy, "Mask")
+    assert image is sampler.image and metadata["size"] == size
+    assert sampler.module.MAX_PIXELS == 16_777_216
+
+
+def chunk_image(sampler):
+    """Small multi-chunk input; real 4K allocation belongs to native qualification."""
+    sampler.image.size = (128, 65)
+    sampler.image.pixels = Pixels([0.25, 0.5, 0.75, 1.0] * (128 * 65))
+    for item in sampler.uv.data:
+        item.uv = [0.5 / 128, 0.5 / 65]
+
+
+def test_multichunk_read_has_complete_independent_rgba_and_raw_channel_hashes(sampler):
+    chunk_image(sampler)
+    sampler.image.pixels.values[-2] = -0.0
+    raw = sampler.image.pixels.values
+    rgba_bytes = struct.pack("<" + "f" * len(raw), *raw)
+    channel = [raw[index] for index in range(2, len(raw), 4)]
+    channel_bytes = struct.pack("<" + "f" * len(channel), *channel)
+    before = native_values(sampler)
+    result = sample(sampler, channel="B")
+    assert result["mask_weights"] == [0.75] * 4
+    assert result["input_evidence"]["image_pixels_sha256_float32_le"] == hashlib.sha256(rgba_bytes).hexdigest()
+    assert result["input_evidence"]["channel_sha256_float32_le"] == hashlib.sha256(channel_bytes).hexdigest()
+    assert native_values(sampler) == before and sampler.image.pixels.reads == 2
+
+
+@pytest.mark.parametrize("bad", [-0.01, 1.01, math.nan, math.inf])
+def test_channel_validation_reaches_the_unsampled_tail_after_multiple_copy_chunks(sampler, bad):
+    chunk_image(sampler)
+    sampler.image.pixels.values[-4] = bad
+    before = sampler.image.pixels.values.tobytes()
+    with pytest.raises(sampler.module.BridgeError) as caught:
+        sample(sampler, vertex_indices=[1])
+    assert caught.value.code == "NOT_IMPLEMENTED" and sampler.image.pixels.reads == 1
+    assert sampler.image.pixels.values.tobytes() == before
+
+
+@pytest.mark.parametrize("loss", ["disconnect", "deadline", "disable", "replace"])
+def test_chunk_copy_uses_retained_pure_lifecycle_without_permission_callbacks(sampler, monkeypatch, loss):
+    chunk_image(sampler)
+    registry = registered(sampler)
+    spec = registry.get("mesh.sculpt_mask_sample")
+    lifecycle = importlib.import_module(sampler.module.__package__.rsplit(".", 1)[0] + ".request_lifecycle")
+    lifetime = lifecycle.RequestLifetime(connection=lifecycle.ConnectionLifetime())
+    sampler.context.request_lifecycle = lifetime
+    original = sampler.module.image_masks.channel_copy
+    checks = []
+
+    def copy_with_loss(rgba, index, *, check):
+        def checked():
+            checks.append(True)
+            if len(checks) == 4:  # After the first bounded chunk, not a live provider.
+                if loss == "disconnect":
+                    lifetime.connection.disconnected.set()
+                elif loss == "deadline":
+                    lifetime.deadline = -math.inf
+                elif loss == "disable":
+                    registry.disable_toolset("mesh")
+                else:
+                    registry._tools[spec.name] = replace(spec, description="Replaced")
+            check()
+        return original(rgba, index, check=checked)
+
+    monkeypatch.setattr(sampler.module.image_masks, "channel_copy", copy_with_loss)
+    before = native_values(sampler)
+    with pytest.raises(sampler.module.BridgeError) as caught:
+        sample(sampler)
+    assert caught.value.code == {"disconnect": "TIMEOUT", "deadline": "TIMEOUT", "disable": "TOOLSET_DISABLED", "replace": "NOT_IMPLEMENTED"}[loss]
+    assert len(checks) == 4 and len(sampler.calls) == 2
+    assert sampler.image.pixels.reads == 1 and native_values(sampler) == before
+
+
+def test_initial_rgba_is_released_before_independent_final_readback(sampler, monkeypatch):
+    chunk_image(sampler)
+    original = sampler.module._pixels
+    first = []
+
+    def read(*args):
+        if first:
+            assert first[0]() is None
+        values = original(*args)
+        if not first:
+            first.append(weakref.ref(values))
+        return values
+
+    monkeypatch.setattr(sampler.module, "_pixels", read)
+    assert sample(sampler)["mask_weights"] == [0.25] * 4
+    assert sampler.image.pixels.reads == 2
+
+
+def test_channel_allocation_failure_never_mutates_native_inputs(sampler, monkeypatch):
+    before = native_values(sampler)
+
+    def fail(*_args, **_kwargs):
+        raise MemoryError("Controlled private channel allocation failure")
+
+    monkeypatch.setattr(sampler.module.image_masks, "channel_copy", fail)
+    with pytest.raises(MemoryError):
+        sample(sampler)
+    assert sampler.image.pixels.reads == 1 and native_values(sampler) == before
+
+
+@pytest.mark.parametrize("loss,code", [("disable", "TOOLSET_DISABLED"), ("replace", "NOT_IMPLEMENTED")])
+def test_selected_channel_validation_retains_spec_before_hash_or_new_provider(sampler, monkeypatch, loss, code):
+    chunk_image(sampler)
+    registry = registered(sampler)
+    spec = registry.get("mesh.sculpt_mask_sample")
+    copy_channel = sampler.module.image_masks.channel_copy
+    digest = sampler.module.pixel_brush.digest
+    validation = []
+
+    def copy_then_revoke(*args, **kwargs):
+        channel = copy_channel(*args, **kwargs)
+        validation.append(True)
+        if loss == "disable":
+            registry.disable_toolset("mesh")
+        else:
+            registry._tools[spec.name] = replace(spec, description="Replaced before validation")
+        return channel
+
+    def digest_before_loss(values):
+        assert not validation, "Validation must observe revoked identity before hashing the channel"
+        return digest(values)
+
+    monkeypatch.setattr(sampler.module.image_masks, "channel_copy", copy_then_revoke)
+    monkeypatch.setattr(sampler.module.pixel_brush, "digest", digest_before_loss)
+    before = native_values(sampler)
+    with pytest.raises(sampler.module.BridgeError) as caught:
+        sample(sampler)
+    assert caught.value.code == code and validation == [True]
+    assert len(sampler.calls) == 2 and sampler.image.pixels.reads == 1
+    assert native_values(sampler) == before
+
+
+@pytest.mark.parametrize("failed_read", [1, 2])
+def test_failed_complete_pixel_read_never_changes_native_inputs(sampler, monkeypatch, failed_read):
+    original = sampler.image.pixels.foreach_get
+
+    def read(target):
+        if sampler.image.pixels.reads + 1 == failed_read:
+            sampler.image.pixels.reads += 1
+            raise OSError("Controlled native-read failure")
+        original(target)
+
+    monkeypatch.setattr(sampler.image.pixels, "foreach_get", read)
+    before = native_values(sampler)
+    with pytest.raises(sampler.module.BridgeError) as caught:
+        sample(sampler)
+    assert caught.value.code == "OPERATION_FAILED"
+    assert sampler.image.pixels.reads == failed_read and native_values(sampler) == before

@@ -15,14 +15,14 @@ from ..errors import BridgeError, ErrorCode, invalid_argument
 from ..permissions import Permission
 from ..tool_registry import ToolContext, ToolRegistry, check_final_mutation
 from ..utils import bool_param, reject_unknown_params, require_blender
-from . import pixel_brush
+from . import image_masks, pixel_brush
 
 LOGGER = logging.getLogger(__name__)
 METHOD = "mesh.sculpt_mask_sample"
 MAX_VERTICES = 100_000
 MAX_EDGES = 200_000
 MAX_LOOPS = 300_000
-MAX_PIXELS = 1_048_576
+MAX_PIXELS = pixel_brush.MAX_PIXELS
 CHANNELS = {"R": 0, "G": 1, "B": 2, "A": 3}
 
 
@@ -300,7 +300,7 @@ def _image(bpy: Any, name: str) -> tuple[Any, dict]:
     ):
         raise BridgeError(
             ErrorCode.NOT_IMPLEMENTED,
-            "Sculpt masks support at most 1,048,576 pixels with dimensions 1-4096.",
+            "Sculpt masks support at most 16,777,216 pixels with dimensions 1-4096.",
         )
     if len(image.pixels) != size[0] * size[1] * 4:
         raise BridgeError(
@@ -362,18 +362,25 @@ def sculpt_mask_sample(context: ToolContext, params: Mapping[str, Any]) -> dict:
     frozen, corners = _scope(context, bpy, request)
     image, metadata = _image(bpy, request["image_name"])
     width, height = metadata["size"]
+    _pure(context, spec)
     values = _pixels(context, image, width, height)
+    _pure(context, spec)
     pixels_digest = pixel_brush.digest(values)
-    channel = values[CHANNELS[request["channel"]] :: 4]
+    _pure(context, spec)
+    channel = image_masks.channel_copy(
+        values, CHANNELS[request["channel"]], check=lambda: _pure(context, spec)
+    )
     del values
     for ordinal, value in enumerate(channel):
         if ordinal % 1024 == 0:
-            _check_request(context)
+            _pure(context, spec)
         if not math.isfinite(value) or not 0.0 <= value <= 1.0:
             raise BridgeError(
                 ErrorCode.NOT_IMPLEMENTED,
                 "The complete selected raw mask channel must be finite and within [0,1].",
             )
+    channel_digest = pixel_brush.digest(channel)
+    _pure(context, spec)
     weights, corner_counts, seams = [], [], []
     for index in request["vertex_indices"]:
         _check_request(context)
@@ -418,6 +425,7 @@ def sculpt_mask_sample(context: ToolContext, params: Mapping[str, Any]) -> dict:
             "Sculpt-mask inputs changed during the read; resample.",
             {"stale_mask_inputs": True},
         ) from exc
+    _pure(context, spec)
     if (
         current_request != request
         or current != frozen
@@ -444,7 +452,7 @@ def sculpt_mask_sample(context: ToolContext, params: Mapping[str, Any]) -> dict:
         "seam_vertices": seams,
         "input_evidence": {
             "image_pixels_sha256_float32_le": pixels_digest,
-            "channel_sha256_float32_le": pixel_brush.digest(channel),
+            "channel_sha256_float32_le": channel_digest,
             "uv_sha256_float32_le": frozen["uv_sha256_float32_le"],
             "topology_sha256": frozen["topology_sha256"],
             "geometry_sha256_float32_le": frozen["geometry_sha256_float32_le"],

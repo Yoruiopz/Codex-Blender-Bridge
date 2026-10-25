@@ -53,6 +53,7 @@ CASES = {
     "texture_paint": ("blender_texture_paint_smoke.py", "BLENDER_TEXTURE_PAINT_OK "),
     "paint_jobs": ("blender_paint_jobs_smoke.py", "BLENDER_PAINT_JOBS_OK "),
     "large_paint": ("blender_large_paint_smoke.py", "BLENDER_LARGE_PAINT_OK "),
+    "large_surface_paint": ("blender_large_surface_paint_smoke.py", "BLENDER_LARGE_SURFACE_PAINT_OK "),
     "image_masks": ("blender_image_masks_smoke.py", "BLENDER_IMAGE_MASKS_OK "),
     "pixel_codecs": ("blender_pixel_codecs_smoke.py", "BLENDER_PIXEL_CODECS_OK "),
     "image_alpha": ("blender_image_alpha_smoke.py", "BLENDER_IMAGE_ALPHA_OK "),
@@ -72,6 +73,7 @@ CASES = {
     "artist_quaternion": ("blender_artist_quaternion_smoke.py", "BLENDER_ARTIST_QUATERNION_OK "),
     "uv_edit_storage": ("blender_uv_edit_storage_smoke.py", "BLENDER_UV_EDIT_STORAGE_OK "),
     "uv_edit_boundary_probe": ("blender_uv_edit_boundary_probe.py", "BLENDER_UV_EDIT_BOUNDARY_PROBE_OK "),
+    "uv_edit_guard": ("blender_uv_edit_guard_smoke.py", "BLENDER_UV_EDIT_GUARD_OK "),
     "artist_multitarget": ("blender_artist_multitarget_smoke.py", "BLENDER_ARTIST_MULTITARGET_OK "),
     "asset_delivery": ("blender_asset_delivery_smoke.py", "BLENDER_ASSET_DELIVERY_READER_OK "),
     "weight_brushes": ("blender_weight_brushes_smoke.py", "BLENDER_CODEX_WEIGHT_BRUSHES_SMOKE_OK "),
@@ -209,6 +211,8 @@ OPT_IN_CASES.add("artist_quaternion_storage")
 OPT_IN_CASES.add("artist_quaternion")
 OPT_IN_CASES.add("uv_edit_storage")
 OPT_IN_CASES.add("uv_edit_boundary_probe")
+OPT_IN_CASES.add("large_surface_paint")
+OPT_IN_CASES.add("uv_edit_guard")
 OPT_IN_CASES.add("scene_checkpoint_admission")
 OPT_IN_CASES.add("render_scope_probe")
 OPT_IN_CASES.add("render_boundaries")
@@ -225,6 +229,7 @@ INTERACTIVE_CASES.add("artist_target_sidebar")
 OPT_IN_CASES.add("artist_multitarget")
 INTERACTIVE_CASES.add("paint_jobs")
 INTERACTIVE_CASES.add("large_paint")
+INTERACTIVE_CASES.add("large_surface_paint")
 INTERACTIVE_CASES.add("image_masks")
 INTERACTIVE_CASES.add("image_alpha")
 INTERACTIVE_CASES.add("image_streams")
@@ -290,7 +295,7 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
         "--python",
         str(script),
     ]
-    if case in {"artist_quaternion_storage", "artist_quaternion", "uv_edit_storage", "uv_edit_boundary_probe"}:
+    if case in {"artist_quaternion_storage", "artist_quaternion", "uv_edit_storage", "uv_edit_boundary_probe", "large_surface_paint", "uv_edit_guard"}:
         command.insert(1, "--disable-autoexec")
     interactive = case in INTERACTIVE_CASES
     if interactive:

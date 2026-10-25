@@ -1,10 +1,11 @@
 # Project saving is blocked pending native side-effect control
 
-Unreleased safety change: **`project.save` returns `NOT_IMPLEMENTED` for both
+Published 0.4.0 alpha and current development source: **`project.save` returns
+`NOT_IMPLEMENTED` for both
 current-file Save and Save As.** The prior alpha's native save capability is
-unavailable in this development source. The tool name, optional `filepath`,
+unavailable in these versions. The tool name, optional `filepath`,
 permission metadata and V1 envelopes remain compatible; successful saving is
-not supported. No package version or published alpha artifact changes here.
+not supported. Earlier published artifacts remain available unchanged.
 
 `SAVE_PROJECT` remains required. Supplying `filepath` also requires
 `ACCESS_EXTERNAL_FILES`; the handler checks both grants together in its final

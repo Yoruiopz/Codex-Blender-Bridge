@@ -251,10 +251,15 @@ class PaintJobs(CooperativeJobController):
             raise BridgeError(ErrorCode.OPERATION_FAILED, "One image job is already active; inspect/cancel it first.",
                               {"active_job_id": self.active.job_id})
         time_limit = pixel_brush.number(time_limit, "time_limit_seconds", 1., 300.)
-        from .tools.image_surface_paint import REQUIRED, SurfacePaintDriver, prepare_surface
+        from .tools.image_surface_paint import (
+            REQUIRED,
+            SurfacePaintDriver,
+            prepare_surface,
+            workload,
+        )
 
         started = time.monotonic()
-        prepared = prepare_surface(context, params)
+        prepared = prepare_surface(context, params, allow_large=True)
         mask = prepared["mask"]
         job = PaintJob("job_" + uuid.uuid4().hex, getattr(context, "request_id", ""), prepared["source_name"], prepared["name"],
                        getattr(context, "request_lifecycle", None) or RequestLifetime.local(), started+time_limit,
@@ -262,13 +267,8 @@ class PaintJobs(CooperativeJobController):
                        prepared["source"].source == "FILE" or bool(mask and mask["requires_external_files"]), started=started,
                        method="image.paint_surface_job_start", kind="image.paint_surface_version", required_permissions=REQUIRED,
                        driver=SurfacePaintDriver(prepared))
-        pixels = prepared["width"]*prepared["height"]
-        job.workload = {"image_size": [prepared["width"], prepared["height"]],
-                        "frozen_source_pixel_bytes": pixels*16,
-                        "private_pixel_buffers_peak_estimate_bytes": pixels*52 + (len(mask["kernel"]["values"])*4 if mask else 0),
-                        "estimate_excludes": "Geometry/plan Python objects, input readbacks, Blender/native/GPU/undo/file buffers and allocator overhead",
-                        "frozen_geometry_objects": len(prepared["records"]), "frozen_triangles": len(prepared["triangles"]),
-                        "projection_work_started": False, "maximum_visibility_triangle_tests": 2_000_000}
+        job.workload = {**workload(prepared), "frozen_geometry_objects": len(prepared["records"]),
+                        "frozen_triangles": len(prepared["triangles"]), "projection_work_started": False}
         self._accept(job, context)
         return {"accepted": True, **job.summary(), "painting_completed": False,
                 "source_and_geometry_frozen_at_acceptance": True, "projection_work_started": False,

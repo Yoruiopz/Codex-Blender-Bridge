@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 import math
+import struct
 from array import array
 from types import SimpleNamespace as NS
 from typing import get_type_hints
@@ -11,6 +12,65 @@ import pytest
 from pydantic import TypeAdapter, ValidationError
 
 from mcp_server.tools.image_paint import BrushStroke, ImagePaintTools
+
+
+@pytest.mark.parametrize("selected", range(4))
+@pytest.mark.parametrize("quantum", [1, 3, 4096])
+def test_raw_mask_channel_copy_is_exact_bounded_and_does_not_validate_values(paint_tools, selected, quantum):
+    paint = paint_tools[0]
+    masks = paint.image_masks
+    raw = array("f")
+    raw.frombytes(struct.pack("=8I", 0x80000000, 0x7FC00001, 0x3F800000, 0x3E800000,
+                              0x3F000000, 0x3F400000, 0x3E000000, 0x3D800000))
+    raw *= 5
+    slices, checks = [], []
+
+    class ObservedRGBA(array):
+        def __getitem__(self, key):
+            result = super().__getitem__(key)
+            if isinstance(key, slice):
+                slices.append(len(result))
+            return result
+
+    rgba = ObservedRGBA("f", raw)
+    before = rgba.tobytes()
+    actual = masks.channel_copy(rgba, selected, quantum=quantum, check=lambda: checks.append(1))
+    assert actual.tobytes() == raw[selected::4].tobytes()
+    assert rgba.tobytes() == before and max(slices) <= quantum
+    assert len(checks) == 2+2*math.ceil((len(raw)//4)/quantum)
+
+
+@pytest.mark.parametrize("channel,quantum", [(True, 1), (-1, 1), (4, 1), (0, True), (0, 0), (0, 4097)])
+def test_raw_mask_channel_copy_rejects_invalid_budgets_before_allocating(paint_tools, channel, quantum):
+    masks = paint_tools[0].image_masks
+    with pytest.raises(paint_tools[0].BridgeError):
+        masks.channel_copy(array("f", [0., 0., 0., 1.]), channel, quantum=quantum)
+
+
+def test_raw_mask_channel_copy_can_stop_between_bounded_copies_without_touching_source(paint_tools):
+    paint = paint_tools[0]
+    rgba = array("f", [.2, .4, .6, 1.])*10
+    before, calls = rgba.tobytes(), []
+
+    def check():
+        calls.append(1)
+        if len(calls) == 5:
+            raise paint.BridgeError("TIMEOUT", "caller stopped during raw channel copy")
+
+    with pytest.raises(paint.BridgeError, match="caller stopped"):
+        paint.image_masks.channel_copy(rgba, 1, quantum=2, check=check)
+    assert rgba.tobytes() == before
+
+
+def test_mask_channel_destination_allocation_failure_changes_no_native_data(paint_tools, monkeypatch):
+    paint, context, images, bpy, _grants = paint_tools
+    before = images[0].pixels.values.tobytes()
+    monkeypatch.setattr(paint.image_masks, "array", lambda *_args: (_ for _ in ()).throw(MemoryError("controlled channel allocation")))
+    with pytest.raises(MemoryError):
+        paint.image_masks.freeze(context, bpy, {"image_name": "Original", "channel": "R", "invert": False},
+            read=paint._read, maximum_pixels=paint.brush.MAX_PIXELS, source=images[0],
+            source_values=images[0].pixels.values, source_file=None)
+    assert len(images) == 1 and images[0].pixels.values.tobytes() == before
 
 
 def stroke(**values):

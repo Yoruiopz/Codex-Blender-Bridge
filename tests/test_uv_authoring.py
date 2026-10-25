@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 import math
+import struct
 from types import SimpleNamespace
 from typing import get_type_hints
 
@@ -14,8 +15,8 @@ from mcp_server.tools.uv import UVCoordinateUpdate, UVCorner, UVTools, load_defi
 
 class Loop:
     def __init__(self, index):
-        self.data = SimpleNamespace(uv=(float(index), .25), pin_uv=False)
-        self.vert = self.edge = SimpleNamespace(hide=False)
+        self.data = SimpleNamespace(uv=(float(index), 0.25), pin_uv=False)
+        self.vert = self.edge = SimpleNamespace(index=index, hide=False)
 
     def __getitem__(self, layer):
         return self.data
@@ -23,16 +24,95 @@ class Loop:
 
 @pytest.fixture
 def edit(addon_package, monkeypatch):
+    """Algorithm model with genuine admission bindings, not native-profile proof."""
     module = importlib.import_module(f"{addon_package}.tools.uv_edit")
+    guard = importlib.import_module(f"{addon_package}.uv_edit_guard")
+    intent = importlib.import_module(f"{addon_package}.uv_edit_intent")
+    registry_module = importlib.import_module(f"{addon_package}.tool_registry")
+    permissions = importlib.import_module(f"{addon_package}.permissions")
+    state = importlib.import_module(f"{addon_package}.state").BridgeState()
     layer = SimpleNamespace(name="UV")
-    faces = [SimpleNamespace(index=i, select=i == 0, hide=False, loops=[Loop(j) for j in range(4)]) for i in range(2)]
-    bm = SimpleNamespace(faces=faces, loops=SimpleNamespace(layers=SimpleNamespace(uv={"UV": layer})))
+    faces = [
+        SimpleNamespace(index=i, select=i == 0, hide=False, loops=[Loop(j) for j in range(4)])
+        for i in range(2)
+    ]
+    bm = SimpleNamespace(
+        faces=faces, loops=SimpleNamespace(layers=SimpleNamespace(uv={"UV": layer}))
+    )
     obj = SimpleNamespace(name="Mesh", data=SimpleNamespace(users=1))
     monkeypatch.setattr(module, "_active_edit_mesh", lambda _: (None, obj, bm, {}))
     monkeypatch.setattr(module, "validate_selection_reference", lambda *args: {"faces": [0]})
     calls = []
-    monkeypatch.setattr(module, "bmesh", SimpleNamespace(update_edit_mesh=lambda *a, **kw: calls.append(kw)))
-    context = SimpleNamespace(check_cancelled=None)
+    monkeypatch.setattr(
+        module, "bmesh", SimpleNamespace(update_edit_mesh=lambda *a, **kw: calls.append(kw))
+    )
+
+    class Reader:
+        proof_hooks = ()
+
+        def __init__(self, _context, params):
+            _obj, _bm, _layer, scoped = module._scope(
+                params, require_reference=("updates" in params or params.get("corners") is not None)
+            )
+            self.scope_keys = tuple(
+                (face.index, index, loop.vert.index, loop.edge.index)
+                for face in scoped
+                for index, loop in enumerate(face.loops)
+            )
+            self.object_name, self.uv_layer = obj.name, layer.name
+            self.identities = {"object": (id(obj), 1), "mesh": (id(obj.data), 2)}
+            self.scalar_count = sum(len(face.loops) for face in faces) * 3
+
+        def snapshot(self):
+            rows = [
+                {
+                    "face": face.index,
+                    "corner": index,
+                    "vertex": loop.vert.index,
+                    "edge": loop.edge.index,
+                    "uv": tuple(loop.data.uv),
+                    "pin_uv": loop.data.pin_uv,
+                }
+                for face in faces
+                for index, loop in enumerate(face.loops)
+            ]
+            preserved = (
+                obj.data.users,
+                tuple(
+                    (
+                        face.index,
+                        face.select,
+                        face.hide,
+                        tuple((loop.vert.hide, loop.edge.hide) for loop in face.loops),
+                    )
+                    for face in faces
+                ),
+            )
+            return guard.NativeState(preserved, intent.freeze_snapshot({"UV": rows}))
+
+        def resolve(self, key, field, expected):
+            assert field in {"uv", "pin_uv"}
+            target = faces[key[0]].loops[key[1]].data
+            matched = (tuple(struct.pack("<f", value).hex() for value in target.uv) == expected.uv_bits
+                       if field == "uv" else target.pin_uv is expected.pin_uv)
+            if expected.key != key or not matched:
+                raise guard.BridgeError("NOT_IMPLEMENTED", "The model leaf differs from the original prefix")
+            return target
+
+        def update(self):
+            module.bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
+
+    monkeypatch.setattr(guard, "_NativeReader", Reader)
+    registry = registry_module.ToolRegistry(enabled_toolsets=("uv",))
+    manager = permissions.PermissionManager(lambda: {"EDIT_MESH": True})
+    context = registry_module.ToolContext(state, manager, registry, SimpleNamespace())
+    module.register_tools(registry)  # Retain the actual original guarded handlers.
+
+    def dispatch(name):
+        return lambda ctx, params: registry.dispatch("uv." + name, params, ctx)
+
+    for name in ("coordinates_set", "transform", "pin"):
+        monkeypatch.setattr(module, name, dispatch(name))
     return module, obj, bm, calls, context
 
 
@@ -101,8 +181,8 @@ def test_transform_prevalidates_every_result_and_rejects_overflow(edit):
     module, _, bm, calls, context = edit
     with pytest.raises(Exception) as error:
         module.transform(context, arguments(scale=[1e6, 1]))
-    assert error.value.code == "INVALID_ARGUMENT" and not calls
-    assert bm.faces[0].loops[0].data.uv == (0, .25)
+    assert error.value.code == "NOT_IMPLEMENTED" and not calls
+    assert bm.faces[0].loops[0].data.uv == (0, 0.25)
 
 
 def test_all_pinned_and_repeated_pin_are_noops(edit):
@@ -146,10 +226,11 @@ def test_indexed_pin_needs_reference(edit):
     assert error.value.code == "INVALID_ARGUMENT" and not calls
 
 
-@pytest.mark.parametrize("tool", ["transform", "pin"])
-@pytest.mark.parametrize("restriction", ["hidden", "shared", "missing_layer", "empty", "budget", "invalid_boolean"])
-def test_uv_scope_rejects_unsafe_edits(edit, monkeypatch, tool, restriction):
-    module, obj, bm, calls, context = edit
+@pytest.mark.parametrize("restriction", ["hidden", "shared", "missing_layer", "empty", "budget"])
+def test_retained_legacy_scope_for_uv_refine_rejects_unsupported_model_context(
+    edit, monkeypatch, restriction
+):
+    module, obj, bm, calls, _context = edit
     extra = {}
     if restriction == "hidden":
         bm.faces[0].hide = True
@@ -161,48 +242,59 @@ def test_uv_scope_rejects_unsafe_edits(edit, monkeypatch, tool, restriction):
         bm.faces[0].select = False
     elif restriction == "budget":
         monkeypatch.setattr(module, "MAX_CORNERS", 2)
-    else:
-        extra["pinned" if tool == "pin" else "respect_pins"] = 1
     with pytest.raises(Exception) as error:
-        getattr(module, tool)(context, arguments(**extra))
+        module._scope(arguments(**extra))
     assert error.value.code in {"INVALID_ARGUMENT", "INVALID_SELECTION", "NOT_IMPLEMENTED"}
     assert not calls
 
 
-@pytest.mark.parametrize("rollback_fails", [False, True])
-def test_uv_update_failure_retains_local_recovery_evidence(edit, monkeypatch, rollback_fails):
+@pytest.mark.parametrize("tool", ["transform", "pin"])
+def test_guarded_boolean_parameters_remain_strict(edit, tool):
+    module, _, _, calls, context = edit
+    with pytest.raises(Exception) as error:
+        getattr(module, tool)(
+            context, arguments(**{"pinned" if tool == "pin" else "respect_pins": 1})
+        )
+    assert error.value.code == "INVALID_ARGUMENT" and not calls
+
+
+def test_uv_update_failure_retains_requested_payload_without_unknown_native_compensation(
+    edit, monkeypatch
+):
     module, _, bm, _, context = edit
     updates = []
 
     def fail(*args, **kwargs):
         updates.append(True)
-        if len(updates) == 1 or rollback_fails:
-            raise RuntimeError("injected update failure")
+        raise RuntimeError("injected update failure")
 
     monkeypatch.setattr(module.bmesh, "update_edit_mesh", fail)
     with pytest.raises(Exception) as error:
         module.transform(context, arguments(offset=[1, 1]))
     assert error.value.code == "OPERATION_FAILED"
-    assert error.value.context["rollback_verified"] is not rollback_fails
+    assert error.value.context["rollback_verified"] is False
+    assert error.value.context["possible_mutation"] is True
     assert error.value.context["verification_required"]
-    assert bm.faces[0].loops[0].data.uv == (0, .25)
+    assert updates == [True] and bm.faces[0].loops[0].data.uv == (1, 1.25)
 
 
-def test_cancellation_after_write_rolls_back_and_preserves_error_code(edit, addon_package):
+def test_cancellation_after_write_retains_partial_and_preserves_error_code(edit, addon_package):
     module, _, bm, _, context = edit
     errors = importlib.import_module(f"{addon_package}.errors")
     checks = []
 
     def cancel():
         checks.append(True)
-        if len(checks) == 3:
+        if bm.faces[0].loops[0].data.uv == (1, 1.25):
             raise errors.BridgeError(errors.ErrorCode.TIMEOUT, "expired")
 
     context.check_cancelled = cancel
     with pytest.raises(Exception) as error:
         module.transform(context, arguments(offset=[1, 1]))
-    assert error.value.code == "TIMEOUT" and error.value.context["rollback_verified"]
-    assert bm.faces[0].loops[0].data.uv == (0, .25)
+    assert error.value.code == "TIMEOUT" and not error.value.context["rollback_verified"]
+    assert error.value.context["possible_mutation"] is True
+    assert checks and bm.faces[0].loops[0].data.uv == (1, 1.25)
+    assert bm.faces[0].loops[1].data.uv == (1, 0.25)
 
 
 def test_uv_authoring_registry_and_thin_wrappers(addon_package):

@@ -4,16 +4,20 @@ Let Codex inspect and edit Blender through local, permission-controlled MCP tool
 Work with objects, meshes, materials, UVs, rigs, animation, lights and renders, with
 status, permissions and recovery controls inside Blender.
 
-**[0.4.0 alpha prerelease candidate](docs/releases/0.4.0.md)** ·
-[Previous 0.3.0 downloads](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.3.0) ·
+**[0.5.0 alpha source candidate](docs/releases/0.5.0.md)** ·
+[GitHub releases](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases) ·
+[Published 0.4.0 alpha](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.4.0) ·
 [Install](#install--no-source-build-needed) · [Troubleshooting](docs/troubleshooting.md) ·
 [Contribute](CONTRIBUTING.md)
 
 This is **alpha software**. Try it on a disposable scene or a copy of your project.
-This source prepares **0.4.0**, with **266 MCP tools**, bounded artist workflows and safety
-changes since 0.3.0. Candidate metadata does not establish packaged-release acceptance;
-use matching add-on, MCP server and optional plugin artifacts from one accepted build.
-The previously published **0.3.0** packages remain available with their original **108 tools**.
+The published **0.4.0 alpha** dates to October 24, 2026. This source prepares **0.5.0**,
+with bounded 4K surface-paint jobs, generated-image sculpt-mask sampling and guarded direct
+UV edits. Final combined-source, native and installed-package qualification remains pending;
+0.5.0 is not yet published. The [GitHub releases page](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases)
+is the authority for accepted artifacts and retained evidence. Earlier releases, including
+**0.3.0 alpha** with its original **108 tools**, remain available.
+Use matching add-on, MCP server and optional plugin artifacts from one accepted build.
 
 **1.0 is not ready.** Follow the [development status](docs/development-status.md),
 [roadmap](docs/roadmap.md) and [release plan](docs/plan-1.0.md).
@@ -23,24 +27,24 @@ end-to-end workflows required by the [release gates](docs/release-1.0-readiness.
 
 ## Install — no source build needed
 
-The instructions below install the previously published **0.3.0 alpha**. The **0.4.0 source
-candidate** has [separate notes and qualification limits](docs/releases/0.4.0.md); this page
+The instructions below install the published **0.4.0 alpha**. The **0.5.0 source
+candidate** has [separate notes and qualification limits](docs/releases/0.5.0.md); this page
 does not claim that its release assets have been published.
 
 You need Blender **4.2+**, standalone **Python 3.10+**, and a local Codex client with MCP
 support. Blender's bundled Python does not run the MCP server. The declared minimum is not
 a guarantee that every Blender version or platform is tested; see the
-[0.3.0 release notes](docs/releases/0.3.0.md) for that release's evidence.
+[accepted 0.4.0 release](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.4.0) for its evidence.
 
 ### 1. Download the packages
 
-Get these assets from the [0.3.0 release](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.3.0):
+Get these assets from the [0.4.0 release](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.4.0):
 
 | Asset | Purpose |
 | --- | --- |
-| `blender_codex_bridge-0.3.0.zip` | Required Blender add-on; keep it zipped |
-| `blender_codex_bridge-0.3.0-py3-none-any.whl` | Required standalone MCP server |
-| `blender-codex-bridge-plugin-0.3.0.zip` | Optional Codex plugin and workflow guidance |
+| `blender_codex_bridge-0.4.0.zip` | Required Blender add-on; keep it zipped |
+| `blender_codex_bridge-0.4.0-py3-none-any.whl` | Required standalone MCP server |
+| `blender-codex-bridge-plugin-0.4.0.zip` | Optional Codex plugin and workflow guidance |
 | `SHA256SUMS.txt` | Download checksums |
 
 Use the release assets rather than GitHub's automatic source archives.
@@ -97,9 +101,26 @@ Read the [security model](docs/security.md) and [recovery limits](docs/native-re
 
 ## Features
 
-### 0.4.0 candidate additions
+### Implemented 0.5.0 candidate additions
 
-The source candidate adds artist plans, exact runtime references, reviewed transform
+Surface-paint jobs admit up to 4,096² source and stencil pixels, with explicit finite work
+caps, 64×64 ownership tiles and complete input/output hashes. Synchronous surface painting
+retains its smaller limit. Generated-image sculpt-mask sampling also admits 4,096² pixels,
+with bounded channel copying and full input revalidation; this read remains synchronous.
+These source profiles are documented in [surface painting](docs/image-surface-paint.md) and
+[sculpt masks](docs/surface-brushes.md). Final combined-source qualification must retain
+complete pixels, deadlines, measured memory and interruption results; visual and
+constrained-memory acceptance remain separate requirements.
+
+The integrated [direct UV guard](docs/uv-edit-safety.md) covers `uv.coordinates_set`,
+`uv.transform` and `uv.pin` within a static, material-free, single-user Edit Mode profile.
+It retains exact intent and attempted-field recovery; unsupported dependencies, unknown
+outcomes and authority loss refuse further writes. Full UV workflows, native undo, durable
+recovery and final candidate qualification remain open. See the [0.5.0 notes](docs/releases/0.5.0.md).
+
+### Artist-workflow foundations carried from 0.4.0 alpha
+
+The published 0.4.0 alpha provides artist plans, exact runtime references, reviewed transform
 preview/apply and independent target-channel observations. Step marks and historical receipts
 do not certify the user's goal. It also adds bounded mesh repair and UV authoring, explicit
 sculpt/vertex-color brushes, weight brushes and geometric transfer, Action/F-curve inspection
@@ -109,10 +130,10 @@ See the [0.4.0 notes](docs/releases/0.4.0.md) and each linked domain contract fo
 
 Safety changes narrow unsupported ownership, checkpoint, callback and recovery paths.
 **`project.save` is unavailable**, protected viewport capture and shader-interface removal
-remain unsupported, and the known Blender 5.2.2 import quarantine stays in place. Private UV
-Edit Mode storage/planning research does not enable a public guard or qualify UV editing.
-Candidate export/weight recovery changes still require their exact native validation; no
-production-delivery or character-workflow acceptance follows from the tool inventory.
+remain unsupported, and the known Blender 5.2.2 import quarantine stays in place. The
+current UV guard retains its separate restricted profile and qualification requirements.
+Published bounded export/weight checks do not establish full production delivery or
+character-workflow acceptance; the tool inventory cannot supply that evidence.
 
 ### Previously published 0.3.0 alpha
 
@@ -134,7 +155,8 @@ inspect partial failures before retrying. See [batch and Geometry Nodes limits](
 Candidate mesh/UV, painting, shader, character, procedural, simulation and delivery contracts
 are tracked in [development status](docs/development-status.md), including the
 [structured UV-seam contract](docs/development-status.md#unreleased-structured-uv-seams).
-They are absent from the 0.3.0 downloads. The private UV planner/probe remains research.
+They are absent from the 0.3.0 downloads. Historical UV planner/probe research is distinct
+from the integrated three-tool guard and does not qualify its complete workflow.
 
 Current development contracts include [packed recovery jobs](docs/image-recovery-jobs.md),
 [shader interface plans](docs/shader-interface-lifecycle.md),
@@ -143,7 +165,7 @@ Current development contracts include [packed recovery jobs](docs/image-recovery
 
 ### Complete tool inventory — current source
 
-This generated inventory describes the **0.4.0 candidate source**, including bounded tools
+This generated inventory describes the **0.5.0 candidate source**, including bounded tools
 whose acceptance remains subject to their documented limits. It is checked against the
 registry in CI. It does not describe the 108-tool 0.3.0 download.
 The local recovery UI also has an add-on-only action, not an extra MCP tool.
@@ -560,18 +582,18 @@ Current registry: **266 MCP tools**.
 | `uv.align` | Align explicit UV corners to an exact U/V coordinate while preserving pins and face orientation. |
 | `uv.analyze` | Measure bounded triangulated UV overlap/winding, pixel anisotropy and world-unit texel density, with explicit completeness. |
 | `uv.capture_layout` | Capture a bounded UV-coordinate PNG without scene/UI/render changes; not a quality verdict. |
-| `uv.coordinates_set` | Set exact face-corner UV coordinates within a validated face selection reference. |
+| `uv.coordinates_set` | Set explicit face-corner UVs within a validated face reference. Bounded standalone local Edit Mode admission and exact before/after checks; inspect reported partial state after failure. |
 | `uv.inspect` | Inspect bounded UV layers, selection, bounds, and island connectivity. |
 | `uv.layer_activate` | Activate an Object Mode UV layer and optionally make it the render/clone layer. |
 | `uv.layer_create` | Create a zero UV layer or copy UVs/pins in Object Mode; copy per-layer selection where available, otherwise preserve mesh-global selection. |
 | `uv.layer_remove` | Remove an Object Mode UV layer only with explicit data-loss confirmation. |
 | `uv.layer_rename` | Rename an Object Mode UV layer; named consumers are not rewritten. |
 | `uv.pack_islands` | Pack selected UV islands using bounded margin settings. |
-| `uv.pin` | Pin or unpin selected-face UV corners without changing their coordinates. |
+| `uv.pin` | Pin or unpin scoped UV corners while preserving coordinates. Bounded standalone local Edit Mode admission and exact before/after checks; inspect reported partial state after failure. |
 | `uv.relax` | Relax one complete explicit UV island with fixed boundaries/pins and bounded displacement. |
 | `uv.smart_project` | Smart-project selected faces using bounded projection settings. |
 | `uv.stitch` | Copy explicit same-vertex UV corner correspondences to fixed anchors without welding mesh topology. |
-| `uv.transform` | Transform selected-face UV corners using explicit pivot, scale, rotation and offset; respect pins by default. |
+| `uv.transform` | Scale scoped UVs about a pivot, rotate, then offset; respect pins by default. Bounded standalone local Edit Mode admission and exact before/after checks; inspect partial failures. |
 | `uv.unwrap` | Unwrap selected faces with explicit method and margin. |
 
 </details>
