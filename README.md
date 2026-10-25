@@ -14,14 +14,17 @@ This is **alpha software**. Try it on a disposable scene or a copy of your proje
 The published **0.5.0 alpha** dates to October 25, 2026 at **07:54:54 UTC**, from
 `4a45b99`. It includes bounded 4K painting and guarded direct UV edits, with
 [exact-source Linux checks and verified downloads](docs/releases/0.5.0.md#verified-evidence).
-This source prepares **0.6.0**; it has no new capability or qualification claim and is
-not published. The [GitHub releases page](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases)
+This source prepares **0.6.0** with bounded isolated geometry previews and history-failure
+containment. Selected Linux native checks passed; installed-package and prerelease
+qualification use the exact candidate artifacts. The [GitHub releases page](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases)
 is the authority for accepted artifacts and retained evidence. Earlier releases remain available.
 Use matching add-on, MCP server and optional plugin artifacts from one accepted build.
 
 Development targets **official, unmodified Blender only**, without a fork or custom
-distribution. Ordinary viewport capture remains available when artist protection
-is unarmed. Protected capture still refuses until a stock-Blender redesign is
+distribution. The new [geometry preview](docs/geometry-preview.md) renders bounded
+authored meshes in a separate official Blender process; original materials and current
+viewport appearance are excluded. Ordinary viewport capture remains available when artist protection
+is unarmed. Protected viewport capture still refuses until a stock-Blender redesign is
 qualified; see [capture status and preservation requirements](docs/protected-capture-design.md).
 
 **1.0 is not ready.** Follow the [development status](docs/development-status.md),
@@ -33,8 +36,8 @@ end-to-end workflows required by the [release gates](docs/release-1.0-readiness.
 ## Install — no source build needed
 
 The instructions below install the published **0.5.0 alpha**. The prospective
-**0.6.0 source** has [separate notes](docs/releases/0.6.0.md) and remains unqualified
-and unpublished.
+**0.6.0 source** has [separate notes](docs/releases/0.6.0.md); check the release page
+for matching accepted candidate artifacts and their qualification evidence.
 
 You need Blender **4.2+**, standalone **Python 3.10+**, and a local Codex client with MCP
 support. Blender's bundled Python does not run the MCP server. The declared minimum is not

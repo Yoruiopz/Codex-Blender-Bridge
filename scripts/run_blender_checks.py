@@ -127,6 +127,7 @@ CASES = {
     "rigid_lifecycle_probe": ("blender_rigid_lifecycle_probe_smoke.py", "BLENDER_RIGID_LIFECYCLE_PROBE_READER_OK "),
     "rigid_timer_probe": ("blender_rigid_timer_probe_smoke.py", "BLENDER_RIGID_TIMER_PROBE_OK "),
     "scene_job_kernel": ("blender_scene_job_kernel_smoke.py", "BLENDER_SCENE_JOB_KERNEL_OK "),
+    "executor_history_containment": ("blender_executor_history_containment_smoke.py", "BLENDER_EXECUTOR_HISTORY_CONTAINMENT_OK "),
     "rigid_evaluation_jobs": ("blender_rigid_evaluation_jobs_smoke.py", "BLENDER_RIGID_EVALUATION_JOBS_OK "),
     "rigid_body_scope": ("blender_rigid_body_scope_smoke.py", "BLENDER_RIGID_BODY_SCOPE_OK "),
     "rigid_evaluation_dependencies": ("blender_rigid_evaluation_dependencies_smoke.py", "BLENDER_RIGID_EVALUATION_DEPENDENCIES_OK "),
@@ -191,6 +192,7 @@ OPT_IN_CASES.add("rigid_runtime_getters")
 OPT_IN_CASES.add("rigid_create_new_probe")
 OPT_IN_CASES.add("rigid_timer_probe")
 OPT_IN_CASES.add("scene_job_kernel")
+OPT_IN_CASES.add("executor_history_containment")
 OPT_IN_CASES.add("rigid_evaluation_jobs")
 PORTABLE_BLEND_RESEARCH_PHASES = {
     "portable_blend_writer_probe": "writer",
@@ -264,6 +266,7 @@ INTERACTIVE_CASES.add("rigid_startup_defaults_probe")
 INTERACTIVE_CASES.add("rigid_scope_profile_probe")
 INTERACTIVE_CASES.add("rigid_timer_probe")
 INTERACTIVE_CASES.add("scene_job_kernel")
+INTERACTIVE_CASES.add("executor_history_containment")
 INTERACTIVE_CASES.add("rigid_evaluation_jobs")
 INTERACTIVE_CASES.add("render_boundaries_interactive")
 
@@ -301,7 +304,7 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
         "--python",
         str(script),
     ]
-    if case in {"artist_quaternion_storage", "artist_quaternion", "uv_edit_storage", "uv_edit_boundary_probe", "large_surface_paint", "uv_edit_guard", "geometry_preview"}:
+    if case in {"artist_quaternion_storage", "artist_quaternion", "uv_edit_storage", "uv_edit_boundary_probe", "large_surface_paint", "uv_edit_guard", "geometry_preview", "executor_history_containment"}:
         command.insert(1, "--disable-autoexec")
     interactive = case in INTERACTIVE_CASES
     if case == "isolated_asset_preview_probe":
@@ -324,6 +327,8 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
     environment["BRIDGE_TEST_PROCESS_TOKEN"] = process_instance
     for key, folder in (("BLENDER_USER_CONFIG", "config"), ("BLENDER_USER_SCRIPTS", "scripts"),
                         ("BLENDER_USER_DATAFILES", "datafiles")):
+        if case == "installed_addon_probe" and key == "BLENDER_USER_SCRIPTS":
+            folder = "installed scripts with spaces"
         directory = temporary / folder
         directory.mkdir()
         environment[key] = str(directory)

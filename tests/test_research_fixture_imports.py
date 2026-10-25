@@ -18,6 +18,9 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 HELPERS = (
     "scripts.blender_geometry_preview_smoke",
+
+
+    "scripts.blender_executor_history_containment_smoke",
     "scripts.blender_isolated_asset_preview_probe_smoke",
     "scripts.native_isolated_asset_preview",
     "scripts.blender_rigid_timer_probe_smoke",
@@ -109,6 +112,9 @@ def fixture_imports(addon_package, monkeypatch):
 
 @pytest.mark.parametrize("name,helper", [
     ("scripts.blender_geometry_preview_smoke", "main"),
+
+
+    ("scripts.blender_executor_history_containment_smoke", "main"),
     ("scripts.blender_isolated_asset_preview_probe_smoke", "main"),
     ("scripts.native_isolated_asset_preview", "validate_dto"),
     ("scripts.blender_rigid_timer_probe_smoke", "checkpointed_cache"),
@@ -163,6 +169,44 @@ def test_registered_geometry_fixture_materializes_only_before_pending_state():
     )
     assert updates and updates[0] < action_setup < plan_setup
     assert all(line < pending_base for line in updates)
+
+
+def test_history_native_fixture_is_opt_in_interactive_and_autoexec_disabled(monkeypatch, tmp_path):
+    import json
+    import subprocess
+
+    runner = importlib.import_module("scripts.run_blender_checks")
+    case = "executor_history_containment"
+    assert case in runner.OPT_IN_CASES & runner.INTERACTIVE_CASES
+    monkeypatch.setattr(runner.sys, "platform", "linux")
+
+    def run(command, **kwargs):
+        assert "--background" not in command and "--disable-autoexec" in command
+        assert command.index("--factory-startup") < command.index("--python")
+        assert command[command.index("--python")+1].endswith("blender_executor_history_containment_smoke.py")
+        kwargs["stdout"].write((runner.CASES[case][1]+json.dumps({"blender_version": "4.5.14"})).encode())
+        return NS(returncode=0)
+
+    monkeypatch.setattr(subprocess, "run", run)
+    assert runner.run_case(Path("blender"), case, tmp_path, 20)["status"] == "passed"
+
+
+def test_history_native_observer_copies_python_call_facts_without_native_or_history_work():
+    script = importlib.import_module("scripts.blender_executor_history_containment_smoke")
+    fixture = script.Fixture.__new__(script.Fixture)
+    request_code, native_code = object(), object()
+    fixture.code_names = {request_code: "request", native_code: "_snapshot"}
+    fixture.rows, fixture.outside = {}, {}
+    fixture.current, fixture.profile_failures = None, 0
+    request = NS(id="observed", method="fixture.history.write")
+    frame = NS(f_code=request_code, f_locals={"request": request})
+    fixture.observe_profile(frame, "call", None)
+    fixture.observe_profile(NS(f_code=native_code), "call", None)
+    fixture.observe_profile(frame, "return", None)
+    assert fixture.rows["observed"]["calls"] == {"_snapshot": 1}
+    assert fixture.current is None and fixture.profile_failures == 0
+    fixture.observe_profile(NS(f_code=object()), "call", None)
+    assert fixture.outside == {} and fixture.profile_failures == 0
 
 
 @pytest.mark.parametrize("name,expected", [

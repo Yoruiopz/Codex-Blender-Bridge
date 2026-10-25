@@ -14,8 +14,10 @@ remain mandatory for the later stable 1.0 candidate.
 The published [**0.5.0 alpha**](releases/0.5.0.md) dates to 2026-10-25 at
 07:54:54 UTC, from `4a45b99`, with exact-source CI, selected Linux native and
 installed checks plus all six anonymous download hashes retained. Earlier releases
-remain available. The prospective [0.6.0 source](releases/0.6.0.md) is unqualified
-and unpublished. Meaningful
+remain available. The prospective [0.6.0 source](releases/0.6.0.md) adds selected-native-checked
+isolated geometry previews and history-failure containment. Installed candidate
+qualification is recorded separately for each candidate; accepted artifacts are
+listed on GitHub releases. Meaningful
 versioned GitHub prereleases are authorized on an approximately two-to-three-hour
 review cadence; this is not a deadline to publish unreviewed changes. Stable 1.0
 criteria are unchanged.
@@ -65,6 +67,15 @@ parent authored-data/context preservation without clearing or rebasing armed
 protection or restoring over manual edits. Current protected capture still
 refuses. Safe-save catalog effects remain separately unresolved; H01/H02 and all
 29 items remain mandatory.
+
+The new geometry-only preview passed selected registered-tool checks on both
+Linux builds, including denial, stale handles, cancellation and running-worker
+revocation. Its measured source projection remained unchanged under real plan
+enforcement with a null protected-data baseline. Original material/current viewport
+appearance, a populated protected baseline, complete hidden preservation and
+installed delivery remain unqualified. Core history/reporting containment also
+passed real native loopback failure cases on both builds, with no extra finalization
+or work after a rejected job start. Neither increment closes a checklist item.
 
 ## B0 — Safety, recovery and evidence
 

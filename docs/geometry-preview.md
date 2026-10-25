@@ -1,10 +1,24 @@
 # Isolated authored-geometry previews
 
 The prospective source adds `preview.geometry_start` and `preview.geometry_image`.
-Native and installed-package qualification for these public methods is pending.
+Selected registered-tool native checks passed at `9e7c11d` on both builds below;
+installed-package qualification must replay these methods from the exact accepted ZIP.
+See the release evidence for candidate-specific installed outcomes.
 The earlier private DTO experiment is separate evidence. Windows remains deferred;
 this source profile admits only the exact qualified official Linux Blender 4.5.14
 and 5.2.2 builds. No custom Blender build is required.
+
+The selected native fixture passed success, stale fetch, permission denial,
+cancellation before worker launch and permission revocation while a worker ran.
+Independent declared source projections matched around public entry, including
+the dirty unrelated Action and pending hidden selection. Actual task-plan enforcement
+was enabled, with a null protected-data baseline on both builds; no populated
+protection snapshot is qualified. Both retained 128px triangle images were reviewed
+and fully framed. Worker peak RSS was 820,708 KiB on 4.5.14 and 690,336 KiB on 5.2.2;
+this is process peak, not an operation delta or constrained-memory qualification.
+Parent peak memory and individual native blocking intervals remain unmeasured.
+The retained native/visual review has SHA-256
+`b6806afb65ba63d2be3ff82f23a22fdcf9d0d409fef8cacc352e5a2945cb0bf9`.
 
 Start with an explicit Object name, then poll `jobs.inspect` for a terminal result
 and retrieve its `preview_id` with `preview.geometry_image`. Blender requires

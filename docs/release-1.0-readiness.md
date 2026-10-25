@@ -5,7 +5,7 @@ or a promise of a release date. [Published 0.5.0](releases/0.5.0.md)
 (25 October, 07:54:54 UTC) remains alpha. Exact-source CI, selected Linux native
 and installed checks and verified downloads are retained; they do not complete
 any stable gate. Earlier releases remain available. The prospective
-[0.6.0 source](releases/0.6.0.md) is unqualified and unpublished. Meaningful,
+[0.6.0 source](releases/0.6.0.md) is an alpha candidate with source-specific evidence. Meaningful,
 reviewed increments are authorized for versioned GitHub
 prereleases at roughly a 2–3 hour cadence, with matching packages, checksums and
 source-specific validation. Tool counts and elapsed time do not establish readiness.
@@ -117,6 +117,13 @@ protected capture remains refused until matched parent authored-data/context
 preservation is demonstrated. A redesign may not clear or rebase armed
 protection, accept a changed baseline after synchronization, or restore over
 intervening manual edits. The 29 items and 14 gates remain unchanged.
+
+The separate [authored-geometry preview](geometry-preview.md) now has selected
+registered-tool native evidence on both Linux builds at `9e7c11d`. It renders an
+immutable bounded DTO in a separate official Blender process. Measured source fields
+and real enforcement metadata were preserved; the protected-data baseline was null.
+Original material/current viewport appearance and stronger hidden-state/populated-baseline
+guarantees remain unqualified. This does not close H02/F01 or a stable release gate.
 
 Safe saving has a separate blocker: asset-catalog `SAVE_POST` effects extend
 outside authored Main. A snapshot witness alone cannot establish approved-path
