@@ -1,0 +1,1 @@
+b52f506fc29e37ec0c23d5a5c0923c4612b93004e9bf3ded731a1ea2e8e137d0  blender-codex-bridge-0.6.0-development-evidence.tar.gz

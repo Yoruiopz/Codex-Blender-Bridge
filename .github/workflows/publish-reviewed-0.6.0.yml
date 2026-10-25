@@ -1,0 +1,427 @@
+name: Publish reviewed 0.6.0 alpha
+
+on:
+  push:
+    branches:
+      - codex/publish-reviewed-0.6.0
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: publish-reviewed-0.6.0
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: >-
+      github.event_name == 'push' &&
+      github.repository == 'Yoruiopz/Codex-Blender-Bridge' &&
+      github.ref == 'refs/heads/codex/publish-reviewed-0.6.0' &&
+      github.run_attempt == 1
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out the exact reviewed support-branch push
+        uses: actions/checkout@v4
+        with:
+          repository: Yoruiopz/Codex-Blender-Bridge
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+          submodules: false
+
+      - name: Retrieve only the accepted immutable package artifact
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          repository: Yoruiopz/Codex-Blender-Bridge
+          run-id: 40196147205
+          artifact-ids: 12600610753
+          merge-multiple: true
+          path: ${{ runner.temp }}/accepted-0.6.0-packages
+
+      - name: Verify fixed inputs, upload missing assets, verify bytes and publish alpha
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 -I -B - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import re
+          import stat
+          import sys
+          from urllib.error import HTTPError, URLError
+          from urllib.parse import quote, urlsplit
+          from urllib.request import HTTPRedirectHandler, Request, build_opener
+
+          REPO = 'Yoruiopz/Codex-Blender-Bridge'
+          REPO_ID = 1327089885
+          SOURCE = '73cad805903fcd0be9175b49a5ecf78505ecd4a5'
+          TREE = '2703f46038cd8f970437686f3fddabe9ea5a8ca9'
+          RUN = 40196147205
+          ARTIFACT = 12600610753
+          RELEASE = 423442432
+          TAG = 'v0.6.0'
+          API = 'https://api.github.com/repos/' + REPO
+          UPLOAD = 'https://uploads.github.com/repos/' + REPO + '/releases/' + str(RELEASE) + '/assets'
+          TOKEN = None  # The unarmed guard precedes credential access.
+          ARMED = True
+          VERSION = '0.6.0'
+          TITLE = '0.6.0 alpha — isolated geometry previews and history containment'
+          SOURCE_BRANCH = 'codex/integration-0.6-candidate-20261025'
+          NOTES_BYTES = 6131
+          EVIDENCE_BLOB_SHA = 'dd8eed5dd08cd57de0dc2651fa259d4f284b54c1'
+          EVIDENCE_BLOB_PATH = 'release-evidence/0.6.0/blender-codex-bridge-0.6.0-development-evidence.tar.gz'
+          PRESERVED_LATEST = {'observed': True, 'release_id': None}  # Root observed HTTP404: no latest stable
+          NOTES_SHA = '9dc8f687486e81af8adf049c16e92a075b067368a3895a62a07d1e74fa5fb7f5'
+          EXPECTED = {'SHA256SUMS.txt': (311, 'babfd2c80be03d8ddec2e88a0e097cd84d1d03dfc23247ac48e12a16d30c007a'),
+           'blender-codex-bridge-plugin-0.6.0.zip': (6640,
+                                                     'bc1218c89055649fbce9c56710392750030f6a00dcd6d1e0295aeb33f9ee5900'),
+           'blender_codex_bridge-0.6.0-py3-none-any.whl': (164460,
+                                                           '03ed0476082be3783abb0efaf6eda21a9ce94f5f43a4ae5a429e6e31a0785972'),
+           'blender_codex_bridge-0.6.0.zip': (785382,
+                                              '10358beb21520123f6462d9c1e0c7c6184c74f5768132365cb700178023a300e'),
+           'blender-codex-bridge-0.6.0-development-evidence.tar.gz': (13117771,
+                                                                      'b52f506fc29e37ec0c23d5a5c0923c4612b93004e9bf3ded731a1ea2e8e137d0'),
+           'EVIDENCE-SHA256SUMS.txt': (121, 'c8837b72505d13a8af5b7539219d2589f75b63a8d75d9757a9e597fc12c1cfa7')}
+          PACKAGE_NAMES = set(EXPECTED) - {'blender-codex-bridge-0.6.0-development-evidence.tar.gz', 'EVIDENCE-SHA256SUMS.txt'}
+
+          PROTECTED_PRIOR_RELEASES = {422510687: {'tag': 'v0.4.0',
+                       'source': '4470d88bb4d8fb1ed75e86090dd6886fb55eb589',
+                       'notes_bytes': 3580,
+                       'notes_sha256': '575411e1002676966a760c21660850527769ac31180736da767d9d0f54f5a7cb',
+                       'assets': {'blender_codex_bridge-0.4.0.zip': (732258,
+                                                                     '1d212a02a5a1a4a30bab62c8043d3ae63e7a626687507a5262c2fec29c9b357b'),
+                                  'blender_codex_bridge-0.4.0-py3-none-any.whl': (161122,
+                                                                                  '591d088cfe842174c3e13faf2c56a1fa60ae311a1d5a63971d545e5c7c9f09d0'),
+                                  'blender-codex-bridge-plugin-0.4.0.zip': (6640,
+                                                                            '61a16a96aa6fa2e20ef7d6c4e3ca25527eb96e871c78fd24d20be7664242bc84'),
+                                  'SHA256SUMS.txt': (311,
+                                                     '69c86fd4881099147cfa7bee3b7dcb873498e8861e48ba241801bc105ba99c48'),
+                                  'blender-codex-bridge-0.4.0-development-evidence.tar.gz': (22157039,
+                                                                                             'f6bc5dce6ecb2d495e7390be4cfcf81127c9d8a597eb63f578d010f8e594fc1a'),
+                                  'EVIDENCE-SHA256SUMS.txt': (121,
+                                                              'c5dbdaa22890f6ce0a94a1a8a8964e466fdc183bae53cfb20ca1bd0f0754cecd')}},
+           423225358: {'tag': 'v0.5.0',
+                       'source': '4a45b99927082e1448a963140d4895c4ae82a4c7',
+                       'notes_bytes': 4627,
+                       'notes_sha256': '7ed2beb0a2ea2055f06025dfe36173302a65157287b03c7a0346e50cc38456ab',
+                       'assets': {'blender-codex-bridge-0.5.0-development-evidence.tar.gz': (10630959,
+                                                                                             '21c976d22ae42af3eddef7cf9685dda908a2fc877b460eddac2f18e7e45dd892'),
+                                  'blender-codex-bridge-plugin-0.5.0.zip': (6640,
+                                                                            '37d5d3cd3089b643290a403eba1534e2ca35ef10ac6c21357e5205d2b5d88427'),
+                                  'blender_codex_bridge-0.5.0-py3-none-any.whl': (162330,
+                                                                                  '0d0e1c2355d13c8ba442001196148565a20ca41fa914cc2373b8f1745de6aa7f'),
+                                  'blender_codex_bridge-0.5.0.zip': (751218,
+                                                                     '1d87c87d8a67bdf237c51d96ee39683e021c2b3d13d8c001be687d6922bfb56d'),
+                                  'EVIDENCE-SHA256SUMS.txt': (121,
+                                                              '9aac9cc93252b3c3d345bfb353e41d9c5d7f72724ad26159e48c6c63563b571a'),
+                                  'SHA256SUMS.txt': (311,
+                                                     'b24b359333ff4d56d49f2815a04bb59cfef10449a5b509ec9193db3fda551e20')}}}
+
+          class Refused(RuntimeError):
+              pass
+
+          def require(value, message):
+              if not value:
+                  raise Refused(message)
+
+          class SafeRedirect(HTTPRedirectHandler):
+              def redirect_request(self, request, fp, code, message, headers, newurl):
+                  parsed = urlsplit(newurl)
+                  require(request.get_method() == 'GET', 'Refuse redirecting a mutating request')
+                  require(parsed.scheme == 'https' and parsed.hostname in {
+                      'api.github.com', 'release-assets.githubusercontent.com',
+                      'objects.githubusercontent.com', 'github.com'} and
+                      parsed.port in (None, 443) and parsed.username is None and parsed.password is None,
+                      'Refuse an unexpected download redirect')
+                  redirected = super().redirect_request(request, fp, code, message, headers, newurl)
+                  require(redirected is not None, 'Unsupported redirect')
+                  if parsed.hostname != 'api.github.com':
+                      for mapping in (redirected.headers, redirected.unredirected_hdrs):
+                          for key in list(mapping):
+                              if key.lower() in {'authorization', 'proxy-authorization'}:
+                                  del mapping[key]
+                  return redirected
+
+          OPENER = build_opener(SafeRedirect())
+
+          def request(path, method='GET', data=None, *, binary=False, missing=False):
+              require(path.startswith('/'), 'Only fixed repository API paths are accepted')
+              headers = {'Authorization': 'Bearer ' + TOKEN, 'X-GitHub-Api-Version': '2022-11-28',
+                         'Accept': 'application/octet-stream' if binary else 'application/vnd.github+json'}
+              if data is not None:
+                  headers['Content-Type'] = 'application/json'
+                  data = json.dumps(data, allow_nan=False).encode()
+              try:
+                  return OPENER.open(Request(API + path, data=data, headers=headers, method=method), timeout=60)
+              except HTTPError as error:
+                  if missing and error.code == 404:
+                      return None
+                  raise Refused('GitHub API request refused with HTTP ' + str(error.code)) from None
+              except URLError:
+                  raise Refused('GitHub API transport failed; mutation outcome may need inspection') from None
+
+          def api(path, method='GET', data=None, *, missing=False):
+              response = request(path, method, data, missing=missing)
+              if response is None:
+                  return None
+              with response:
+                  body = response.read(4 * 1024 * 1024 + 1)
+              require(len(body) <= 4 * 1024 * 1024, 'Unbounded API response')
+              return json.loads(body)
+
+          def files_in(folder, names):
+              require(folder.is_dir() and not folder.is_symlink(), 'Missing owned input directory')
+              paths = list(folder.rglob('*'))
+              require(all(not path.is_symlink() for path in paths), 'Input symlink refused')
+              require({path.relative_to(folder).as_posix() for path in paths if path.is_file()} == names,
+                      'Unexpected input file inventory')
+              require(all(path.is_file() for path in paths), 'Unexpected nested input directory')
+
+          def local_bytes(path, length, expected):
+              require(stat.S_ISREG(path.lstat().st_mode) and not path.is_symlink() and path.stat().st_size == length,
+                      'Local input size/type differs')
+              data = path.read_bytes()
+              require(len(data) == length and hashlib.sha256(data).hexdigest() == expected, 'Local input hash differs')
+              return data
+
+          def ci():
+              run = api('/actions/runs/' + str(RUN))
+              require(run['id'] == RUN and run['head_sha'] == SOURCE and run['event'] == 'push' and
+                      run['status'] == 'completed' and run['conclusion'] == 'success' and run['run_attempt'] == 1 and
+                      run['head_branch'] == SOURCE_BRANCH and
+                      run['repository']['id'] == REPO_ID and run['repository']['full_name'] == REPO and
+                      run['head_repository']['id'] == REPO_ID, 'Accepted CI run identity/status differs')
+              jobs = api('/actions/runs/' + str(RUN) + '/jobs?per_page=100')
+              names = {'packages'} | {'test (' + python + ', ' + sdk + ')'
+                  for python in ('3.10', '3.11', '3.12') for sdk in ('2.0.0', '2.2.0')}
+              require(jobs['total_count'] == len(jobs['jobs']) == 7 and {job['name'] for job in jobs['jobs']} == names and
+                      all(job['run_id'] == RUN and job['head_sha'] == SOURCE and job['status'] == 'completed' and
+                          job['conclusion'] == 'success' for job in jobs['jobs']), 'All seven accepted CI jobs are required')
+              artifact = api('/actions/artifacts/' + str(ARTIFACT))
+              require(artifact['id'] == ARTIFACT and artifact['name'] == 'blender-codex-bridge-development-' + SOURCE and
+                      artifact['expired'] is False and artifact['size_in_bytes'] == 936194 and
+                      artifact['digest'] == 'sha256:f81431913f41d7991d8534ec6ec3c21ba856a50d6a744376721cbb0215778751' and
+                      artifact['workflow_run']['id'] == RUN and artifact['workflow_run']['head_sha'] == SOURCE and
+                      artifact['workflow_run']['repository_id'] == REPO_ID and artifact['workflow_run']['head_repository_id'] == REPO_ID and
+                      artifact['workflow_run']['head_branch'] == SOURCE_BRANCH,
+                      'Accepted immutable artifact metadata differs')
+              commit = api('/git/commits/' + SOURCE)
+              require(commit['sha'] == SOURCE and commit['tree']['sha'] == TREE, 'Accepted source tree differs')
+
+          def tag_commit(name):
+              reference = api('/git/ref/tags/' + quote(name, safe=''), missing=True)
+              if reference is None:
+                  return None
+              value = reference['object']
+              for _ in range(5):
+                  require(re.fullmatch('[a-f0-9]{40}', value['sha']), 'Invalid tag object')
+                  if value['type'] == 'commit':
+                      return (reference['object']['type'], reference['object']['sha'], value['sha'])
+                  require(value['type'] == 'tag', 'Unexpected tag object type')
+                  value = api('/git/tags/' + value['sha'])['object']
+              raise Refused('Tag nesting exceeds the reviewed bound')
+
+          def release(draft):
+              value = api('/releases/' + str(RELEASE))
+              require(value['id'] == RELEASE and value['tag_name'] == TAG and value['target_commitish'] == SOURCE and
+                      value['draft'] is draft and value['prerelease'] is True and value['name'] == TITLE and value['body'] == notes and
+                      value['upload_url'].split('{', 1)[0] == UPLOAD, 'Fixed release identity/body/state differs')
+              target = tag_commit(TAG)
+              require(draft or target is not None, 'Published release tag is missing')
+              if target is not None:
+                  require(target[2] == SOURCE, 'Release tag does not resolve to the accepted source')
+              return value
+
+          def asset_list(identifier):
+              values = api('/releases/' + str(identifier) + '/assets?per_page=100')
+              require(type(values) is list and len(values) < 100, 'Asset pagination exceeds the reviewed bound')
+              require(len({value['name'] for value in values}) == len(values), 'Duplicate release asset names')
+              return values
+
+          def protected_prior_releases():
+              # Fixed accepted 0.4.0 and0.5.0 pins supplement the before/after snapshots of all old releases.
+              for identifier, pin in PROTECTED_PRIOR_RELEASES.items():
+                  value = api('/releases/' + str(identifier))
+                  require(value['id'] == identifier and value['tag_name'] == pin['tag'] and
+                          value['target_commitish'] == pin['source'] and value['draft'] is False and
+                          value['prerelease'] is True, 'Previously accepted alpha identity/state differs')
+                  body = value['body'].encode('utf-8')
+                  require(len(body) == pin['notes_bytes'] and hashlib.sha256(body).hexdigest() == pin['notes_sha256'],
+                          'Previously accepted alpha notes differ')
+                  target = tag_commit(pin['tag'])
+                  require(target is not None and target[2] == pin['source'], 'Previously accepted alpha tag differs')
+                  assets = asset_list(identifier)
+                  require({item['name'] for item in assets} == set(pin['assets']), 'Previously accepted alpha asset inventory differs')
+                  for item in assets:
+                      length, expected = pin['assets'][item['name']]
+                      require(item['state'] == 'uploaded' and item['size'] == length and
+                              item.get('digest') == 'sha256:' + expected, 'Previously accepted alpha asset size/state/digest differs')
+
+          def support_evidence_blob():
+              # The checked-out support commit is separate from the accepted product source commit.
+              support = os.environ['GITHUB_SHA']
+              require(re.fullmatch('[a-f0-9]{40}', support), 'Support push SHA is invalid')
+              commit = api('/git/commits/' + support)
+              require(commit['sha'] == support, 'Support commit differs')
+              tree = api('/git/trees/' + commit['tree']['sha'] + '?recursive=1')
+              require(tree['truncated'] is False and len(tree['tree']) <= 4096, 'Support tree exceeds reviewed bound')
+              entries = [item for item in tree['tree'] if item['path'] == EVIDENCE_BLOB_PATH]
+              require(len(entries) == 1, 'Evidence blob is missing or ambiguous in support commit')
+              item = entries[0]
+              name = EVIDENCE_BLOB_PATH.rsplit('/', 1)[1]
+              require(item['type'] == 'blob' and item['mode'] == '100644' and item['sha'] == EVIDENCE_BLOB_SHA and
+                      item['size'] == EXPECTED[name][0], 'Support evidence blob metadata differs')
+              payload = local_bytes(Path(os.environ['GITHUB_WORKSPACE']) / EVIDENCE_BLOB_PATH, *EXPECTED[name])
+              header = ('blob ' + str(len(payload)) + '\0').encode('ascii')
+              require(hashlib.sha1(header + payload).hexdigest() == EVIDENCE_BLOB_SHA, 'Evidence Git blob bytes differ')
+              return support
+
+          def old_releases():
+              values = api('/releases?per_page=100')
+              require(type(values) is list and len(values) < 100, 'Release pagination exceeds the reviewed bound')
+              result = []
+              for value in values:
+                  if value['id'] == RELEASE:
+                      continue
+                  fields = {key: value.get(key) for key in ('id', 'tag_name', 'target_commitish', 'name', 'body',
+                      'draft', 'prerelease', 'created_at', 'published_at', 'updated_at', 'html_url')}
+                  fields['tag_object'] = tag_commit(value['tag_name'])
+                  fields['assets'] = [{key: item.get(key) for key in ('id', 'name', 'label', 'state', 'content_type',
+                      'size', 'digest', 'created_at', 'updated_at', 'browser_download_url')}
+                      for item in sorted(asset_list(value['id']), key=lambda item: item['id'])]
+                  result.append(fields)
+              required = {'v0.2.0', 'v0.3.0', 'v0.4.0', 'v0.5.0'}
+              require(required <= {value['tag_name'] for value in result}, 'An earlier published release is missing')
+              require(all(value['draft'] is False and value['tag_object'] is not None
+                          for value in result if value['tag_name'] in required), 'An earlier published release/tag is unavailable')
+              return sorted(result, key=lambda value: value['id'])
+
+          def latest_stable():
+              value = api('/releases/latest', missing=True)
+              return None if value is None else value['id']
+
+          def verify_asset(value):
+              name = value['name']
+              require(name in EXPECTED and type(value['id']) is int and value['id'] > 0, 'Unexpected remote asset')
+              length, expected = EXPECTED[name]
+              require(value['state'] == 'uploaded' and value['size'] == length and value.get('digest') == 'sha256:' + expected,
+                      'Remote asset size/state/digest differs: ' + name)
+              digest, total = hashlib.sha256(), 0
+              with request('/releases/assets/' + str(value['id']), binary=True) as response:
+                  for chunk in iter(lambda: response.read(1024 * 1024), b''):
+                      total += len(chunk)
+                      require(total <= length, 'Remote asset exceeds pinned size: ' + name)
+                      digest.update(chunk)
+              require(total == length and digest.hexdigest() == expected, 'Downloaded remote asset differs: ' + name)
+
+          def all_assets():
+              values = asset_list(RELEASE)
+              require({value['name'] for value in values} == set(EXPECTED), 'Exactly six accepted assets are required')
+              for value in values:
+                  verify_asset(value)
+
+          def preserved_repository():
+              with OPENER.open(Request(API, headers={'Authorization': 'Bearer ' + TOKEN,
+                      'X-GitHub-Api-Version': '2022-11-28', 'Accept': 'application/vnd.github+json'}), timeout=60) as response:
+                  payload = response.read(4 * 1024 * 1024 + 1)
+              require(len(payload) <= 4 * 1024 * 1024, 'Unbounded repository metadata')
+              repo = json.loads(payload)
+              require(repo['id'] == REPO_ID and repo['private'] is False and repo['default_branch'] == 'main',
+                      'Repository identity/visibility/default branch differs')
+              require(api('/git/ref/heads/main')['object']['sha'] == '1e3c9898ca1f4cf0d91858a383a0b93bf6438db5',
+                      'Preserved main differs')
+              pr = api('/pulls/8')
+              require(pr['draft'] is True and pr['state'] == 'open' and pr['merged'] is False and
+                      pr['head']['sha'] == '4470d88bb4d8fb1ed75e86090dd6886fb55eb589', 'Preserved draft PR8 differs')
+
+          try:
+              require(ARMED is True, 'Publisher proposal is UNARMED; no credentials or network used')
+              require(type(RELEASE) is int and RELEASE > 0, 'Fixed draft release ID is not pinned')
+              require(type(NOTES_BYTES) is int and NOTES_BYTES > 0 and type(NOTES_SHA) is str and
+                      re.fullmatch('[a-f0-9]{64}', NOTES_SHA), 'Release notes are not pinned')
+              require(type(EVIDENCE_BLOB_SHA) is str and re.fullmatch('[a-f0-9]{40}', EVIDENCE_BLOB_SHA),
+                      'Evidence Git blob is not pinned')
+              require(len(EXPECTED) == 6 and all(type(length) is int and length > 0 and type(expected) is str and
+                      re.fullmatch('[a-f0-9]{64}', expected) for length, expected in EXPECTED.values()),
+                      'All six exact asset size/hash pins are required')
+              require(PRESERVED_LATEST['observed'] is True and (PRESERVED_LATEST['release_id'] is None or
+                      type(PRESERVED_LATEST['release_id']) is int and PRESERVED_LATEST['release_id'] > 0),
+                      'Actual latest-release observation is not pinned')
+              require(TAG == 'v' + VERSION and VERSION == '0.6.0', 'Component/tag version differs')
+              TOKEN = os.environ['GH_TOKEN']
+              require(os.environ['GITHUB_REPOSITORY'] == REPO and os.environ['GITHUB_REF'] ==
+                      'refs/heads/codex/publish-reviewed-0.6.0' and os.environ['GITHUB_EVENT_NAME'] == 'push' and
+                      os.environ['GITHUB_RUN_ATTEMPT'] == '1', 'Publisher event/ref/attempt differs')
+              workspace = Path(os.environ['GITHUB_WORKSPACE']).resolve()
+              require(Path.cwd().resolve() == workspace, 'Unexpected checkout directory')
+              packages = Path(os.environ['RUNNER_TEMP']) / 'accepted-0.6.0-packages'
+              evidence = workspace / 'release-evidence/0.6.0'
+              files_in(packages, PACKAGE_NAMES)
+              files_in(evidence, {'RELEASE-NOTES.md', 'blender-codex-bridge-0.6.0-development-evidence.tar.gz', 'EVIDENCE-SHA256SUMS.txt'})
+              notes = local_bytes(evidence / 'RELEASE-NOTES.md', NOTES_BYTES, NOTES_SHA).decode('utf-8')
+              paths = {name: (packages if name in PACKAGE_NAMES else evidence) / name for name in EXPECTED}
+              for name, (length, expected) in EXPECTED.items():
+                  local_bytes(paths[name], length, expected)
+              require((packages / 'SHA256SUMS.txt').read_text() == ''.join(EXPECTED[name][1] + '  ' + name + '\n'
+                      for name in ('blender_codex_bridge-0.6.0.zip', 'blender_codex_bridge-0.6.0-py3-none-any.whl', 'blender-codex-bridge-plugin-0.6.0.zip')),
+                      'Package checksum manifest differs')
+              require((evidence / 'EVIDENCE-SHA256SUMS.txt').read_text() == EXPECTED['blender-codex-bridge-0.6.0-development-evidence.tar.gz'][1] +
+                      '  blender-codex-bridge-0.6.0-development-evidence.tar.gz\n', 'Evidence checksum manifest differs')
+              support_commit = support_evidence_blob()
+              ci()
+              preserved_repository()
+              protected_prior_releases()
+              release(True)
+              previous, latest = old_releases(), latest_stable()
+              require(latest == PRESERVED_LATEST['release_id'], 'Latest stable release differs from root observation')
+              existing = asset_list(RELEASE)
+              require({value['name'] for value in existing} <= set(EXPECTED), 'Unexpected draft asset; never replace/delete it')
+              for value in existing:
+                  verify_asset(value)
+              present = {value['name'] for value in existing}
+              for name in EXPECTED:
+                  if name in present:
+                      continue
+                  length, expected = EXPECTED[name]
+                  payload = local_bytes(paths[name], length, expected)
+                  upload = Request(UPLOAD + '?name=' + quote(name, safe=''), data=payload, method='POST',
+                      headers={'Authorization': 'Bearer ' + TOKEN, 'Accept': 'application/vnd.github+json',
+                               'X-GitHub-Api-Version': '2022-11-28', 'Content-Type': 'application/octet-stream'})
+                  try:
+                      with OPENER.open(upload, timeout=120) as response:
+                          require(response.status == 201, 'Asset creation did not return 201')
+                          result = response.read(1024 * 1024 + 1)
+                      require(len(result) <= 1024 * 1024 and json.loads(result)['name'] == name, 'Asset creation result differs')
+                  except (HTTPError, URLError):
+                      raise Refused('Missing-asset upload failed; no overwrite or automatic retry performed') from None
+                  print('Uploaded missing accepted asset: ' + name)
+              all_assets()
+              ci()
+              release(True)
+              require(old_releases() == previous and latest_stable() == latest, 'Earlier release/tag/latest state changed')
+              protected_prior_releases()
+              api('/releases/' + str(RELEASE), 'PATCH', {'draft': False, 'prerelease': True, 'make_latest': 'false'})
+              release(False)
+              preserved_repository()
+              all_assets()
+              protected_prior_releases()
+              require(old_releases() == previous and latest_stable() == latest, 'Earlier release/tag/latest state changed after publication')
+              print(json.dumps({'status': 'PUBLISHED_VERIFIED_ALPHA_ONLY', 'release_id': RELEASE, 'tag': TAG,
+                  'source_commit': SOURCE, 'source_tree': TREE, 'support_commit': support_commit,
+                  'evidence_archive_git_blob': EVIDENCE_BLOB_SHA, 'component_version': VERSION, 'assets': {name: value[1] for name, value in EXPECTED.items()},
+                  'all_six_remote_assets_downloaded_and_hashed': True, 'old_releases_and_latest_preserved': True,
+                  'candidate_code_executed': False, 'evidence_archive_executed_or_unpacked': False, 'main_merged': False}))
+          except Refused as error:
+              print('Reviewed alpha publisher stopped: ' + str(error), file=sys.stderr)
+              raise SystemExit(1) from None
+          except Exception as error:
+              print('Reviewed alpha publisher stopped with unexpected ' + type(error).__name__ + '; inspect fixed release state before a new reviewed push', file=sys.stderr)
+              raise SystemExit(1) from None
+          PY

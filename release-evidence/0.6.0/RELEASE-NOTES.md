@@ -1,0 +1,30 @@
+0.6.0 alpha adds isolated authored-geometry previews and contains operation-history failures without repeating a mutation. It runs on standard, unmodified Blender. The full artist-workflow 1.0 target remains unfinished; all 29 implementation requirements and all fourteen stable release gates remain open.
+
+Changes:
+
+- `preview.geometry_start` sends a bounded named static Mesh to a separate official Blender worker. Poll `jobs.inspect`, then retrieve the PNG with `preview.geometry_image`. Blender requires scene inspection, viewport capture and external-file permissions. The public surface now contains 268 typed tools; two internal tools remain hidden.
+- The worker never opens the artist's project. It creates its own scene with fixed framing, a new opaque material and a transparent background. The initial profile is 128 × 128, eight samples and one CPU thread, with at most 512 vertices, 1,024 edges, 512 faces and 2,048 corners. Only the exact qualified Linux 4.5.14 and 5.2.2 builds admit this profile. Local, unshared Object-mode meshes must be static, use XYZ rotation and default delta transforms, and have no parent, modifiers, constraints, animation or shape keys.
+- Preview handles are temporary, with source, plan, lifetime and permission checks before delivery. Cancellation and revoked authority prevent publication. Owned workers are terminated/reaped before their known private files are removed; uncertain cleanup retains effects and refuses delivery. These files and handles are not saves or backups.
+- A failing operation-history append is attempted once. A primary serializable denial survives a secondary history failure; failed outcome reporting returns a bounded structured error, and a missing linked receipt marks the artist-step journal incomplete. Unknown history or mutation outcomes require reinspection, not automatic retry or a claim of rollback.
+
+Verified source: `73cad805903fcd0be9175b49a5ecf78505ecd4a5`, tree `2703f46038cd8f970437686f3fddabe9ea5a8ca9`.
+
+- [Exact-commit CI](https://github.com/Yoruiopz/Codex-Blender-Bridge/actions/runs/40196147205): all seven jobs passed. Each Python 3.10–3.12 × MCP SDK 2.0.0/2.2.0 cell passed 8,403 tests with the same three Windows-only skips. Ruff, mypy, generated inventory and whitespace checks passed.
+- The four package/checksum files passed API size/digest checks, archive/member safety checks, immutable Git comparisons and wheel RECORD verification. Release installers use these exact CI-built bytes.
+- Eight selected native process results passed on official Linux Blender 4.5.14 (`62c1db4208e8`) and 5.2.2 (`d13f752e3b9c`): registered geometry preview, executor-history containment, paint jobs and the shared Scene-job kernel. Geometry checks included success, stale fetch, permission denial, cancellation before worker launch and permission revocation during a running worker. Independent declared source projections preserved unrelated dirty animation and pending hidden selection. Actual plan enforcement used a null protected-data baseline; a populated protected snapshot is not qualified.
+- The exact add-on ZIP passed fresh candidate installation, previous-package replacement, upgrade and rollback from published 0.3.0 and 0.5.0 on both builds: four fresh Blender processes and sixteen phase observations. Eight candidate previews executed installed start/inspect/image methods, with default external-file denial followed by explicit local consent. Installed module/worker bytes matched the ZIP; real worker paths contained spaces, and workers were reaped. Each four-phase route runs inside one fresh process; this does not prove process restart or preference migration.
+- A new wheel installation and fresh MCP SDK 2.2.0 stdio session passed with 268 tools, 25 disabled domains, 240 SDK receipts and 210 malformed standard-JSON cases. Installed bridge and RECORD bytes matched the wheel and accepted Git source. Third-party dependencies used 59 explicit read-only links to an existing dependency environment; the bridge installation and session were new, and the old environment remained unchanged.
+
+Limits:
+
+Windows compatibility/testing remains **deferred and unverified**. These selected Linux checks do not qualify the full native inventory, installed MCP-to-Blender A–F artist scenarios, constrained-memory operation, native undo, durable recovery or stable 1.0.
+
+The preview shows authored geometry with a replacement material. It omits original materials, UVs/attributes, evaluated modifiers, children/instances and current viewport appearance. Matching images and declared projections do not prove whole-Main hidden-state preservation, provider purity or complete protected-data coverage. Individual native blocking intervals and parent peak memory remain unmeasured; worker RSS is a whole-process peak, not an operation delta. No universal realtime or preemption guarantee is claimed.
+
+Existing restrictions on `project.save`, protected `viewport.capture`, shader-interface REMOVE/conversion and the exact Blender 5.2.2 typed importer remain. Separate weight, material-recovery, curve, cloth, native-save and private GLB development is excluded from this release's claims. Earlier 0.5.0 4K evidence remains historical evidence for that source, not current-candidate qualification.
+
+Ten exact-candidate geometry images passed retained visual review: two source-fixture triangles and eight installed cube previews. This verifies framing and silhouette only. The curated synthetic evidence archive includes CI artifacts/logs, native reports, installation receipts, source/package hashes and a standalone public-source Git bundle verified by restoration and `git fsck --strict`.
+
+Install matching add-on ZIP, MCP wheel and optional plugin together; verify `SHA256SUMS.txt`, restart both sides and begin with a disposable project and inspection. GitHub source archives are not the add-on installer. Verify the separate development-evidence archive with `EVIDENCE-SHA256SUMS.txt`.
+
+Previous releases remain available. Main and draft PR #8 remain unmerged. This is a prerelease, not stable 1.0 or cross-platform qualification.
