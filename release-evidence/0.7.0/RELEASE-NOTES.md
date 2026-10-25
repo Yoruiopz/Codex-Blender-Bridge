@@ -1,0 +1,16 @@
+0.7.0 alpha adds guarded weight edits and bounded raw F-curve point editing on standard Blender. The full artist-workflow 1.0 target remains open.
+
+- `weights.assign` and `weights.normalize` retain a complete Float32 plan, check live authority and expected state before each write, and recover only verified attempted fields. The supported profile is a local, single-user, editable Mesh within the documented dependency limits.
+- `animation.curve_edit` supports existing future-key raw `co` and handle coordinates with both handles already FREE. It preserves key-time bits and the sampled current raw transform channels. Interpolation/easing, handle conversion and extrapolation remain unsupported; valid requests return `NOT_IMPLEMENTED` in this profile. There is no arbitrary-Python fallback.
+- Geometry-preview evidence now includes a populated protected mesh/material-binding/Action baseline, truthful selected-field comparisons, preserved manual edits and unknown results after evidence eviction.
+
+Validation binds source `8d07ad898ba92c5e94db57b1562fefef9c8e0e1c` and its exact packaged bytes:
+
+- [All seven CI jobs passed](https://github.com/Yoruiopz/Codex-Blender-Bridge/actions/runs/40217002252). Each Python 3.10–3.12 × MCP SDK 2.0.0/2.2.0 cell passed 8,884 tests with three Windows-only skips.
+- Ten selected source-native processes and four fresh installed artist TCP processes passed on official Linux Blender 4.5.14 and 5.2.2. The installed tests use the genuine Runtime, preferences, checkpoints and request queue.
+- Both builds passed fresh installation, reconnect and clean-directory upgrade/rollback from 0.3.0 and 0.6.0. Sixteen phase observations and twelve installed preview workers were verified. The original oversized-report failure is retained; its corrected receipt replay passed.
+- A fresh wheel/stdio session verified 268 tools, defaults, 240 SDK receipts and 210 malformed-input cases. Package members, wheel RECORD and checksums match Git and CI. Neutral preview silhouette/framing was reviewed through standard PNG alpha composition; original material/current-viewport appearance remains unqualified.
+
+These are finite Linux alpha profiles. **Windows compatibility/testing is deferred and unverified.** Native undo, durable writer recovery, constrained memory, full character/procedural/artist workflows and all fourteen stable gates remain open. `project.save`, protected `viewport.capture`, held shader REMOVE/conversion and the exact-build import quarantine retain their restrictions. Separate native-save, material, GLB, cloth and current-pixel lifecycle development is excluded from this release's functional claims.
+
+[The actionable blocker plan](https://github.com/Yoruiopz/Codex-Blender-Bridge/blob/971cae042745cb3fbe7318e4ec17b67642aadca8/docs/releases/0.7.0-blocker-plan.md) preserves the full 29-item scope and states the next implementation and native/installed gates. Install matching add-on ZIP, MCP wheel and optional plugin; verify `SHA256SUMS.txt`. Source archives are not the add-on installer. The retained development evidence and `EVIDENCE-SHA256SUMS.txt` bind the accepted reports and source. Previous releases, main and draft PR #8 remain unchanged; this is a prerelease, not stable 1.0.
