@@ -419,3 +419,9 @@ UV inspection reports signed polygon-area diagnostics; modifying UV responses ex
 `verification.status` and always keep `user_goal_verified=false`. Passing basic numeric checks
 does not prove absence of overlap, self-intersection or distortion, nor acceptable texel density.
 These broader checks and visual/artistic acceptance remain open gates.
+
+The prospective isolated authored-geometry preview methods have a separate
+[bounded contract](geometry-preview.md). Their private DTO experiment does not
+qualify registered public jobs, cancellation, installed worker discovery, source
+freshness or image retrieval. Those gates require retained exact-source native
+and installed-package evidence; all broader artist-workflow gates remain open.

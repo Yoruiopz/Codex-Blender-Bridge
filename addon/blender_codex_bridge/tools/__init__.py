@@ -25,6 +25,7 @@ def register_all(registry: ToolRegistry) -> None:
         face_attributes,
         geometry_node_groups,
         geometry_nodes,
+        geometry_preview,
         geometry_zone_lifecycle,
         image_delivery,
         image_paint,
@@ -77,6 +78,7 @@ def register_all(registry: ToolRegistry) -> None:
     )
 
     core.register_tools(registry)
+    geometry_preview.register_tools(registry)
     task_plan.register_tools(registry)
     animation_curve_inspection.register_tools(registry)
     animation_curve_sampling.register_tools(registry)

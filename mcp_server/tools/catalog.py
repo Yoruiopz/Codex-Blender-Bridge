@@ -46,6 +46,8 @@ from .geometry_node_groups import load_definitions as _load_geometry_group_defin
 from .geometry_nodes import DESTRUCTIVE_TOOL_NAMES as GEOMETRY_DESTRUCTIVE_TOOL_NAMES
 from .geometry_nodes import TOOL_DATA as GEOMETRY_TOOL_DATA
 from .geometry_nodes import load_definitions as _load_base_geometry_definitions
+from .geometry_preview import PERMISSIONS as GEOMETRY_PREVIEW_PERMISSIONS
+from .geometry_preview import TOOL_DATA as GEOMETRY_PREVIEW_TOOL_DATA
 from .geometry_zone_lifecycle import DESTRUCTIVE_TOOL_NAMES as GEOMETRY_ZONE_DESTRUCTIVE_TOOL_NAMES
 from .geometry_zone_lifecycle import TOOL_DATA as GEOMETRY_ZONE_TOOL_DATA
 from .geometry_zone_lifecycle import load_definitions as _load_geometry_zone_definitions
@@ -170,6 +172,7 @@ def load_scene_edit_definitions() -> tuple[ToolDefinition, ...]:
     return (*_load_base_scene_edit_definitions(), *_load_scene_variant_definitions())
 
 CORE_REMOTE_TOOLS: tuple[tuple[str, str, bool, tuple[str, ...]], ...] = (
+    *((name, description, modifying, GEOMETRY_PREVIEW_PERMISSIONS) for name, description, modifying in GEOMETRY_PREVIEW_TOOL_DATA),
     ("jobs.inspect", "Inspect session-local image or bounded rigid-evaluation job progress, result/error and retained effects.", False, ("INSPECT_SCENE",)),
     ("jobs.list", "List bounded session-local image and rigid-evaluation jobs and retained Scene receipts; no durable queue.", False, ("INSPECT_SCENE",)),
     ("jobs.cancel", "Request safe-point cancellation of an exact job, not rollback; available while paused.", False, ()),

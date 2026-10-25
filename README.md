@@ -168,6 +168,11 @@ Current development contracts include [packed recovery jobs](docs/image-recovery
 [guarded rig edits](docs/rig-edit-boundaries.md) and the
 [two-bone animation benchmark](docs/character-nla.md).
 
+The prospective source includes bounded isolated authored-geometry preview jobs.
+They use a separate official Blender worker and a new opaque view, with no source
+Main edit or original-material claim. Public native/installed qualification is
+pending; see [the geometry-preview contract](docs/geometry-preview.md).
+
 ### Complete tool inventory — current source
 
 This generated inventory describes the **prospective 0.6.0 source**, including bounded tools
@@ -176,10 +181,10 @@ registry in CI. It does not describe the 108-tool 0.3.0 download.
 The local recovery UI also has an add-on-only action, not an extra MCP tool.
 
 <!-- BEGIN GENERATED MCP TOOLS -->
-Current registry: **266 MCP tools**.
+Current registry: **268 MCP tools**.
 
 <details>
-<summary>core — 34 tools</summary>
+<summary>core — 36 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
@@ -193,6 +198,8 @@ Current registry: **266 MCP tools**.
 | `jobs.inspect` | Inspect session-local image or bounded rigid-evaluation job progress, result/error and retained effects. |
 | `jobs.list` | List bounded session-local image and rigid-evaluation jobs and retained Scene receipts; no durable queue. |
 | `object.inspect` | Inspect one object without dumping raw vertex coordinates. |
+| `preview.geometry_image` | Retrieve a successful fresh geometry-preview PNG from this session; stale/expired handles refuse. |
+| `preview.geometry_start` | Start one bounded isolated authored-geometry preview job; no source Main or original material appearance is changed. |
 | `project.info` | Inspect project metadata and render settings. |
 | `project.save` | Project saving is unavailable until native save side effects can be bounded. |
 | `scene.compare` | Compare current measured object fields with a session snapshot; report incomplete coverage. |

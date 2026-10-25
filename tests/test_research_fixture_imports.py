@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import importlib
 import os
 import runpy
@@ -16,6 +17,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 HELPERS = (
+    "scripts.blender_geometry_preview_smoke",
     "scripts.blender_isolated_asset_preview_probe_smoke",
     "scripts.native_isolated_asset_preview",
     "scripts.blender_rigid_timer_probe_smoke",
@@ -106,6 +108,7 @@ def fixture_imports(addon_package, monkeypatch):
 
 
 @pytest.mark.parametrize("name,helper", [
+    ("scripts.blender_geometry_preview_smoke", "main"),
     ("scripts.blender_isolated_asset_preview_probe_smoke", "main"),
     ("scripts.native_isolated_asset_preview", "validate_dto"),
     ("scripts.blender_rigid_timer_probe_smoke", "checkpointed_cache"),
@@ -132,6 +135,34 @@ def test_importing_helper_fixture_does_not_start_experiment(fixture_imports, nam
     imported = importlib.import_module(name)
     assert callable(getattr(imported, helper))
     assert fixture_imports.timers == [] and fixture_imports.events == []
+
+
+def test_registered_geometry_fixture_materializes_only_before_pending_state():
+    tree = ast.parse((ROOT / "scripts" / "blender_geometry_preview_smoke.py").read_text())
+    calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)]
+    updates = sorted(
+        node.lineno for node in calls
+        if isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "layer" and node.func.attr == "update"
+    )
+    plan_setup = min(
+        node.lineno for node in calls
+        if isinstance(node.func, ast.Attribute) and node.func.attr == "dispatch"
+        and node.args and isinstance(node.args[0], ast.Constant)
+        and node.args[0].value in {"task.plan.set", "task.plan.enforce"}
+    )
+    action_setup = next(
+        node.lineno for node in calls
+        if isinstance(node.func, ast.Attribute) and node.func.attr == "new"
+        and isinstance(node.func.value, ast.Attribute) and node.func.value.attr == "actions"
+    )
+    pending_base = next(
+        node.lineno for node in calls
+        if isinstance(node.func, ast.Attribute) and node.func.attr == "hide_set"
+    )
+    assert updates and updates[0] < action_setup < plan_setup
+    assert all(line < pending_base for line in updates)
 
 
 @pytest.mark.parametrize("name,expected", [

@@ -133,7 +133,8 @@ def test_official_sdk_advertises_bounded_optional_quaternion_and_rejects_raw_boo
         try:
             async with Client(runtime.server) as client:
                 tools = {tool.name: tool for tool in (await client.list_tools()).tools}
-                assert len(tools) == 266
+                assert len(tools) == 268
+                assert {"preview.geometry_start", "preview.geometry_image"} <= tools.keys()
                 for method, required in ((SET, ["object_name"]), (PREVIEW, ["reference_id", "expected_revision"])):
                     tool = tools[method]
                     assert tool.annotations.read_only_hint is (method == PREVIEW)

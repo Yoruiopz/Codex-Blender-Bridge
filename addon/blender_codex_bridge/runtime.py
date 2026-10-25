@@ -10,8 +10,8 @@ from .command_queue import CommandQueue
 from .constants import DEFAULT_HOST, DEFAULT_PORT, DEFAULT_REQUEST_TIMEOUT_SECONDS
 from .errors import BridgeError, ErrorCode
 from .executor import MainThreadExecutor
+from .geometry_preview_jobs import GeometryPreviewJobs
 from .permissions import PermissionManager, permission_snapshot
-from .scene_jobs import SceneJobs
 from .selection import clear_selection_references
 from .server import LocalBridgeServer
 from .state import BridgeState, get_state
@@ -68,7 +68,7 @@ class BridgeRuntime:
         self.checkpoints = CheckpointManager()
         self.registry = ToolRegistry(enabled_toolsets=())
         register_all(self.registry)
-        self.jobs = SceneJobs(lambda: self.executor.context,
+        self.jobs = GeometryPreviewJobs(lambda: self.executor.context,
                               lambda: getattr(_preferences(), "paint_job_budget_ms", 4), registry=self.registry)
         self.executor = MainThreadExecutor(
             command_queue=self.command_queue,

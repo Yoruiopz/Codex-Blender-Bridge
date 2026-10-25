@@ -20,6 +20,7 @@ from .core import CoreTools
 from .deformation import DeformationTools
 from .geometry_node_groups import GeometryNodeGroupTools
 from .geometry_nodes import GeometryNodeTools
+from .geometry_preview import GeometryPreviewTools
 from .geometry_zone_lifecycle import GeometryZoneLifecycleTools
 from .image_portability import ImagePortabilityTools
 from .image_recovery import ImageRecoveryTools
@@ -77,6 +78,7 @@ def iter_bindings(registry: ToolRegistry) -> Iterable[MCPToolBinding]:
         ProjectTools(registry),
         SceneTools(registry),
         ViewportTools(registry),
+        GeometryPreviewTools(registry),
         SceneEditTools(registry),
         SceneVariantTools(registry),
         ObjectTools(registry),
