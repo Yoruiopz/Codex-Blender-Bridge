@@ -1,0 +1,82 @@
+{
+  "source_commit": "4a45b99927082e1448a963140d4895c4ae82a4c7",
+  "publisher_support_commit": "55bb551f2aa4ec80d2e17f808a79b54c829f827c",
+  "published_release": "v0.5.0",
+  "files": {
+    "publication-download-verification.json": {
+      "bytes": 3109,
+      "sha256": "cdcfc55d32db32c11ff75cfd2c8dc1598ea84073ec20f8bf4ff9f079aa2e472a"
+    },
+    "published-release.json": {
+      "bytes": 18823,
+      "sha256": "11ffe0311d36670fd88105f76052c36bbbeec5c4433ff474981f8539ad551612"
+    },
+    "archive-verification.json": {
+      "bytes": 493,
+      "sha256": "68ace64e6e893ecb0dd8b5d4667804ad4e7362d641af476e1a7912a930039116"
+    },
+    "publisher-api-and-logs.json": {
+      "bytes": 57114,
+      "sha256": "cc05bf7377fbdc1def142be8a7e5803e83def1741788f246ac4c7e2a1ee8e3d7"
+    },
+    "pre-publisher-observations.json": {
+      "bytes": 46173,
+      "sha256": "d9fe11f65393cf1a97eaea4cca7de8d5f0f8f5a208ed438c7d4b84c74abad4ff"
+    },
+    "previous-releases-before.json": {
+      "bytes": 48153,
+      "sha256": "daf6ba424e399454e6d9b91a8ffa8fec8794826ecaa1dae80b05e4c0c4df5ed3"
+    },
+    "latest-release-before.json": {
+      "bytes": 43,
+      "sha256": "dc56074fa627d50793cd73a885da282416051a844ef4c9fa5d2325d1f0dceeb3"
+    },
+    "main-before.json": {
+      "bytes": 356,
+      "sha256": "527348321de624feaa223d4435e8641e763b107c0ec67137312ed96d81e31aed"
+    },
+    "repository-before.json": {
+      "bytes": 6136,
+      "sha256": "883bd9470c98dd4d5b34162839f195409e447dd2524e86c1f462a37f207b299e"
+    },
+    "draft-release.json": {
+      "bytes": 6401,
+      "sha256": "caab9aea9053521cedd3832847258cc023088298f8eb5e4cc765d1a8ebec0d73"
+    },
+    "archive-git-blob.json": {
+      "bytes": 170,
+      "sha256": "7db190e8143522bdd8106245b173c17046950239b075effb5d731cf51e28f5e4"
+    },
+    "download-verifier-correction.txt": {
+      "bytes": 445,
+      "sha256": "28c7a75544de676c45828b68225a4d82aebbec5c4c95be41be534419a497ae12"
+    },
+    "verify-published-v1-source.txt": {
+      "bytes": 4074,
+      "sha256": "f2ba11158fe4771adf10bfacf05c4e82da075142b4ce28fd6b73a04ac17c3c0c"
+    },
+    "verify-published-v2-source.txt": {
+      "bytes": 4375,
+      "sha256": "484fe8955ec6ecf5b8b1bc1a4ff5dd1d7f89f1eef3e52fb7cb13e0329191e9e6"
+    },
+    "armed-publisher.yml": {
+      "bytes": 25938,
+      "sha256": "427dfbd90056d1544c951c7cccf93bf9db6fb006e5dc930354afcf7ec7eb7020"
+    },
+    "root-publisher-review.json": {
+      "bytes": 799,
+      "sha256": "4e83284bf0d369fd8f2896fc6ec5ad8d7d4df773ccc50d9257d88eb886a4da81"
+    },
+    "arming-independent-review.json": {
+      "bytes": 4147,
+      "sha256": "30d15fc829e05bdee9439417cc305ab9e55a4d744565ec8ffd633dcd600b76a1"
+    },
+    "publisher-proposal-freeze.json": {
+      "bytes": 2769,
+      "sha256": "6060e1ca9400b245815e7778fc8b894eab2e266313dc459864e295079a7645bf"
+    }
+  },
+  "archive_unchanged_sha256": "21c976d22ae42af3eddef7cf9685dda908a2fc877b460eddac2f18e7e45dd892",
+  "all14gates": "OPEN",
+  "Windows_tested": false
+}

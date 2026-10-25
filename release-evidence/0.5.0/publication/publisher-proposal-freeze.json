@@ -1,0 +1,64 @@
+{
+  "status": "UNARMED_SOURCE_PROPOSAL_FROZEN_SOURCE_CLEAR",
+  "source_edits_stopped": true,
+  "members": {
+    "README.md": {
+      "bytes": 8609,
+      "sha256": "50c5e0691175ddf3837629024124f033b6c7730b18f55b92a5a1c0fa77f571d0"
+    },
+    "embedded-publisher.py": {
+      "bytes": 21105,
+      "sha256": "24136d408a678af7a1e52cd6147067c37c142adbc896ff8b6d74d1fa4b1345ae"
+    },
+    "independent-final-review.json": {
+      "bytes": 3536,
+      "sha256": "19b0d3b357cfbd4de0bd98d59315eaa26ebb768c3a7f111fa28d94d70a36f5ce"
+    },
+    "known-publication-pins.json": {
+      "bytes": 1035,
+      "sha256": "b1da748aa244d071363b879e086405d060229dbeebeb0c51bf45af94cccfcfc5"
+    },
+    "prepare_proposal.py": {
+      "bytes": 11181,
+      "sha256": "62701fa977fa9c7246c4db3e1f676e5341305a52a53c86ed1b6f95a8a8d3407b"
+    },
+    "prior-0.4-accepted-assets.json": {
+      "bytes": 888,
+      "sha256": "83e59b6f96aedb452b3bf2546b0cc12635f04c2d58bbab1a6c014be867eacb58"
+    },
+    "publish-reviewed-alpha.yml.unarmed": {
+      "bytes": 25991,
+      "sha256": "16db7c367d16e07e28ca91931dd05323c9da03b876c6260fba4d212d74beaa2a"
+    },
+    "source-input-pins.json": {
+      "bytes": 3902,
+      "sha256": "7ad894264246b59c7f5854cab47befd14bf7e38aeecfe2308d53e7e25b6baf61"
+    },
+    "source-validation.json": {
+      "bytes": 1181,
+      "sha256": "cdc2f34815d6acb33c05f05c6c1d80c468bacccef74d3fc674066912c25076e1"
+    },
+    "workflow-source.diff": {
+      "bytes": 24089,
+      "sha256": "8d20b4133371676c8302620c9e1a921ab40b055a648edc97b251b2a2febc94e1"
+    }
+  },
+  "manifest_sha256": "bab0fb4a9bc9c91d6d74211fe8af54289f65092d618878ee9dcfa6cd6ad6c8d0",
+  "workflow_sha256": "16db7c367d16e07e28ca91931dd05323c9da03b876c6260fba4d212d74beaa2a",
+  "embedded_sha256": "24136d408a678af7a1e52cd6147067c37c142adbc896ff8b6d74d1fa4b1345ae",
+  "independent_review_sha256": "19b0d3b357cfbd4de0bd98d59315eaa26ebb768c3a7f111fa28d94d70a36f5ce",
+  "all_actual_component_release_notes_evidence_pins_filled": true,
+  "draft_release_id": 423225358,
+  "source_commit": "4a45b99927082e1448a963140d4895c4ae82a4c7",
+  "source_tree": "c7daaead4cb9332b81768535248e1c7e67037d7c",
+  "CI_run": 40172422470,
+  "artifact": 12590508302,
+  "actual_latest_stable_observation": "HTTP404; preserve absence",
+  "proposal_is_armed": false,
+  "trigger": "on: []",
+  "job_gate": "false &&",
+  "Python_gate": "ARMED=False before credentials/network",
+  "publisher_or_GitHub_or_upload_execution": false,
+  "build_install_native_full_tests": false,
+  "root_next": "Review final source/acceptance and explicit arming delta, fresh draft/prior/latest observations, supportcommit containing exactarchiveblob; retain source/proof separately from already accepted fixed archive, then authorized publication only byroot."
+}

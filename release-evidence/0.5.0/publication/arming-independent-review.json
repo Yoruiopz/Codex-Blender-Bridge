@@ -1,0 +1,70 @@
+{
+  "status": "SOURCE_CLEAR_EXACT_FOUR_CHANGE_ARMING_DELTA",
+  "checked_at_utc": "2026-10-25T07:52:30Z",
+  "reviewer": "/root/docs_resume",
+  "findings": [],
+  "inputs": {
+    "/dev/shm/blender-codex-resume-20261025/publisher-0.5-proposal/publish-reviewed-alpha.yml.unarmed": {
+      "sha256": "16db7c367d16e07e28ca91931dd05323c9da03b876c6260fba4d212d74beaa2a",
+      "bytes": 25991
+    },
+    "/dev/shm/blender-codex-resume-20261025/publisher-0.5-proposal/embedded-publisher.py": {
+      "sha256": "24136d408a678af7a1e52cd6147067c37c142adbc896ff8b6d74d1fa4b1345ae",
+      "bytes": 21105
+    },
+    "/dev/shm/blender-codex-resume-20261025/publisher-0.5-proposal/independent-final-review.json": {
+      "sha256": "19b0d3b357cfbd4de0bd98d59315eaa26ebb768c3a7f111fa28d94d70a36f5ce",
+      "bytes": 3536
+    },
+    "/dev/shm/blender-codex-resume-20261025/publisher-0.5-armed/publish-reviewed-alpha.yml": {
+      "sha256": "427dfbd90056d1544c951c7cccf93bf9db6fb006e5dc930354afcf7ec7eb7020",
+      "bytes": 25938
+    },
+    "/dev/shm/blender-codex-resume-20261025/publisher-0.5-armed/embedded-publisher.py": {
+      "sha256": "24cebec6346b2c2f43b9a638397d81b18e289605f1b4fe3c8adcd75d81d225e2",
+      "bytes": 21104
+    },
+    "/dev/shm/blender-codex-resume-20261025/publisher-0.5-armed/root-review.json": {
+      "sha256": "4e83284bf0d369fd8f2896fc6ec5ad8d7d4df773ccc50d9257d88eb886a4da81",
+      "bytes": 799
+    },
+    "/dev/shm/blender-codex-resume-20261025/publisher-0.5-proposal/source-input-pins.json": {
+      "sha256": "7ad894264246b59c7f5854cab47befd14bf7e38aeecfe2308d53e7e25b6baf61",
+      "bytes": 3902
+    },
+    "/dev/shm/blender-codex-resume-20261025/publisher-0.5-proposal/known-publication-pins.json": {
+      "sha256": "b1da748aa244d071363b879e086405d060229dbeebeb0c51bf45af94cccfcfc5",
+      "bytes": 1035
+    },
+    "/dev/shm/blender-codex-resume-20261025/release-0.5/ci/combined-audit.json": {
+      "sha256": "7b98315cdcd328e542cb60224bfa5ccb82f17a5a25eaa6b2557b9cbb016e328d",
+      "bytes": 7430
+    }
+  },
+  "exact_delta": [
+    "Workflow display name only",
+    "Single push trigger limited to codex/publish-reviewed-0.5.0",
+    "Remove inert false job conjunct; retain exact repo/ref/event/attempt1",
+    "ARMED=False to True; embedded Python otherwise byte-identical"
+  ],
+  "verified": [
+    "Armed workflow equals reviewed unarmed bytes after exactly the four allowed substitutions; embedded Python matches workflow exactly.",
+    "Job and Python independently require exact repository, support branch push and run attempt1; arming guard precedes credential access.",
+    "Accepted source/tree/run/artifact/release IDs fixed; all four package pins match root accepted CI audit, notes/evidence/checksum pins match reviewed publication metadata.",
+    "Only API mutation is fixed release423225358 PATCH draftfalse/prereleasetrue/make_latestfalse; uploads use fixed release endpoint POST for missing names only, no delete/replace/overwrite route.",
+    "All six new assets are required with exact sizes/hash/API metadata and streamed remote validation before and after publication.",
+    "All six prior0.4 asset pins, notes/source/tag checks and old0.2/.3/.4 metadata/tag/latest snapshots retained unchanged from independently cleared proposal.",
+    "Workflow never writes main/source branch/PR refs or merges; support checkout uses github.sha with credentials not persisted. Candidate packages and evidence archive are only read/hashed, not imported/executed/unpacked by publisher."
+  ],
+  "api_mutations": [
+    "api('/releases/' + str(RELEASE), 'PATCH', {'draft': False, 'prerelease': True, 'make_latest': 'false'})"
+  ],
+  "limits": [
+    "Source-only arming delta and local pinned-receipt comparison; no network, helper execution, actions, tests, builds, installations, native runs, commits or publication.",
+    "Fresh remote draft/prior/latest/ref observations and exact support commit push remain root responsibilities; this review did not refetch them.",
+    "No stable1.0 or technical immutable-release flag claimed; all14gates remain open."
+  ],
+  "executed": false,
+  "network": false,
+  "source_changed": false
+}

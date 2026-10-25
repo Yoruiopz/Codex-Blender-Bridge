@@ -1,0 +1,81 @@
+{
+  "status": "PUBLISHED_PRERELEASE_AND_ALL_SIX_ANONYMOUS_DOWNLOADS_VERIFIED",
+  "verified_at_utc": "2026-10-25T07:58:13Z",
+  "release_id": 423225358,
+  "release_url": "https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.5.0",
+  "published_at": "2026-10-25T07:54:54Z",
+  "prerelease": true,
+  "github_immutable_flag": false,
+  "source_commit": "4a45b99927082e1448a963140d4895c4ae82a4c7",
+  "source_tree": "c7daaead4cb9332b81768535248e1c7e67037d7c",
+  "publisher_support_commit": "55bb551f2aa4ec80d2e17f808a79b54c829f827c",
+  "publisher_workflow_run_id": 40174551178,
+  "assets": [
+    {
+      "id": 674438360,
+      "name": "blender-codex-bridge-0.5.0-development-evidence.tar.gz",
+      "bytes": 10630959,
+      "sha256": "21c976d22ae42af3eddef7cf9685dda908a2fc877b460eddac2f18e7e45dd892",
+      "anonymous_public_download_verified": true,
+      "api_digest_verified": true
+    },
+    {
+      "id": 674438344,
+      "name": "blender-codex-bridge-plugin-0.5.0.zip",
+      "bytes": 6640,
+      "sha256": "37d5d3cd3089b643290a403eba1534e2ca35ef10ac6c21357e5205d2b5d88427",
+      "anonymous_public_download_verified": true,
+      "api_digest_verified": true
+    },
+    {
+      "id": 674438321,
+      "name": "blender_codex_bridge-0.5.0-py3-none-any.whl",
+      "bytes": 162330,
+      "sha256": "0d0e1c2355d13c8ba442001196148565a20ca41fa914cc2373b8f1745de6aa7f",
+      "anonymous_public_download_verified": true,
+      "api_digest_verified": true
+    },
+    {
+      "id": 674438293,
+      "name": "blender_codex_bridge-0.5.0.zip",
+      "bytes": 751218,
+      "sha256": "1d87c87d8a67bdf237c51d96ee39683e021c2b3d13d8c001be687d6922bfb56d",
+      "anonymous_public_download_verified": true,
+      "api_digest_verified": true
+    },
+    {
+      "id": 674438397,
+      "name": "EVIDENCE-SHA256SUMS.txt",
+      "bytes": 121,
+      "sha256": "9aac9cc93252b3c3d345bfb353e41d9c5d7f72724ad26159e48c6c63563b571a",
+      "anonymous_public_download_verified": true,
+      "api_digest_verified": true
+    },
+    {
+      "id": 674438355,
+      "name": "SHA256SUMS.txt",
+      "bytes": 311,
+      "sha256": "b24b359333ff4d56d49f2815a04bb59cfef10449a5b509ec9193db3fda551e20",
+      "anonymous_public_download_verified": true,
+      "api_digest_verified": true
+    }
+  ],
+  "tag_ref": {
+    "ref": "refs/tags/v0.5.0",
+    "node_id": "REF_kwDOTxnI3bByZWZzL3RhZ3MvdjAuNS4w",
+    "url": "https://api.github.com/repos/Yoruiopz/Codex-Blender-Bridge/git/refs/tags/v0.5.0",
+    "object": {
+      "sha": "4a45b99927082e1448a963140d4895c4ae82a4c7",
+      "type": "commit",
+      "url": "https://api.github.com/repos/Yoruiopz/Codex-Blender-Bridge/git/commits/4a45b99927082e1448a963140d4895c4ae82a4c7"
+    }
+  },
+  "main_ref_unchanged": "1e3c9898ca1f4cf0d91858a383a0b93bf6438db5",
+  "pr8_draft_open_unmerged_head_unchanged": "4470d88bb4d8fb1ed75e86090dd6886fb55eb589",
+  "visibility_unchanged": "public",
+  "previous_three_releases_notes_and_asset_id_size_digest_metadata_unchanged": true,
+  "latest_stable_absence_preserved": true,
+  "all_14_release_gates": "OPEN",
+  "Windows_tested": false,
+  "stable_1_0_acceptance": false
+}

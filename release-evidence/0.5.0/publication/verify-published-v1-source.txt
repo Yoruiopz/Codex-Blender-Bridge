@@ -1,0 +1,30 @@
+from pathlib import Path
+import subprocess,json,hashlib,urllib.request,concurrent.futures,time
+base=Path('/dev/shm/blender-codex-resume-20261025');out=base/'publication-0.5';dl=out/'downloaded-assets';dl.mkdir(exist_ok=False)
+def api(e):return json.loads(subprocess.check_output(['gh','api','repos/Yoruiopz/Codex-Blender-Bridge/'+e]))
+r=api('releases/423225358');assert not r['draft'] and r['prerelease'] and r['tag_name']=='v0.5.0' and r['target_commitish']=='4a45b99927082e1448a963140d4895c4ae82a4c7' and r['body'].encode()==(out/'RELEASE-NOTES.md').read_bytes();(out/'published-release.json').write_text(json.dumps(r,indent=2)+'\n')
+ci=json.loads((base/'release-0.5/ci/combined-audit.json').read_text());expected={n:(m['bytes'],m['sha256']) for n,m in ci['packages']['assets'].items()}
+for n in ('blender-codex-bridge-0.5.0-development-evidence.tar.gz','EVIDENCE-SHA256SUMS.txt'):
+ p=out/n;expected[n]=(p.stat().st_size,hashlib.sha256(p.read_bytes()).hexdigest())
+assert {x['name'] for x in r['assets']}==set(expected) and len(r['assets'])==6
+def download(a):
+ n=a['name'];size,sha=expected[n];assert a['state']=='uploaded' and a['size']==size and a['digest']=='sha256:'+sha
+ url=a['browser_download_url'];assert url=='https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/download/v0.5.0/'+n
+ p=dl/n;h=hashlib.sha256();total=0
+ with urllib.request.urlopen(urllib.request.Request(url,headers={'User-Agent':'Blender-Codex-Bridge-release-byte-verification'}),timeout=60) as response,p.open('xb') as f:
+  assert response.status==200
+  while True:
+   data=response.read(1024*1024)
+   if not data:break
+   total+=len(data);assert total<=size;h.update(data);f.write(data)
+ assert total==size and h.hexdigest()==sha
+ return {'id':a['id'],'name':n,'bytes':total,'sha256':sha,'anonymous_public_download_verified':True,'api_digest_verified':True}
+with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:assets=list(pool.map(download,r['assets']))
+tag=api('git/ref/tags/v0.5.0');assert tag['object']['type']=='commit' and tag['object']['sha']==r['target_commitish']
+main=api('git/ref/heads/main');pr=api('pulls/8');repo=api('');assert main['object']['sha']=='1e3c9898ca1f4cf0d91858a383a0b93bf6438db5' and pr['head']['sha']=='4470d88bb4d8fb1ed75e86090dd6886fb55eb589' and pr['draft'] and pr['state']=='open' and not pr['merged'];assert repo['private'] is False and repo['visibility']=='public'
+prior=json.loads((out/'previous-releases-before.json').read_text());protected=('id','tag_name','target_commitish','name','body','draft','prerelease','created_at','published_at','updated_at','html_url','assets')
+for old in prior:
+ new=api('releases/'+str(old['id']));assert {k:old[k] for k in protected}=={k:new[k] for k in protected},old['id']
+latest=subprocess.run(['gh','api','repos/Yoruiopz/Codex-Blender-Bridge/releases/latest'],capture_output=True);assert latest.returncode and '404' in latest.stderr.decode()
+receipt={'status':'PUBLISHED_PRERELEASE_AND_ALL_SIX_ANONYMOUS_DOWNLOADS_VERIFIED','verified_at_utc':time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime()),'release_id':r['id'],'release_url':r['html_url'],'published_at':r['published_at'],'prerelease':True,'github_immutable_flag':r.get('immutable'),'source_commit':r['target_commitish'],'source_tree':'c7daaead4cb9332b81768535248e1c7e67037d7c','publisher_support_commit':'55bb551f2aa4ec80d2e17f808a79b54c829f827c','publisher_workflow_run_id':40174551178,'assets':assets,'tag_ref':tag,'main_ref_unchanged':main['object']['sha'],'pr8_draft_open_unmerged_head_unchanged':pr['head']['sha'],'visibility_unchanged':'public','previous_three_releases_all_selected_fields_and_full_asset_metadata_unchanged':True,'latest_stable_absence_preserved':True,'all_14_release_gates':'OPEN','Windows_tested':False,'stable_1_0_acceptance':False}
+(out/'publication-download-verification.json').write_text(json.dumps(receipt,indent=2)+'\n');print(json.dumps({k:v for k,v in receipt.items() if k not in ('assets','tag_ref')}));print('receipt_sha256',hashlib.sha256((out/'publication-download-verification.json').read_bytes()).hexdigest())

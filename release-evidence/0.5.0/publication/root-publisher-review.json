@@ -1,0 +1,14 @@
+{
+  "status": "ROOT_ARMED_SOURCE_REVIEWED_AWAITING_INDEPENDENT_DELTA_AND_PUSH",
+  "workflow_sha256": "427dfbd90056d1544c951c7cccf93bf9db6fb006e5dc930354afcf7ec7eb7020",
+  "embedded_sha256": "24cebec6346b2c2f43b9a638397d81b18e289605f1b4fe3c8adcd75d81d225e2",
+  "source_unarmed_sha256": "16db7c367d16e07e28ca91931dd05323c9da03b876c6260fba4d212d74beaa2a",
+  "allowed_delta": "workflow name, exact singlebranch push trigger, removejobfalse, setARMEDTrue only",
+  "source_commit": "4a45b99927082e1448a963140d4895c4ae82a4c7",
+  "release_id": 423225358,
+  "artifact_id": 12590508302,
+  "evidence_branch_commit": "726567285327f92f9578eaa4d3c1c573f011f8a0",
+  "prior14gates": "OPEN",
+  "root_alpha_acceptance_sha256": "8375daba4d81d4c838740f8965e1109fd646596b0a8dade830e55b6170de25c0",
+  "executed": false
+}
