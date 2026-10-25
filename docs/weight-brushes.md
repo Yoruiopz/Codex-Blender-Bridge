@@ -6,6 +6,11 @@ local, editable, non-override, single-user target mesh data. Targets and source
 regions are named explicitly; active selection is not interpreted as consent.
 They never change topology, normalize weights, create groups or save the project.
 
+The separate [direct assign/normalize guard](weight-edit-safety.md) retains
+pre-provider intent and field-only recovery in source. Its bounded ordinary
+stock native call window is implemented but awaits native qualification. It does not change or qualify
+the three geometry-aware brush/mirror/transfer handlers described here.
+
 ## Explicit brush strokes
 
 `weights.brush_stroke(object_name, group_name, vertex_indices, strokes,

@@ -30,6 +30,7 @@ HELPERS = (
     "scripts.blender_simulation_cache_probe_smoke",
     "scripts.blender_camera_focus_smoke",
     "scripts.blender_animation_curve_sampling_smoke",
+    "scripts.blender_animation_intent_smoke",
     "scripts.blender_surface_publication_probe",
     "scripts.blender_sculpt_mask_smoke",
     "scripts.blender_character_revision_smoke",
@@ -124,6 +125,7 @@ def fixture_imports(addon_package, monkeypatch):
     ("scripts.blender_simulation_cache_probe_smoke", "values"),
     ("scripts.blender_camera_focus_smoke", "main"),
     ("scripts.blender_animation_curve_sampling_smoke", "main"),
+    ("scripts.blender_animation_intent_smoke", "main"),
     ("scripts.blender_surface_publication_probe", "main"),
     ("scripts.blender_sculpt_mask_smoke", "main"),
     ("scripts.blender_character_revision_smoke", "main"),
@@ -243,6 +245,268 @@ def test_large_surface_entry_refuses_unowned_ui_before_exit_authority(fixture_im
     monkeypatch.setattr(os, "_exit", lambda _status: pytest.fail("Unowned entry acquired process-exit authority"))
     with pytest.raises(AssertionError, match="Use the isolated private interactive runner"):
         runpy.run_path(str(ROOT / "scripts/blender_large_surface_paint_smoke.py"), run_name="__main__")
+    assert fixture_imports.timers == [] and fixture_imports.events == []
+
+
+def test_animation_intent_entry_refuses_unowned_ui_before_exit_authority(fixture_imports, monkeypatch):
+    monkeypatch.setattr(os, "_exit", lambda _status: pytest.fail("Unowned curve fixture acquired process-exit authority"))
+    with pytest.raises(AssertionError, match="Use the isolated private interactive runner"):
+        runpy.run_path(str(ROOT / "scripts/blender_animation_intent_smoke.py"), run_name="__main__")
+    assert fixture_imports.timers == [] and fixture_imports.events == []
+
+
+def test_animation_intent_direct_main_rechecks_ownership_before_scheduling_or_exit(fixture_imports, monkeypatch):
+    script = importlib.import_module("scripts.blender_animation_intent_smoke")
+    monkeypatch.setattr(os, "_exit", lambda _status: pytest.fail("Direct unowned main acquired process-exit authority"))
+    with pytest.raises(AssertionError, match="Use the isolated private interactive runner"):
+        script.main()
+    assert fixture_imports.timers == [] and fixture_imports.events == []
+
+
+@pytest.mark.parametrize("fault", [None, "proof", "stdout", "stderr"])
+def test_animation_intent_owned_finish_always_exits_after_io_failure(fixture_imports, monkeypatch, fault):
+    script = importlib.import_module("scripts.blender_animation_intent_smoke")
+    sidebar = importlib.import_module("scripts.blender_artist_sidebar_smoke")
+    observed = []
+    class OwnedExit(BaseException):
+        pass
+    def exit_owned(status):
+        observed.append(status)
+        raise OwnedExit
+    def stream(name):
+        def flush():
+            if fault == name:
+                raise OSError("Private controlled stdio flush failure")
+        return NS(write=lambda *_: None, flush=flush)
+    fixture = script.Fixture.__new__(script.Fixture)
+    fixture.data = {"calls": [], "source_sha256": {}}
+    fixture.path = NS(read_bytes=lambda: b"owned fixture proof")
+    fixture.started = 0.
+    def flush():
+        if fault == "proof":
+            raise OSError("Private controlled proof flush failure")
+    fixture.flush = flush
+    monkeypatch.setattr(sidebar, "owned_process_exit", exit_owned)
+    monkeypatch.setattr(script.bpy.app, "version_string", "Portable fixture model", raising=False)
+    with monkeypatch.context() as patch:
+        patch.setattr(sys, "stdout", stream("stdout"))
+        patch.setattr(sys, "stderr", stream("stderr"))
+        with pytest.raises(OwnedExit):
+            fixture.finish(0)
+    assert observed == [0 if fault is None else 1]
+    assert fixture_imports.timers == [] and fixture_imports.events == []
+
+
+@pytest.mark.parametrize("alias_matches", [True, False])
+def test_animation_intent_native_shaped_snapshot_has_four_field_bits_and_checks_alias_before_freeze(
+    fixture_imports, alias_matches,
+):
+    script = importlib.import_module("scripts.blender_animation_intent_smoke")
+
+    def prop(name, kind):
+        return NS(identifier=name, is_readonly=False, is_runtime=False, is_registered=False, type=kind)
+
+    point_fields = ("co", "co_ui", "handle_left", "handle_right")
+    point = NS(co=[11., 10.], co_ui=[11., 10. if alias_matches else 12.],
+               handle_left=[10., -0.], handle_right=[14., 10.], as_pointer=lambda: 71,
+               bl_rna=NS(identifier="Keyframe", properties=[prop(name, "FLOAT") for name in point_fields]))
+    curve = NS(data_path="location", array_index=0, keyframe_points=[point], sampled_points=[], modifiers=[],
+               as_pointer=lambda: 70, bl_rna=NS(identifier="FCurve", properties=[prop("data_path", "STRING"), prop("array_index", "INT")]))
+    if alias_matches:
+        row = script.curve_row(curve)
+        snapshot, = row["points"]
+        assert set(snapshot["rna"]) == set(snapshot["float32_bits"]) == set(point_fields)
+        assert snapshot["float32_bits"]["co"] == snapshot["float32_bits"]["co_ui"] == ["00003041", "00002041"]
+        assert snapshot["float32_bits"]["handle_left"][1] == "00000080"
+        before = {"actions": [{"identity": {"pointer": 7}, "layers": [{"strips": [{"bags": [{"curves": [row]}]}]}]}]}
+        predicted = script.predict(before, 7, {"keyframes": [{"frame": 11., "co": [11., 13.]}]})
+        expected = script.chosen_curve(predicted, 7)["points"][0]
+        assert set(expected["rna"]) == set(expected["float32_bits"]) == set(point_fields)
+        assert expected["float32_bits"]["co"] == expected["float32_bits"]["co_ui"] == ["00003041", "00005041"]
+    else:
+        with pytest.raises(AssertionError, match="Native co_ui read alias differs before freezing"):
+            script.curve_row(curve)
+    assert fixture_imports.timers == [] and fixture_imports.events == []
+
+
+def test_animation_intent_oracle_predicts_whole_state_without_readback(fixture_imports):
+    import copy
+    import struct
+
+    script = importlib.import_module("scripts.blender_animation_intent_smoke")
+    curve = {"identity": {"pointer": 70},
+             "rna": {"data_path": "location", "array_index": 0, "extrapolation": "CONSTANT"},
+             "points": [{"identity": {"pointer": 71},
+                         "rna": {"co": [11., 10.], "co_ui": [11., 10.], "handle_left": [10., 10.], "handle_right": [14., 10.],
+                                  "interpolation": "BEZIER", "easing": "AUTO"},
+                         "float32_bits": {"co": ["00003041", "00002041"], "co_ui": ["00003041", "00002041"],
+                                          "handle_left": ["00002041", "00002041"], "handle_right": ["00006041", "00002041"]}}]}
+    before = {"actions": [{"identity": {"pointer": 7}, "layers": [{"strips": [{"bags": [{"curves": [curve]}]}]}]}],
+              "protected": {"curve": [1., -0.]}, "context": {"frame": 1}}
+    original = copy.deepcopy(before)
+    request = {"keyframes": [{"frame": 11., "co": [11., .1], "handle_left": [10., -0.],
+                             "handle_right": [14., .25]}]}
+    result = script.predict(before, 7, request)
+    observed = script.chosen_curve(result, 7)
+    point = observed["points"][0]
+    assert observed["rna"] == curve["rna"] and observed["identity"] == curve["identity"]
+    assert point["identity"] == curve["points"][0]["identity"]
+    assert point["rna"]["co"] == point["rna"]["co_ui"] == [11., struct.unpack("<f", struct.pack("<f", .1))[0]]
+    assert point["rna"]["co"] is not point["rna"]["co_ui"]
+    assert point["float32_bits"]["co"] == point["float32_bits"]["co_ui"] == ["00003041", "cdcccc3d"]
+    assert point["rna"]["handle_right"] == [14., .25]
+    assert point["float32_bits"]["handle_left"][1] == "00000080"
+    assert result["protected"] == before["protected"] and result["context"] == before["context"]
+    assert script.same(before, original) and not script.same(before, result)
+    assert not script.same(-0., 0.) and not script.same(True, 1)
+    assert script.same(result, script.predict(result, 7, request))
+    handles_only = script.predict(before, 7, {"keyframes": [{"frame": 11., "handle_left": [10., -0.]}]})
+    handle_point = script.chosen_curve(handles_only, 7)["points"][0]
+    assert handle_point["rna"]["co"] == handle_point["rna"]["co_ui"] == [11., 10.]
+    assert handle_point["float32_bits"]["co"] == curve["points"][0]["float32_bits"]["co"]
+    assert fixture_imports.timers == [] and fixture_imports.events == []
+
+
+@pytest.mark.parametrize("curve_request", [
+    {"extrapolation": "CONSTANT"},
+    {"keyframes": [{"frame": -0., "interpolation": "BEZIER"}]},
+    {"keyframes": [{"frame": -0., "handle_left_type": "FREE"}]},
+    {"keyframes": [{"frame": -0., "co": [0., 2.]}]},
+    {"keyframes": [{"frame": -0., "co": [1., 2.]}]},
+])
+def test_animation_intent_oracle_refuses_full_curve_fields_and_time_bit_changes(fixture_imports, curve_request):
+    script = importlib.import_module("scripts.blender_animation_intent_smoke")
+    point = {"rna": {"co": [-0., 1.], "co_ui": [-0., 1.]},
+             "float32_bits": {"co": ["00000080", "0000803f"], "co_ui": ["00000080", "0000803f"]}}
+    curve = {"rna": {"data_path": "location", "array_index": 0}, "points": [point]}
+    before = {"actions": [{"identity": {"pointer": 7}, "layers": [{"strips": [{"bags": [{"curves": [curve]}]}]}]}]}
+    with pytest.raises(AssertionError):
+        script.predict(before, 7, curve_request)
+    assert point["rna"]["co"] == [-0., 1.] and point["float32_bits"]["co"][0] == "00000080"
+    assert fixture_imports.timers == [] and fixture_imports.events == []
+
+
+@pytest.mark.parametrize("failure", [False, True])
+def test_animation_intent_checkpoint_observer_calls_original_once_and_never_fakes_completion(fixture_imports, failure):
+    script = importlib.import_module("scripts.blender_animation_intent_smoke")
+    calls, blender, guard = [], object(), object()
+
+    def original(actual_blender, label, **kwargs):
+        calls.append((actual_blender, label, kwargs))
+        if failure:
+            raise RuntimeError("Actual snapshot refused")
+        return "real-snapshot-token"
+
+    fixture = script.Fixture.__new__(script.Fixture)
+    fixture.runtime = NS(checkpoints=NS(_snapshot=original))
+    fixture.label, fixture.data = "owned-call", {"native_snapshot_receipts": []}
+    fixture.observe_checkpoints()
+    if failure:
+        with pytest.raises(RuntimeError, match="Actual snapshot refused"):
+            fixture.runtime.checkpoints._snapshot(blender, "before", guard=guard)
+    else:
+        assert fixture.runtime.checkpoints._snapshot(blender, "before", guard=guard) == "real-snapshot-token"
+    assert calls == [(blender, "before", {"guard": guard})]
+    row, = fixture.data["native_snapshot_receipts"]
+    assert row == {"call": "owned-call", "label": "before", "completed": not failure,
+                   **({} if failure else {"returned": "real-snapshot-token"})}
+    assert fixture_imports.timers == [] and fixture_imports.events == []
+
+
+def test_animation_intent_source_excludes_held_native_paths_and_production_provider_replacement():
+    tree = ast.parse((ROOT / "scripts/blender_animation_intent_smoke.py").read_text())
+    forbidden_calls = {"frame_set", "keyframe_insert", "save_as_mainfile", "save_mainfile", "save_userpref",
+                       "undo", "undo_redo", "undo_history"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Attribute):
+                assert node.func.attr not in forbidden_calls
+                if node.func.attr == "update":
+                    assert isinstance(node.func.value, ast.Name) and node.func.value.id in {"result", "row"}
+            if isinstance(node.func, ast.Name):
+                assert node.func.id != "PermissionManager"
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for target in targets:
+                for field in ast.walk(target):
+                    if isinstance(field, ast.Attribute):
+                        assert field.attr not in {"_write", "_update", "_read", "_source", "permissions", "ui_type"}
+
+
+@pytest.mark.parametrize("first_value,expected", [(0., (0., 20., 0.)), (20., (20., 40., 0.)), (-2.5, (-2.5, 17.5, 0.))])
+def test_animation_intent_factory_seeds_first_key_transform_before_binding(
+    fixture_imports, monkeypatch, first_value, expected,
+):
+    script = importlib.import_module("scripts.blender_animation_intent_smoke")
+    events, curves = [], []
+
+    class Actor:
+        def __init__(self):
+            self._location = (0., 0., 0.)
+            self.animation_data = NS(action=None, action_slot=None)
+
+        @property
+        def location(self):
+            return self._location
+
+        @location.setter
+        def location(self, value):
+            self._location = tuple(value)
+            events.append(("location", tuple(value)))
+
+        def animation_data_create(self):
+            assert self.location == expected
+            assert len(curves) == 2 and all(len(curve.keyframe_points) == 2 for curve in curves)
+            events.append(("binding", None))
+            return self.animation_data
+
+    class Points(list):
+        def add(self, count):
+            self.extend(NS() for _ in range(count))
+
+    def curve_new(*, data_path, index):
+        assert data_path == "location" and index == len(curves)
+        curve = NS(keyframe_points=Points(), update=lambda: pytest.fail("Raw setup must never issue FCurve.update"))
+        curves.append(curve)
+        return curve
+
+    actor, slot = Actor(), NS()
+    bag = NS(fcurves=NS(new=curve_new))
+    strip = NS(channelbag=lambda actual_slot, ensure: bag if actual_slot is slot and ensure else pytest.fail("Wrong raw slot"))
+    layer = NS(strips=NS(new=lambda **kwargs: strip if kwargs == {"type": "KEYFRAME"} else pytest.fail("Wrong strip")))
+    action = NS(slots=NS(new=lambda *args: slot if args == ("OBJECT", "Actor") else pytest.fail("Wrong actor slot")),
+                layers=NS(new=lambda name: layer if name == "Raw Owned Layer" else pytest.fail("Wrong layer")))
+
+    def object_new(name, data):
+        assert (name, data) == ("Actor", None)
+        events.append(("new_object", None))
+        return actor
+
+    def action_new(name):
+        assert name == "Motion" and actor.location == expected
+        events.append(("new_action", None))
+        return action
+
+    scene = NS(frame_current=1, frame_subframe=0., collection=NS(objects=NS(link=lambda owner: events.append(("link", owner)))))
+    monkeypatch.setattr(script.bpy, "context", NS(scene=scene), raising=False)
+    monkeypatch.setattr(script.bpy, "data", NS(objects=NS(new=object_new), actions=NS(new=action_new)), raising=False)
+    assert script.make_actor("Actor", "Motion", ((1., first_value), (11., first_value+10.))) == (action, actor)
+    assert actor.location == expected and actor.animation_data.action is action and actor.animation_data.action_slot is slot
+    assert [name for name, _ in events] == ["new_object", "location", "link", "new_action", "binding"]
+    assert tuple(curve.keyframe_points[0].co[1] for curve in curves) == expected[:2]
+    assert [scene.frame_current, scene.frame_subframe] == [1, 0.]
+    assert fixture_imports.timers == [] and fixture_imports.events == []
+
+
+@pytest.mark.parametrize("frame,subframe,first_key", [(2, 0., 1.), (1, .25, 1.), (1, 0., 2.)])
+def test_animation_intent_factory_refuses_other_time_before_allocation(fixture_imports, monkeypatch, frame, subframe, first_key):
+    script = importlib.import_module("scripts.blender_animation_intent_smoke")
+    scene = NS(frame_current=frame, frame_subframe=subframe)
+    monkeypatch.setattr(script.bpy, "context", NS(scene=scene), raising=False)
+    monkeypatch.setattr(script.bpy, "data", NS(objects=NS(new=lambda *_args: pytest.fail("Time refused before allocation"))), raising=False)
+    with pytest.raises(AssertionError, match="factory frame one"):
+        script.make_actor("Actor", "Motion", ((first_key, 0.), (11., 10.)))
+    assert [scene.frame_current, scene.frame_subframe] == [frame, subframe]
     assert fixture_imports.timers == [] and fixture_imports.events == []
 
 

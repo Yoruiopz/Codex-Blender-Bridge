@@ -95,62 +95,165 @@ This is neither durable version storage nor an automatic backup. Allocation or
 binding failure reports the retained new Action name and measured binding recovery;
 it does not silently delete the retained Action.
 
-## Edit one existing curve
+## Edit existing raw point fields
 
 `animation.curve_edit(object_name, data_path, index=0, keyframes?, extrapolation?,
-slot_identifier?, affected_objects?)` selects exactly one existing F-curve on the active Action. Shared,
-linked, overridden or read-only Actions are rejected. Layered Actions use only the
-object's assigned active slot; an explicit slot identifier must match it.
+slot_identifier?, affected_objects?)` retains its existing public parameters. The
+first admitted writer profile is **`RAW_FREE_POINT_V1`**: raw `co`, `handle_left`
+and `handle_right` Float2 assignments on existing keys. This is a bounded
+implementation increment; full curve authoring remains required for 1.0.
 
 Each of at most 256 `keyframes` entries names one distinct existing `frame` and may
-set `interpolation` (`CONSTANT`, `LINEAR`, `BEZIER`), `easing`, handle types, and
-`handle_left`/`handle_right` coordinates. Explicit handle coordinates require the
-corresponding `FREE` type. Numeric input is finite and bounded to ±1,000,000. No keys,
-channels or slots are inserted or guessed. Curves are limited to 1,024 existing
-unsampled points. Extrapolation is `CONSTANT` or `LINEAR`.
+supply `co=[frame, value]`, `handle_left=[x, y]` or `handle_right=[x, y]`. The optional
+`co` field is additive. Its MCP schema requires an exact two-element array of
+finite numbers within ±1,000,000, rejecting booleans, numeric strings and malformed
+arrays. Blender independently checks every input and requires the Float32-rounded
+`co.x` bits to equal the selected key's original frame bits, including signed zero.
+This profile changes values, not key times. A raw `co` assignment leaves handles
+unchanged unless their fields are explicitly requested. `co_ui` is a separately
+compared native read alias of `co`; it is never used as a setter.
 
-All input is validated before edits. Post-state contains every bounded curve point,
-including handles affected by native recalculation. Native keyframe wrappers are
-reacquired after extrapolation/update because Blender may invalidate earlier RNA
-wrappers. Failure attempts measured local restoration and reports whether mutation
-may remain; reinspection is required. Other Action channels and source versions
-are not replaced. Automatic handle recalculation can affect neighboring handles on
-the edited curve. Other Action metadata, layers, groups, slots and channels are
-compared around each write. Point wrappers are reacquired at every write boundary.
+The existing `interpolation`, `easing`, `handle_left_type`, `handle_right_type` and
+`extrapolation` parameters remain in the public schema for compatibility. Valid
+requests for any of them return `NOT_IMPLEMENTED` before point operations,
+including requests that match the source value. Malformed enum values retain
+`INVALID_ARGUMENT`. Do not include `handle_left_type="FREE"` or
+`handle_right_type="FREE"` to authorize coordinates: both handles must already be
+FREE. No keys, channels, slots or Actions are inserted or recreated by this tool.
 
-Both authoring tools now recheck live cancellation, pause/emergency stop, permission and
-toolset, exact object/Action identity, Action content/reference ownership, current
-session and NLA/binding context before every write and compensation. Changed
-consumers, manual keys or a newer binding prevent stale compensation. A failed
-copy retains its allocation and delegates binding recovery to the same guarded
-Action lifecycle contract; it never blindly rebinds a protected source or deletes
-the retained copy. The optional `affected_objects` defaults to an empty list for
-independent objects. Dependent consumers must be enumerated exactly within the
-32-object closure; unsupported graphs fail closed. These tools require no active
-owner drivers or tweak mode, local editable Actions, and bounded lifecycle content;
-asset-marked/custom-property Actions and sampled curves need broader contracts.
+### Source and context admitted by the first profile
+
+This profile admits only the source-reviewed official **Linux Blender 4.5.14 LTS**
+(build `62c1db4208e8`) and **Linux Blender 5.2.2 LTS** (build `d13f752e3b9c`). An exact
+build match is an admission condition, not native qualification of this writer.
+Other builds and platforms return `NOT_IMPLEMENTED`; Windows qualification is
+deferred.
+
+The named owner must be a local editable nonoverride Empty with no data block,
+parent, constraints, modifiers, instancing or custom properties, directly owned by
+the sole Scene's master collection and visible in its sole ViewLayer. Its active
+Action must be local, editable, unshared and nonoverride, with an ordinary REPLACE
+binding at full influence and no NLA tracks, drivers or tweak mode. Layered Actions
+require the assigned OBJECT slot; an explicit `slot_identifier` must match it.
+The target curve and all channels in the assigned slot must address `location`,
+`rotation_euler` or `scale`, index 0–2, with XYZ rotation mode. Pose-bone, custom
+control and arbitrary RNA channels need separate authoring profiles.
+
+The current scene time must already equal an existing key on every admitted active
+slot curve, and each raw Object channel must match that key's Float32 value.
+A `co` edit that revises the current key's value is refused. The first native case
+can therefore revise a future key while retaining an unchanged current key and
+pose. Current-frame value revision and broader dirty/evaluated contexts remain
+unqualified; the writer never adopts a changed Object projection as a new baseline.
+
+Object Mode and a **separate existing unanimated active Empty** are required for the
+normal checkpoint. The named animated owner may be unselected. A previous weak
+checkpoint owner must also meet the bounded static Empty witness. A genuine
+checkpoint/setup before intent capture is allowed; automatic checkpoints remain
+enabled. Context acquisition after intent capture must preserve the original
+compared source. Only the canonical completed checkpoint push advances the
+source-reviewed ParticleEdit weak role.
+
+The ordinary profile also requires exactly one Scene, ViewLayer, WindowManager
+and Window, bounded local nonoverride Main IDs, no linked-library or Text roots,
+no unrelated or embedded animation, and no admitted frame/dependency callbacks.
+Main is limited to 256 IDs, 128 Objects and 16 Actions. Each admitted Action has at
+most 32 curves and 1,024 total keyframes; sampled points, modifiers, drivers,
+asset-marked Actions and Action custom properties are refused. External affected
+consumers are unsupported, so `affected_objects` must be empty. These restrictions
+are local to this writer, not global permission or inspection changes.
+
+Every point on the selected curve must already have two FREE handles, finite exact
+Float32 coordinates within ±1,000,000, reviewed interpolation/easing values, and
+strictly increasing times. Stored or requested subnormal coordinates require a
+separate qualification. Adjacent key times must have a Float32-rounded subtraction
+greater than the exact native `0.01f` threshold (little-endian bytes `0ad7233c`).
+Equality can merge keys; a Python-double gap greater than `0.01` is insufficient.
+Source and independently rounded requested handles must bracket their key:
+`left.x <= key.x <= right.x`. Crossing or swapped handles are refused rather than
+clamped or swapped. The writer issues **no `FCurve.update`, sort, extrapolation
+setter or `co_ui` setter**. Full update and extrapolation can relocate point storage
+on the reviewed official builds; they require a separate owned-transition and
+recovery contract.
+
+### Preservation, lifecycle and recovery
+
+The registered admission factory retains the original bounded request, canonical
+ordinary Runtime/Executor/provider services, permissions, cancellation hooks,
+Object/Action session identities, assigned slot, curve/point identities and the
+complete declared Action and preservation scope before providers or checkpoint
+writes. This profile is standalone: `batch.plan`/`batch.execute` refuse this
+nonbatchable writer. Protected task-scope enforcement needs separate qualification;
+this first profile requires advisory task scope. The existing structured-mutation
+lease remains held through entry, editing, recovery and checkpoint finalization.
+
+A pure kernel independently predicts the complete Action prefix for every Float32
+field assignment, including the `co_ui` read alias. Untouched values, scalar types,
+signed zeros, metadata, other channels and descendant identities remain compared.
+Fresh owner membership and point facts are checked before canonical native calls;
+point/vector wrappers and the callable's native owner are released before the next
+provider boundary. Neither native output nor a post-checkpoint observation becomes
+a new expected baseline.
+
+Cancellation, disconnect, deadline, permission/toolset changes, pause/stop, changed
+bindings/consumers/context or replaced services stop later writes. The first refusal
+remains sticky. A setter is recorded as attempted before entry. A native exception
+can have effects: recovery may reverse only an independently verified attempted
+prefix under current authority, through the same raw field path. Unknown state,
+manual interleaving or lost authority retains effects and reports refusal instead
+of overwriting newer work. No recovery recreates keys, channels or Actions.
+
+Success and failure carry flat typed `recovery_evidence` with
+`kind=curve_mutation`: original IDs, selector, stage, attempted/verified field and
+update counts, original/requested/observed digests, known/partial-state flags and
+restoration refusal. Native update counts remain zero in this profile. These
+observations grant no restore authority and retain no native handles, buffers or
+intent prefixes in history. Inspection denial redacts the recovery payload under
+the existing policy. A compared rollback is not native undo availability or a
+durable backup. The writer never saves.
+
+Results identify `authored_profile=RAW_FREE_POINT_V1` and disclose
+`context_sync_possible=true`, `current_pose_revision_qualified=false`,
+`persistent_non_ID_identity_qualified=false` and
+`complete_hidden_state_qualified=false`. The ordinary trusted synchronous leaf is
+not an arbitrary in-process Python sandbox, a persistent non-ID/ABA identity
+guarantee or proof that every native hidden/runtime field is unchanged.
+
+The pure snapshot retains its existing 65,536-item, depth-32, 4,096-byte-string and
+1,537-step budgets. Items multiplied by field steps must not exceed 2,097,152;
+existing request budgets also apply. Work can be refused below the point limits.
+Native allocation, reads, ownership scans, checkpoints and individual setters can
+block until return. This synchronous increment adds no job, hard memory cap or
+latency guarantee.
+
+`action_copy` retains its separate allocation/binding contract: a failed copy
+retains its allocation and delegates measured binding recovery to Action lifecycle;
+it does not blindly rebind a protected source or delete a retained copy. Its
+`affected_objects` scope retains the separate bounded consumer-closure rules.
 
 ## Verification and remaining limits
 
-Portable read-only fixtures cover full handle metadata, shared/linked reads,
-exact layered slots, strict pagination and indexed reads at the million-point
-budget, finite output, and matching official MCP schemas/forwarding. The native
-fixture also includes read-only pages before and after the existing authoring
-checks; results must be retained for the exact source being qualified.
-
-Unit fixtures cover invalid input, shared/linked ownership, active layered-slot
-selection, failure restoration and RNA-wrapper replacement. The disposable native
-`animation_curves` runner case verifies independent Action binding, protected source
-and unrelated channel preservation, linear/constant motion samples, explicit FREE
-handles, context preservation and playback using an existing typed NLA strip.
+Portable inspection/sampling fixtures cover read-only selectors, pagination,
+metadata and bounded numeric evaluation. The new point-intent models cover strict
+source/request admission, independent complete Float32 prefixes, signed zero,
+`co`/`co_ui` alias preservation, no-op classification and inverse-prefix direction.
+MCP schema fixtures exercise optional Float2 validation and preserve the existing
+forwarding envelope, including retained unsupported enum parameters. These checks
+do not prove a native registered write or checkpoint recovery.
 
 The earlier authoring fixture passed on **Linux Blender 4.5.14 LTS and 5.2.2 LTS** in
-`build/next-wave-animation-guard-native-20261022-final-2/report.json`. It includes measured
-native compensation and late pause/permission/manual-key refusal; that historical
-run predates `animation.curve_inspect`. Unit fixtures also
-prove live stop/cancel/permission/toolset refusal, postwrite manual-key/consumer
-interleaving, protected-channel preservation after native failure, and retained
-allocations after authority or ownership changes. The earlier 4.3.2 evidence is
-historical source evidence. Windows, production-scale/mixed-editor undo, curve
-insertion/deletion and full character acceptance remain open. Run native fixtures
-only through `scripts/run_blender_checks.py`.
+`build/next-wave-animation-guard-native-20261022-final-2/report.json`. That historical
+run predates the retained-intent writer. A separate native RNA probe observed raw
+`co`/left/right calls preserve measured point addresses and extrapolation/full
+update relocate them on both exact builds. Neither result qualifies this new
+registered writer, its lifecycle or its recovery. Exact-source native evidence must
+be retained for the point-only profile before release acceptance, including sampled
+values, full authored/preservation comparisons, genuine checkpoints, denial,
+invalid context, injected failures, manual interleaving and measured recovery.
+Run native fixtures only through `scripts/run_blender_checks.py`.
+
+Current-frame curves, interpolation/easing, all handle modes/conversion,
+extrapolation/full-update ownership, broader rigs/controls, curve insertion/deletion,
+Action/NLA workflows, mixed manual/bridge undo, production memory/latency and full
+character acceptance remain mandatory work. Windows compatibility/testing remains
+deferred. This increment does not complete H05/C03 or qualify 1.0.

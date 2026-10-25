@@ -112,6 +112,8 @@ def bounded_recovery_evidence(value: Any) -> dict[str, Any] | None:
         return _bounded_weight_recovery(value)
     if value.get("kind") == "uv_mutation":
         return _bounded_uv_recovery(value)
+    if value.get("kind") == "curve_mutation":
+        return _bounded_curve_recovery(value)
     result: dict[str, Any] = {}
     mode = value.get("mode")
     if isinstance(mode, str) and mode in {"CURRENT_PIXELS_SNAPSHOT", "LOADED_BUFFER", "PACKED_RECONSTRUCTION"}:
@@ -146,7 +148,8 @@ def _bounded_weight_recovery(value: Mapping[str, Any]) -> dict[str, Any] | None:
     """Copy a complete flat weight-write receipt; it grants no restore authority."""
     method, name, stage = value.get("method"), value.get("object_name"), value.get("stage")
     if (type(method) is not str or method not in {
-            "weights.brush_stroke", "weights.mirror_geometric", "weights.transfer_surface"}
+            "weights.brush_stroke", "weights.mirror_geometric", "weights.transfer_surface",
+            "weights.assign", "weights.normalize"}
             or type(stage) is not str or stage not in {
                 "PREPARED", "FIELD_WRITE", "UPDATE", "RESTORE", "COMPLETE", "FAILED"}
             or type(name) is not str or not name or len(name) > 63 or any(ord(c) < 32 for c in name)):
@@ -157,15 +160,19 @@ def _bounded_weight_recovery(value: Mapping[str, Any]) -> dict[str, Any] | None:
     except UnicodeError:
         return None
     result: dict[str, Any] = {"kind": "weight_mutation", "method": method, "object_name": name, "stage": stage}
+    direct = method in {"weights.assign", "weights.normalize"}
+    if direct and stage == "UPDATE":
+        return None
     for key in ("execution_started", "possible_mutation", "rollback_verified", "verification_required",
                 "state_known", "retained_partial"):
         field = value.get(key)
         if type(field) is not bool:
             return None
         result[key] = field
-    for key, maximum in (("owned_membership_attempts", 4096), ("owned_membership_verified", 4096),
-                         ("restoration_attempts", 4096), ("restored_memberships", 4096),
-                         ("native_update_attempts", 6), ("native_update_verified", 6)):
+    membership_limit, update_limit = (256, 0) if direct else (4096, 6)
+    for key, maximum in (("owned_membership_attempts", membership_limit), ("owned_membership_verified", membership_limit),
+                         ("restoration_attempts", membership_limit), ("restored_memberships", membership_limit),
+                         ("native_update_attempts", update_limit), ("native_update_verified", update_limit)):
         field = value.get(key)
         if type(field) is not int or not 0 <= field <= maximum:
             return None
@@ -261,6 +268,73 @@ def _bounded_uv_recovery(value: Any) -> dict[str, Any] | None:
             or result["retained_partial"] or refused is not None):
         return None
     return result
+
+
+def _bounded_curve_recovery(value: Any) -> dict[str, Any] | None:
+    """Retain bounded scalar curve observations, never prefixes or authority."""
+    if (type(value) is not dict or len(value) > 64 or any(type(key) is not str for key in value)
+            or type(value.get("kind")) is not str or value["kind"] != "curve_mutation"
+            or type(value.get("method")) is not str or value["method"] != "animation.curve_edit"
+            or "observed_sha256" not in value or "restoration_refused" not in value):
+        return None
+    stage = value.get("stage")
+    if type(stage) is not str or stage not in {"PREPARED", "FIELD_WRITE", "UPDATE", "RESTORE", "COMPLETE", "FAILED"}:
+        return None
+    result: dict[str, Any] = {"kind": "curve_mutation", "method": value["method"], "stage": stage}
+    for key, maximum in (("object_name", 63), ("action_name", 63), ("data_path", 2048)):
+        field = value.get(key)
+        if type(field) is not str or not field or len(field) > (512 if key == "data_path" else maximum) or any(ord(c) < 32 for c in field):
+            return None
+        try:
+            if len(field.encode("utf-8")) > maximum:
+                return None
+        except UnicodeError:
+            return None
+        result[key] = field
+    index = value.get("array_index")
+    if type(index) is not int or not 0 <= index <= 16384:
+        return None
+    result["array_index"] = index
+    for key in ("object_pointer", "object_session_uid", "action_pointer", "action_session_uid", "curve_pointer"):
+        field = value.get(key)
+        if type(field) is not int or not 1 <= field <= 2**64 - 1:
+            return None
+        result[key] = field
+    for key in ("execution_started", "possible_mutation", "rollback_verified", "verification_required", "state_known", "retained_partial"):
+        field = value.get(key)
+        if type(field) is not bool:
+            return None
+        result[key] = field
+    for key, maximum in (("owned_field_attempts", 1537), ("owned_field_verified", 1537),
+                         ("restoration_attempts", 1537), ("restored_fields", 1537),
+                         ("native_update_attempts", 2), ("native_update_verified", 2)):
+        field = value.get(key)
+        if type(field) is not int or not 0 <= field <= maximum:
+            return None
+        result[key] = field
+    for key in ("before_sha256", "expected_sha256", "observed_sha256"):
+        field = value.get(key)
+        if key == "observed_sha256" and field is None:
+            result[key] = None
+        elif type(field) is str and len(field) == 64 and all(c in "0123456789abcdef" for c in field):
+            result[key] = field
+        else:
+            return None
+    refused = value["restoration_refused"]
+    if refused is not None and (type(refused) is not str or refused not in {
+            "AUTHORITY_LOST", "STATE_CHANGED", "UNKNOWN_WRITE_RESULT", "INVALID_NATIVE_SCOPE", "NATIVE_INTERRUPTED"}):
+        return None
+    result["restoration_refused"] = refused
+    if (result["owned_field_verified"] > result["owned_field_attempts"]
+            or result["restored_fields"] > result["restoration_attempts"]
+            or result["native_update_verified"] > result["native_update_attempts"]
+            or result["state_known"] != (result["observed_sha256"] is not None)):
+        return None
+    if result["rollback_verified"] and (not result["state_known"] or result["observed_sha256"] != result["before_sha256"]
+                                       or result["retained_partial"] or refused is not None):
+        return None
+    return result
+
 
 
 def bounded_external_effects(value: Any) -> dict[str, Any] | None:

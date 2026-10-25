@@ -2,16 +2,21 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
+from pydantic import Field, StrictFloat
 from typing_extensions import NotRequired, TypedDict
 
 from ..tool_registry import ToolDefinition, ToolRegistry, remote_tool
 from ._common import MCPToolBinding, params
 
+CurveCoordinate = Annotated[StrictFloat, Field(ge=-1_000_000, le=1_000_000, allow_inf_nan=False)]
+Float2 = Annotated[list[CurveCoordinate], Field(strict=True, min_length=2, max_length=2)]
+
 
 class KeyframeEdit(TypedDict):
     frame: float
+    co: NotRequired[Float2]
     interpolation: NotRequired[Literal["CONSTANT", "LINEAR", "BEZIER"]]
     easing: NotRequired[Literal["AUTO", "EASE_IN", "EASE_OUT", "EASE_IN_OUT"]]
     handle_left_type: NotRequired[Literal["FREE", "ALIGNED", "VECTOR", "AUTO", "AUTO_CLAMPED"]]
@@ -22,7 +27,7 @@ class KeyframeEdit(TypedDict):
 
 TOOL_DATA = (
     ("animation.action_copy", "Copy and bind an explicit independent active Action; source remains in this session, unused source retention across saves is not guaranteed."),
-    ("animation.curve_edit", "Edit interpolation/easing/handles on at most 256 existing keyframes of one local unshared active-Action curve; at most 1024 curve points, no insertion or arbitrary RNA."),
+    ("animation.curve_edit", "Edit bounded raw co/value and FREE handle fields of existing ordinary Object keys; interpolation, handle-type, extrapolation and full-update profiles remain unsupported."),
 )
 
 
@@ -46,7 +51,7 @@ class AnimationCurveTools:
         slot_identifier: str | None = None,
         affected_objects: list[str] | None = None,
     ) -> Any:
-        """Edit one existing curve; explicit handle coordinates require corresponding FREE handle types."""
+        """Edit existing FREE-handle points in RAW_FREE_POINT_V1. Optional co=[existing_frame,value] preserves the Float32 frame bits; Blender checks ownership, source profile and current-pose preservation. Enum/handle-type/extrapolation parameters remain in the protocol but valid requests return NOT_IMPLEMENTED. No key insertion, FCurve.update or sort."""
         return await self.registry.call("animation.curve_edit", params(
             object_name=object_name, data_path=data_path, index=index, keyframes=keyframes,
             extrapolation=extrapolation, slot_identifier=slot_identifier, affected_objects=affected_objects,

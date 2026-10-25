@@ -19,6 +19,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 CASES = {
     "geometry_preview": ("blender_geometry_preview_smoke.py", "BLENDER_GEOMETRY_PREVIEW_OK "),
+    "weight_edit_guard": ("blender_weight_edit_guard_smoke.py", "BLENDER_WEIGHT_EDIT_GUARD_OK "),
     "isolated_asset_preview_probe": ("blender_isolated_asset_preview_probe_smoke.py", "BLENDER_ISOLATED_ASSET_PREVIEW_WORKER_OK "),
     "exclusive_mutation": ("blender_exclusive_mutation_smoke.py", "BLENDER_EXCLUSIVE_MUTATION_OK "),
     "project_save_denial": ("blender_project_save_denial_smoke.py", "BLENDER_PROJECT_SAVE_DENIAL_OK "),
@@ -65,6 +66,7 @@ CASES = {
     "image_portability_probe": ("blender_image_portability_smoke.py", "BLENDER_IMAGE_PORTABILITY_PROBE_READER_OK "),
     "animation_curves": ("blender_animation_curves_smoke.py", "BLENDER_CODEX_ANIMATION_CURVES_SMOKE_OK "),
     "curve_sampling": ("blender_animation_curve_sampling_smoke.py", "BLENDER_ANIMATION_CURVE_SAMPLING_OK "),
+    "animation_intent": ("blender_animation_intent_smoke.py", "BLENDER_ANIMATION_INTENT_OK "),
     "surface_publication_probe": ("blender_surface_publication_probe.py", "BLENDER_SURFACE_PUBLICATION_PROBE_OK "),
     "geometry_node_groups": ("blender_geometry_node_groups_smoke.py", "BLENDER_GEOMETRY_NODE_GROUPS_OK "),
     "task_plans": ("blender_task_plans_smoke.py", "BLENDER_TASK_PLANS_READER_OK "),
@@ -214,10 +216,12 @@ OPT_IN_CASES.add("artist_target_verification")
 OPT_IN_CASES.add("artist_target_sidebar")
 OPT_IN_CASES.add("artist_quaternion_storage")
 OPT_IN_CASES.add("artist_quaternion")
+OPT_IN_CASES.add("animation_intent")
 OPT_IN_CASES.add("uv_edit_storage")
 OPT_IN_CASES.add("uv_edit_boundary_probe")
 OPT_IN_CASES.add("large_surface_paint")
 OPT_IN_CASES.add("uv_edit_guard")
+OPT_IN_CASES.add("weight_edit_guard")
 OPT_IN_CASES.add("scene_checkpoint_admission")
 OPT_IN_CASES.add("render_scope_probe")
 OPT_IN_CASES.add("render_boundaries")
@@ -269,6 +273,7 @@ INTERACTIVE_CASES.add("scene_job_kernel")
 INTERACTIVE_CASES.add("executor_history_containment")
 INTERACTIVE_CASES.add("rigid_evaluation_jobs")
 INTERACTIVE_CASES.add("render_boundaries_interactive")
+INTERACTIVE_CASES.add("animation_intent")
 
 
 def success_payload(output: str, marker: str) -> dict | None:
@@ -304,7 +309,7 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
         "--python",
         str(script),
     ]
-    if case in {"artist_quaternion_storage", "artist_quaternion", "uv_edit_storage", "uv_edit_boundary_probe", "large_surface_paint", "uv_edit_guard", "geometry_preview", "executor_history_containment"}:
+    if case in {"artist_quaternion_storage", "artist_quaternion", "uv_edit_storage", "uv_edit_boundary_probe", "large_surface_paint", "uv_edit_guard", "geometry_preview", "executor_history_containment", "animation_intent", "weight_edit_guard"}:
         command.insert(1, "--disable-autoexec")
     interactive = case in INTERACTIVE_CASES
     if case == "isolated_asset_preview_probe":
@@ -378,6 +383,18 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
             else "interactive_display" if interactive else "background"
         ),
     }
+    if case == "animation_intent":
+        result["qualification_scope"] = {
+            "authored_profile": "RAW_FREE_POINT_V1",
+            "registered_future_key_raw_fields": ["co", "handle_left", "handle_right"],
+            "current_pose_revision_qualified": False,
+            "native_failure_compensation_qualified": False,
+            "native_cancellation_disconnect_qualified": False,
+            "persistent_non_ID_identity_qualified": False,
+            "complete_hidden_state_qualified": False,
+            "full_H05_C03_qualified": False,
+            "windows_testing_deferred": True,
+        }
     with log.open("wb") as stream:
         try:
             if interactive and sys.platform == "win32":

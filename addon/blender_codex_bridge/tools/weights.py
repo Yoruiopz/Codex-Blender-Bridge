@@ -122,56 +122,22 @@ def _apply(obj: Any, updates: list[tuple[Any, int, float | None]]) -> dict[str, 
 
 
 def assign(context: Any, params: Mapping[str, Any]) -> dict[str, Any]:
+    from ..weight_edit_guard import current
+
     reject_unknown_params(params, {"object_name", "group_name", "vertex_indices", "weight"})
-    obj = _object(params, modify=True)
-    name = bounded_name(params.get("group_name"), "group_name")
-    group = obj.vertex_groups.get(name)
-    if group is None or group.lock_weight:
-        raise invalid_argument("Named vertex group must exist and be unlocked.")
-    indices = _indices(obj, params.get("vertex_indices"))
-    value = params.get("weight")
-    if value is not None and (type(value) not in (int, float) or not 0 <= value <= 1):
-        raise invalid_argument(
-            "weight must be a finite number in [0,1], or null to remove membership."
-        )
-    if "weight" not in params:
-        raise invalid_argument("weight is required (null removes memberships).")
-    return _apply(obj, [(group, i, value) for i in indices])
+    return current(context, "weights.assign", params).execute()
 
 
 def normalize(context: Any, params: Mapping[str, Any]) -> dict[str, Any]:
+    from ..weight_edit_guard import current
+
     reject_unknown_params(params, {"object_name", "group_names", "vertex_indices"})
-    obj = _object(params, modify=True)
-    indices = _indices(obj, params.get("vertex_indices"))
-    names = params.get("group_names")
-    if (
-        not isinstance(names, list)
-        or not 1 <= len(names) <= 32
-        or any(not isinstance(n, str) for n in names)
-        or len(set(names)) != len(names)
-    ):
-        raise invalid_argument("group_names must contain 1-32 unique names.")
-    groups = [obj.vertex_groups.get(name) for name in names]
-    if any(group is None or group.lock_weight for group in groups):
-        raise invalid_argument("Normalization groups must exist and be unlocked.")
-    selected = {g.index for g in groups}
-    updates = []
-    for index in indices:
-        weights = {g.group: g.weight for g in obj.data.vertices[index].groups}
-        untouched = sum(w for g, w in weights.items() if g not in selected)
-        total = sum(weights.get(g.index, 0) for g in groups)
-        if untouched > 1 + 1e-6 or total <= 0:
-            raise invalid_argument(
-                "Cannot normalize zero target weights or preserve untouched weights exceeding one.",
-                vertex_index=index,
-            )
-        for group in groups:
-            if group.index in weights:
-                updates.append((group, index, weights[group.index] / total * max(0, 1 - untouched)))
-    return _apply(obj, updates)
+    return current(context, "weights.normalize", params).execute()
 
 
 def register_tools(registry: Any) -> None:
+    from ..weight_edit_guard import factory
+
     for name, handler in (
         ("inspect", inspect),
         ("group_create", group_create),
@@ -189,6 +155,8 @@ def register_tools(registry: Any) -> None:
             if name == "inspect"
             else (Permission.EDIT_MESH,),
             description=handler.__doc__ or f"Bounded vertex weights: {name}.",
+            **({"checkpoint_admission_factory": lambda context, params, method=f"weights.{name}": factory(method, context, params),
+                "exclusive_mutation": True} if name in {"assign", "normalize"} else {}),
         )
 
 

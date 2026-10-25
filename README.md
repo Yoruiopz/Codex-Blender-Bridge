@@ -241,7 +241,7 @@ Current registry: **268 MCP tools**.
 | `animation.action_inspect` | Inspect one exact Action's bounded content, slots, direct references and save retention. |
 | `animation.action_remove` | Confirm removal of one unused unretained Action ID without unlinking or automatic recreation. |
 | `animation.action_update` | Rename/set fake-user retention on one Action; clearing retention additionally needs DELETE_OBJECTS. |
-| `animation.curve_edit` | Edit interpolation/easing/handles on at most 256 existing keyframes of one local unshared active-Action curve; at most 1024 curve points, no insertion or arbitrary RNA. |
+| `animation.curve_edit` | Edit bounded raw co/value and FREE handle fields of existing ordinary Object keys; interpolation, handle-type, extrapolation and full-update profiles remain unsupported. |
 | `animation.curve_inspect` | Inspect an exact active-Action curve's extrapolation and paged keyframes with full Bezier handles; never update or evaluate animation. |
 | `animation.curve_sample` | Sample bounded direct values of one exact active-Action curve; no scene, NLA, driver, constraint or deformation evaluation. |
 | `animation.inspect` | Inspect one object's bounded action, F-curves, keyframes, slots, and drivers. |

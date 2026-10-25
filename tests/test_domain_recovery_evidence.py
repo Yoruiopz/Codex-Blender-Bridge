@@ -215,3 +215,93 @@ def test_uv_reducer_refuses_adapters_custom_keys_and_oversized_objects_before_re
     assert reduce(supplied) is None
     assert reduce({**uv_evidence(), **{f"unknown_{i}": None for i in range(39)}}) == uv_evidence()
     assert reduce({**uv_evidence(), **{f"unknown_{i}": None for i in range(40)}}) is None
+
+
+def curve_evidence():
+    return {"kind": "curve_mutation", "method": "animation.curve_edit", "object_name": "Actor",
+            "action_name": "Walk", "data_path": "location", "array_index": 0,
+            "object_pointer": 1001, "object_session_uid": 101, "action_pointer": 1002,
+            "action_session_uid": 102, "curve_pointer": 1003, "stage": "FAILED",
+            "execution_started": True, "possible_mutation": True, "rollback_verified": False,
+            "verification_required": True, "state_known": False, "retained_partial": True,
+            "owned_field_attempts": 2, "owned_field_verified": 1,
+            "restoration_attempts": 0, "restored_fields": 0, "native_update_attempts": 0,
+            "native_update_verified": 0, "before_sha256": "a" * 64, "expected_sha256": "b" * 64,
+            "observed_sha256": None, "restoration_refused": "AUTHORITY_LOST"}
+
+
+def test_curve_partial_failure_history_is_detached_typed_and_redacted(domain_env):
+    env, facts = domain_env, curve_evidence()
+    def failed(*_):
+        raise env.errors.BridgeError("TIMEOUT", "Curve edit interrupted", {
+            "affected_objects": ["Actor"], "possible_mutation": False, "recovery_evidence": facts})
+    response = invoke(env, failed, "animation.curve_edit")
+    assert not response.ok and response.error["context"]["possible_mutation"] is True
+    assert response.error["context"]["verification_required"] is True
+    assert env.state.history(1)[0]["recovery_evidence"] == facts
+    facts["action_name"] = "Later caller mutation"
+    assert env.state.history(1)[0]["recovery_evidence"]["action_name"] == "Walk"
+    env.grants["INSPECT_SCENE"] = False
+    hidden = env.core.checkpoint_list(env.executor.context, {"limit": 1})["operation_history"][0]
+    assert hidden["recovery_evidence"] is None and hidden["recovery_evidence_redacted"]
+    assert hidden["description_redacted"] and hidden["affected_objects"] == ["Actor"]
+    assert "action_name" not in str(hidden) and "a" * 64 not in str(hidden)
+
+
+def test_curve_native_interruption_keeps_attempted_unknown_receipt_without_restore_authority(domain_env):
+    env = domain_env
+    facts = {**curve_evidence(), "owned_field_attempts": 1, "owned_field_verified": 0,
+             "restoration_refused": "NATIVE_INTERRUPTED"}
+    def interrupted(*_):
+        raise env.errors.BridgeError("OPERATION_FAILED", "Native point call interrupted", {
+            "affected_objects": ["Actor"], "recovery_evidence": facts, "verification_required": True})
+    response = invoke(env, interrupted, "animation.curve_edit")
+    assert not response.ok and response.error["context"]["possible_mutation"]
+    retained = env.state.history(1)[0]["recovery_evidence"]
+    assert retained == facts
+    assert not retained["state_known"] and retained["observed_sha256"] is None
+    assert not retained["rollback_verified"] and retained["restoration_attempts"] == 0
+
+
+def test_curve_success_history_does_not_grant_undo_or_saved_backup(domain_env):
+    env = domain_env
+    facts = {**curve_evidence(), "stage": "COMPLETE", "state_known": True, "observed_sha256": "b" * 64,
+             "retained_partial": False, "verification_required": False, "owned_field_verified": 2,
+             "restoration_refused": None, "native_update_attempts": 1, "native_update_verified": 1}
+    response = invoke(env, lambda *_: {"affected_objects": ["Actor"], "recovery_evidence": facts}, "animation.curve_edit")
+    assert response.ok and not response.result["operation"]["undo_boundary_created"]
+    assert env.state.history(1)[0]["recovery_evidence"] == facts
+    assert "project_saved" not in facts and "snapshot_retained" not in facts
+
+
+def test_curve_rollback_facts_require_known_original_and_no_retained_refusal(domain_env):
+    facts = {**curve_evidence(), "state_known": True, "observed_sha256": "a" * 64,
+             "rollback_verified": True, "retained_partial": False, "restoration_refused": None,
+             "restoration_attempts": 1, "restored_fields": 1}
+    reduce = domain_env.state_mod.bounded_recovery_evidence
+    assert reduce(facts) == facts
+    for changed in ({"observed_sha256": "b" * 64}, {"retained_partial": True},
+                    {"restoration_refused": "STATE_CHANGED"}, {"state_known": False, "observed_sha256": None}):
+        assert reduce({**facts, **changed}) is None
+
+
+def test_curve_history_never_copies_intent_prefixes_arrays_or_native_handles(domain_env):
+    facts = curve_evidence()
+    supplied = {**facts, "prefixes": [0.] * 10000, "native_curve": object(), "restore": object(), "project_saved": True}
+    supplied["cycle"] = supplied
+    assert domain_env.state_mod.bounded_recovery_evidence(supplied) == facts
+
+
+@pytest.mark.parametrize("field,value", [
+    ("method", "animation.keyframe_insert"), ("stage", "RESTORED"), ("object_name", ""),
+    ("action_name", "é" * 32), ("action_name", "bad\nname"), ("data_path", "\ud800"),
+    ("data_path", "a" * 513), ("array_index", True), ("array_index", 16385),
+    ("object_pointer", 0), ("action_session_uid", 2**64), ("curve_pointer", 1.0),
+    ("execution_started", 1), ("possible_mutation", "false"), ("rollback_verified", None),
+    ("owned_field_attempts", True), ("owned_field_attempts", 1538), ("owned_field_verified", 3),
+    ("restoration_attempts", -1), ("restored_fields", 1), ("native_update_attempts", 3),
+    ("native_update_verified", 1), ("before_sha256", "A" * 64), ("expected_sha256", None),
+    ("observed_sha256", "b" * 64), ("state_known", True), ("restoration_refused", "FORCE"),
+])
+def test_invalid_curve_facts_never_become_recovery_history(domain_env, field, value):
+    assert domain_env.state_mod.bounded_recovery_evidence({**curve_evidence(), field: value}) is None

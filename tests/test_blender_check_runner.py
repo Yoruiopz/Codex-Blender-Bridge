@@ -30,7 +30,7 @@ def test_all_existing_smokes_are_in_registry(runner):
 @pytest.mark.parametrize("case", [
     "core", "undo_lifecycle", "camera_focus", "curve_sampling", "surface_publication_probe", "sculpt_mask",
     "character_revision", "artist_target_verification", "artist_target_sidebar", "artist_quaternion_storage", "artist_quaternion",
-    "uv_edit_storage", "uv_edit_boundary_probe", "large_surface_paint", "uv_edit_guard",
+    "uv_edit_storage", "uv_edit_boundary_probe", "large_surface_paint", "uv_edit_guard", "animation_intent", "weight_edit_guard",
 ])
 def test_factory_fixture_bytecode_prelude_runs_before_script(runner, monkeypatch, tmp_path, case):
     monkeypatch.setattr(runner.sys, "platform", "linux")
@@ -42,7 +42,7 @@ def test_factory_fixture_bytecode_prelude_runs_before_script(runner, monkeypatch
         assert command[expression + 1] == "import sys; sys.dont_write_bytecode = True"
         assert command[script + 1] == str(ROOT / "scripts" / runner.CASES[case][0])
         assert "--factory-startup" in command
-        if case in {"artist_quaternion_storage", "artist_quaternion", "uv_edit_storage", "uv_edit_boundary_probe", "large_surface_paint", "uv_edit_guard"}:
+        if case in {"artist_quaternion_storage", "artist_quaternion", "uv_edit_storage", "uv_edit_boundary_probe", "large_surface_paint", "uv_edit_guard", "animation_intent", "weight_edit_guard"}:
             assert command.index("--disable-autoexec") < script
         assert command[command.index("--python-exit-code") + 1] == "1"
         assert ("--background" in command) is (case not in runner.INTERACTIVE_CASES)
@@ -65,6 +65,8 @@ def test_factory_fixture_bytecode_prelude_runs_before_script(runner, monkeypatch
     assert "uv_edit_boundary_probe" in runner.OPT_IN_CASES and "uv_edit_boundary_probe" not in runner.INTERACTIVE_CASES
     assert "large_surface_paint" in runner.OPT_IN_CASES and "large_surface_paint" in runner.INTERACTIVE_CASES
     assert "uv_edit_guard" in runner.OPT_IN_CASES and "uv_edit_guard" not in runner.INTERACTIVE_CASES
+    assert "animation_intent" in runner.OPT_IN_CASES and "animation_intent" in runner.INTERACTIVE_CASES
+    assert "weight_edit_guard" in runner.OPT_IN_CASES and "weight_edit_guard" not in runner.INTERACTIVE_CASES
 
 
 @pytest.mark.parametrize(
