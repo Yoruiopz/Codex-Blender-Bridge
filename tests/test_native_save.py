@@ -568,7 +568,8 @@ def test_canonical_constructor_provider_stays_closure_free():
                   and isinstance(node.body, ast.Call) and isinstance(node.body.func, ast.Name)
                   and node.body.func.id == "permission_snapshot"]
     assert len(candidates) == 1 and not candidates[0].args.args
-    assert ast.unparse(candidates[0]) == "lambda: permission_snapshot(_preferences())"
+    expected = ast.parse("lambda: permission_snapshot(_preferences())", mode="eval").body
+    assert ast.dump(candidates[0], include_attributes=False) == ast.dump(expected, include_attributes=False)
 
 
 @pytest.mark.parametrize("method", ["register", "unregister", "start_server", "stop_server",
