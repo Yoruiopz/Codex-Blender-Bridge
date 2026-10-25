@@ -1,0 +1,90 @@
+{
+  "status": "PASS_INDEPENDENT_SOURCE_AND_PIN_REVIEW_NO_CONCRETE_BLOCKER",
+  "reviewer_task": "/root/release06_notes",
+  "source_commit": "73cad805903fcd0be9175b49a5ecf78505ecd4a5",
+  "source_tree": "2703f46038cd8f970437686f3fddabe9ea5a8ca9",
+  "publisher_workflow_sha256": "1a97d2017554f5ce3762ff8404df7cd6c800f5943b9ab123d0a77cc61d93cb4e",
+  "publisher_python_sha256": "6cc08738311dc8ede7df5a31e9e6e4d6e137e25adaf525cbb603ee1eedb096ca",
+  "root_preparation_sha256": "fd3abf32b9241a8c2de9106eeabf0248f100a6019abeaf354a896728e46cb5fc",
+  "notes_sha256": "9dc8f687486e81af8adf049c16e92a075b067368a3895a62a07d1e74fa5fb7f5",
+  "draft_release_id": 423442432,
+  "accepted_assets": {
+    "SHA256SUMS.txt": {
+      "bytes": 311,
+      "sha256": "babfd2c80be03d8ddec2e88a0e097cd84d1d03dfc23247ac48e12a16d30c007a"
+    },
+    "blender-codex-bridge-plugin-0.6.0.zip": {
+      "bytes": 6640,
+      "sha256": "bc1218c89055649fbce9c56710392750030f6a00dcd6d1e0295aeb33f9ee5900"
+    },
+    "blender_codex_bridge-0.6.0-py3-none-any.whl": {
+      "bytes": 164460,
+      "sha256": "03ed0476082be3783abb0efaf6eda21a9ce94f5f43a4ae5a429e6e31a0785972"
+    },
+    "blender_codex_bridge-0.6.0.zip": {
+      "bytes": 785382,
+      "sha256": "10358beb21520123f6462d9c1e0c7c6184c74f5768132365cb700178023a300e"
+    },
+    "blender-codex-bridge-0.6.0-development-evidence.tar.gz": {
+      "bytes": 13117771,
+      "sha256": "b52f506fc29e37ec0c23d5a5c0923c4612b93004e9bf3ded731a1ea2e8e137d0"
+    },
+    "EVIDENCE-SHA256SUMS.txt": {
+      "bytes": 121,
+      "sha256": "c8837b72505d13a8af5b7539219d2589f75b63a8d75d9757a9e597fc12c1cfa7"
+    }
+  },
+  "checks": {
+    "YAML_embedded_body_exact": true,
+    "publisher_parses_without_execution": true,
+    "CI_run_and_artifact_exact": true,
+    "draft_title_body_source_identity_local_receipt_matches": true,
+    "six_exact_local_asset_pins_match": true,
+    "old_0_4_and_0_5_pins_match_preflight": true,
+    "all_old_release_before_after_guard_present": true,
+    "main_PR8_visibility_guards_present": true,
+    "only_missing_asset_POST_and_fixed_draft_PATCH_mutations": true,
+    "no_delete_overwrite_ref_tag_merge_mutations": true,
+    "GET_redirect_host_allowlist_and_non_API_auth_stripping": true,
+    "support_blob_SHA1_size_SHA256_bound": true,
+    "archive_176_regular_safe_unique_members": true,
+    "all_174_payloads_match_manifest_and_root_allowlist": true,
+    "ten_root_visual_receipts_hash_bound": true,
+    "source_bundle_single_public_ref_header_and_root_restore_receipt_bound": true,
+    "notes_truthfully_keep_Windows_and_stable_gates_open": true,
+    "historical_0_5_is_preservation_pin_only": true,
+    "primary_user_edit_hashes_unchanged": true
+  },
+  "archive_scan": {
+    "payloads_scanned_including_nested_archives": 415,
+    "ZIPs_read_and_CRC_checked": 10,
+    "literal_secret_patterns_checked": [
+      "github_personal_access_token",
+      "openai_secret_key",
+      "signed_url_query",
+      "private_key"
+    ],
+    "unresolved_findings": [],
+    "classified_benign_matches": [
+      {
+        "path": "root-recipes/archive_evidence06.py",
+        "pattern": "signed_url_query",
+        "count": 1,
+        "classification": "BENIGN_SCANNER_REGEX_LITERAL_NOT_A_URL_OR_CREDENTIAL"
+      }
+    ],
+    "scope": "Literal-pattern scan plus reviewed synthetic path/member closure; not universal information-sensitivity proof. Public source Git pack contents are bound to root standalone restore proof, not unpacked or executed by this independent review."
+  },
+  "mutations_performed": {
+    "publisher_executed": false,
+    "generator_executed": false,
+    "GitHub_calls": false,
+    "archive_or_source_modified": false,
+    "native_or_full_tests": false
+  },
+  "limits": [
+    "Local fixed-input and source review only; root must trigger the exact reviewed workflow and inspect its actual result.",
+    "Remote draft and artifact state were read from retained root preflight receipts; no new GitHub API call in this review.",
+    "Postpublication anonymous download and previous-state verification remain root responsibilities."
+  ]
+}
