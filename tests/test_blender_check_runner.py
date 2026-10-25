@@ -51,6 +51,36 @@ def test_populated_geometry_preview_requires_owned_interactive_qualified_variant
     assert row["qualification_scope"]["full_H02_F04_or_protected_object_qualified"] is False
 
 
+@pytest.mark.parametrize("fail_first", [False, True])
+def test_installed_artist_guards_are_two_fresh_queued_candidate_phases(runner, monkeypatch, tmp_path, fail_first):
+    monkeypatch.setattr(runner.sys, "platform", "linux")
+    monkeypatch.setattr(runner, "git_value", lambda *_: "a" * 40)
+    case = "installed_artist_guards"
+    assert case in runner.OPT_IN_CASES & runner.INTERACTIVE_CASES
+    seen = []
+
+    def run(command, **kwargs):
+        phase = command[command.index("--bridge-phase") + 1]
+        assert "--background" not in command and "--disable-autoexec" in command
+        assert " " in kwargs["env"]["BLENDER_USER_SCRIPTS"]
+        assert kwargs["env"]["BRIDGE_TEST_SUPPORT_COMMIT"] == "a" * 40
+        seen.append((phase, kwargs["env"]["BRIDGE_TEST_PROCESS_TOKEN"], kwargs["env"]["BLENDER_USER_CONFIG"]))
+        payload = {"blender_version": "5.2.2", "phase": phase, "process_id": 41,
+                   "process_instance": kwargs["env"]["BRIDGE_TEST_PROCESS_TOKEN"],
+                   "installed_queued_guard_qualified": not fail_first}
+        marker = runner.PHASED_CASES[case][0 if phase == "weights" else 1]
+        kwargs["stdout"].write((marker + json.dumps(payload)).encode())
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(runner.subprocess, "run", run)
+    result = runner.run_case(Path("blender"), case, tmp_path, 10)
+    assert result["status"] == ("failed" if fail_first else "passed")
+    assert [row[0] for row in seen] == (["weights"] if fail_first else ["weights", "curve"])
+    if not fail_first:
+        assert seen[0][1:] != seen[1][1:] and result["fresh_process_verified"]
+        assert result["phases"][0]["qualification_scope"]["complete_installed_artist_workflow_qualified"] is False
+
+
 @pytest.mark.parametrize("case", [
     "core", "undo_lifecycle", "camera_focus", "curve_sampling", "surface_publication_probe", "sculpt_mask",
     "character_revision", "artist_target_verification", "artist_target_sidebar", "artist_quaternion_storage", "artist_quaternion",

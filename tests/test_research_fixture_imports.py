@@ -20,6 +20,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 HELPERS = (
+    "scripts.blender_installed_artist_guards_smoke",
     "scripts.blender_geometry_preview_smoke",
 
 
@@ -116,6 +117,7 @@ def fixture_imports(addon_package, monkeypatch):
 
 
 @pytest.mark.parametrize("name,helper", [
+    ("scripts.blender_installed_artist_guards_smoke", "main"),
     ("scripts.blender_geometry_preview_smoke", "main"),
 
 
@@ -1407,3 +1409,52 @@ def test_populated_geometry_manual_controls_never_replace_baseline_or_run_an_inv
     assert not any(isinstance(node, ast.Attribute) and node.attr in {
         "undo", "undo_last", "restore_last", "restore_operation", "frame_set"}
         for node in ast.walk(controls))
+
+
+def test_installed_artist_guards_reuse_exact_private_isolation_functions():
+    owned = ast.parse((ROOT / "scripts/blender_installed_artist_guards_smoke.py").read_text())
+    original = ast.parse((ROOT / "scripts/blender_artist_sidebar_smoke.py").read_text())
+    for name in ("sha256", "owned_process_exit", "owned_file", "private_display_manifest"):
+        first = next(n for n in owned.body if isinstance(n, ast.FunctionDef) and n.name == name)
+        second = next(n for n in original.body if isinstance(n, ast.FunctionDef) and n.name == name)
+        assert ast.dump(first) == ast.dump(second)
+
+
+def test_installed_artist_guards_never_replace_product_services_or_dispatch_directly():
+    tree = ast.parse((ROOT / "scripts/blender_installed_artist_guards_smoke.py").read_text())
+    for node in ast.walk(tree):
+        assert not (isinstance(node, ast.ImportFrom) and (node.module or "").startswith("blender_codex_bridge"))
+        if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            assert not any(isinstance(target, ast.Attribute) and target.attr in {
+                "permissions", "checkpoints", "_snapshot", "check_cancelled", "check_final_request"} for target in targets)
+        assert not (isinstance(node, ast.Attribute) and node.attr in {
+            "dispatch", "keyframe_insert", "ui_type", "frame_set", "undo_push"})
+    setup = next(node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == "setup")
+    text = ast.unparse(setup)
+    assert text.index("sys.path[:]") < text.index("addon_install") < text.index("get_runtime()")
+    assert "config['candidate']" in text and "_archive(record, owned, 'candidate')" in text
+    assert "_archive(config['previous']" not in text
+    assert "_expected_tool_names(record) is not None" in text
+    assert "record['sha256'] == ACCEPTED_ZIP_SHA256" in text
+    assert "_installed_bytes(self.installed, self.members)" in text
+
+
+def test_installed_artist_guards_use_actual_queue_and_independent_predicted_history():
+    tree = ast.parse((ROOT / "scripts/blender_installed_artist_guards_smoke.py").read_text())
+    client = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "QueuedTCP")
+    text = ast.unparse(client)
+    assert "socket.create_connection(('127.0.0.1', self.port)" in text
+    assert "self.runtime.executor._drain_timer()" in text
+    assert "response['id'] == identifier" in text
+    source = ast.unparse(tree)
+    for value in ("weights.assign", "weights.normalize", "animation.curve_edit",
+                  "permission_denial", "locked_group_scope", "current_pose_scope",
+                  "handle_conversion_scope", "invalid_frame_type"):
+        assert repr(value) in source
+    assert "helper.predict(snapshot(), action.as_pointer(), request)" in source
+    assert "newest['recovery_evidence'] == result['recovery_evidence']" in source
+    assert "row['checkpoint_after'] == checkpoints" in source
+    assert "row['after'], expected" in source
+    assert "8d07ad898ba92c5e94db57b1562fefef9c8e0e1c" in source
+    assert "0afc38c1315fedc952c3c657c82f510c720ce79a669df319f8278c959f67eaf4" in source

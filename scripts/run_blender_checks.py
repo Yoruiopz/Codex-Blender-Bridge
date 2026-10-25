@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 CASES = {
+    "installed_artist_guards": ("blender_installed_artist_guards_smoke.py", "BLENDER_INSTALLED_ARTIST_GUARDS_OK "),
     "geometry_preview": ("blender_geometry_preview_smoke.py", "BLENDER_GEOMETRY_PREVIEW_OK "),
     "geometry_preview_populated_protection": ("blender_geometry_preview_smoke.py", "BLENDER_GEOMETRY_PREVIEW_OK "),
     "weight_edit_guard": ("blender_weight_edit_guard_smoke.py", "BLENDER_WEIGHT_EDIT_GUARD_OK "),
@@ -154,6 +155,7 @@ CASES = {
 }
 # Each phase must exit successfully before a new process can consume its artifacts.
 PHASED_CASES = {
+    "installed_artist_guards": ("BLENDER_INSTALLED_ARTIST_WEIGHTS_OK ", "BLENDER_INSTALLED_ARTIST_CURVE_OK "),
     "isolated_asset_preview_probe": ("BLENDER_ISOLATED_ASSET_PREVIEW_WRITER_OK ", "BLENDER_ISOLATED_ASSET_PREVIEW_WORKER_OK "),
     "image_reopen": ("BLENDER_IMAGE_REOPEN_WRITER_OK ", "BLENDER_IMAGE_REOPEN_READER_OK "),
     "image_portability_probe": ("BLENDER_IMAGE_PORTABILITY_PROBE_WRITER_OK ", "BLENDER_IMAGE_PORTABILITY_PROBE_READER_OK "),
@@ -233,6 +235,8 @@ INTERACTIVE_CASES = {"undo_lifecycle", "mesh_edit_recovery", "mesh_repair", "uv_
 
 
 INTERACTIVE_CASES.add("geometry_preview")
+INTERACTIVE_CASES.add("installed_artist_guards")
+OPT_IN_CASES.add("installed_artist_guards")
 OPT_IN_CASES.add("geometry_preview")
 INTERACTIVE_CASES.add("geometry_preview_populated_protection")
 OPT_IN_CASES.add("geometry_preview_populated_protection")
@@ -312,7 +316,7 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
         "--python",
         str(script),
     ]
-    if case in {"artist_quaternion_storage", "artist_quaternion", "uv_edit_storage", "uv_edit_boundary_probe", "large_surface_paint", "uv_edit_guard", "geometry_preview", "geometry_preview_populated_protection", "executor_history_containment", "animation_intent", "weight_edit_guard"}:
+    if case in {"artist_quaternion_storage", "artist_quaternion", "uv_edit_storage", "uv_edit_boundary_probe", "large_surface_paint", "uv_edit_guard", "geometry_preview", "geometry_preview_populated_protection", "executor_history_containment", "animation_intent", "weight_edit_guard", "installed_artist_guards"}:
         command.insert(1, "--disable-autoexec")
     interactive = case in INTERACTIVE_CASES
     if case == "isolated_asset_preview_probe":
@@ -337,11 +341,16 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
     environment["BRIDGE_TEST_PROCESS_TOKEN"] = process_instance
     for key, folder in (("BLENDER_USER_CONFIG", "config"), ("BLENDER_USER_SCRIPTS", "scripts"),
                         ("BLENDER_USER_DATAFILES", "datafiles")):
-        if case == "installed_addon_probe" and key == "BLENDER_USER_SCRIPTS":
+        if case in {"installed_addon_probe", "installed_artist_guards"} and key == "BLENDER_USER_SCRIPTS":
             folder = "installed scripts with spaces"
         directory = temporary / folder
         directory.mkdir()
         environment[key] = str(directory)
+    if case == "installed_artist_guards":
+        supporting_commit = git_value("rev-parse", "HEAD")
+        if supporting_commit is None:
+            raise ValueError("Installed artist qualification requires a supporting Git commit")
+        environment["BRIDGE_TEST_SUPPORT_COMMIT"] = supporting_commit
     launch_cwd = ROOT
     if case in PORTABLE_BLEND_RESEARCH_PHASES or case == "isolated_asset_preview_probe":
         # Research-only operational profile. This is not an OS/network sandbox.
@@ -408,6 +417,14 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
             "image_pixels_or_material_appearance_qualified": False,
             "full_H02_F04_or_protected_object_qualified": False,
         }
+    if case == "installed_artist_guards":
+        result["qualification_scope"] = {
+            "candidate_only": True, "installed_actual_TCP_queue": True,
+            "domain_phases": ["weights", "curve"],
+            "native_failure_compensation_qualified": False,
+            "complete_installed_artist_workflow_qualified": False,
+            "appearance_qualified": False, "windows_testing_deferred": True,
+        }
     with log.open("wb") as stream:
         try:
             if interactive and sys.platform == "win32":
@@ -450,6 +467,8 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
     if case == "geometry_preview_populated_protection":
         phase_evidence = bool(payload and payload.get("variant") == "populated_data_baseline"
                               and payload.get("populated_protected_data_baseline_qualified") is True)
+    if case == "installed_artist_guards":
+        phase_evidence = bool(phase_evidence and payload and payload.get("installed_queued_guard_qualified") is True)
     if result["exit_code"] == 0 and payload is not None and version and phase_evidence:
         result["status"] = "passed"
     result["completed_at"] = datetime.now(timezone.utc).isoformat()
@@ -464,7 +483,8 @@ def run_case(blender: Path, case: str, output: Path, timeout: int) -> dict:
     bundle = output / f"{case}-bundle"
     bundle.mkdir()
     phases = []
-    for phase, marker in zip(("writer", "reader"), PHASED_CASES[case], strict=True):
+    phase_names = ("weights", "curve") if case == "installed_artist_guards" else ("writer", "reader")
+    for phase, marker in zip(phase_names, PHASED_CASES[case], strict=True):
         result = _run_process(blender, case, output, timeout, phase=phase,
                               bundle=bundle, phase_marker=marker)
         phases.append(result)
@@ -511,7 +531,7 @@ def main() -> int:
     )
     parser.add_argument("--case", action="append", choices=tuple(CASES), dest="cases")
     parser.add_argument("--package-probe-config", type=Path,
-                        help="Pinned candidate/previous ZIP configuration for installed_addon_probe")
+                        help="Pinned ZIP configuration for installed add-on/artist qualification")
     parser.add_argument(
         "--include-interactive",
         action="store_true",
@@ -529,10 +549,10 @@ def main() -> int:
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
     defaults = [case for case in CASES if (args.include_interactive or case not in INTERACTIVE_CASES | OPT_IN_CASES)
-                and (case != "installed_addon_probe" or args.package_probe_config is not None)]
+                and (case not in {"installed_addon_probe", "installed_artist_guards"} or args.package_probe_config is not None)]
     cases = list(dict.fromkeys(args.cases or defaults))
-    if "installed_addon_probe" in cases and args.package_probe_config is None:
-        parser.error("installed_addon_probe requires --package-probe-config")
+    if {"installed_addon_probe", "installed_artist_guards"}.intersection(cases) and args.package_probe_config is None:
+        parser.error("Installed qualification requires --package-probe-config")
     package_proof = None
     # Pass a frozen configuration through only this runner's child environment.
     # The fixture independently freezes and verifies both named ZIP payloads.
