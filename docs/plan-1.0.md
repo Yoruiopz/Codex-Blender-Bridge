@@ -31,10 +31,17 @@ designs/alternatives, not retries or weaker evidence.
 
 Meaningful versioned GitHub **pre-releases are authorized**, on an approximately
 two-to-three-hour review cadence. The latest published
-[**0.5.0 alpha**](releases/0.5.0.md) dates to 2026-10-25 at 07:54:54 UTC from
-`4a45b99`, with exact CI, selected Linux native, installed and anonymous download
-evidence. The prospective [0.6.0 source](releases/0.6.0.md) is unqualified and
-unpublished. Build matching components
+[**0.6.0 alpha**](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.6.0)
+dates to 2026-10-25 at **14:29:56 UTC** from
+`73cad805903fcd0be9175b49a5ecf78505ecd4a5`. Its
+[exact-source evidence](releases/0.6.0.md#verified-evidence) includes all seven CI
+jobs, 8,403 tests with three Windows-only skips per matrix cell, eight selected
+interactive source processes, four installed background processes with sixteen
+phase observations, ten reviewed geometry images and all six anonymous download
+hashes. Those checks do not qualify later development increments or complete
+artist workflows. The [published blocker plan](https://github.com/Yoruiopz/Codex-Blender-Bridge/blob/codex/release-0.6-publication-evidence/docs/releases/0.6.0-blocker-plan.md)
+records the ordered next implementation and verification milestones. All 29
+implementation items and fourteen stable gates remain **OPEN**. Build matching components
 and checksums from a clean reviewed increment, disclose limits and unverified
 Windows status, and verify downloaded bytes. Preserve previous releases. Present
 an exact merge proposal where required; merge permission is not blanket. The
@@ -79,7 +86,7 @@ constraint. Prepare public documentation and contributor/support entry points an
 GitHub repository public. The user subsequently made it public; anonymous repository,
 documentation and existing release downloads were verified. This is separate from qualifying or publishing 1.0. Distribute
 matched packages through GitHub releases. Preserve all earlier releases, including
-0.3.0, 0.4.0 and 0.5.0; no stable release date has been set.
+0.3.0, 0.4.0, 0.5.0 and 0.6.0; no stable release date has been set.
 
 The machine-readable [requirement ledger](release-1.0-ledger.json) deliberately starts open.
 The [qualification checker](release-evidence.md) validates source/package provenance and retained
@@ -94,7 +101,7 @@ acceptance evidence; native smoke reports themselves remain `NOT_ASSESSED`.
   They do not prove interactive UI installation, real undo interleaving or artistic quality.
 - The manifest's 4.2 minimum is not verified by the local matrix. Test it or explicitly resolve
   supported versions before RC. Do not infer Linux/macOS Blender support from Python CI.
-- Published 0.5.0 remains alpha, with older releases still available. Do not
+- Published 0.6.0 remains alpha, with older releases still available. Do not
   replace accepted artifacts or publish 1.0 early.
   Public-facing repository work is now authorized; it does not close any release gate.
 

@@ -7,15 +7,14 @@ unchanged. Other weight tools are not changed or qualified by this increment.
 
 The bounded ordinary stock-Blender reader/call window is implemented in source
 for the recorded Linux 4.5.14 (`62c1db4208e8`) and 5.2.2 (`d13f752e3b9c`) builds.
-**Native qualification remains incomplete.** The first runs on both builds
-refused before any membership case because Mesh runtime metadata was absent
-from the allowlist. The exact bundled declaration is now covered in source;
-that correction awaits a native rerun. Unknown builds, origins
-and unsupported profiles refuse with `NOT_IMPLEMENTED`; portable models do not
-qualify their native behavior. The old two handlers' context-free compensation
-path is no longer used. No native, installed, character-workflow, Windows or
-1.0 acceptance follows. All 29 implementation items and 14 release gates remain
-open; Windows work remains deferred.
+Selected native checks passed on both builds at the sources recorded below;
+broader native qualification remains incomplete. The early Mesh-runtime-metadata
+refusals remain historical evidence, rather than current success. Unknown builds,
+origins and unsupported profiles refuse with `NOT_IMPLEMENTED`; portable models
+alone do not qualify native behavior. The old two handlers' context-free
+compensation path is no longer used. No installed, full character-workflow,
+Windows or 1.0 acceptance follows. All 29 implementation items and 14 release
+gates remain open; Windows work remains deferred.
 
 ## Implemented ordinary source profile
 
@@ -165,9 +164,79 @@ Focused models exercise registered factories, request/provider drift, exact
 Float32/absence/zero behavior, whole-membership CAS, throw-before/after-write,
 foreign edits, revocation, field-only recovery, exclusive reentry, batch refusal
 and typed history. They do not qualify native group identity/storage or undo.
-The opt-in isolated case `weight_edit_guard` is a registered native
-fixture awaiting execution; an unsupported native gate must fail that fixture, not report success or
-silently replace the production reader. Root owns native/full validation.
+The opt-in isolated case `weight_edit_guard` uses the genuine registered Runtime,
+Executor, permission source and automatic checkpoints. Earlier source
+`415e0c1140f7ae11608166ea4762c23118235056` passed assignment, normalization and
+permission denial on official Linux 4.5.14 and 5.2.2. That evidence does not
+qualify later fixture changes or native recovery.
+
+The extended fixture adds three adverse cases: an injected failure after the
+first applied setter with authority retained; actual edit-permission revocation
+at that boundary; and an external write to another group's membership. It
+independently compares complete Float32 membership bits, group names/indices and
+pointers, original Object/Mesh UIDs/pointers, direct native consumers, transforms
+and authored mesh geometry. Expected outcomes are assertions, never edits to a
+production receipt: measured compensation in the first case, retained first-write
+state without an inverse in the second, and preservation of the external write
+with inverse refusal in the third. Failed operation history must retain the same
+bounded recovery facts. A permission-revoked first write has one verified
+membership and zero restoration attempts: `_member` releases its leaf, runs the
+provider-free `_read`/pure `_final`, verifies the complete first prefix, and only
+then reaches the next `_live` permission-provider call. The foreign-membership
+case instead fails that complete prefix comparison before incrementing verified
+memberships. These expectations follow the production control flow; a changed
+native receipt must fail the fixture rather than be rewritten.
+
+The expanded projection initially failed on both builds at fixture commit
+`4f5cbeb5237d748f253bc8b6e043aedf2d8450b6`. The 4.5 permission assertion expected
+the wrong verified count. The 5.2 ordinary-call comparison failed before its
+snapshots were retained, so the changed header/consumer field remains unknown;
+that run is not cold-context preservation evidence.
+
+The current fixture performs an explicit genuine `checkpoint.create` as declared
+disposable-scene preparation before capturing any original weight-call state or
+intent. It retains preparation-before/after target, Scene headers/UIDs, native
+consumer/WindowManager role observations, field-path differences and the native
+checkpoint receipt separately. This preparation may stamp Scene markers, tag the
+project modified, push/encode the native undo stack and create native override
+operations. Those source-described effects are not a complete side-effect
+inventory, and the fixture does not promise preparation preserves hidden state.
+Cold-context expanded preservation remains unqualified. After preparation, every
+weight-call comparison still requires exact complete UID/header/consumer and
+Float32 preservation; no post-tool snapshot becomes its baseline and no field is
+removed to accept drift. Ordinary and adverse attempt rows, full projections and
+bounded diagnostic differences are retained before assertions, including failed
+rows. The bounded differences do not replace the complete retained projections.
+
+Blender's native `bpy_func` callable is a custom C `tp_call`; Python C-return
+profiling cannot establish that it ran. The fixture observes the exact unchanged
+`_NativeLeaf.__call__` wrapper and tracks exceptional exits. After that wrapper's
+`finally` releases its native method, the observer disables itself before the
+explicit external event. A separate complete stored-state projection must prove
+the first predicted membership was actually applied. Wrapper entry/return
+counts are recorded distinctly from unobserved C-return events. No native
+method, reader, checkpoint or permission provider is replaced. Profiling/trace
+hooks and local permission fields are restored on error.
+
+These injected external events are not passive native-read or provider-purity
+evidence. Native method dependency tags, copy-on-write and notifiers, hidden
+caches and full Main state are outside this fixture's projection. Native global
+undo, mixed manual undo, history eviction, real queued/TCP cancellation and
+disconnect, memory pressure and character deformation remain unqualified. A
+retained snapshot or undo history is not a durable backup.
+
+At `f65e3e6653a38f13d4fa391bbeb94ab94f0268a6`, root's isolated replay passed all
+six cases on both official builds after the explicit setup checkpoint. The
+applied-write failure measured one verified membership, one restored membership
+and verified rollback. Permission loss retained one verified membership with no
+inverse attempt. Foreign interleaving retained zero verified memberships, made
+no inverse attempt and preserved the external write. The original cold 5.2
+expanded header/consumer mismatch remains unidentified and unqualified; the
+successful prepared-context replay does not explain it. This source-specific
+evidence does not qualify later integrations or add cancellation, disconnect,
+native undo, durable recovery or constrained-memory proof. Root owns exact
+integrated full-suite and native qualification; an unsupported native gate must
+fail the fixture rather than replace the production reader.
 Existing broader artist/character fixtures remain mandatory and must not be
 rewritten to hide profile refusals. Full F01/F03/C02 and stable release acceptance
 remain incomplete.

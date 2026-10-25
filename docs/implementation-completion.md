@@ -11,13 +11,18 @@ testing are deferred until implementation is complete, remain unverified, and do
 not block this implementation pass.** Windows 11 and installed-package acceptance
 remain mandatory for the later stable 1.0 candidate.
 
-The published [**0.5.0 alpha**](releases/0.5.0.md) dates to 2026-10-25 at
-07:54:54 UTC, from `4a45b99`, with exact-source CI, selected Linux native and
-installed checks plus all six anonymous download hashes retained. Earlier releases
-remain available. The prospective [0.6.0 source](releases/0.6.0.md) adds selected-native-checked
-isolated geometry previews and history-failure containment. Installed candidate
-qualification is recorded separately for each candidate; accepted artifacts are
-listed on GitHub releases. Meaningful
+The published [**0.6.0 alpha**](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.6.0)
+dates to 2026-10-25 at **14:29:56 UTC**, from
+`73cad805903fcd0be9175b49a5ecf78505ecd4a5`. Its
+[exact-source evidence](releases/0.6.0.md#verified-evidence) records all seven CI
+jobs, 8,403 tests plus three Windows-only skips per matrix cell, eight selected
+interactive source processes, four installed background processes with sixteen
+phase observations, ten reviewed geometry images and all six anonymous download
+hashes. The fresh wheel exposed 268 tools and passed 240 SDK receipts and 210
+malformed standard-JSON cases. Earlier releases and their separate evidence remain
+available. The [published blocker plan](https://github.com/Yoruiopz/Codex-Blender-Bridge/blob/codex/release-0.6-publication-evidence/docs/releases/0.6.0-blocker-plan.md)
+records actionable next implementation and validation steps; it closes none of
+the 29 items or fourteen gates. Meaningful
 versioned GitHub prereleases are authorized on an approximately two-to-three-hour
 review cadence; this is not a deadline to publish unreviewed changes. Stable 1.0
 criteria are unchanged.
@@ -34,7 +39,7 @@ surface jobs and generated-image sculpt-mask reads; synchronous surface painting
 retains its 1,048,576-pixel limit. Exact-source memory, interruption and installed
 checks are retained in the [0.5.0 evidence](releases/0.5.0.md#verified-evidence);
 visual, constrained-memory, durable and full-workflow acceptance remain required.
-Those executions do not qualify this prospective 0.6.0 source. Rigid evaluation
+Those historical executions do not supply 0.6.0's separate qualification. Rigid evaluation
 is not baking, and asset exchange remains limited.
 
 The registered quaternion workflow at `c49cd0f` is a bounded authored-channel
@@ -45,9 +50,10 @@ fresh leaf resolution and attempted-field compensation within a restricted profi
 The published 0.5.0 source has selected registered-tool native evidence; full F02,
 native undo, durable recovery and appearance acceptance remain open. Published
 0.4.0 export and weight corrections retain their bounded evidence and limits.
-Curve, cloth-job and material-recovery work under separate review is not included
-in this prospective 0.6.0 preparation; no operational cloth-job claim follows
-from this checklist.
+Later curve, direct-weight, cloth-job, material-recovery, native-save and private
+GLB increments are excluded from published 0.6.0's claims. Their own current-source
+evidence does not retroactively qualify the released packages; no operational
+cloth-job or full character-workflow claim follows from this checklist.
 
 Each item needs the relevant success, permission-denial, invalid-context,
 protected/context-preservation, injected-failure, interruption/manual-interleaving
@@ -68,12 +74,15 @@ protection or restoring over manual edits. Current protected capture still
 refuses. Safe-save catalog effects remain separately unresolved; H01/H02 and all
 29 items remain mandatory.
 
-The new geometry-only preview passed selected registered-tool checks on both
+The geometry-only preview in published 0.6.0 passed selected registered-tool checks on both
 Linux builds, including denial, stale handles, cancellation and running-worker
 revocation. Its measured source projection remained unchanged under real plan
 enforcement with a null protected-data baseline. Original material/current viewport
-appearance, a populated protected baseline, complete hidden preservation and
-installed delivery remain unqualified. Core history/reporting containment also
+appearance, a populated protected baseline and complete hidden preservation remain
+unqualified. The exact ZIP also passed the bounded installed start/inspect/image
+and upgrade/rollback routes described in the release evidence; complete installed
+artist scenarios and restart/preference migration remain unqualified. Ten reviewed
+images establish structural framing and silhouette only. Core history/reporting containment also
 passed real native loopback failure cases on both builds, with no extra finalization
 or work after a rejected job start. Neither increment closes a checklist item.
 

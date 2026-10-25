@@ -42,6 +42,7 @@ HELPERS = (
     "scripts.blender_uv_edit_boundary_probe",
     "scripts.blender_large_surface_paint_smoke",
     "scripts.blender_uv_edit_guard_smoke",
+    "scripts.blender_weight_edit_guard_smoke",
     "scripts.native_character_revision_evidence",
     "scripts.native_character_evidence",
     "scripts.native_cache_evidence",
@@ -137,6 +138,7 @@ def fixture_imports(addon_package, monkeypatch):
     ("scripts.blender_uv_edit_boundary_probe", "main"),
     ("scripts.blender_large_surface_paint_smoke", "main"),
     ("scripts.blender_uv_edit_guard_smoke", "main"),
+    ("scripts.blender_weight_edit_guard_smoke", "main"),
     ("scripts.native_character_revision_evidence", "lbs_vertices"),
 ])
 def test_importing_helper_fixture_does_not_start_experiment(fixture_imports, name, helper):
@@ -1054,3 +1056,147 @@ def test_scene_worker_keeps_stopped_evidence_assertions(scene_worker, drift):
     assert "AssertionError" in result.get("failure", ""), result
     assert "external_edit" not in state.recorded and not state.final_verified
     assert state.resumes == ["complete", "cancel", "permission", "disconnect", "external_edit"]
+
+
+def weight_boundary_model(fixture_imports, addon_package, *, method="append", arguments=(7,)):
+    """Actual CPython C callable + unchanged production wrapper; no Blender proof."""
+    script = importlib.import_module("scripts.blender_weight_edit_guard_smoke")
+    guard = importlib.import_module(f"{addon_package}.weight_edit_guard")
+    values, events = [], []
+    leaf = guard._NativeLeaf(arguments)
+    leaf.method = getattr(values, method)
+    observer = script.WriteBoundaryObserver(guard._NativeLeaf, type(leaf.method), arguments,
+                                            lambda: events.append(tuple(values)))
+    return NS(script=script, values=values, events=events, leaf=leaf, observer=observer)
+
+
+def test_weight_observer_measures_completed_wrapper_after_actual_C_storage_and_release(fixture_imports, addon_package):
+    case = weight_boundary_model(fixture_imports, addon_package)
+    with case.observer:
+        case.leaf()
+    assert case.events == [(7,)] and case.values == [7]
+    assert case.leaf.method is None
+    assert case.observer.record["wrapper_calls"] == case.observer.record["wrapper_returns"] == 1
+    assert case.observer.record["wrapper_exceptions"] == 0
+    assert case.observer.record["external_event_triggered"] is True
+    assert case.observer.record["leaf_released_before_external_event"] is True
+    assert case.observer.record["observed_C_return_events"] is False
+    assert sys.getprofile() is None and sys.gettrace() is None
+
+
+def test_weight_observer_disarms_hooks_before_external_action_and_never_reenters(fixture_imports, addon_package):
+    case = weight_boundary_model(fixture_imports, addon_package)
+
+    def external():
+        assert sys.getprofile() is None and sys.gettrace() is None
+        assert case.leaf.method is None
+        case.events.append(tuple(case.values))
+        case.leaf.method = case.values.append
+        case.leaf()
+
+    case.observer.action = external
+    with case.observer:
+        case.leaf()
+    assert case.events == [(7,)] and case.values == [7, 7]
+    assert case.observer.record["wrapper_calls"] == case.observer.record["wrapper_returns"] == 1
+    assert sys.getprofile() is None and sys.gettrace() is None
+
+
+def test_weight_observer_does_not_admit_exceptional_native_wrapper_completion(fixture_imports, addon_package):
+    case = weight_boundary_model(fixture_imports, addon_package, method="index", arguments=(99,))
+    with pytest.raises(ValueError), case.observer:
+        case.leaf()
+    assert not case.observer.completed and case.events == [] and case.values == []
+    assert case.observer.record["wrapper_exceptions"] == 1
+    assert case.observer.record["external_event_triggered"] is False
+    assert case.leaf.method is None and sys.getprofile() is None and sys.gettrace() is None
+
+
+def test_weight_observer_ignores_genuine_C_calls_outside_original_wrapper(fixture_imports, addon_package):
+    case = weight_boundary_model(fixture_imports, addon_package)
+    with case.observer:
+        case.values.append(7)
+    assert not case.observer.entered and not case.observer.completed and case.events == []
+    assert case.observer.record["wrapper_calls"] == case.observer.record["wrapper_returns"] == 0
+    assert sys.getprofile() is None and sys.gettrace() is None
+
+
+@pytest.mark.parametrize("drift", ["arguments", "method_type"])
+def test_weight_observer_refuses_changed_arguments_or_callable_before_execution(fixture_imports, addon_package, drift):
+    case = weight_boundary_model(fixture_imports, addon_package)
+    if drift == "arguments":
+        case.leaf.arguments = (8,)
+    else:
+        case.leaf.method = lambda _value: pytest.fail("An unknown callable entered")
+    with pytest.raises(AssertionError), case.observer:
+        case.leaf()
+    assert not case.observer.completed and case.events == [] and case.values == []
+    assert sys.getprofile() is None and sys.gettrace() is None
+
+
+def test_weight_observer_external_failure_retains_actual_applied_C_state_and_restores_hooks(fixture_imports, addon_package):
+    case = weight_boundary_model(fixture_imports, addon_package)
+
+    def external():
+        assert case.values == [7] and case.leaf.method is None
+        raise case.script.InjectedAfterWeightWrite("Owned model failure")
+
+    case.observer.action = external
+    with pytest.raises(case.script.InjectedAfterWeightWrite), case.observer:
+        case.leaf()
+    assert case.values == [7] and case.leaf.method is None and case.observer.completed
+    assert case.observer.record["wrapper_exceptions"] == 0
+    assert sys.getprofile() is None and sys.gettrace() is None
+
+
+@pytest.mark.parametrize("hook", ["profile", "trace"])
+def test_weight_observer_refuses_occupied_hook_without_replacing_it(fixture_imports, addon_package, hook):
+    case = weight_boundary_model(fixture_imports, addon_package)
+    getter, setter = (sys.getprofile, sys.setprofile) if hook == "profile" else (sys.gettrace, sys.settrace)
+    previous = getter()
+
+    def occupied(*_args):
+        return None
+
+    setter(occupied)
+    try:
+        with pytest.raises(RuntimeError, match="unused profiling/trace boundary"), case.observer:
+            pytest.fail("Observer replaced an occupied hook")
+        assert getter() is occupied and case.events == []
+    finally:
+        setter(previous)
+    assert sys.getprofile() is None and sys.gettrace() is None
+
+
+def test_weight_diagnostics_retain_exact_changed_F32_and_header_paths_without_mutating_inputs(fixture_imports):
+    script = importlib.import_module("scripts.blender_weight_edit_guard_smoke")
+    before = {"object": ["Object", "Target", 100, 200, 1, False, False],
+              "memberships": [[[0, "0000803e"], [1, "0000803e"]]]}
+    after = {"object": ["Object", "Target", 100, 200, 1, False, True],
+             "memberships": [[[0, "0000003f"], [1, "0000803e"]]]}
+    result = script.field_differences(before, after)
+    assert result == {"entries": [
+        {"path": "$.memberships[0][0][1]", "before": "0000803e", "after": "0000003f"},
+        {"path": "$.object[6]", "before": False, "after": True}], "truncated": False}
+    assert before["memberships"][0][0][1] == "0000803e" and before["object"][6] is False
+    assert script.nonmemberships(before) != script.nonmemberships(after)
+    assert script.nonmemberships(before) == {"object": before["object"]}
+
+
+def test_weight_diagnostics_bound_only_the_diff_list_and_retain_complete_shape_changes(fixture_imports):
+    script = importlib.import_module("scripts.blender_weight_edit_guard_smoke")
+    before, after = {"rows": [0, 0, 0]}, {"rows": [1, 2, 3]}
+    result = script.field_differences(before, after, limit=2)
+    assert result == {"entries": [{"path": "$.rows[0]", "before": 0, "after": 1},
+                                  {"path": "$.rows[1]", "before": 0, "after": 2}], "truncated": True}
+    assert before == {"rows": [0, 0, 0]} and after == {"rows": [1, 2, 3]}
+    assert script.field_differences({"roles": []}, {"roles": [1]}) == {
+        "entries": [{"path": "$.roles", "before": [], "after": [1]}], "truncated": False}
+    assert script.field_differences(before, before) == {"entries": [], "truncated": False}
+
+
+@pytest.mark.parametrize("limit", [True, False, 0, -1, 129, 2., None])
+def test_weight_diagnostics_reject_invalid_diff_budgets(fixture_imports, limit):
+    script = importlib.import_module("scripts.blender_weight_edit_guard_smoke")
+    with pytest.raises(AssertionError):
+        script.field_differences({"users": 1}, {"users": 2}, limit=limit)

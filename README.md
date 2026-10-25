@@ -4,20 +4,22 @@ Let Codex inspect and edit Blender through local, permission-controlled MCP tool
 Work with objects, meshes, materials, UVs, rigs, animation, lights and renders, with
 status, permissions and recovery controls inside Blender.
 
-**[0.6.0 prospective alpha source](docs/releases/0.6.0.md)** ·
+**[Published 0.6.0 alpha](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.6.0)** ·
 [GitHub releases](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases) ·
-[Published 0.5.0 alpha](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.5.0) ·
+[Release evidence](docs/releases/0.6.0.md#verified-evidence) ·
 [Install](#install--no-source-build-needed) · [Troubleshooting](docs/troubleshooting.md) ·
 [Contribute](CONTRIBUTING.md)
 
 This is **alpha software**. Try it on a disposable scene or a copy of your project.
-The published **0.5.0 alpha** dates to October 25, 2026 at **07:54:54 UTC**, from
-`4a45b99`. It includes bounded 4K painting and guarded direct UV edits, with
-[exact-source Linux checks and verified downloads](docs/releases/0.5.0.md#verified-evidence).
-This source prepares **0.6.0** with bounded isolated geometry previews and history-failure
-containment. Selected Linux native checks passed; installed-package and prerelease
-qualification use the exact candidate artifacts. The [GitHub releases page](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases)
-is the authority for accepted artifacts and retained evidence. Earlier releases remain available.
+The published **0.6.0 alpha** dates to October 25, 2026 at **14:29:56 UTC**, from
+`73cad805903fcd0be9175b49a5ecf78505ecd4a5`. It adds bounded isolated geometry previews
+and history-failure containment, with [exact-source CI, selected Linux native and
+installed-package evidence](docs/releases/0.6.0.md#verified-evidence). All six release
+assets were verified through anonymous downloads. The current development checkout
+can contain later increments; the published evidence applies to that exact release.
+The [GitHub releases page](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases)
+is the authority for accepted artifacts. Earlier releases, including the separate
+[0.5.0 4K/UV evidence](docs/releases/0.5.0.md#verified-evidence), remain available.
 Use matching add-on, MCP server and optional plugin artifacts from one accepted build.
 
 Development targets **official, unmodified Blender only**, without a fork or custom
@@ -29,33 +31,36 @@ qualified; see [capture status and preservation requirements](docs/protected-cap
 
 **1.0 is not ready.** Follow the [development status](docs/development-status.md),
 [roadmap](docs/roadmap.md) and [release plan](docs/plan-1.0.md).
+All 29 implementation items and 14 stable-release gates remain open; the
+[published blocker plan](https://github.com/Yoruiopz/Codex-Blender-Bridge/blob/codex/release-0.6-publication-evidence/docs/releases/0.6.0-blocker-plan.md)
+records the remaining implementation and validation steps.
 Windows compatibility work and Windows testing are **deferred**. Linux development evidence
 does not qualify Windows 11, the Windows Blender 4.5 LTS/stable 5.x matrix, or the installed
 end-to-end workflows required by the [release gates](docs/release-1.0-readiness.md).
 
 ## Install — no source build needed
 
-The instructions below install the published **0.5.0 alpha**. The prospective
-**0.6.0 source** has [separate notes](docs/releases/0.6.0.md); check the release page
-for matching accepted candidate artifacts and their qualification evidence.
+The instructions below install the published **0.6.0 alpha**. Use its matching
+artifacts and [release-specific qualification evidence](docs/releases/0.6.0.md).
 
 You need Blender **4.2+**, standalone **Python 3.10+**, and a local Codex client with MCP
 support. Blender's bundled Python does not run the MCP server. The declared minimum is not
 a guarantee that every Blender version or platform is tested; see the
-[accepted 0.5.0 release](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.5.0) for its evidence.
+[accepted 0.6.0 release](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.6.0) for its evidence.
 
 ### 1. Download the packages
 
-Get these assets from the [0.5.0 release](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.5.0):
+Get these assets from the [0.6.0 release](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.6.0):
 
 | Asset | Purpose |
 | --- | --- |
-| `blender_codex_bridge-0.5.0.zip` | Required Blender add-on; keep it zipped |
-| `blender_codex_bridge-0.5.0-py3-none-any.whl` | Required standalone MCP server |
-| `blender-codex-bridge-plugin-0.5.0.zip` | Optional Codex plugin and workflow guidance |
+| `blender_codex_bridge-0.6.0.zip` | Required Blender add-on; keep it zipped |
+| `blender_codex_bridge-0.6.0-py3-none-any.whl` | Required standalone MCP server |
+| `blender-codex-bridge-plugin-0.6.0.zip` | Optional Codex plugin and workflow guidance |
 | `SHA256SUMS.txt` | Download checksums |
 
-Use the release assets rather than GitHub's automatic source archives.
+Verify the three installers against `SHA256SUMS.txt`. Use the release assets
+rather than GitHub's automatic source archives.
 
 ### 2. Install in Blender
 
@@ -118,7 +123,8 @@ with bounded channel copying and full input revalidation; this read remains sync
 These source profiles are documented in [surface painting](docs/image-surface-paint.md) and
 [sculpt masks](docs/surface-brushes.md). The published source has bounded complete-pixel,
 deadline, memory and interruption evidence on two Linux builds; visual and
-constrained-memory acceptance remain open. Those results do not qualify the 0.6.0 source.
+constrained-memory acceptance remain open. Those 0.5.0 results stay specific to
+that source; 0.6.0 has separate selected qualification evidence.
 
 The integrated [direct UV guard](docs/uv-edit-safety.md) covers `uv.coordinates_set`,
 `uv.transform` and `uv.pin` within a static, material-free, single-user Edit Mode profile.
@@ -171,14 +177,16 @@ Current development contracts include [packed recovery jobs](docs/image-recovery
 [guarded rig edits](docs/rig-edit-boundaries.md) and the
 [two-bone animation benchmark](docs/character-nla.md).
 
-The prospective source includes bounded isolated authored-geometry preview jobs.
-They use a separate official Blender worker and a new opaque view, with no source
-Main edit or original-material claim. Public native/installed qualification is
-pending; see [the geometry-preview contract](docs/geometry-preview.md).
+Published 0.6.0 includes bounded isolated authored-geometry preview jobs.
+They use a separate official Blender worker and a new opaque view. The worker
+never opens the source project; original-material appearance and complete hidden-Main
+preservation remain unqualified. Selected source and installed checks passed;
+see [the release evidence](docs/releases/0.6.0.md#verified-evidence) and
+[geometry-preview limits](docs/geometry-preview.md).
 
 ### Complete tool inventory — current source
 
-This generated inventory describes the **prospective 0.6.0 source**, including bounded tools
+This generated inventory describes the **current development source**, including bounded tools
 whose acceptance remains subject to their documented limits. It is checked against the
 registry in CI. It does not describe the 108-tool 0.3.0 download.
 The local recovery UI also has an add-on-only action, not an extra MCP tool.
