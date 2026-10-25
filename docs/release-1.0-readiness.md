@@ -1,11 +1,12 @@
 # Working toward 1.0.0
 
 Status: **not release-ready**. This is an acceptance plan, not a feature announcement
-or a promise of a release date. [Published 0.5.0](releases/0.5.0.md)
-(25 October, 07:54:54 UTC) remains alpha. Exact-source CI, selected Linux native
-and installed checks and verified downloads are retained; they do not complete
+or a promise of a release date. [Published 0.6.0](releases/0.6.0.md)
+(25 October, 14:29:56 UTC) remains the recommended alpha download. Its exact-source
+CI, selected Linux native/installed checks and verified downloads do not complete
 any stable gate. Earlier releases remain available. The prospective
-[0.6.0 source](releases/0.6.0.md) is an alpha candidate with source-specific evidence. Meaningful,
+[0.7.0 source](releases/0.7.0.md) is an alpha candidate with separate development
+evidence and pending exact-candidate qualification. Meaningful,
 reviewed increments are authorized for versioned GitHub
 prereleases at roughly a 2–3 hour cadence, with matching packages, checksums and
 source-specific validation. Tool counts and elapsed time do not establish readiness.

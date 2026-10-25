@@ -27,6 +27,30 @@ def test_all_existing_smokes_are_in_registry(runner):
     } | {"blender_surface_publication_probe.py", "blender_uv_edit_boundary_probe.py"}
 
 
+@pytest.mark.parametrize("qualified", [False, True])
+def test_populated_geometry_preview_requires_owned_interactive_qualified_variant(runner, monkeypatch, tmp_path, qualified):
+    monkeypatch.setattr(runner.sys, "platform", "linux")
+    case = "geometry_preview_populated_protection"
+    assert case in runner.OPT_IN_CASES & runner.INTERACTIVE_CASES and case not in runner.PHASED_CASES
+
+    def run(command, **kwargs):
+        assert "--background" not in command and "--disable-autoexec" in command
+        assert command[-2:] == ["--", "--bridge-populated-protection"]
+        assert command.count("--bridge-populated-protection") == 1
+        assert kwargs["env"]["BLENDER_USER_CONFIG"].startswith(str(tmp_path))
+        assert kwargs["env"]["BRIDGE_TEST_PROCESS_TOKEN"]
+        kwargs["stdout"].write((runner.CASES[case][1] + json.dumps({
+            "blender_version": "5.2.2", "variant": "populated_data_baseline",
+            "populated_protected_data_baseline_qualified": qualified})).encode())
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(runner.subprocess, "run", run)
+    row = runner.run_case(Path("blender"), case, tmp_path, 10)
+    assert row["status"] == ("passed" if qualified else "failed")
+    assert row["qualification_scope"]["selected_fields"] == ["mesh_geometry", "material_slots", "animation"]
+    assert row["qualification_scope"]["full_H02_F04_or_protected_object_qualified"] is False
+
+
 @pytest.mark.parametrize("case", [
     "core", "undo_lifecycle", "camera_focus", "curve_sampling", "surface_publication_probe", "sculpt_mask",
     "character_revision", "artist_target_verification", "artist_target_sidebar", "artist_quaternion_storage", "artist_quaternion",

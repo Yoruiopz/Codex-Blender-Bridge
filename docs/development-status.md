@@ -1,10 +1,17 @@
 # Development status
 
-**Unreleased development; 1.0 is NOT_READY.** The published [0.3.0 alpha](releases/0.3.0.md)
-contains 108 tools. The development registry currently contains **264 MCP tools**;
-its packages retain 0.3.0 metadata until a qualified release is accepted. Always pair the
-add-on and MCP server from one checkout. A matching version string alone does not identify
-an unpublished build.
+**0.7.0 alpha candidate; 1.0 is NOT_READY.** The recommended published download is
+[0.6.0 alpha](releases/0.6.0.md). This checkout has matching **0.7.0** component
+metadata and **268 MCP tools**; it is not an accepted or published 0.7.0 build.
+Always pair the add-on and MCP server from one accepted build. A matching version
+string alone does not identify an unpublished build.
+
+The [candidate notes](releases/0.7.0.md) separate retained direct-weight recovery,
+`RAW_FREE_POINT_V1` and populated selected-field geometry evidence from pending
+candidate qualification. Non-FREE/current-pose/broad-curve authoring remains
+unsupported. Preview structural success does not qualify appearance; reported
+image-review discrepancies remain retained. All 29 implementation items and
+14 stable-release gates remain open; Windows compatibility/testing is deferred.
 
 **Project save safety:** the legacy `project.save` backend is now unavailable for
 both current-file Save and Save As. It retains its schema and permissions but
@@ -15,8 +22,8 @@ and portable `.blend` delivery remain required; see the [migration and evidence]
 
 ## What is being developed
 
-The notes below describe increments on the development branch, not features available in
-the published downloads. Follow each domain's linked contract for current limits and
+The notes below describe the current development source; earlier releases contain
+some of these foundations within their own source-specific limits. Follow each domain's linked contract for current limits and
 failure/recovery behavior. Tool count and isolated fixture results do not prove complete
 artist workflows. The [execution plan](plan-1.0.md), [readiness gates](release-1.0-readiness.md)
 and [evidence rules](release-evidence.md) define the work needed for 1.0.

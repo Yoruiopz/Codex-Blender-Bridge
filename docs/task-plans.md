@@ -5,8 +5,8 @@ native/path access; see [the safety change](project-save-safety.md). Fresh-proce
 results below establish feature serialization through owned fixture setup, not a
 safe bridge project-save capability. Earlier typed-save reports are historical.
 
-This unreleased increment adds one bounded plan for the active Blender runtime. It
-survives MCP client disconnection/reconnection. Runtime reset and project replacement
+The bridge keeps one bounded plan for the active Blender runtime. It survives
+MCP client disconnection/reconnection. Runtime reset and project replacement
 clear it. Plan text is task data, never executable instructions or permission.
 
 `task.plan.set` accepts a goal of at most 2,000 characters, 1–32 steps and up to 32
@@ -132,15 +132,37 @@ whether runtime protection is enabled; comparison never enables it.
 
 ## Explicit runtime enforcement
 
-`task.plan.enforce(enabled=true, expected_revision=...)` opts into a bounded static-prop
-profile with at least one exact protected object. It resolves current protected identities,
-requires inspection consent, and refuses an active background job or nested enablement
-inside another executing request. It grants no permissions. The plan cannot be replaced,
+`task.plan.enforce(enabled=true, expected_revision=...)` enables an Object-identity
+and incoming-consumer firewall with at least one exact protected object. It resolves
+current protected identities, requires inspection consent, and refuses an active
+background job or nested enablement inside another executing request. Each admitted
+method still needs its own reviewed effect scope. It grants no permissions. The plan cannot be replaced,
 loaded over or cleared while enforcement is enabled. Status/note corrections remain possible
 without changing the protection generation. Explicit disable uses `enabled=false` and the
 current revision, remains possible under pause/emergency stop, and records an operation-history
 audit. Cancellation/inspection denial still prevents the control change. Reconnect preserves
 runtime protection; reset/project replacement clears it.
+
+Enabling enforcement records the current plan/Scene/protected Object identities.
+It does not capture or require a raw-Main snapshot, and its separate advisory
+`baseline` can be null. Conversely, `task.plan.capture` does not enable enforcement
+or authorize a new modifying method. A selected-field snapshot and the runtime
+mutation firewall have different roles; neither is a durable backup or a complete
+object/appearance certificate.
+
+The snapshot reader explicitly updates pending dependencies for transforms,
+visibility, shader and rig fields. Their results cannot be used to claim that
+pending raw pose or selection was unchanged during baseline capture. The data-only
+field subset in the new
+[populated geometry-preview case](geometry-preview.md#populated-selected-field-evidence-source-only-acceptance-case)
+uses stored geometry, bindings and animation definitions, but still requires
+native before/after/delayed checks. The source-only case passed those selected-data
+structural checks on both pinned builds before 0.7.0 candidate metadata preparation;
+final candidate qualification remains pending. It retains the baseline metadata
+and cached data, requires a complete real comparison, and tests manual changes
+and eviction without clearing enforcement, restoring over edits or replacing
+the baseline. Reported image-viewer discrepancies do not invalidate or enlarge
+that measured data scope; appearance remains unqualified.
 
 An in-flight mutator is also counted by the surviving Blender tool registry. Replacing or
 clearing runtime plan/project state and resetting enabled toolsets cannot hide that writer
@@ -154,12 +176,23 @@ The plan, active protection, baseline and in-flight mutator counter remain intac
 active preview or write boundary keeps its prior generation and cannot continue or compensate
 across that history change. This invalidation does not grant whole-scene undo while armed.
 
-Only `transform.set`, `transform.translate`, `transform.rotate`, `transform.scale` and
-`task.plan.apply_preview` currently have reviewed modifying scope. Other modifying tools,
-including context selection/mode, mesh/material/rig edits, batch execution, viewport/render
-capture, persistence, project saving and whole-scene undo, fail before their handler or
-automatic checkpoint while protection is enabled. Native checkpointing for accepted
-transforms remains available. No cleanup/recovery tool implicitly disables the policy.
+`transform.set`, `transform.translate`, `transform.rotate`, `transform.scale` and
+`task.plan.apply_preview` have reviewed authored-writing scope. The isolated
+geometry-preview job has a separate reviewed effect scope with an empty original-Main
+write set; it does not authorize current viewport/material capture. Other modifying
+tools, including context selection/mode, mesh/material/rig edits, batch execution,
+viewport/render capture, persistence, project saving and whole-scene undo, fail
+before their handler or automatic checkpoint while protection is enabled. Native
+checkpointing for accepted transforms remains available. No cleanup/recovery tool
+implicitly disables the policy.
+
+The separate normal-native-save development path also refuses every enforced plan:
+its broad native callbacks and synchronization effects are not a reviewed protected
+scope. Copying to another path still runs native saving in the artist Main. A new
+baseline label or native-effects permission cannot override negative constraints.
+A future extension needs a preventive method-specific effect/consumer contract;
+post-save detection of callback damage is not successful preservation. The older
+same-Main protected-capture raw-witness hold remains a separate limitation.
 
 Scope follows incoming native Object ID consumers, up to 32 Objects and 100 direct users per
 Object. Direct/transitive protected consumers reject the edit. An outbound read-only reference

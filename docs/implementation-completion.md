@@ -27,6 +27,14 @@ versioned GitHub prereleases are authorized on an approximately two-to-three-hou
 review cadence; this is not a deadline to publish unreviewed changes. Stable 1.0
 criteria are unchanged.
 
+The current [0.7.0 alpha candidate](releases/0.7.0.md) prepares retained direct
+weights, `RAW_FREE_POINT_V1` and populated selected-field geometry-preview evidence.
+Its final commit/package/installed qualification is pending. The registered
+point-only writer still requires native acceptance within its exact profile;
+non-FREE/current-pose/broad-curve requests remain unsupported. Reported preview
+image-review discrepancies are retained separately from structural success.
+Neither candidate metadata nor these bounded increments closes an item or gate.
+
 ## Current foundations and unfinished work
 
 Repair, cuts/bridges/slides, base-surface projection, UV authoring/refinement,

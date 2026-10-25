@@ -5,6 +5,7 @@ Work with objects, meshes, materials, UVs, rigs, animation, lights and renders, 
 status, permissions and recovery controls inside Blender.
 
 **[Published 0.6.0 alpha](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.6.0)** ·
+[0.7.0 alpha candidate](docs/releases/0.7.0.md) ·
 [GitHub releases](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases) ·
 [Release evidence](docs/releases/0.6.0.md#verified-evidence) ·
 [Install](#install--no-source-build-needed) · [Troubleshooting](docs/troubleshooting.md) ·
@@ -21,6 +22,14 @@ The [GitHub releases page](https://github.com/Yoruiopz/Codex-Blender-Bridge/rele
 is the authority for accepted artifacts. Earlier releases, including the separate
 [0.5.0 4K/UV evidence](docs/releases/0.5.0.md#verified-evidence), remain available.
 Use matching add-on, MCP server and optional plugin artifacts from one accepted build.
+
+This checkout prepares the **[0.7.0 alpha candidate](docs/releases/0.7.0.md)** with
+retained direct-weight edits, the bounded `RAW_FREE_POINT_V1` curve writer and a
+populated selected-field protection test for isolated geometry previews. Candidate
+package, exact-commit CI and installed qualification remain pending; **0.6.0 remains
+the recommended download**. The preview's selected-data checks do not qualify
+appearance or complete protected objects. Reported image-review discrepancies are
+retained in the candidate notes and require resolution before visual acceptance.
 
 Development targets **official, unmodified Blender only**, without a fork or custom
 distribution. The new [geometry preview](docs/geometry-preview.md) renders bounded

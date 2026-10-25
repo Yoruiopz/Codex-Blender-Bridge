@@ -1307,3 +1307,103 @@ def test_weight_diagnostics_reject_invalid_diff_budgets(fixture_imports, limit):
     script = importlib.import_module("scripts.blender_weight_edit_guard_smoke")
     with pytest.raises(AssertionError):
         script.field_differences({"users": 1}, {"users": 2}, limit=limit)
+
+
+def test_populated_geometry_fixture_captures_real_data_before_pending_raw_setup():
+    tree = ast.parse((ROOT / "scripts" / "blender_geometry_preview_smoke.py").read_text())
+    calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)]
+    direct = {node.args[0].value: node.lineno for node in calls
+              if isinstance(node.func, ast.Attribute) and node.func.attr == "dispatch"
+              and node.args and isinstance(node.args[0], ast.Constant)
+              and node.args[0].value in {"task.plan.set", "task.plan.capture", "task.plan.enforce"}}
+    pending = next(node.lineno for node in calls
+                   if isinstance(node.func, ast.Attribute) and node.func.attr == "hide_set")
+    assert direct["task.plan.set"] < direct["task.plan.capture"] < direct["task.plan.enforce"] < pending
+    source = ast.unparse(tree)
+    assert "CAPTURE_FIELDS = ('mesh_geometry', 'material_slots', 'animation')" in source
+    assert "protected_mesh.from_pydata" in source and "protected_mesh.materials.append(material)" in source
+    assert "evidence_cache[store.baseline['snapshot_id']]" in source
+    assert "actual is cached_record and actual == cached_value" in source
+    assert "if cached or actual is not None:" in source
+    assert "compare_data('after_image_data_compare', 'unchanged_within_scope')" in source
+    assert "negative_protected_controls()" in source
+    assert "'material_slots'" in source and "slot.link" in source
+    assert not any(isinstance(node, ast.Attribute) and node.attr in {"ui_type", "keyframe_insert"}
+                   for node in ast.walk(tree))
+
+
+@pytest.fixture
+def populated_geometry_helpers():
+    tree = ast.parse((ROOT / "scripts" / "blender_geometry_preview_smoke.py").read_text())
+    wanted = {"digest", "selected_authored", "raw_diagnostic", "checked_observation"}
+    nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in wanted]
+    assert {node.name for node in nodes} == wanted
+    import hashlib
+    import json
+    namespace = {"hashlib": hashlib, "json": json}
+    exec(compile(ast.Module(body=nodes, type_ignores=[]), "owned-geometry-oracle", "exec"), namespace)
+    value = {"target": {"vertices": ["target-f32"], "channels": ["static"]},
+             "protected": {"identity": ["protected", 1], "mesh": {"vertices": ["protected-f32"]},
+                           "visibility": {"hide_viewport": False}},
+             "actor": {"identity": ["actor", 2], "channels": {"location": ["pending-raw"]}},
+             "action": {"keys": ["authored-key"]}, "material": {"binding": 3},
+             "raw_selected": ["selected-hidden"], "frame": [1, 0.]}
+    return NS(**namespace, value=value)
+
+
+def test_populated_geometry_oracle_distinguishes_authored_scope_from_idle_raw_state(populated_geometry_helpers):
+    from copy import deepcopy
+    case = populated_geometry_helpers
+    after = deepcopy(case.value)
+    after["actor"]["channels"]["location"] = ["evaluated-raw"]
+    after["raw_selected"] = []
+    proof = {}
+    row = case.checked_observation(proof, "generic_compare", case.value, after)
+    assert row["selected_authored_equal"] and not row["raw_equal"]
+    assert row["raw_preservation_required"] is False
+    assert proof["api_observations"][0]["raw_before"] != proof["api_observations"][0]["raw_after"]
+
+
+@pytest.mark.parametrize("field", ["target", "protected", "action", "material"])
+def test_populated_geometry_oracle_cannot_pass_a_changed_requested_field(populated_geometry_helpers, field):
+    from copy import deepcopy
+    case = populated_geometry_helpers
+    after = deepcopy(case.value)
+    if field == "protected":
+        after[field]["mesh"]["vertices"] = ["manual-vertex"]
+    else:
+        after[field] = {"changed": True}
+    proof = {}
+    with pytest.raises(AssertionError, match="requested authored field"):
+        case.checked_observation(proof, "compare_changed", case.value, after)
+    assert proof["api_observations"][0]["selected_authored_equal"] is False
+    assert proof["api_observations"][0]["selected_before_sha256"] != proof["api_observations"][0]["selected_after_sha256"]
+
+
+def test_populated_geometry_oracle_still_requires_immediate_geometry_raw_preservation(populated_geometry_helpers):
+    from copy import deepcopy
+    case = populated_geometry_helpers
+    after = deepcopy(case.value)
+    after["raw_selected"] = []
+    proof = {}
+    with pytest.raises(AssertionError, match="immediate geometry-call raw diagnostic"):
+        case.checked_observation(proof, "registered_start", case.value, after, raw_required=True)
+    assert proof["api_observations"][0]["raw_preservation_required"] is True
+
+
+def test_populated_geometry_manual_controls_never_replace_baseline_or_run_an_inverse():
+    tree = ast.parse((ROOT / "scripts" / "blender_geometry_preview_smoke.py").read_text())
+    controls = next(node for node in ast.walk(tree)
+                    if isinstance(node, ast.FunctionDef) and node.name == "negative_protected_controls")
+    source = ast.unparse(controls)
+    assert "co.x = 4.125" in source and "co.y = 21.0" in source
+    assert "compare_data('manual_vertex_compare', 'changed')" in source
+    assert "compare_data('manual_key_compare', 'changed')" in source
+    assert "'scene.snapshot'" in source and "old_id not in evidence_cache" in source
+    assert "'evicted_evidence_compare'" in source and "'INVALID_ARGUMENT'" in source
+    assert not any(isinstance(node, ast.Assign) and any(
+        isinstance(target, ast.Attribute) and target.attr in {"baseline", "protection"}
+        for target in node.targets) for node in ast.walk(controls))
+    assert not any(isinstance(node, ast.Attribute) and node.attr in {
+        "undo", "undo_last", "restore_last", "restore_operation", "frame_set"}
+        for node in ast.walk(controls))

@@ -1,12 +1,12 @@
 # Isolated authored-geometry previews
 
-The prospective source adds `preview.geometry_start` and `preview.geometry_image`.
-Selected registered-tool native checks passed at `9e7c11d` on both builds below;
-installed-package qualification must replay these methods from the exact accepted ZIP.
-See the release evidence for candidate-specific installed outcomes.
-The earlier private DTO experiment is separate evidence. Windows remains deferred;
-this source profile admits only the exact qualified official Linux Blender 4.5.14
-and 5.2.2 builds. No custom Blender build is required.
+[0.6.0 alpha](releases/0.6.0.md) includes `preview.geometry_start` and
+`preview.geometry_image` from accepted source `73cad80`. Its exact-source CI and
+installed ZIP checks are recorded in the release evidence. Earlier selected
+registered-tool native checks at `9e7c11d` and the private DTO experiment remain
+separate, source-specific evidence. Windows remains deferred; this source profile
+admits only the exact qualified official Linux Blender 4.5.14 and 5.2.2 builds.
+No custom Blender build is required.
 
 The selected native fixture passed success, stale fetch, permission denial,
 cancellation before worker launch and permission revocation while a worker ran.
@@ -78,13 +78,60 @@ transforms, protected Object channels/raw visibility, Action keys/handles/identi
 bindings and known material/USER-reference identities. It does not use synchronizing
 getters after creating the pending Base state or claim complete hidden storage.
 
+## Populated selected-field evidence: source-only acceptance case
+
+`geometry_preview_populated_protection` is a separate opt-in interactive case.
+Its selected-data structural recipe passed on both pinned builds before 0.7.0
+candidate metadata preparation; final candidate qualification remains pending.
+The existing null-baseline control remains available as `geometry_preview`.
+Those structural passes do not establish a reliable visible image; see the
+[retained image-review discrepancy](releases/0.7.0.md#preview-image-review-discrepancy).
+
+Owned setup creates a nonempty protected Mesh, a real material binding and an
+Actor with stored Action keys. It calls the real `task.plan.set`,
+`task.plan.capture` with `mesh_geometry`, `material_slots` and `animation`, then
+`task.plan.enforce` before establishing pending hidden-selection and raw-channel
+state. Enforcement is the existing Object-identity/incoming-consumer firewall;
+it does not require a raw-Main baseline or introduce a new protection mode.
+The separate snapshot measures only its selected fields.
+
+The case retains both baseline metadata and the actual cached evidence record.
+It requires independent declared projections before, immediately after and on
+delayed turns around registered start/poll/image and real `task.plan.compare`.
+Comparison must return complete `unchanged_within_scope`; an unchanged snapshot
+ID alone is insufficient. The comparison itself is checked for observed effects.
+Existing stale, permission-denial, cancellation and running-worker revocation
+checks remain part of the recipe.
+
+Every API call and delayed turn retains origin-labelled raw diagnostics. Immediate
+raw equality is required around geometry start/image calls, matching their
+existing qualified contract. Generic job inspection, selected-field comparison
+and idle UI turns do not have a universal raw-preservation claim: any observed
+raw changes are recorded. Pending transforms, current evaluated pose and raw
+visibility are outside this selected-data case; changes in them never replace
+the original baseline or excuse a changed requested authored field.
+
+Separate manual vertex/key edits must be reported as changed and left intact.
+Eviction through ordinary snapshot APIs must make comparison unavailable while
+enforcement remains active. No PNG certifies unavailable structural evidence,
+and neither failure authorizes restoration or baseline replacement.
+
+These fields avoid the snapshot reader's explicit dependency-update branch;
+that fact is not proof of universal getter purity or unchanged hidden storage.
+UVs, image pixels, evaluated pose, complete nested materials, material appearance
+and safe saving remain outside this case. It does not qualify protected
+`viewport.capture`, a parent-Main native save/render, or the full H02/F04/I01
+requirements. All 29 implementation items and 14 stable gates remain open.
+
 The first registered native attempt on both pinned builds stopped during real
 `task.plan.enforce`, before any geometry-preview entry: newly linked fixture
 Objects had not yet been materialized in the ViewLayer. That failed evidence is
 retained separately. The corrected fixture updates its owned ViewLayer during
 initial setup, before plan references, dirty-animation setup and pending hidden
 selection. It performs no ViewLayer update after establishing that pending state.
-The correction is not a passing native result; qualification remains pending.
+The corrected `9e7c11d` fixture subsequently passed the selected native checks
+summarized above. Those results do not qualify the separate populated-baseline
+case.
 
 Resource effects remain bounded when cleanup cannot be proved: the manager
 retains at most four unresolved staging resources and refuses another worker

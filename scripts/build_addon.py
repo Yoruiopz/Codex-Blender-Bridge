@@ -106,7 +106,7 @@ def main() -> None:
     parser.add_argument(
         "--output",
         type=Path,
-        default=ROOT / "dist" / "blender_codex_bridge-0.6.0.zip",
+        default=ROOT / "dist" / "blender_codex_bridge-0.7.0.zip",
         help="Destination ZIP path",
     )
     args = parser.parse_args()

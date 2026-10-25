@@ -19,6 +19,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 CASES = {
     "geometry_preview": ("blender_geometry_preview_smoke.py", "BLENDER_GEOMETRY_PREVIEW_OK "),
+    "geometry_preview_populated_protection": ("blender_geometry_preview_smoke.py", "BLENDER_GEOMETRY_PREVIEW_OK "),
     "weight_edit_guard": ("blender_weight_edit_guard_smoke.py", "BLENDER_WEIGHT_EDIT_GUARD_OK "),
     "isolated_asset_preview_probe": ("blender_isolated_asset_preview_probe_smoke.py", "BLENDER_ISOLATED_ASSET_PREVIEW_WORKER_OK "),
     "exclusive_mutation": ("blender_exclusive_mutation_smoke.py", "BLENDER_EXCLUSIVE_MUTATION_OK "),
@@ -233,6 +234,8 @@ INTERACTIVE_CASES = {"undo_lifecycle", "mesh_edit_recovery", "mesh_repair", "uv_
 
 INTERACTIVE_CASES.add("geometry_preview")
 OPT_IN_CASES.add("geometry_preview")
+INTERACTIVE_CASES.add("geometry_preview_populated_protection")
+OPT_IN_CASES.add("geometry_preview_populated_protection")
 INTERACTIVE_CASES.add("isolated_asset_preview_probe")
 INTERACTIVE_CASES.add("exclusive_mutation")
 OPT_IN_CASES.add("exclusive_mutation")
@@ -309,7 +312,7 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
         "--python",
         str(script),
     ]
-    if case in {"artist_quaternion_storage", "artist_quaternion", "uv_edit_storage", "uv_edit_boundary_probe", "large_surface_paint", "uv_edit_guard", "geometry_preview", "executor_history_containment", "animation_intent", "weight_edit_guard"}:
+    if case in {"artist_quaternion_storage", "artist_quaternion", "uv_edit_storage", "uv_edit_boundary_probe", "large_surface_paint", "uv_edit_guard", "geometry_preview", "geometry_preview_populated_protection", "executor_history_containment", "animation_intent", "weight_edit_guard"}:
         command.insert(1, "--disable-autoexec")
     interactive = case in INTERACTIVE_CASES
     if case == "isolated_asset_preview_probe":
@@ -324,6 +327,8 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
         if case == "shader_remove_loaded_probe":
             command.append("--bridge-loaded-fixture")
         marker = phase_marker
+    if case == "geometry_preview_populated_protection":
+        command.extend(["--", "--bridge-populated-protection"])
     # Blender writes quit.blend on normal UI exit. Keep it outside the user's temp recovery.
     temporary = output / f"{label}-temp"
     temporary.mkdir()
@@ -395,6 +400,14 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
             "full_H05_C03_qualified": False,
             "windows_testing_deferred": True,
         }
+    if case == "geometry_preview_populated_protection":
+        result["qualification_scope"] = {
+            "selected_fields": ["mesh_geometry", "material_slots", "animation"],
+            "actual_populated_baseline_required": True,
+            "raw_idle_ui_preservation_qualified": False,
+            "image_pixels_or_material_appearance_qualified": False,
+            "full_H02_F04_or_protected_object_qualified": False,
+        }
     with log.open("wb") as stream:
         try:
             if interactive and sys.platform == "win32":
@@ -434,6 +447,9 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
         and payload.get("phase") == phase
         and payload.get("process_instance") == process_instance
         and type(payload.get("process_id")) is int and payload["process_id"] > 0)
+    if case == "geometry_preview_populated_protection":
+        phase_evidence = bool(payload and payload.get("variant") == "populated_data_baseline"
+                              and payload.get("populated_protected_data_baseline_qualified") is True)
     if result["exit_code"] == 0 and payload is not None and version and phase_evidence:
         result["status"] = "passed"
     result["completed_at"] = datetime.now(timezone.utc).isoformat()

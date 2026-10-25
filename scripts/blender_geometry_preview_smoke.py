@@ -8,6 +8,7 @@ import json
 import sys
 import time
 import traceback
+from copy import deepcopy
 from pathlib import Path
 
 import bpy
@@ -15,6 +16,43 @@ import bpy
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / "addon"), str(ROOT / "scripts")]
 MARKER = "BLENDER_GEOMETRY_PREVIEW_OK "
+POPULATED_FLAG = "--bridge-populated-protection"
+CAPTURE_FIELDS = ("mesh_geometry", "material_slots", "animation")
+
+
+def digest(value):
+    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":"),
+                                     allow_nan=False).encode()).hexdigest()
+
+
+def selected_authored(value):
+    """The data-only scope; pending animation/UI state stays a diagnostic."""
+    return {"target": value["target"], "protected": value["protected"]["mesh"],
+            "protected_identity": value["protected"]["identity"],
+            "actor_identity": value["actor"]["identity"], "action": value["action"],
+            "material": value["material"]}
+
+
+def raw_diagnostic(value):
+    return {"actor_channels": value["actor"]["channels"],
+            "protected_visibility": value["protected"]["visibility"],
+            "raw_selected": value["raw_selected"], "frame": value["frame"]}
+
+
+def checked_observation(proof, label, before, after, *, raw_required=False):
+    """Record evidence before assertions, including an effect of compare itself."""
+    authored_equal = selected_authored(before) == selected_authored(after)
+    raw_before, raw_after = raw_diagnostic(before), raw_diagnostic(after)
+    row = {"label": label, "selected_before_sha256": digest(selected_authored(before)),
+           "selected_after_sha256": digest(selected_authored(after)),
+           "selected_authored_equal": authored_equal, "raw_before": raw_before,
+           "raw_after": raw_after, "raw_equal": raw_before == raw_after,
+           "raw_preservation_required": raw_required}
+    proof.setdefault("api_observations", []).append(row)
+    assert authored_equal, "A requested authored field changed around " + label
+    if raw_required:
+        assert raw_before == raw_after, "The immediate geometry-call raw diagnostic changed: " + label
+    return row
 
 
 def main():
@@ -39,7 +77,9 @@ def main():
 
     status = 1
     runtime = None
-    proof = {"completed": False, "blender_version": bpy.app.version_string, "calls": []}
+    populated = POPULATED_FLAG in sys.argv
+    proof = {"completed": False, "blender_version": bpy.app.version_string, "calls": [],
+             "variant": "populated_data_baseline" if populated else "null_baseline_control"}
     output = Path(tempfile.gettempdir()) / "registered-geometry-preview.json"
     try:
         assert bpy.ops.preferences.addon_enable(module="blender_codex_bridge") == {"FINISHED"}
@@ -58,11 +98,18 @@ def main():
         mesh.update()
         target = bpy.data.objects.new("Registered Geometry Source", mesh)
         scene.collection.objects.link(target)
-        protected = bpy.data.objects.new("Registered Geometry Protected", None)
+        protected_mesh = None
+        if populated:
+            protected_mesh = bpy.data.meshes.new("Registered Protected Geometry")
+            protected_mesh.from_pydata([(4., 0., 0.), (5., 0., 0.), (4., 1., .5)], [], [(0, 1, 2)])
+            protected_mesh.update()  # Owned setup, before any pending-state diagnostic.
+        protected = bpy.data.objects.new("Registered Geometry Protected", protected_mesh)
         scene.collection.objects.link(protected)
         material = bpy.data.materials.new("Registered Source Material Sentinel")
         material.diffuse_color = (0.3, 0.5, 0.7, 0.8)
         mesh.materials.append(material)
+        if populated:
+            protected_mesh.materials.append(material)
         target["preview_keep_ref"] = protected
         actor = bpy.data.objects.new("Registered Dirty Animation", None)
         scene.collection.objects.link(actor)
@@ -86,6 +133,26 @@ def main():
                 "protected_objects": [protected.name, actor.name],
             },
         )
+        from blender_codex_bridge.task_plans import get_task_plans
+
+        store = get_task_plans(runtime.state)
+        baseline_value = cached_value = cached_record = None
+        evidence_cache = runtime.executor.evidence._snapshots
+        if populated:
+            captured = runtime.dispatch("task.plan.capture", {"fields": list(CAPTURE_FIELDS),
+                                                              "max_elements": 4096})
+            fields = captured["evidence"]["state"]["objects"]
+            assert captured["evidence"]["coverage_complete"] is True
+            assert fields[protected.name]["fields"]["mesh_geometry"]["record_count"] > 1
+            assert fields[protected.name]["fields"]["material_slots"]["record_count"] == 1
+            assert fields[actor.name]["fields"]["animation"]["record_count"] > 8
+            assert tuple(store.baseline["fields"]) == CAPTURE_FIELDS
+            baseline_value = deepcopy(store.baseline)
+            cached_record = evidence_cache[store.baseline["snapshot_id"]]
+            cached_value = deepcopy(cached_record)
+            proof["setup_populated_capture"] = {"result": captured,
+                "baseline_metadata": baseline_value, "cached_record": cached_value,
+                "scope": "Explicit data-only fields; no raw current-pose/visibility/whole-object baseline"}
         runtime.dispatch(
             "task.plan.enforce", {"enabled": True, "expected_revision": plan["plan"]["revision"]}
         )
@@ -127,7 +194,7 @@ def main():
             # Independent literal authored fields. No context/active/selected,
             # select_get/hide_get, dimensions, matrix, bounds or evaluation getter.
             data = actor.animation_data
-            return {
+            result = {
                 "target": {
                     **object_fields(target),
                     "mesh_identity": token(mesh),
@@ -213,14 +280,53 @@ def main():
                 "raw_selected": raw_selection(layer),
                 "frame": [scene.frame_current, scene.frame_subframe],
             }
+            if populated:
+                result["protected"]["mesh"] = {
+                    "identity": token(protected_mesh), "users": int(protected_mesh.users),
+                    "vertices": [bits(v.co) for v in protected_mesh.vertices],
+                    "edges": [{"vertices": list(e.vertices), "seam": bool(e.use_seam),
+                               "sharp": bool(e.use_edge_sharp)} for e in protected_mesh.edges],
+                    "loops": [[int(item.vertex_index), int(item.edge_index)] for item in protected_mesh.loops],
+                    "faces": [{"vertices": list(item.vertices), "loop_start": int(item.loop_start),
+                               "loop_total": int(item.loop_total), "material_index": int(item.material_index),
+                               "smooth": bool(item.use_smooth)} for item in protected_mesh.polygons],
+                    "material_slots": [[slot.link, token(slot.material)] for slot in protected.material_slots],
+                }
+            return result
+
+        def retain_baseline(*, cached=True):
+            assert store.baseline is baseline and store.protection is protection
+            assert store.baseline == baseline_value
+            actual = evidence_cache.get(baseline_value["snapshot_id"])
+            # Eviction may remove the record, but it never licenses altering a
+            # record that is still retained during an earlier snapshot call.
+            if cached or actual is not None:
+                assert actual is cached_record and actual == cached_value
+
+        def invoke(method, params, label, *, cached=True):
+            if not populated:
+                return runtime.dispatch(method, params)
+            retain_baseline(cached=cached)
+            before_call = projection()
+            try:
+                return runtime.dispatch(method, params)
+            finally:
+                after_call = projection()
+                checked_observation(proof, label, before_call, after_call,
+                    raw_required=method in {"preview.geometry_start", "preview.geometry_image"})
+                retain_baseline(cached=cached)
+
+        def compare_data(label, expected_status):
+            compared = invoke("task.plan.compare", {"max_elements": 4096}, label)
+            evidence = compared["evidence"]
+            proof.setdefault("protected_comparisons", []).append({"label": label, "result": compared})
+            assert evidence["coverage_complete"] is True and evidence["status"] == expected_status
+            return evidence
 
         before = projection()
-        from blender_codex_bridge.task_plans import get_task_plans
-
-        store = get_task_plans(runtime.state)
         baseline, protection = store.baseline, store.protection
-        accepted = runtime.dispatch(
-            "preview.geometry_start", {"object_name": target.name, "time_limit_seconds": 120}
+        accepted = invoke(
+            "preview.geometry_start", {"object_name": target.name, "time_limit_seconds": 120}, "registered_start"
         )
         after = projection()
         assert (
@@ -248,13 +354,87 @@ def main():
         job_id = accepted["job_id"]
         started = time.monotonic()
         phase = "success"
+        positive_authored = selected_authored(before) if populated else None
+
+        def negative_protected_controls():
+            # These are explicit disposable manual edits. The saved baseline is
+            # never changed, and no tool is asked to restore or compensate them.
+            retain_baseline()
+            protected_mesh.vertices[0].co.x = 4.125
+            vertex_before = projection()
+            assert vertex_before["protected"]["mesh"]["vertices"][0][0] == bits((4.125,))[0]
+            result = compare_data("manual_vertex_compare", "changed")
+            assert any(item.get("field") == "mesh_geometry" for item in result["changes"])
+            assert selected_authored(projection()) == selected_authored(vertex_before)
+            proof["manual_vertex_edit_preserved"] = True
+            curve.keyframe_points[0].co.y = 21.
+            key_before = projection()
+            assert key_before["action"]["curve"]["keys"][0]["co"][1] == bits((21.,))[0]
+            result = compare_data("manual_key_compare", "changed")
+            assert any(item.get("field") == "animation" for item in result["changes"])
+            assert selected_authored(projection()) == selected_authored(key_before)
+            proof["manual_key_edit_preserved"] = True
+            old_id = baseline_value["snapshot_id"]
+            for index in range(9):
+                invoke("scene.snapshot", {"object_names": [protected.name], "fields": ["mesh_geometry"],
+                                          "max_elements": 4096}, "evict_evidence_" + str(index), cached=False)
+            assert old_id not in evidence_cache
+            from blender_codex_bridge.errors import BridgeError
+            try:
+                invoke("task.plan.compare", {"max_elements": 4096}, "evicted_evidence_compare", cached=False)
+            except BridgeError as error:
+                assert error.code == "INVALID_ARGUMENT"
+                proof["evicted_evidence_comparison"] = error.to_dict()
+            else:
+                raise AssertionError("An evicted protected snapshot was certified")
+            retain_baseline(cached=False)
+            proof.update(evidence_eviction_remains_unknown=True, enforcement_retained_after_eviction=True,
+                         selected_baseline_never_rebased=True, automatic_inverse_performed=False)
+
+        def begin_failure_controls():
+            nonlocal job_id, phase
+            from blender_codex_bridge.errors import BridgeError
+            target.location.x += .25  # Explicit unprotected manual edit after the positive proof.
+            try:
+                invoke("preview.geometry_image", {"preview_id": proof["terminal"]["result"]["preview_id"]},
+                       "stale_image_fetch")
+                raise AssertionError("Stale geometry image was returned")
+            except BridgeError as error:
+                assert error.context.get("reason") == "STALE_SOURCE"
+                proof["calls"].append({"case": "stale_fetch", "error": error.to_dict()})
+            prefs.allow_viewport_capture = False
+            try:
+                invoke("preview.geometry_start", {"object_name": target.name}, "denied_start")
+                raise AssertionError("Denied geometry start was accepted")
+            except BridgeError as error:
+                assert error.code == "PERMISSION_DENIED"
+                proof["calls"].append({"case": "denied_start", "error": error.to_dict()})
+            finally:
+                prefs.allow_viewport_capture = True
+            cancelled = invoke("preview.geometry_start", {"object_name": target.name, "time_limit_seconds": 120},
+                               "cancelled_start")
+            invoke("jobs.cancel", {"job_id": cancelled["job_id"]}, "explicit_cancel")
+            job_id, phase = cancelled["job_id"], "cancel"
 
         def tick():
             nonlocal status, phase, job_id
             try:
                 if time.monotonic() - started > 125:
                     raise AssertionError("Registered geometry job exceeded fixture deadline")
-                row = runtime.dispatch("jobs.inspect", {"job_id": job_id})
+                if phase == "populated_delayed":
+                    observed = projection()
+                    authored_equal = selected_authored(observed) == positive_authored
+                    proof.setdefault("delayed_observations", []).append({"origin": "post_image_timer_turn",
+                        "selected_authored_sha256": digest(selected_authored(observed)),
+                        "selected_authored_equal": authored_equal, "raw_diagnostic": raw_diagnostic(observed)})
+                    assert authored_equal
+                    compare_data("delayed_data_compare_" + str(len(proof["delayed_observations"])),
+                                 "unchanged_within_scope")
+                    if len(proof["delayed_observations"]) < 3:
+                        return .05
+                    begin_failure_controls()
+                    return .05
+                row = invoke("jobs.inspect", {"job_id": job_id}, "poll_" + phase)
                 if not row["terminal"]:
                     if phase == "revoke_wait" and row["progress"].get("phase") == "worker_running":
                         prefs.allow_viewport_capture = False
@@ -265,9 +445,10 @@ def main():
                     proof["calls"].append(
                         {"case": "explicit_cancel_before_worker", "terminal": row}
                     )
-                    next_job = runtime.dispatch(
+                    next_job = invoke(
                         "preview.geometry_start",
                         {"object_name": target.name, "time_limit_seconds": 120},
+                        "running_revoke_start",
                     )
                     job_id, phase = next_job["job_id"], "revoke_wait"
                     return 0.05
@@ -279,6 +460,14 @@ def main():
                     )
                     prefs.allow_viewport_capture = True
                     proof["calls"].append({"case": "revoke_running_worker", "terminal": row})
+                    if populated:
+                        compare_data("after_cancel_revoke_data_compare", "unchanged_within_scope")
+                        negative_protected_controls()
+                        proof.update(populated_protected_data_baseline_qualified=True,
+                            baseline_metadata_unchanged=True, baseline_cached_record_unchanged_before_eviction=True,
+                            raw_idle_ui_preservation_qualified=False,
+                            populated_scope=list(CAPTURE_FIELDS),
+                            full_protected_object_or_H02_or_F04_qualified=False)
                     proof["completed"] = True
                     output.write_text(json.dumps(proof, indent=2) + "\n")
                     print(
@@ -288,6 +477,9 @@ def main():
                                 "blender_version": bpy.app.version_string,
                                 "receipt": str(output),
                                 "completed": True,
+                                "variant": proof["variant"],
+                                "populated_protected_data_baseline_qualified": proof.get(
+                                    "populated_protected_data_baseline_qualified", False),
                             }
                         ),
                         flush=True,
@@ -296,8 +488,8 @@ def main():
                     owned_process_exit(status)
                     return None
                 assert phase == "success" and row["state"] == "SUCCEEDED", row
-                image = runtime.dispatch(
-                    "preview.geometry_image", {"preview_id": row["result"]["preview_id"]}
+                image = invoke(
+                    "preview.geometry_image", {"preview_id": row["result"]["preview_id"]}, "registered_image_fetch"
                 )
                 assert image["scene_changed"] is False and image["project_saved"] is False
                 assert store.protection is protection and store.baseline is baseline
@@ -315,32 +507,12 @@ def main():
                 with output.with_suffix(".png").open("xb") as stream:
                     stream.write(base64.b64decode(image["png_base64"], validate=True))
                 output.write_text(json.dumps(proof, indent=2) + "\n")
-                from blender_codex_bridge.errors import BridgeError
-
-                target.location.x += 0.25  # Explicit disposable manual edit after positive proof.
-                try:
-                    runtime.dispatch(
-                        "preview.geometry_image", {"preview_id": row["result"]["preview_id"]}
-                    )
-                    raise AssertionError("Stale geometry image was returned")
-                except BridgeError as error:
-                    assert error.context.get("reason") == "STALE_SOURCE"
-                    proof["calls"].append({"case": "stale_fetch", "error": error.to_dict()})
-                prefs.allow_viewport_capture = False
-                try:
-                    runtime.dispatch("preview.geometry_start", {"object_name": target.name})
-                    raise AssertionError("Denied geometry start was accepted")
-                except BridgeError as error:
-                    assert error.code == "PERMISSION_DENIED"
-                    proof["calls"].append({"case": "denied_start", "error": error.to_dict()})
-                finally:
-                    prefs.allow_viewport_capture = True
-                cancelled = runtime.dispatch(
-                    "preview.geometry_start",
-                    {"object_name": target.name, "time_limit_seconds": 120},
-                )
-                runtime.dispatch("jobs.cancel", {"job_id": cancelled["job_id"]})
-                job_id, phase = cancelled["job_id"], "cancel"
+                if populated:
+                    assert selected_authored(projection()) == positive_authored
+                    compare_data("after_image_data_compare", "unchanged_within_scope")
+                    phase = "populated_delayed"
+                    return .05
+                begin_failure_controls()
                 return 0.05
             except Exception:
                 proof["failure"] = traceback.format_exc()

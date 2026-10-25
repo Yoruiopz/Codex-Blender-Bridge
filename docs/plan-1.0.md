@@ -11,6 +11,18 @@ historical; current feature reopen fixtures use labeled owned setup serializatio
 Safe authorized saving and portable `.blend` delivery remain mandatory open
 requirements, with no scope reduction. See [the safety contract](project-save-safety.md).
 
+## 0.7.0 alpha candidate — 2026-10-25
+
+The [candidate notes](releases/0.7.0.md) cover retained direct-weight recovery,
+`RAW_FREE_POINT_V1` and populated selected-field geometry-preview evidence.
+Matching 0.7.0 component metadata prepares qualification; it is not publication.
+Published 0.6.0 remains the recommended download. Exact candidate CI/packages,
+installed checks and supported-profile native acceptance remain pending.
+Reported preview image-review discrepancies must remain retained and resolved
+before visual acceptance. All 29 implementation items and fourteen stable gates
+remain open; Windows remains deferred. Unsupported non-FREE/current-pose/broad
+curve operations have no arbitrary-Python fallback.
+
 ## Current implementation priorities — 2026-10-25
 
 The [29-item implementation checklist](implementation-completion.md) is the
