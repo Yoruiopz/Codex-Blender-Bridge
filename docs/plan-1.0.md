@@ -31,15 +31,25 @@ designs/alternatives, not retries or weaker evidence.
 
 Meaningful versioned GitHub **pre-releases are authorized**, on an approximately
 two-to-three-hour review cadence. The latest published
-[**0.4.0 alpha**](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.4.0)
-dates to 2026-10-24 at 04:30:48 UTC from `4470d88`. The bounded
-[0.5.0 candidate](releases/0.5.0.md) is not yet published and requires final
-combined-source, native and installed-package qualification. Build matching components
+[**0.5.0 alpha**](releases/0.5.0.md) dates to 2026-10-25 at 07:54:54 UTC from
+`4a45b99`, with exact CI, selected Linux native, installed and anonymous download
+evidence. The prospective [0.6.0 source](releases/0.6.0.md) is unqualified and
+unpublished. Build matching components
 and checksums from a clean reviewed increment, disclose limits and unverified
 Windows status, and verify downloaded bytes. Preserve previous releases. Present
 an exact merge proposal where required; merge permission is not blanket. The
 [stable release gates](release-evidence.md) and historical evidence below are
 unchanged. See the checklist for current foundations and work still in progress.
+
+The architecture uses **official, unmodified Blender only**: no custom build, fork
+or distribution. The [native witness finding](release-1.0-readiness.md#current-native-witness-blocker)
+blocks the earlier strict same-Main/raw pending-Base guarantee, not ordinary
+unarmed screenshots or useful visual verification. Stock redesign work may use
+explicit synchronization with declared mutation semantics, or a separate
+Scene/process snapshot preview. Protected capture remains refused until the new
+profile is qualified. It may not clear or rebase armed protection, restore over
+manual edits, or omit matched parent authored-data/context checks. Safe-save
+catalog effects remain a separate unresolved requirement.
 
 ## Outcome and scope
 
@@ -69,7 +79,7 @@ constraint. Prepare public documentation and contributor/support entry points an
 GitHub repository public. The user subsequently made it public; anonymous repository,
 documentation and existing release downloads were verified. This is separate from qualifying or publishing 1.0. Distribute
 matched packages through GitHub releases. Preserve all earlier releases, including
-0.3.0 and 0.4.0; no stable release date has been set.
+0.3.0, 0.4.0 and 0.5.0; no stable release date has been set.
 
 The machine-readable [requirement ledger](release-1.0-ledger.json) deliberately starts open.
 The [qualification checker](release-evidence.md) validates source/package provenance and retained
@@ -84,7 +94,7 @@ acceptance evidence; native smoke reports themselves remain `NOT_ASSESSED`.
   They do not prove interactive UI installation, real undo interleaving or artistic quality.
 - The manifest's 4.2 minimum is not verified by the local matrix. Test it or explicitly resolve
   supported versions before RC. Do not infer Linux/macOS Blender support from Python CI.
-- Published 0.4.0 remains alpha, with older releases still available. Do not
+- Published 0.5.0 remains alpha, with older releases still available. Do not
   replace accepted artifacts or publish 1.0 early.
   Public-facing repository work is now authorized; it does not close any release gate.
 

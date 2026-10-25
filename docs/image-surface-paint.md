@@ -48,9 +48,10 @@ The implemented limits are:
   constraints, modifiers or shape keys; positive nonsingular world transforms.
 - Synchronous versions allow at most 1,048,576 pixels in each source and stencil.
   The job variant admits up to 16,777,216 pixels in each (4096 square); dimensions
-  remain at most 4096 per axis. Final combined-source 4K deadline, memory and
-  interruption qualification is pending; dimension admission alone does not
-  establish it. Constrained-memory and reviewed appearance acceptance are separate.
+  remain at most 4096 per axis. Published 0.5.0 has bounded deadline, memory and
+  interruption results in its [exact-source evidence](releases/0.5.0.md#verified-evidence).
+  Those executions do not qualify later source; dimension admission alone does
+  not establish completion. Constrained-memory and reviewed appearance acceptance remain open.
 - At most 4096 vertices, 2048 polygons, 12288 loops, 8192 edges and 128 material
   slots per mesh; complete native base tessellation, at most 512 target triangles
   and 1024 triangles across the target plus at most eight explicit occluders.

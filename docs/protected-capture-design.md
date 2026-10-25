@@ -1,10 +1,40 @@
 # Protected capture: source findings and required witness
 
-Protected `viewport.capture` remains unsupported. Its existing `modifies=True`,
-`automatic_checkpoint=False` and `CAPTURE_VIEWPORT` authorization are unchanged.
-The framing fixture proves ordinary capture geometry and restoration; it does
-not admit capture while an artist plan is armed. This document is a design and
-source-review record, not an implementation or native acceptance claim.
+## Current stock-Blender direction
+
+Development targets **official, unmodified Blender only**. No fork, custom build
+or custom Blender distribution is a product requirement. Ordinary
+`viewport.capture` remains available when artist protection is unarmed; the
+framing fixture records bounded ordinary capture geometry and restoration.
+Protected capture remains refused until a new stock profile is qualified. Its
+existing `modifies=True`, `automatic_checkpoint=False` and `CAPTURE_VIEWPORT`
+authorization are unchanged.
+
+The missing native API blocks the earlier strict same-Main guarantee of observing
+raw pending Base flags without ensuring synchronization. It does not block all
+ordinary screenshots or useful visual verification. The source findings below
+remain valid for that older guarantee; custom-API work is stopped outside the
+candidate and retained as historical analysis.
+
+The authorized redesign may use an explicit synchronization stage with clearly
+declared effects, or a separate Scene/process snapshot preview. `GPUOffScreen`
+still reaches dependency-graph evaluation, and context getters can ensure
+synchronization. An explicit `ViewLayer.update` is an authorized mutation, not a
+passive read. A separate Scene/process route also needs measured parent isolation;
+its name alone is not preservation evidence.
+
+Every proposed profile must qualify matched parent authored-data and context
+preservation. It may not clear or rebase an armed protection scope, adopt changed
+state after synchronization as the protected baseline, or restore over intervening
+manual edits. Authority, lifetime, ownership and expected-state checks remain
+required. No redesigned protected profile or restoration guarantee is implemented
+or qualified by this document. Safe-save asset-catalog effects are a separate,
+unchanged requirement. All 29 implementation items and 14 open gates remain.
+
+The following sections retain the earlier same-Main source investigation and
+its stricter raw-state witness requirements. They are not a requirement to ship a
+custom Blender API before ordinary capture or a separately qualified stock
+redesign can be useful.
 
 ## Getter counterexample to qualify
 
@@ -137,10 +167,11 @@ cannot supply the raw per-Base compare-and-swap proof needed during temporary
 isolation and restoration. Python raw collection controls in this probe do not
 provide that complete witness. Private memory offsets and `ctypes` are excluded.
 
-Before guarded capture is implementable, a native test must establish that
-witness on both exact builds and compare before/after raw data during accepted,
-refused and injected-failure calls. It must include a provider that dirties the
-layer and changes selection/visibility, literal authored all-Main snapshots,
+Before the earlier strict same-Main candidate could be implemented, a native test
+would need to establish that witness on both exact builds and compare before/after
+raw data during accepted, refused and injected-failure calls. It must include a
+provider that dirties the layer and changes selection/visibility, literal authored
+all-Main snapshots,
 explicit evaluation/writeback candidates, and the actual armed transform loop.
 No synchronization or newly observed native result may become the baseline.
 
@@ -163,4 +194,5 @@ GPU resource release remains necessary, with no late image publication.
 The guarded operation must own finalization so the generic modifying-tool path
 does not finalize an unrelated editor checkpoint. It must never update the
 artist plan baseline or label a stale baseline verified. The ordinary capture
-path and its existing armed refusal remain unchanged until these proofs exist.
+path remains available, and the current armed refusal stays until a new stock
+profile is qualified against its explicit preservation contract.

@@ -1,7 +1,7 @@
 # Explicit sculpt masks and vertex-color brushes
 
 Bounded structured tools introduced after 0.3.0, with the 4K mask-read profile in
-the 0.5.0 source candidate. These tools perform actual bounded
+the published 0.5.0 alpha. These tools perform actual bounded
 geometry/color edits through typed APIs. They do not claim complete sculpting,
 viewport/surface-projected texture painting, multires or full artist acceptance.
 
@@ -92,9 +92,10 @@ At 4,096², the RGBA copy is 256 MiB and the selected channel is 64 MiB, plus
 bounded copy scratch and mesh/UV evidence. This roughly 320 MiB array estimate
 excludes Blender/native/GPU buffers, Python/allocator overhead and unrelated
 images; it is not a process-memory guarantee or an out-of-core algorithm.
-Final combined-source native 4K qualification, constrained-memory acceptance,
-reviewed production sculpt quality and complete artist/recovery acceptance remain
-open release work; this admission profile does not close PAINT-01 or A05.
+Published 0.5.0 has selected [4K native evidence](releases/0.5.0.md#verified-evidence).
+Later-source qualification, constrained-memory acceptance, reviewed production
+sculpt quality and complete artist/recovery acceptance remain open; this admission
+profile does not close PAINT-01 or A05.
 
 ## Color attribute lifecycle and painting
 

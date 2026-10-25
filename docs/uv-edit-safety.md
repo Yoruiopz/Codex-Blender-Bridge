@@ -1,9 +1,9 @@
 # Bounded direct UV edits
 
 This contract applies only to `uv.coordinates_set`, `uv.transform` and `uv.pin`.
-The guard is integrated into the 0.5.0 source candidate and implements a conditional,
-partial, material-free profile. Final combined-source native and installed
-qualification remains pending. It does not qualify the remaining UV operators,
+The guard is included in published 0.5.0 and implements a conditional, partial,
+material-free profile. Its [selected native evidence](releases/0.5.0.md#verified-evidence)
+applies to that exact source; later source requires separate qualification. It does not qualify the remaining UV operators,
 UV layer lifecycle, full F02/REC-01 workflows, Windows or release 1.0.
 
 The public arguments, `uv` toolset and Blender-authoritative `EDIT_MESH`
@@ -206,10 +206,11 @@ loop invalidation and an actual registered fixture-only checkpoint NOOP.
 Independent host checks retained literal capabilities/nulls and map/selection
 continuity. That research does not prove internal temporary PYPTR allocation
 purity, a persistent layer UUID, every schema/session path or this new guard.
-The integrated guard at source `23d9fc0` adds registered success/failure/recovery
-fixtures and complete supported map/marker comparisons. Final reconstructed
-combined-source native reports and installed checks remain required; fixture
-presence does not establish a passing result. Local dispatch alone cannot prove
+The integrated guard at source `23d9fc0` added registered success/failure/recovery
+fixtures and complete supported map/marker comparisons. Those selected checks
+passed in the published `4a45b99` source; [retained evidence](releases/0.5.0.md#verified-evidence)
+records the bounded verdict. Later-source native and installed checks remain
+required; fixture presence alone establishes no result. Local dispatch cannot prove
 transport behavior, native undo, durable recovery or reviewed visual quality.
 Windows-specific qualification remains deferred and unverified.
 

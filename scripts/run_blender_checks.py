@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 CASES = {
+    "isolated_asset_preview_probe": ("blender_isolated_asset_preview_probe_smoke.py", "BLENDER_ISOLATED_ASSET_PREVIEW_WORKER_OK "),
     "exclusive_mutation": ("blender_exclusive_mutation_smoke.py", "BLENDER_EXCLUSIVE_MUTATION_OK "),
     "project_save_denial": ("blender_project_save_denial_smoke.py", "BLENDER_PROJECT_SAVE_DENIAL_OK "),
     "core": ("blender_smoke.py", "BLENDER_CODEX_SMOKE_OK "),
@@ -148,6 +149,7 @@ CASES = {
 }
 # Each phase must exit successfully before a new process can consume its artifacts.
 PHASED_CASES = {
+    "isolated_asset_preview_probe": ("BLENDER_ISOLATED_ASSET_PREVIEW_WRITER_OK ", "BLENDER_ISOLATED_ASSET_PREVIEW_WORKER_OK "),
     "image_reopen": ("BLENDER_IMAGE_REOPEN_WRITER_OK ", "BLENDER_IMAGE_REOPEN_READER_OK "),
     "image_portability_probe": ("BLENDER_IMAGE_PORTABILITY_PROBE_WRITER_OK ", "BLENDER_IMAGE_PORTABILITY_PROBE_READER_OK "),
     "task_plans": ("BLENDER_TASK_PLANS_WRITER_OK ", "BLENDER_TASK_PLANS_READER_OK "),
@@ -222,6 +224,7 @@ OPT_IN_CASES.add("render_checkpoint_probe")
 INTERACTIVE_CASES = {"undo_lifecycle", "mesh_edit_recovery", "mesh_repair", "uv_authoring", "prop_workflow", "uv_analysis", "mesh_analysis", "image_assets", "shader_groups", "undo_capacity", "shader_settings", "image_revisions", "field_scanner", "texture_paint"}
 
 
+INTERACTIVE_CASES.add("isolated_asset_preview_probe")
 INTERACTIVE_CASES.add("exclusive_mutation")
 OPT_IN_CASES.add("exclusive_mutation")
 INTERACTIVE_CASES.add("artist_multitarget")
@@ -298,6 +301,8 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
     if case in {"artist_quaternion_storage", "artist_quaternion", "uv_edit_storage", "uv_edit_boundary_probe", "large_surface_paint", "uv_edit_guard"}:
         command.insert(1, "--disable-autoexec")
     interactive = case in INTERACTIVE_CASES
+    if case == "isolated_asset_preview_probe":
+        interactive = phase == "writer"
     if interactive:
         command.remove("--background")
     label = case if phase is None else f"{case}-{phase}"
@@ -320,7 +325,7 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
         directory.mkdir()
         environment[key] = str(directory)
     launch_cwd = ROOT
-    if case in PORTABLE_BLEND_RESEARCH_PHASES:
+    if case in PORTABLE_BLEND_RESEARCH_PHASES or case == "isolated_asset_preview_probe":
         # Research-only operational profile. This is not an OS/network sandbox.
         # Do not inherit credential variables or arbitrary Python/Blender paths.
         environment = {key: os.environ[key] for key in (
@@ -335,8 +340,15 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
             environment[key] = str(directory)
         environment.update(TEMP=str(temporary), TMP=str(temporary), TMPDIR=str(temporary),
                            BRIDGE_TEST_PROCESS_TOKEN=process_instance,
-                           BRIDGE_TEST_PORTABLE_BLEND_PHASE=PORTABLE_BLEND_RESEARCH_PHASES[case],
                            GSETTINGS_BACKEND="memory", NO_AT_BRIDGE="1")
+        if case in PORTABLE_BLEND_RESEARCH_PHASES:
+            environment["BRIDGE_TEST_PORTABLE_BLEND_PHASE"] = PORTABLE_BLEND_RESEARCH_PHASES[case]
+        elif interactive and "BRIDGE_TEST_PRIVATE_UI_MANIFEST" in os.environ:
+            # The reviewed display manifest binds its own private runtime path.
+            # The fixture validates this before taking owned process-exit authority.
+            environment["BRIDGE_TEST_PRIVATE_UI_MANIFEST"] = os.environ["BRIDGE_TEST_PRIVATE_UI_MANIFEST"]
+            if "XDG_RUNTIME_DIR" in os.environ:
+                environment["XDG_RUNTIME_DIR"] = os.environ["XDG_RUNTIME_DIR"]
         launch_cwd = temporary / "working"
         launch_cwd.mkdir(mode=0o700)
         command.insert(1, "--disable-autoexec")

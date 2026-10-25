@@ -1,7 +1,7 @@
 # Installation and upgrades
 
-These instructions install the **published 0.4.0 alpha**. The 0.5.0 development
-candidate is not yet published. Use a disposable scene or project copy for initial checks.
+These instructions install the **published 0.5.0 alpha**. The prospective 0.6.0
+development source is unqualified and not published. Use a disposable scene or project copy for initial checks.
 
 You need Blender **4.2+**, standalone **Python 3.10+**, and a local Codex client with MCP support.
 Blender's bundled Python is not the Python used for the MCP server.
@@ -10,14 +10,14 @@ Historical 0.3.0 release checks used Blender 4.5.1 and 5.1.2; this is not curren
 
 ## 1. Download the packages
 
-Open the [0.4.0 release](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.4.0)
+Open the [0.5.0 release](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.5.0)
 and expand **Assets**:
 
 | Download | Purpose |
 | --- | --- |
-| `blender_codex_bridge-0.4.0.zip` | Required Blender add-on; do not extract it |
-| `blender_codex_bridge-0.4.0-py3-none-any.whl` | Required MCP server; install with pip below |
-| `blender-codex-bridge-plugin-0.4.0.zip` | Optional Codex plugin and Blender Studio guidance |
+| `blender_codex_bridge-0.5.0.zip` | Required Blender add-on; do not extract it |
+| `blender_codex_bridge-0.5.0-py3-none-any.whl` | Required MCP server; install with pip below |
+| `blender-codex-bridge-plugin-0.5.0.zip` | Optional Codex plugin and Blender Studio guidance |
 | `SHA256SUMS.txt` | Checksums for verifying downloads |
 
 GitHub's automatic **Source code** archives are for development, not Blender installation.
@@ -33,16 +33,20 @@ Leave Blender open. Never expose or tunnel this port to another computer.
 
 ### Qualified installation scope
 
-The exact published 0.4.0 ZIP passed clean-directory discovery and enablement,
-0.3.0 upgrade/rollback and loopback reconnect checks on Linux Blender 4.5.14 and
-5.2.2. Its matching wheel passed a fresh installed MCP session with SDK 2.2.0;
-CI covered Python 3.10–3.12 and SDK 2.0.0/2.2.0. These are bounded alpha checks,
+The exact published 0.5.0 ZIP passed clean-directory discovery and enablement,
+previous-version replacement, upgrade/rollback and reconnect checks separately
+with published 0.3.0 and 0.4.0 on Linux Blender 4.5.14 and 5.2.2. Each route uses
+four rows in one fresh Blender process per build; process restart and preference
+migration are not established. Its matching wheel passed a fresh installed MCP
+SDK 2.2.0 session. Exact-commit CI covered Python 3.10–3.12 and SDK 2.0.0/2.2.0.
+All six release assets were independently downloaded and hashed anonymously;
+see [the release evidence](releases/0.5.0.md#verified-evidence). These are bounded alpha checks,
 not complete artist-workflow or stable 1.0 acceptance. Windows compatibility and
 testing remain deferred and unverified; the commands below are setup guidance.
 
 The older published 0.3.0 ZIP has a discovery metadata issue on these two Linux
 builds. Reinstalling that same ZIP does not fix its missing literal version.
-The matching 0.4.0 packages contain the correction. Earlier releases remain
+The matching 0.4.0 and 0.5.0 packages contain the correction. Earlier releases remain
 available for deliberate rollback.
 
 ## 3. Connect Codex
@@ -52,7 +56,7 @@ On **Windows**, with the wheel in Downloads, run PowerShell:
 ```powershell
 $bridgeHome = Join-Path $env:LOCALAPPDATA 'BlenderCodexBridge'
 py -3 -m venv "$bridgeHome\.venv"
-& "$bridgeHome\.venv\Scripts\python.exe" -m pip install "$env:USERPROFILE\Downloads\blender_codex_bridge-0.4.0-py3-none-any.whl"
+& "$bridgeHome\.venv\Scripts\python.exe" -m pip install "$env:USERPROFILE\Downloads\blender_codex_bridge-0.5.0-py3-none-any.whl"
 codex mcp add blender_codex_bridge -- "$bridgeHome\.venv\Scripts\blender-codex-mcp.exe"
 codex mcp list
 ```
@@ -64,7 +68,7 @@ On **macOS/Linux**:
 
 ```bash
 python3 -m venv "$HOME/.local/share/blender-codex-bridge/.venv"
-"$HOME/.local/share/blender-codex-bridge/.venv/bin/python" -m pip install "$HOME/Downloads/blender_codex_bridge-0.4.0-py3-none-any.whl"
+"$HOME/.local/share/blender-codex-bridge/.venv/bin/python" -m pip install "$HOME/Downloads/blender_codex_bridge-0.5.0-py3-none-any.whl"
 codex mcp add blender_codex_bridge -- "$HOME/.local/share/blender-codex-bridge/.venv/bin/blender-codex-mcp"
 ```
 
@@ -73,7 +77,7 @@ same absolute executable path as the command, with no arguments.
 See [OpenAI's MCP setup documentation](https://developers.openai.com/codex/mcp/).
 Restart the client if needed and **start a new Codex task** to discover the tools.
 
-**Compatibility:** 0.4.0 is tested with MCP SDK 2.0.0 and 2.2.0; the old SDK pin is no
+**Compatibility:** 0.5.0 is tested with MCP SDK 2.0.0 and 2.2.0; the old SDK pin is no
 longer needed. If deliberately installing historical 0.2.0, follow its
 [release-specific instructions](releases/0.2.0.md), including `mcp==2.0.0`.
 
@@ -107,7 +111,7 @@ Checksums detect mismatched/corrupt files; they do not independently authenticat
 ## Upgrading
 
 Upgrade the **Blender add-on and MCP server together**, from the same release.
-For 0.1.0, 0.2.0 or 0.3.0 → 0.4.0:
+For 0.1.0, 0.2.0, 0.3.0 or 0.4.0 → 0.5.0:
 
 1. Save and back up your scene using Blender’s own UI. The alpha’s structured
    `project.save` is blocked pending its safety replacement. Stop the bridge and finish active tool calls.
@@ -116,11 +120,11 @@ For 0.1.0, 0.2.0 or 0.3.0 → 0.4.0:
 4. Upgrade the **same virtual environment** registered with Codex:
 
    ```powershell
-   & "$env:LOCALAPPDATA\BlenderCodexBridge\.venv\Scripts\python.exe" -m pip install --upgrade "$env:USERPROFILE\Downloads\blender_codex_bridge-0.4.0-py3-none-any.whl"
+   & "$env:LOCALAPPDATA\BlenderCodexBridge\.venv\Scripts\python.exe" -m pip install --upgrade "$env:USERPROFILE\Downloads\blender_codex_bridge-0.5.0-py3-none-any.whl"
    ```
 
    Remove any old `mcp==2.0.0` constraint from your install command or requirements file;
-   keeping SDK 2.0.0 installed also works. Do not mix a 0.4.0 server with
+   keeping SDK 2.0.0 installed also works. Do not mix a 0.5.0 server with
    an older add-on. If using an editable source install, update that
    environment or re-register the new executable path; do not accidentally update another Python.
 

@@ -1,10 +1,11 @@
 # Working toward 1.0.0
 
 Status: **not release-ready**. This is an acceptance plan, not a feature announcement
-or a promise of a release date. [Published 0.4.0](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.4.0)
-(24 October) remains alpha; older releases remain available. The bounded
-[0.5.0 source candidate](releases/0.5.0.md) awaits final combined-source, native
-and installed-package qualification and is not yet published. Meaningful,
+or a promise of a release date. [Published 0.5.0](releases/0.5.0.md)
+(25 October, 07:54:54 UTC) remains alpha. Exact-source CI, selected Linux native
+and installed checks and verified downloads are retained; they do not complete
+any stable gate. Earlier releases remain available. The prospective
+[0.6.0 source](releases/0.6.0.md) is unqualified and unpublished. Meaningful,
 reviewed increments are authorized for versioned GitHub
 prereleases at roughly a 2–3 hour cadence, with matching packages, checksums and
 source-specific validation. Tool counts and elapsed time do not establish readiness.
@@ -41,7 +42,7 @@ No current release should be described as a complete human-equivalent artist.
 | --- | --- | --- |
 | Understand a brief and references | Scene/selection/object inspection, task display; [revisioned plans, scene persistence, exact references and opt-in protected transforms](task-plans.md); [explicit target core-channel observations](artist-target-verification.md) | Visual references, wider enforced constraints, broader target/dependency verification, protected save/delivery, scene units/scale checks, ambiguity resolution benchmarks |
 | Model and repair assets | Primitives, arbitrary meshes, selection-scoped edits, modifiers; [repair](mesh-repair.md), [cuts/closed bridges and previewed equal open-chain bridges](mesh-loops.md), [diagnostics](mesh-analysis.md), [previewed explicit-rail vertex/edge slides](mesh-uv-refinement.md), [scoped base-reference projection](mesh-surface-projection.md) | Broader open/multi-loop bridging and native qualification, explicit unequal correspondence, broader retopology, localized/cross-object/evaluated diagnostics, outward/custom normals, shape-key/shared-data workflows and broad protected editing |
-| Sculpt and paint | [UV-image brushes and raw masks](texture-painting.md), canvas/pixel inspection; [explicit-mask PUSH/SMOOTH and POINT/CORNER colors](surface-brushes.md), [generated-image sculpt masks](surface-brushes.md#sample-a-painted-uv-image-into-a-sculpt-mask), [weight brushes](weight-brushes.md), [bounded orthographic surface strokes/stencils](image-surface-paint.md), with 4K job/mask input profiles in the 0.5.0 candidate | Final combined-source 4K qualification, visual/constrained-memory acceptance, viewport/perspective painting, broader texture sources/blends/roles, multires and full production sculpt/paint feedback |
+| Sculpt and paint | [UV-image brushes and raw masks](texture-painting.md), canvas/pixel inspection; [explicit-mask PUSH/SMOOTH and POINT/CORNER colors](surface-brushes.md), [generated-image sculpt masks](surface-brushes.md#sample-a-painted-uv-image-into-a-sculpt-mask), [weight brushes](weight-brushes.md), [bounded orthographic surface strokes/stencils](image-surface-paint.md), with published bounded 4K job/mask evidence in 0.5.0 | Current-source 4K qualification, visual/constrained-memory acceptance, viewport/perspective painting, broader texture sources/blends/roles, multires and full production sculpt/paint feedback |
 | UV and textures | [Authoring and the bounded direct-edit guard](uv-authoring.md), [UV evidence](uv-analysis.md), [align/stitch/island relax](mesh-uv-refinement.md), [approved loading/binding](image-assets.md), [refresh/relocation](image-revisions.md), [paint/digests](texture-painting.md), stored-relative FILE reopen, [loaded/unloaded FILE recovery](image-portability.md) and [cooperative 4K snapshots/recovery](image-recovery-jobs.md) | UV-editor selection, cross-object/evaluated atlases, broader quality acceptance, full painting/baking, broader formats and production durable-pixel acceptance |
 | Materials and look development | Principled controls, isolated copies, approved images, [nested paths/groups](shader-groups.md), [reviewed properties/ramps](shader-settings.md), [interface preview/rename/reorder/default](shader-interface-lifecycle.md), bounded nested evidence and [reference-prop fixture](field-scanner-workflow.md) | Interface conversion/removal and animated maintenance, broader properties, deep asset lifecycle, complete nested dependency preservation, production materials/look development |
 | Procedural modeling | Reviewed GN graphs/zones; [nested instances/copies and modifier constants](geometry-node-groups.md), [identifier-preserving zone conversion/interface edits](geometry-zone-lifecycle.md) | Broader nested/interface lifecycle, disk baking, evaluated diagnostics and broader node types |
@@ -86,6 +87,41 @@ a blocker to this implementation pass. Complete Windows native and installed-pac
 acceptance remains a future stable-release gate; Linux development results do not qualify
 Windows or other platforms for 1.0. Align the manifest and support claims only at
 candidate qualification.
+
+## Current native witness blocker
+
+The source-only acquisition/entry review at receipt SHA-256
+`a5936fdd28a81ce6f682a77bfbf056ee012f8a28e89b4c97af5cd2451b314aff`
+finds that Python scheduler phase, epoch and mutation leases cannot certify the
+lifetime of cached Main for an external raw reader. Cached `bpy.data.as_pointer()`
+has no validity check, and native reset can release Python references before its
+later refresh. This is source evidence, not a reproduced crash or native acceptance.
+
+This gap applies to the earlier strict same-Main/raw pending-Base witness
+guarantee. It does not block ordinary screenshots or the whole useful product:
+ordinary `viewport.capture` works with artist protection unarmed. Its framing
+evidence does not establish the older passive raw-state guarantee.
+
+The architecture is **official, unmodified Blender only**, with no fork, custom
+build or distribution. The proposed Blender-owned snapshot API is absent from
+the reviewed binaries; custom-API implementation work is stopped outside the
+candidate, with its analysis retained as history rather than a product prerequisite.
+Python phase/epoch/lease checks still cannot stand in for the missing witness.
+
+Authorized stock redesign options are explicit synchronization with declared
+effects, or a separate Scene/process snapshot preview. `GPUOffScreen` still
+reaches dependency-graph evaluation, context getters can ensure synchronization,
+and explicit `ViewLayer.update` must be treated as an authorized mutation rather
+than a passive read. No new profile is qualified by this decision. Current
+protected capture remains refused until matched parent authored-data/context
+preservation is demonstrated. A redesign may not clear or rebase armed
+protection, accept a changed baseline after synchronization, or restore over
+intervening manual edits. The 29 items and 14 gates remain unchanged.
+
+Safe saving has a separate blocker: asset-catalog `SAVE_POST` effects extend
+outside authored Main. A snapshot witness alone cannot establish approved-path
+filesystem effects or complete project delivery. See [capture design](protected-capture-design.md)
+and [save safety](project-save-safety.md). Existing holds remain in place.
 
 ## Release gates
 

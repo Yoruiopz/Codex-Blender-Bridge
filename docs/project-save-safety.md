@@ -1,6 +1,6 @@
 # Project saving is blocked pending native side-effect control
 
-Published 0.4.0 alpha and current development source: **`project.save` returns
+Published 0.4.0/0.5.0 alphas and current development source: **`project.save` returns
 `NOT_IMPLEMENTED` for both
 current-file Save and Save As.** The prior alpha's native save capability is
 unavailable in these versions. The tool name, optional `filepath`,

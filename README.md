@@ -4,20 +4,25 @@ Let Codex inspect and edit Blender through local, permission-controlled MCP tool
 Work with objects, meshes, materials, UVs, rigs, animation, lights and renders, with
 status, permissions and recovery controls inside Blender.
 
-**[0.5.0 alpha source candidate](docs/releases/0.5.0.md)** ·
+**[0.6.0 prospective alpha source](docs/releases/0.6.0.md)** ·
 [GitHub releases](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases) ·
-[Published 0.4.0 alpha](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.4.0) ·
+[Published 0.5.0 alpha](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.5.0) ·
 [Install](#install--no-source-build-needed) · [Troubleshooting](docs/troubleshooting.md) ·
 [Contribute](CONTRIBUTING.md)
 
 This is **alpha software**. Try it on a disposable scene or a copy of your project.
-The published **0.4.0 alpha** dates to October 24, 2026. This source prepares **0.5.0**,
-with bounded 4K surface-paint jobs, generated-image sculpt-mask sampling and guarded direct
-UV edits. Final combined-source, native and installed-package qualification remains pending;
-0.5.0 is not yet published. The [GitHub releases page](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases)
-is the authority for accepted artifacts and retained evidence. Earlier releases, including
-**0.3.0 alpha** with its original **108 tools**, remain available.
+The published **0.5.0 alpha** dates to October 25, 2026 at **07:54:54 UTC**, from
+`4a45b99`. It includes bounded 4K painting and guarded direct UV edits, with
+[exact-source Linux checks and verified downloads](docs/releases/0.5.0.md#verified-evidence).
+This source prepares **0.6.0**; it has no new capability or qualification claim and is
+not published. The [GitHub releases page](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases)
+is the authority for accepted artifacts and retained evidence. Earlier releases remain available.
 Use matching add-on, MCP server and optional plugin artifacts from one accepted build.
+
+Development targets **official, unmodified Blender only**, without a fork or custom
+distribution. Ordinary viewport capture remains available when artist protection
+is unarmed. Protected capture still refuses until a stock-Blender redesign is
+qualified; see [capture status and preservation requirements](docs/protected-capture-design.md).
 
 **1.0 is not ready.** Follow the [development status](docs/development-status.md),
 [roadmap](docs/roadmap.md) and [release plan](docs/plan-1.0.md).
@@ -27,24 +32,24 @@ end-to-end workflows required by the [release gates](docs/release-1.0-readiness.
 
 ## Install — no source build needed
 
-The instructions below install the published **0.4.0 alpha**. The **0.5.0 source
-candidate** has [separate notes and qualification limits](docs/releases/0.5.0.md); this page
-does not claim that its release assets have been published.
+The instructions below install the published **0.5.0 alpha**. The prospective
+**0.6.0 source** has [separate notes](docs/releases/0.6.0.md) and remains unqualified
+and unpublished.
 
 You need Blender **4.2+**, standalone **Python 3.10+**, and a local Codex client with MCP
 support. Blender's bundled Python does not run the MCP server. The declared minimum is not
 a guarantee that every Blender version or platform is tested; see the
-[accepted 0.4.0 release](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.4.0) for its evidence.
+[accepted 0.5.0 release](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.5.0) for its evidence.
 
 ### 1. Download the packages
 
-Get these assets from the [0.4.0 release](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.4.0):
+Get these assets from the [0.5.0 release](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.5.0):
 
 | Asset | Purpose |
 | --- | --- |
-| `blender_codex_bridge-0.4.0.zip` | Required Blender add-on; keep it zipped |
-| `blender_codex_bridge-0.4.0-py3-none-any.whl` | Required standalone MCP server |
-| `blender-codex-bridge-plugin-0.4.0.zip` | Optional Codex plugin and workflow guidance |
+| `blender_codex_bridge-0.5.0.zip` | Required Blender add-on; keep it zipped |
+| `blender_codex_bridge-0.5.0-py3-none-any.whl` | Required standalone MCP server |
+| `blender-codex-bridge-plugin-0.5.0.zip` | Optional Codex plugin and workflow guidance |
 | `SHA256SUMS.txt` | Download checksums |
 
 Use the release assets rather than GitHub's automatic source archives.
@@ -101,22 +106,22 @@ Read the [security model](docs/security.md) and [recovery limits](docs/native-re
 
 ## Features
 
-### Implemented 0.5.0 candidate additions
+### Published 0.5.0 additions
 
 Surface-paint jobs admit up to 4,096² source and stencil pixels, with explicit finite work
 caps, 64×64 ownership tiles and complete input/output hashes. Synchronous surface painting
 retains its smaller limit. Generated-image sculpt-mask sampling also admits 4,096² pixels,
 with bounded channel copying and full input revalidation; this read remains synchronous.
 These source profiles are documented in [surface painting](docs/image-surface-paint.md) and
-[sculpt masks](docs/surface-brushes.md). Final combined-source qualification must retain
-complete pixels, deadlines, measured memory and interruption results; visual and
-constrained-memory acceptance remain separate requirements.
+[sculpt masks](docs/surface-brushes.md). The published source has bounded complete-pixel,
+deadline, memory and interruption evidence on two Linux builds; visual and
+constrained-memory acceptance remain open. Those results do not qualify the 0.6.0 source.
 
 The integrated [direct UV guard](docs/uv-edit-safety.md) covers `uv.coordinates_set`,
 `uv.transform` and `uv.pin` within a static, material-free, single-user Edit Mode profile.
 It retains exact intent and attempted-field recovery; unsupported dependencies, unknown
 outcomes and authority loss refuse further writes. Full UV workflows, native undo, durable
-recovery and final candidate qualification remain open. See the [0.5.0 notes](docs/releases/0.5.0.md).
+recovery remain open. See the [0.5.0 evidence and limits](docs/releases/0.5.0.md).
 
 ### Artist-workflow foundations carried from 0.4.0 alpha
 
@@ -165,7 +170,7 @@ Current development contracts include [packed recovery jobs](docs/image-recovery
 
 ### Complete tool inventory — current source
 
-This generated inventory describes the **0.5.0 candidate source**, including bounded tools
+This generated inventory describes the **prospective 0.6.0 source**, including bounded tools
 whose acceptance remains subject to their documented limits. It is checked against the
 registry in CI. It does not describe the 108-tool 0.3.0 download.
 The local recovery UI also has an add-on-only action, not an extra MCP tool.

@@ -11,9 +11,11 @@ testing are deferred until implementation is complete, remain unverified, and do
 not block this implementation pass.** Windows 11 and installed-package acceptance
 remain mandatory for the later stable 1.0 candidate.
 
-The published [**0.4.0 alpha**](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.4.0)
-dates to 2026-10-24 at 04:30:48 UTC, from `4470d88`. Earlier releases remain available.
-The [0.5.0 source candidate](releases/0.5.0.md) is not yet published. Meaningful
+The published [**0.5.0 alpha**](releases/0.5.0.md) dates to 2026-10-25 at
+07:54:54 UTC, from `4a45b99`, with exact-source CI, selected Linux native and
+installed checks plus all six anonymous download hashes retained. Earlier releases
+remain available. The prospective [0.6.0 source](releases/0.6.0.md) is unqualified
+and unpublished. Meaningful
 versioned GitHub prereleases are authorized on an approximately two-to-three-hour
 review cadence; this is not a deadline to publish unreviewed changes. Stable 1.0
 criteria are unchanged.
@@ -25,22 +27,25 @@ nested materials, image jobs/recovery, orthographic surface strokes/stencils,
 sculpt/color/weight tools, bounded rigs/animation, GN/rigid evaluation, plans,
 receipts and target verification already exist within documented limits. Their
 results are tied to specific sources; they do not establish complete current-source
-workflow acceptance. The 0.5.0 source admits 4,096-square inputs for bounded
+workflow acceptance. Published 0.5.0 admits 4,096-square inputs for bounded
 surface jobs and generated-image sculpt-mask reads; synchronous surface painting
-retains its 1,048,576-pixel limit. Final combined-source, memory, interruption and
-installed qualification remain pending, with visual/constrained-memory acceptance
-still required. Rigid evaluation is not baking, and asset exchange remains limited.
+retains its 1,048,576-pixel limit. Exact-source memory, interruption and installed
+checks are retained in the [0.5.0 evidence](releases/0.5.0.md#verified-evidence);
+visual, constrained-memory, durable and full-workflow acceptance remain required.
+Those executions do not qualify this prospective 0.6.0 source. Rigid evaluation
+is not baking, and asset exchange remains limited.
 
 The registered quaternion workflow at `c49cd0f` is a bounded authored-channel
 foundation. UV storage/reader results at `e96362f` and `093aeb9` are historical
 source-specific native research. The current source integrates a retained-intent
 [guard for three direct UV tools](uv-edit-safety.md), with exact Float32 comparisons,
 fresh leaf resolution and attempted-field compensation within a restricted profile.
-Final reconstructed combined-source qualification remains pending; full F02,
+The published 0.5.0 source has selected registered-tool native evidence; full F02,
 native undo, durable recovery and appearance acceptance remain open. Published
 0.4.0 export and weight corrections retain their bounded evidence and limits.
 Curve, cloth-job and material-recovery work under separate review is not included
-in this 0.5.0 candidate; no operational cloth-job claim follows from this checklist.
+in this prospective 0.6.0 preparation; no operational cloth-job claim follows
+from this checklist.
 
 Each item needs the relevant success, permission-denial, invalid-context,
 protected/context-preservation, injected-failure, interruption/manual-interleaving
@@ -49,6 +54,17 @@ independently; retain reviewed matched visuals when appearance matters. Record
 source/package identities, hardware, peak memory, native blocking intervals and
 cancellation/deadline behavior. A known refusal does not fill a required missing
 capability, and a fixture-only save is not safe product saving.
+
+Implementation targets **official, unmodified Blender only**, without custom
+builds, forks or distributions. The [native witness finding](release-1.0-readiness.md#current-native-witness-blocker)
+limits the earlier strict same-Main/raw pending-Base guarantee; it does not block
+ordinary unarmed capture or every useful verification workflow. Authorized stock
+redesign options are explicit synchronization with clearly declared mutation
+semantics, or a separate Scene/process snapshot preview. Each must qualify matched
+parent authored-data/context preservation without clearing or rebasing armed
+protection or restoring over manual edits. Current protected capture still
+refuses. Safe-save catalog effects remain separately unresolved; H01/H02 and all
+29 items remain mandatory.
 
 ## B0 — Safety, recovery and evidence
 

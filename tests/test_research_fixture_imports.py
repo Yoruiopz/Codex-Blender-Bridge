@@ -16,6 +16,8 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 HELPERS = (
+    "scripts.blender_isolated_asset_preview_probe_smoke",
+    "scripts.native_isolated_asset_preview",
     "scripts.blender_rigid_timer_probe_smoke",
     "scripts.blender_rigid_lifecycle_probe_smoke",
     "scripts.blender_scene_job_kernel_smoke",
@@ -104,6 +106,8 @@ def fixture_imports(addon_package, monkeypatch):
 
 
 @pytest.mark.parametrize("name,helper", [
+    ("scripts.blender_isolated_asset_preview_probe_smoke", "main"),
+    ("scripts.native_isolated_asset_preview", "validate_dto"),
     ("scripts.blender_rigid_timer_probe_smoke", "checkpointed_cache"),
     ("scripts.blender_rigid_lifecycle_probe_smoke", "make_scene"),
     ("scripts.blender_scene_job_kernel_smoke", "RigidDriver"),
@@ -149,6 +153,14 @@ def test_owned_background_entry_never_acquires_process_exit(fixture_imports, mon
     monkeypatch.setattr(os, "_exit", forbidden_exit)
     with pytest.raises(AssertionError, match="Use the isolated background runner"):
         runpy.run_path(str(ROOT / "scripts" / script), run_name="__main__")
+    assert fixture_imports.timers == [] and fixture_imports.events == []
+
+
+def test_isolated_preview_entry_refuses_unowned_process_before_exit_authority(fixture_imports, monkeypatch):
+    monkeypatch.setattr(os, "_exit", lambda _status: pytest.fail("Unowned preview acquired process-exit authority"))
+    monkeypatch.setattr(sys, "argv", ["blender"])
+    with pytest.raises(AssertionError, match="Use the phased isolated runner"):
+        runpy.run_path(str(ROOT / "scripts/blender_isolated_asset_preview_probe_smoke.py"), run_name="__main__")
     assert fixture_imports.timers == [] and fixture_imports.events == []
 
 

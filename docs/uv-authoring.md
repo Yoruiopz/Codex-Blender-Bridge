@@ -21,9 +21,10 @@ These three tools require one explicitly named, active, local, non-override, sin
 mesh in **single-object Edit Mode** and an existing, explicitly named `uv_layer`.
 They use BMesh directly: no operator, implicit layer activation or selection changes.
 The new [bounded edit guard](uv-edit-safety.md) restricts the complete native mesh,
-storage and consumer profile. It is integrated into the 0.5.0 source candidate;
-final combined-source native and installed qualification remains pending. This
-bounded implementation does not complete F02, native undo or durable recovery.
+storage and consumer profile. Published 0.5.0 has selected registered-tool native
+checks within that profile; see [its exact-source evidence](releases/0.5.0.md#verified-evidence).
+Later source needs its own qualification. The bounded implementation does not
+complete F02, native undo or durable recovery.
 Use standalone calls. These guarded children are refused by `batch.plan` and
 `batch.execute`; the public argument shapes and permission requirements are unchanged.
 
