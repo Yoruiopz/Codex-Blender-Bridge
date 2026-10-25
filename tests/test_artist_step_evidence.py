@@ -62,6 +62,28 @@ def test_success_receipt_uses_final_outer_record_and_does_not_complete_step(jour
     assert not journal.inspect()["user_goal_verified"]
 
 
+@pytest.mark.parametrize("denied", [False, True])
+def test_history_failure_marks_existing_step_journal_incomplete_without_fabricating_receipt(journal, monkeypatch, denied):
+    attempts = []
+
+    def broken_history(**_kwargs):
+        attempts.append(True)
+        raise RuntimeError("modeled step history failure")
+
+    if denied:
+        journal.env.grants["TRANSFORM_OBJECTS"] = False
+    monkeypatch.setattr(journal.env.context.state, "record_operation", broken_history)
+    response = journal.apply()
+    assert not response.ok
+    assert response.error["code"] == ("PERMISSION_DENIED" if denied else "OPERATION_FAILED")
+    assert response.error["context"]["history_outcome_unknown"]
+    assert attempts == [True]
+    assert journal.inspect()["incomplete"] is True and journal.inspect()["receipts"] == []
+    assert journal.env.data.get_task_plans(journal.env.context.state) is journal.store
+    assert journal.checkpoints == ([] if denied else ["before", "after"])
+    assert journal.store.plan["steps"][0]["status"] == "pending"
+
+
 @pytest.mark.parametrize("fault", ["denial", "partial", "generic", "after_checkpoint"])
 def test_failure_receipt_uses_actual_final_error_record(journal, fault):
     env = journal.env

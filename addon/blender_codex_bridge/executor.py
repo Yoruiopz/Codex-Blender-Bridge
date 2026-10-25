@@ -154,9 +154,22 @@ class MainThreadExecutor:
         """Execute one validated request and contain all failures."""
 
         try:
-            return Response.success(request.id, self._invoke(request, check_cancelled=check_cancelled))
-        except BridgeError as error:
-            return Response.failure(request.id, error)
+            try:
+                result = self._invoke(request, check_cancelled=check_cancelled)
+            except BridgeError as error:
+                return Response.failure(request.id, error)
+            return Response.success(request.id, result)
+        except Exception:
+            # Reporting/finalization itself can fail after the invocation has
+            # unwound. Do not invoke providers, history or native work again.
+            LOGGER.exception("Blender request outcome reporting failed for %s", request.method)
+            # Fixed plain data avoids invoking the failing context/result
+            # normalizer again. Normal wire encoding still uses the V1 envelope.
+            return Response(id=request.id, ok=False, error={
+                "code": ErrorCode.SERVER_ERROR.value,
+                "message": "Blender request reporting failed; reinspect affected state.",
+                "context": {"error_reporting_failed": True, "execution_outcome_unknown": True,
+                            "possible_mutation": True, "verification_required": True}})
 
     def _editor_recovery_metadata(self, *, finalize: bool = True, before_write: Callable[[], None] | None = None,
                                   after_read: Callable[[], None] | None = None,
@@ -221,6 +234,28 @@ class MainThreadExecutor:
         context.request_id = request.id
         step_entry = None
         queued_owner = getattr(check_cancelled, "__self__", None)
+        history_attempted = False
+        history_failed = False
+        history_record = None
+
+        def record_history(*, failure: BridgeError | None = None, **details: Any) -> Any:
+            nonlocal history_attempted, history_failed, history_record
+            if not history_attempted:
+                # A writer may append before raising. Retrying could duplicate
+                # that unknown outcome, including from the exception path.
+                history_attempted = True
+                try:
+                    history_record = self.state.record_operation(**details)
+                except Exception:
+                    history_failed = True
+                    if failure is None:
+                        raise
+                    LOGGER.exception("Operation history recording failed for %s", request.method)
+            if failure is not None and history_failed:
+                failure.context.update(history_recording_failed=True, history_record_verified=False,
+                                       history_outcome_unknown=True, history_retry_attempted=False)
+            return history_record
+
         if isinstance(queued_owner, QueuedRequest) and getattr(check_cancelled, "__func__", None) is QueuedRequest.check_active:
             # Bind the known class implementation, not an arbitrary callback or
             # an overridden method that could invoke permission providers.
@@ -319,7 +354,7 @@ class MainThreadExecutor:
                     undo_finalized = True
             self.registry.check_mutation_owner(spec, context)
             duration_ms = (time.perf_counter() - start) * 1000.0
-            record = self.state.record_operation(
+            record = record_history(
                 tool=request.method,
                 description=_history_description(
                     request,
@@ -425,7 +460,8 @@ class MainThreadExecutor:
                         error.context.update({"execution_started": True, "verification_required": True,
                                               "undo_boundary_finalized": True})
             entry_effects = annotate_entry_error(error, audit)
-            record = self.state.record_operation(
+            record = record_history(
+                failure=error,
                 tool=request.method,
                 description=_history_description(
                     request,
@@ -479,7 +515,8 @@ class MainThreadExecutor:
             error = BridgeError(
                 ErrorCode.OPERATION_FAILED,
                 f"Blender operation '{request.method}' failed.",
-                {"exception_type": type(exc).__name__, "detail": str(exc)[:400],
+                {"exception_type": type(exc).__name__,
+                 "detail": "Operation history recording failed." if history_failed else str(exc)[:400],
                  "execution_started": bool(spec is not None and spec.modifies and handler_entered),
                  "verification_required": True, "undo_boundary_finalized": undo_finalized},
             )
@@ -488,7 +525,8 @@ class MainThreadExecutor:
             if finalization_denial is not None:
                 retain_finalization_denial(error, finalization_denial)
             entry_effects = annotate_entry_error(error, audit)
-            record = self.state.record_operation(
+            record = record_history(
+                failure=error,
                 tool=request.method,
                 description=error.message,
                 success=False,

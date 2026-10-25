@@ -260,8 +260,13 @@ def record_terminal(context: Any, request: Any, record: Any, evidence: Any, *, e
 
 def _record_terminal(store: TaskPlanStore, entry: StepCall | TargetVerifyCall | None, request: Any, record: Any, evidence: Any, *,
                      handler_entered: bool, undo_created: bool, undo_finalized: bool) -> str | None:
-    if (request.method != "task.plan.apply_preview" or record is None or not isinstance(entry, StepCall)
+    if (request.method != "task.plan.apply_preview" or not isinstance(entry, StepCall)
             or entry.store is not store or not matches(store, entry.association, generation=False)):
+        return None
+    if record is None:
+        # A valid step association lost its history result. Do not fabricate a
+        # receipt, retry history, create a store or report a complete journal.
+        store.receipts_incomplete = True
         return None
     details = evidence if isinstance(evidence, Mapping) else {}
     started = details.get("execution_started")

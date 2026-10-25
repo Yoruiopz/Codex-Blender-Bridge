@@ -264,6 +264,18 @@ Only a failure known to occur before a frame was sent carries `executed:false` a
 
 ## Concurrency and ordering
 
+Operation history is attempted at most once per invocation, including error
+handling. A failed history write can have appended a record before raising, so
+the bridge does not retry it. The terminal error reports
+`history_recording_failed=true`, `history_record_verified=false`,
+`history_outcome_unknown=true` and `history_retry_attempted=false`; a primary
+permission denial or other structured error keeps its original code. An edit may
+already have completed and must be reinspected. If secondary outcome reporting
+itself fails, the request boundary returns a structured `SERVER_ERROR` with
+`execution_outcome_unknown=true` and `possible_mutation=true`, without repeating
+history, providers or native finalization. These facts do not create a recovery
+point or a durable backup.
+
 Unreleased image job starters and `rigid_body.evaluate_job_start` return bounded
 accepted job descriptors, not completed domain work. Image painting, delivery,
 snapshot/recovery and rigid evaluation share the same single-active scheduler.
