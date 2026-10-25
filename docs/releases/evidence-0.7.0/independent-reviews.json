@@ -1,0 +1,326 @@
+{
+  "archive": {
+    "sha256": "b24091f739dadb437d2b04a746fcdd2f5ce3edc2859032b3b3d0df2f8ae7ebd6",
+    "review": {
+      "status": "CLEAR_SCOPED",
+      "reviewer": "/root/declared_protection_contract",
+      "reviewed_at_utc": "2026-10-25T19:08:42.012053+00:00",
+      "archive": {
+        "path": "/dev/shm/blender-codex-resume-20261025/publication-0.7/blender-codex-bridge-0.7.0-development-evidence.tar.gz",
+        "bytes": 17290139,
+        "sha256": "731ed512976328553601057a827024cac3ecb9388e72bc22fbea2f650390411a",
+        "unchanged_after_review": true
+      },
+      "scope": "Independent read-only review of exact curated 0.7 evidence payload and its generator; no product/native/test/network/publisher execution or archive/source changes. This receipt is external to the unchanged archive.",
+      "blockers": [],
+      "checks": {
+        "all_251_tar_member_names_read": true,
+        "all_regular_unique_safe_members": true,
+        "metadata": "regular 0644, uid/gid/mtime zero, no owner names, only safe path PAX metadata",
+        "manifest_249_payloads_full_byte_hash_readback": true,
+        "SHA256SUMS_250_entries_including_manifest_verified": true,
+        "all_249_payloads_equal_provenance_source_bytes": true,
+        "curation_generator_read_and_exact_archived_bytes": true,
+        "nested_containers": 13,
+        "nested_regular_unique_safe_members": 496,
+        "nested_all_member_bytes_read_CRC_checked": true,
+        "credential_scan": "No private keys, GitHub/AWS/Google/Slack tokens, unmasked bearer/basic credentials, signed URLs or file-service/sediment download references found in archive/nested payloads; all 1908 reachable public Git blobs also checked by secret patterns.",
+        "context_review": "Xauthority references are synthetic isolation paths/metadata and helper source; no cookie file/value is included. Authorization in CI logs is masked as ***. Process/config UUIDs are synthetic test correlation tokens, not account credentials. Curation excludes profiles/configs/home/user projects/preferences/recovery files; no .blend/.blend1/.exr/.bcbimg or credential file appears. Native data and images are synthetic fixture evidence; previous reporting failure remains explicitly retained.",
+        "public_source_only": "Only one complete Git bundle; exact pack bytes match standalone restore, no alternates/promisor, strict fsck passes. All 2887 stored objects are reachable from the two explicit accepted public refs; no missing or unreachable/private WIP objects. Support-only history consists exactly of public a697 and 369.",
+        "git_object_inventory_sha256": "20b319e3a51fb901e55bfdec6dd7d8a2d2140425778cb353ed09e3f3b9e9d092",
+        "reachable_inventory_sha256": "20b319e3a51fb901e55bfdec6dd7d8a2d2140425778cb353ed09e3f3b9e9d092",
+        "standalone_fsck_receipt_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "public_support_native_tree_equivalences": {
+          "c8e66fbc05e5266d1549c98508f9dbbce2f54798": {
+            "public_commit": "a697ad669cdbd6ac74c1bba9174b07838bb264ed",
+            "identical_tree": "46fb33b6b8e0e1b81ba4485ac4cd36e4c5bda4a5"
+          },
+          "864ad987c82f1ddaf5b7b0e6e0df40a23ee27ef3": {
+            "public_commit": "369512e5767f5f1bcdd867baa3a07ba930ec390f",
+            "identical_tree": "4538e6b1dba647be962fc5f8074323033d2486e1"
+          }
+        },
+        "final_notes": "Final notes differ from independently reviewed 34c7e805... only by __BLOCKER_PLAN_URL__ replacement with exact immutable public commit 971cae042745cb3fbe7318e4ec17b67642aadca8 URL. Archived blocker plan is unchanged 9381121d...; final notes 80c81dfd... .",
+        "functional_claims": "Matches prior CLEAR_SCOPED qualified review: guarded weights and RAW_FREE_POINT_V1; selected-field populated preview proof; separate wheel stdio/native TCP evidence; no full MCP-to-Blender artist E2E claim. H01/material/current-pixel private work excluded; 29/14 stable gates open and Windows deferred."
+      },
+      "hash_bindings": {
+        "archive": "731ed512976328553601057a827024cac3ecb9388e72bc22fbea2f650390411a",
+        "archive_verification_json": "5a108ab5e4e2c792dc74cbab7098a0d90f7628104fb06b01cfd4417ce0e69334",
+        "generator": "80356cf55a1a20322919d23263ecaf5bbb9943e93739659a2d46ffe752994835",
+        "archived_manifest": "e3ae37597f8a024176048c83b8a3c8ebb1805a2f4d389f6e1238d203a52cc1e5",
+        "archived_PAYLOAD_SHA256SUMS": "3958e4364465832fc01cbcb3547d67acd9103f0db0c4040ac3d3bc591b4b2684",
+        "bundle": "d3836585bd2f93cc26db016911eba4635631478f2fcc67084009c29a105bf91b",
+        "notes": "80c81dfda4957f1b10974784a394832fe07547bd7010bc8f8c91b31ca6b4f6f3",
+        "blocker_plan": "9381121de101b236df868809b9db1341bef469d6d4f7242baa0a9e77efc19b41",
+        "prior_qualified_review": "2e590ae54f4d974d57a17d6d9f5c54e89e6874b0aa064736fe93ac907a1150b6",
+        "mechanical_result": "6d3d0aab98e82085890072cda7b35e7c2c5b20b4c50d85fae3abb65b8f9794f4"
+      },
+      "no_new_release_authority_implied": true
+    }
+  },
+  "publisher": {
+    "sha256": "5294665da53817999ad5cc6d2e59d982806d370a5dfb6fc8fb3c9759f1fca550",
+    "review": {
+      "accepted_source": {
+        "CI_run": 40217002252,
+        "artifact_id": 12608052727,
+        "commit": "8d07ad898ba92c5e94db57b1562fefef9c8e0e1c",
+        "tree": "4a9dccf8b3c9a6a05aad1d1d19187381fb4e6bbb"
+      },
+      "actions_performed": {
+        "archive_unpacked": false,
+        "credentials": false,
+        "native_or_full_tests": false,
+        "network": false,
+        "publisher_imported_or_executed": false,
+        "repo_mutations": false,
+        "uploads": false
+      },
+      "asset_pins": {
+        "EVIDENCE-SHA256SUMS.txt": [
+          121,
+          "a12e2bea16e9e0f93096ed7637c226d717ecef1042d5e2f253ea568b5bcafe0e"
+        ],
+        "SHA256SUMS.txt": [
+          311,
+          "7709a150983ae0c56742b19139abae358d1df7a64ea132ddc5480312f6eb4c50"
+        ],
+        "blender-codex-bridge-0.7.0-development-evidence.tar.gz": [
+          17290139,
+          "731ed512976328553601057a827024cac3ecb9388e72bc22fbea2f650390411a"
+        ],
+        "blender-codex-bridge-plugin-0.7.0.zip": [
+          6639,
+          "0971e6d3fba35592af9e6d3263a02025f78246a5307183ef50422ef6aadd9184"
+        ],
+        "blender_codex_bridge-0.7.0-py3-none-any.whl": [
+          165133,
+          "450772458e6fe7ba37370f2a790a44d4b826c63569c66cddc05635a013b5dcc4"
+        ],
+        "blender_codex_bridge-0.7.0.zip": [
+          821714,
+          "0afc38c1315fedc952c3c657c82f510c720ce79a669df319f8278c959f67eaf4"
+        ]
+      },
+      "blocking_findings": [],
+      "candidate_hashes": {
+        "/dev/shm/blender-codex-resume-20261025/publication-0.7/armed-publisher-candidate/DO-NOT-PUBLISH-BEFORE-REVIEWS.md": {
+          "bytes": 1027,
+          "sha256": "967847e1738f56de42e2f61ed09bd892b90feae2d7ac5ff9fe9c3ad8c47ec357"
+        },
+        "/dev/shm/blender-codex-resume-20261025/publication-0.7/armed-publisher-candidate/LOCAL-publish-reviewed-0.7.0.yml": {
+          "bytes": 30155,
+          "sha256": "bd0f4c864f3725eeb5283e9a2ad7ac71dbbd1bf086235d685e1744d427674775"
+        },
+        "/dev/shm/blender-codex-resume-20261025/publication-0.7/armed-publisher-candidate/arming-exact.diff": {
+          "bytes": 5246,
+          "sha256": "6fd30422ba71295f1e503bf4732c93ca4ac5f6c282e06c6a60a14f4de50b62d3"
+        },
+        "/dev/shm/blender-codex-resume-20261025/publication-0.7/armed-publisher-candidate/reviewed-publisher.py": {
+          "bytes": 24986,
+          "sha256": "40c294c16e8905f22e6cae00e3b3fb83c2dfa31f4859c4f35955356dfe177a06"
+        },
+        "/dev/shm/blender-codex-resume-20261025/publication-0.7/armed-publisher-candidate/root-preparation.json": {
+          "bytes": 5080,
+          "sha256": "6a11b581c0097cbf58b31b1f98c70f87b8a85d8021aed2eaa7d86f094a9ae7c2"
+        },
+        "/dev/shm/blender-codex-resume-20261025/publication-0.7/armed-publisher-candidate/source-freeze.json": {
+          "bytes": 1256,
+          "sha256": "cbef8745e171591aa97576a6dfd68daab95b13614b95b36bb5e5095eac3d5d85"
+        }
+      },
+      "checks": {
+        "GET_only_redirect_allowlist_and_cross_host_auth_stripping": true,
+        "Python_3_10_AST_and_compile_only": true,
+        "all_0_2_through_0_6_full_before_after_snapshots_required": true,
+        "all_six_remote_bytes_downloaded_and_hashed_before_draft_false": true,
+        "archive_hash_size_and_Git_blob_SHA1_only_no_unpacking": true,
+        "arming_only_seven_literal_assignments_and_outer_false_removal_comment": true,
+        "candidate_and_comparison_sources_unchanged": true,
+        "embedded_workflow_body_byte_identical": true,
+        "empty_draft_snapshot_exact_source_title_notes_and_prerelease": true,
+        "exact_asset_bytes_and_old_release_state_rechecked_after_publication": true,
+        "fixed_repo_source_CI_run_attempt_event_branch_and_all_seven_jobs": true,
+        "historical_0_6_function_and_class_ASTs_preserved_after_exact_target_literal_updates": true,
+        "no_retry_delete_overwrite_merge_tag_replacement_visibility_or_permission_mutations": true,
+        "only_missing_accepted_asset_POSTs_and_fixed_draft_prerelease_PATCH": true,
+        "prior_0_4_0_5_0_6_exact_pins_match_snapshots_and_0_6_reviewed_publisher": true,
+        "public_repo_main_PR8_and_no_latest_stable_preservation_guards": true,
+        "six_assets_local_size_hashes_and_exact_notes_draft_body": true
+      },
+      "comparison_inputs": {
+        "/dev/shm/blender-codex-resume-20261025/publication-0.6/armed-publisher/reviewed-publisher.py": {
+          "bytes": 23546,
+          "sha256": "6cc08738311dc8ede7df5a31e9e6e4d6e137e25adaf525cbb603ee1eedb096ca"
+        },
+        "/dev/shm/blender-codex-resume-20261025/publication-0.6/publisher-independent-review/review.json": {
+          "bytes": 4075,
+          "sha256": "45f807293c10a5e312a682af53391c33e511e3741c7ae489e0b63f83ec1d2e8e"
+        },
+        "/dev/shm/blender-codex-resume-20261025/publication-0.7/archive-verification.json": {
+          "bytes": 72800,
+          "sha256": "5a108ab5e4e2c792dc74cbab7098a0d90f7628104fb06b01cfd4417ce0e69334"
+        },
+        "/dev/shm/blender-codex-resume-20261025/publication-0.7/armed-publisher-candidate/LOCAL-publish-reviewed-0.7.0.yml": {
+          "bytes": 30155,
+          "sha256": "bd0f4c864f3725eeb5283e9a2ad7ac71dbbd1bf086235d685e1744d427674775"
+        },
+        "/dev/shm/blender-codex-resume-20261025/publication-0.7/armed-publisher-candidate/reviewed-publisher.py": {
+          "bytes": 24986,
+          "sha256": "40c294c16e8905f22e6cae00e3b3fb83c2dfa31f4859c4f35955356dfe177a06"
+        },
+        "/dev/shm/blender-codex-resume-20261025/publication-0.7/armed-publisher-candidate/root-preparation.json": {
+          "bytes": 5080,
+          "sha256": "6a11b581c0097cbf58b31b1f98c70f87b8a85d8021aed2eaa7d86f094a9ae7c2"
+        },
+        "/dev/shm/blender-codex-resume-20261025/publication-0.7/armed-publisher-candidate/source-freeze.json": {
+          "bytes": 1256,
+          "sha256": "cbef8745e171591aa97576a6dfd68daab95b13614b95b36bb5e5095eac3d5d85"
+        },
+        "/dev/shm/blender-codex-resume-20261025/publication-0.7/draft-release.json": {
+          "bytes": 5213,
+          "sha256": "4546d4470b7c0520d109d0aab6ded016cd8f552a60d03a4a08c12ccdd3e085f5"
+        },
+        "/dev/shm/blender-codex-resume-20261025/publication-0.7/preflight/latest-stable.json": {
+          "bytes": 65,
+          "sha256": "06d39490b9acaf1f8456a935145edc2779302bdab3b1af9b6965a058a360119f"
+        },
+        "/dev/shm/blender-codex-resume-20261025/publication-0.7/preflight/main.json": {
+          "bytes": 356,
+          "sha256": "527348321de624feaa223d4435e8641e763b107c0ec67137312ed96d81e31aed"
+        },
+        "/dev/shm/blender-codex-resume-20261025/publication-0.7/preflight/previous-releases.json": {
+          "bytes": 76640,
+          "sha256": "cea55feaac9256d6e726ba56faa2baa6ac7b7969b85b6694625577170467dd43"
+        },
+        "/dev/shm/blender-codex-resume-20261025/publication-0.7/preflight/repository.json": {
+          "bytes": 6136,
+          "sha256": "090c5a68bd9f04a8712857a64459e27a319ea632b372577fa1d7e326c06d6a10"
+        },
+        "/dev/shm/blender-codex-resume-20261025/publication-0.7/publisher-proposal/UNARMED-publish-reviewed-0.7.0.yml": {
+          "bytes": 29806,
+          "sha256": "bd71a086db9abfed453c18cc9bb0a222ed58b395d59dee19e68818f4bcfb8f3b"
+        },
+        "/dev/shm/blender-codex-resume-20261025/publication-0.7/publisher-proposal/reviewed-publisher.py": {
+          "bytes": 24645,
+          "sha256": "980da56f497da9e05067597364733580e06868b7bad030d85fe321c1c49a6fb8"
+        },
+        "/dev/shm/blender-codex-resume-20261025/publication-0.7/qualified-review/review.json": {
+          "bytes": 5538,
+          "sha256": "2e590ae54f4d974d57a17d6d9f5c54e89e6874b0aa064736fe93ac907a1150b6"
+        },
+        "/dev/shm/blender-codex-resume-20261025/publication-0.7/qualified/RELEASE-NOTES.md": {
+          "bytes": 3244,
+          "sha256": "80c81dfda4957f1b10974784a394832fe07547bd7010bc8f8c91b31ca6b4f6f3"
+        },
+        "/dev/shm/blender-codex-resume-20261025/release-0.7/ci/artifacts-rest.final.json": {
+          "bytes": 6733,
+          "sha256": "7c171130682db367647382f6b15f4a50756816f84795ed364e924388a0473fed"
+        },
+        "/dev/shm/blender-codex-resume-20261025/release-0.7/ci/jobs-rest.final.json": {
+          "bytes": 30754,
+          "sha256": "9e0f80dfd4332ae2382ab3d424a3e996bd549206540404803feb0500adda7f51"
+        },
+        "/dev/shm/blender-codex-resume-20261025/release-0.7/ci/package-verification/package-audit-summary.json": {
+          "bytes": 3555,
+          "sha256": "ffafcd785dd5100a78c3e04ed027530fcbeb7cee6467c6c2ea58f1d85fd07608"
+        },
+        "/dev/shm/blender-codex-resume-20261025/release-0.7/ci/workflow-run.final.json": {
+          "bytes": 14417,
+          "sha256": "2b7be4710b94d194ef957b3064024045908692eb8e45160ce981cf9238557e54"
+        }
+      },
+      "draft_release_id": 423590242,
+      "limits": [
+        "Local retained snapshots only; no current GitHub state was queried. PR8 preservation is enforced by reviewed publisher guards; root retains its remote snapshot.",
+        "The publisher must run in the exact root-reviewed support commit/workflow and actual results must be inspected by root.",
+        "Curated archive content/secret review is a separate independent gate; this review hashes archive bytes without unpacking.",
+        "Postpublication anonymous downloads and final preservation checks remain root responsibilities.",
+        "Remote concurrent changes are detected by guards and before/after checks; this is not an atomic lock on external writers."
+      ],
+      "notes_scope": "Final notes keep finite Linux alpha scope, Windows deferred/unverified, H01 excluded, project.save and protected viewport.capture holds, and all stable gates open.",
+      "review_type": "Independent local source/AST/compile and retained fixed-input review; no publisher execution",
+      "reviewer": "/root/native_witness_resume",
+      "schema_version": 1,
+      "status": "CLEAR_SCOPED"
+    }
+  },
+  "functional_scope": {
+    "sha256": "2e590ae54f4d974d57a17d6d9f5c54e89e6874b0aa064736fe93ac907a1150b6",
+    "review": {
+      "schema_version": 1,
+      "reviewer": "/root/declared_protection_contract",
+      "review_type": "Independent read-only final prerelease functional-scope and blocker-plan review",
+      "status": "CLEAR_SCOPED",
+      "blocking_findings": [],
+      "reviewed_document_hashes": {
+        "RELEASE-NOTES.md": "34c7e80558f7528d0b712f010fd77a2355ce7d79c4953012246a11d0c41d880a",
+        "FUNCTIONAL-SCOPE-AND-BLOCKER-PLAN.md": "9381121de101b236df868809b9db1341bef469d6d4f7242baa0a9e77efc19b41"
+      },
+      "accepted_source": {
+        "commit": "8d07ad898ba92c5e94db57b1562fefef9c8e0e1c",
+        "tree": "4a9dccf8b3c9a6a05aad1d1d19187381fb4e6bbb",
+        "CI_run": 40217002252,
+        "package_asset_hashes": {
+          "SHA256SUMS.txt": "7709a150983ae0c56742b19139abae358d1df7a64ea132ddc5480312f6eb4c50",
+          "blender-codex-bridge-plugin-0.7.0.zip": "0971e6d3fba35592af9e6d3263a02025f78246a5307183ef50422ef6aadd9184",
+          "blender_codex_bridge-0.7.0-py3-none-any.whl": "450772458e6fe7ba37370f2a790a44d4b826c63569c66cddc05635a013b5dcc4",
+          "blender_codex_bridge-0.7.0.zip": "0afc38c1315fedc952c3c657c82f510c720ce79a669df319f8278c959f67eaf4"
+        }
+      },
+      "evidence_hashes": {
+        "ci/combined-audit.json": "b94bbd984568212870e2b3afe03018ee1522c9ecb7d002337205bd47a873655d",
+        "root/source-native-review.json": "e956b9de72050bd15e6031e4ee9a1234eb14f7758666d372de739217beaa5049",
+        "installed-wheel/final-verification.json": "bf17c3fa87fd0f6ad33ea870712a16a4284395adb336042d1ded6eefde24ed04",
+        "root/installed-artist-review.json": "903fa920b52ebce745b41bb76ebc14409b656951ce83f928565b03a3f1f4a183",
+        "root/installed-addon-review.json": "1ca63c4d98f6d18d21014b67e86a21a616635d89ae6299da03a5b2948fd0ce1d",
+        "root/source-preview-pixel-review.json": "16faf9bd6c5d32dac8776b1adc048816067d58d3d833b782e6c83e84eef20a6f",
+        "root/installed-preview-pixel-review.json": "c212c83dc47038d2ccdcbc3885916f4ff8096d7f7ba71a53c0c9189631f035b3"
+      },
+      "verified_claims": {
+        "CI": "All7 jobs,6cells,8884passed+3Windows-onlyskips each, identitiesmatch",
+        "source_native": "10selectedprocesses across2pinnedbuilds, exactsource/helper/reporthash",
+        "installed_artist": "4freshinstalledoriginalRuntime/realprefs/checkpoints/TCPqueue domainprocesses; everyindependentdata/historycomparisonverified",
+        "installation": "4processes,16phaseobservations,12workers/images =8candidate0.7+4previous/rollback0.6; no0.3previewclaim",
+        "wheel": "Newwheel/stdio268tools,25disabled,240SDKreceipts,210malformed,59explicitreadonlydependencylinks; bytes/RECORDaudited",
+        "guarded_weights": "CompleteFloat32intent/liveCAS/verifiedattempt-onlyrecovery supported by source6casefixture and installedpositive/refusal scope; no cold/globalundo/durable/constrainedmemoryclaim",
+        "raw_curve": "Existingfuturekeyrawco/FREEhandles only; unchangedkeytimebits and sampledcurrentrawtransformchannels, not evaluatedrig/currentviewport/current-poseauthoring",
+        "geometry": "Populatedmesh/material-slot/Action advisorybaseline, realcomparison/manualchanges/evictionunknown scopedsourceproof; no fullprotectedObject/RawMain/materiallook claim"
+      },
+      "visual_review": {
+        "root/source-preview-pixel-review.json": {
+          "figure": "/dev/shm/blender-codex-resume-20261025/release-0.7/root/source-preview-pixel-review.png",
+          "figure_sha256": "893ea7ca35a3b58cfcddd1328c6fbc319e4755477547fb5753341e20fee7cbfb",
+          "panels": 4,
+          "independently_viewed_by_this_reviewer": true,
+          "result": "All panels contain complete neutral geometry framed within checkerboard; silhouette/framing only",
+          "original_appearance_or_current_viewport_qualified": false
+        },
+        "root/installed-preview-pixel-review.json": {
+          "figure": "/dev/shm/blender-codex-resume-20261025/release-0.7/root/installed-preview-pixel-review.png",
+          "figure_sha256": "f1fb74945d8218837fa1d2c824d151a9522c22c762b1ae5031065c8e49e5db1a",
+          "panels": 12,
+          "independently_viewed_by_this_reviewer": true,
+          "result": "All panels contain complete neutral geometry framed within checkerboard; silhouette/framing only",
+          "original_appearance_or_current_viewport_qualified": false
+        }
+      },
+      "scope_boundaries_verified": [
+        "Wheelstdio and nativeTCP are separate evidence; neither document claims fullinstalledMCP-to-Blenderartistend-to-end",
+        "H01private9scenarios/build source80ec excluded; concreteMRO_pure collision and origin-guard integration gate retained",
+        "Materialsuccessstillrefuses; noqualifiedcopy/bind/recoveryclaimed",
+        "SeparateGLB/cloth/currentpixel experiments excluded fromrelease functionality; newpixelreverse/consumer/helper/durabilitygate explicit",
+        "All29implementationitems and14stablegatesremainOPEN; Windowsuserdeferred/unverified; officialunmodifiedBlender only",
+        "Stable1.0,completeA-F/nativeinventory,originalappearance,nativeundo,durablewriterrecovery andmemorypressure remainunqualified",
+        "Originaloversizedold06FAILreport retained, correctednative03/06receiptreruns separate; not relabeledpass",
+        "Publication/download verification remainsroot pending; no merge/main/PR8/latest-stable authority implied"
+      ],
+      "only_permitted_postreview_text_substitution": {
+        "file": "RELEASE-NOTES.md",
+        "placeholder": "__BLOCKER_PLAN_URL__",
+        "condition": "Root publishes/verifies exactblockerplan bytes with SHA9381121de101b236df868809b9db1341bef469d6d4f7242baa0a9e77efc19b41, replaces onlythisURL andrecordsfinalrelease-noteshash; anyothercontentchange needs review"
+      },
+      "no_edits_tests_native_network_or_publication_performed": true
+    }
+  }
+}

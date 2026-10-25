@@ -1,0 +1,579 @@
+﻿2026-10-25T19:15:42.9246896Z Current runner version: '2.338.0'
+2026-10-25T19:15:42.9281493Z ##[group]Runner Image Provisioner
+2026-10-25T19:15:42.9282949Z Hosted Compute Agent
+2026-10-25T19:15:42.9283949Z Version: 20261021.618
+2026-10-25T19:15:42.9285443Z Commit: 21505ad2541d5be6135ed84fc33697146cf75b8e
+2026-10-25T19:15:42.9286718Z Build Date: 2026-10-21T00:45:21Z
+2026-10-25T19:15:42.9287996Z Worker ID: {df51903a-adf4-4bf4-8b14-225696d9d3a7}
+2026-10-25T19:15:42.9289341Z Region: eastus
+2026-10-25T19:15:42.9290275Z Cloud: Azure
+2026-10-25T19:15:42.9291193Z ##[endgroup]
+2026-10-25T19:15:42.9293838Z ##[group]Operating System
+2026-10-25T19:15:42.9295383Z Ubuntu
+2026-10-25T19:15:42.9296392Z 26.04.1
+2026-10-25T19:15:42.9297410Z LTS
+2026-10-25T19:15:42.9298422Z ##[endgroup]
+2026-10-25T19:15:42.9299410Z ##[group]Runner Image
+2026-10-25T19:15:42.9300548Z Image: ubuntu-26.04
+2026-10-25T19:15:42.9301636Z Version: 20261012.163.1
+2026-10-25T19:15:42.9304558Z Included Software: https://github.com/actions/runner-images/blob/ubuntu26/20261012.163/images/ubuntu/Ubuntu2604-Readme.md
+2026-10-25T19:15:42.9307398Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu26%2F20261012.163
+2026-10-25T19:15:42.9309283Z ##[endgroup]
+2026-10-25T19:15:42.9311482Z ##[group]GITHUB_TOKEN Permissions
+2026-10-25T19:15:42.9314723Z Actions: read
+2026-10-25T19:15:42.9315701Z Contents: write
+2026-10-25T19:15:42.9316817Z Metadata: read
+2026-10-25T19:15:42.9317820Z ##[endgroup]
+2026-10-25T19:15:42.9320924Z Secret source: Actions
+2026-10-25T19:15:42.9322489Z Cache mode: write
+2026-10-25T19:15:42.9323784Z Prepare workflow directory
+2026-10-25T19:15:42.9812947Z Prepare all required actions
+2026-10-25T19:15:42.9886220Z Getting action download info
+2026-10-25T19:15:43.1431727Z Download action repository 'actions/checkout@v4' (SHA:11d5960a326750d5838078e36cf38b85af677262)
+2026-10-25T19:15:43.2431714Z Download action repository 'actions/download-artifact@v4' (SHA:d3f86a106a0bac45b974a628896c90dbdf5c8093)
+2026-10-25T19:15:43.5075631Z Complete job name: publish
+2026-10-25T19:15:43.5964412Z ##[group]Run actions/checkout@v4
+2026-10-25T19:15:43.5965339Z with:
+2026-10-25T19:15:43.5965837Z   repository: Yoruiopz/Codex-Blender-Bridge
+2026-10-25T19:15:43.5966475Z   ref: 9f8339063af214423c71fd46e315f11b6a274c70
+2026-10-25T19:15:43.5967074Z   fetch-depth: 1
+2026-10-25T19:15:43.5967539Z   persist-credentials: false
+2026-10-25T19:15:43.5968041Z   submodules: false
+2026-10-25T19:15:43.5971975Z   token: ***
+2026-10-25T19:15:43.5972423Z   ssh-strict: true
+2026-10-25T19:15:43.5972865Z   ssh-user: git
+2026-10-25T19:15:43.5973291Z   clean: true
+2026-10-25T19:15:43.5973749Z   sparse-checkout-cone-mode: true
+2026-10-25T19:15:43.5974449Z   fetch-tags: false
+2026-10-25T19:15:43.5974904Z   show-progress: true
+2026-10-25T19:15:43.5975354Z   lfs: false
+2026-10-25T19:15:43.5975796Z   set-safe-directory: true
+2026-10-25T19:15:43.5976316Z   allow-unsafe-pr-checkout: false
+2026-10-25T19:15:43.5977099Z ##[endgroup]
+2026-10-25T19:15:43.7016566Z Syncing repository: Yoruiopz/Codex-Blender-Bridge
+2026-10-25T19:15:43.7019307Z ##[group]Getting Git version info
+2026-10-25T19:15:43.7020681Z Working directory is '/home/runner/work/Codex-Blender-Bridge/Codex-Blender-Bridge'
+2026-10-25T19:15:43.7022569Z [command]/usr/bin/git version
+2026-10-25T19:15:43.7023415Z git version 2.55.0
+2026-10-25T19:15:43.7044610Z ##[endgroup]
+2026-10-25T19:15:43.7052072Z Temporarily overriding HOME='/home/runner/work/_temp/dbc004e3-72f6-4a67-a971-e8d0011098d5' before making global git config changes
+2026-10-25T19:15:43.7054758Z Adding repository directory to the temporary git global config as a safe directory
+2026-10-25T19:15:43.7057019Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/Codex-Blender-Bridge/Codex-Blender-Bridge
+2026-10-25T19:15:43.7127189Z Deleting the contents of '/home/runner/work/Codex-Blender-Bridge/Codex-Blender-Bridge'
+2026-10-25T19:15:43.7128470Z ##[group]Initializing the repository
+2026-10-25T19:15:43.7129396Z [command]/usr/bin/git init /home/runner/work/Codex-Blender-Bridge/Codex-Blender-Bridge
+2026-10-25T19:15:43.7254985Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-10-25T19:15:43.7256667Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-10-25T19:15:43.7258402Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-10-25T19:15:43.7259652Z hint: call:
+2026-10-25T19:15:43.7260339Z hint:
+2026-10-25T19:15:43.7261592Z hint: 	git config --global init.defaultBranch <name>
+2026-10-25T19:15:43.7262677Z hint:
+2026-10-25T19:15:43.7263888Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-10-25T19:15:43.7265882Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-10-25T19:15:43.7267611Z hint:
+2026-10-25T19:15:43.7268783Z hint: 	git branch -m <name>
+2026-10-25T19:15:43.7270883Z hint:
+2026-10-25T19:15:43.7272342Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-10-25T19:15:43.7274876Z Initialized empty Git repository in /home/runner/work/Codex-Blender-Bridge/Codex-Blender-Bridge/.git/
+2026-10-25T19:15:43.7278820Z [command]/usr/bin/git remote add origin https://github.com/Yoruiopz/Codex-Blender-Bridge
+2026-10-25T19:15:43.7321665Z ##[endgroup]
+2026-10-25T19:15:43.7323084Z ##[group]Disabling automatic garbage collection
+2026-10-25T19:15:43.7326614Z [command]/usr/bin/git config --local gc.auto 0
+2026-10-25T19:15:43.7359983Z ##[endgroup]
+2026-10-25T19:15:43.7361403Z ##[group]Setting up auth
+2026-10-25T19:15:43.7367587Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-10-25T19:15:43.7401432Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-10-25T19:15:43.7873192Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-25T19:15:43.7909569Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-10-25T19:15:43.8176551Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-25T19:15:43.8212267Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-10-25T19:15:43.8472854Z [command]/usr/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-10-25T19:15:43.8511651Z ##[endgroup]
+2026-10-25T19:15:43.8513125Z ##[group]Fetching the repository
+2026-10-25T19:15:43.8523941Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin 9f8339063af214423c71fd46e315f11b6a274c70
+2026-10-25T19:15:45.1503002Z From https://github.com/Yoruiopz/Codex-Blender-Bridge
+2026-10-25T19:15:45.1505962Z  * branch            9f8339063af214423c71fd46e315f11b6a274c70 -> FETCH_HEAD
+2026-10-25T19:15:45.1512620Z ##[endgroup]
+2026-10-25T19:15:45.1515336Z ##[group]Determining the checkout info
+2026-10-25T19:15:45.1518124Z ##[endgroup]
+2026-10-25T19:15:45.1519210Z [command]/usr/bin/git sparse-checkout disable
+2026-10-25T19:15:45.1587148Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-10-25T19:15:45.1620404Z ##[group]Checking out the ref
+2026-10-25T19:15:45.1625708Z [command]/usr/bin/git checkout --progress --force 9f8339063af214423c71fd46e315f11b6a274c70
+2026-10-25T19:15:45.2596745Z Note: switching to '9f8339063af214423c71fd46e315f11b6a274c70'.
+2026-10-25T19:15:45.2598759Z 
+2026-10-25T19:15:45.2600170Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-10-25T19:15:45.2603600Z changes and commit them, and you can discard any commits you make in this
+2026-10-25T19:15:45.2606857Z state without impacting any branches by switching back to a branch.
+2026-10-25T19:15:45.2608685Z 
+2026-10-25T19:15:45.2610270Z If you want to create a new branch to retain commits you create, you may
+2026-10-25T19:15:45.2613857Z do so (now or later) by using -c with the switch command. Example:
+2026-10-25T19:15:45.2615679Z 
+2026-10-25T19:15:45.2616378Z   git switch -c <new-branch-name>
+2026-10-25T19:15:45.2617451Z 
+2026-10-25T19:15:45.2618431Z Or undo this operation with:
+2026-10-25T19:15:45.2619839Z 
+2026-10-25T19:15:45.2620849Z   git switch -
+2026-10-25T19:15:45.2622061Z 
+2026-10-25T19:15:45.2623894Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-10-25T19:15:45.2625764Z 
+2026-10-25T19:15:45.2627546Z HEAD is now at 9f83390 Publish only the reviewed exact 0.7 alpha assets and curated evidence
+2026-10-25T19:15:45.2633983Z ##[endgroup]
+2026-10-25T19:15:45.2677021Z [command]/usr/bin/git log -1 --format=%H
+2026-10-25T19:15:45.2703313Z 9f8339063af214423c71fd46e315f11b6a274c70
+2026-10-25T19:15:45.2714652Z ##[group]Removing auth
+2026-10-25T19:15:45.2718699Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-10-25T19:15:45.2751845Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-10-25T19:15:45.3023058Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-25T19:15:45.3045596Z http.https://github.com/.extraheader
+2026-10-25T19:15:45.3053002Z [command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader
+2026-10-25T19:15:45.3087288Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-10-25T19:15:45.3345983Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-25T19:15:45.3378233Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-10-25T19:15:45.3645779Z ##[endgroup]
+2026-10-25T19:15:45.3932901Z ##[group]Run actions/download-artifact@v4
+2026-10-25T19:15:45.3933866Z with:
+2026-10-25T19:15:45.3937932Z   github-token: ***
+2026-10-25T19:15:45.3938825Z   repository: Yoruiopz/Codex-Blender-Bridge
+2026-10-25T19:15:45.3939759Z   run-id: 40217002252
+2026-10-25T19:15:45.3940626Z   artifact-ids: 12608052727
+2026-10-25T19:15:45.3941465Z   merge-multiple: true
+2026-10-25T19:15:45.3942383Z   path: /home/runner/work/_temp/accepted-0.7.0-packages
+2026-10-25T19:15:45.3943335Z ##[endgroup]
+2026-10-25T19:15:45.5453092Z Downloading artifacts by ID
+2026-10-25T19:15:45.5458654Z Fetching artifact list for workflow run 40217002252 in repository Yoruiopz/Codex-Blender-Bridge
+2026-10-25T19:15:45.5527307Z (node:2421) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-10-25T19:15:45.5529088Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-10-25T19:15:45.5762295Z (node:2421) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
+2026-10-25T19:15:45.7004750Z Found 7 artifact(s)
+2026-10-25T19:15:45.7006476Z Preparing to download the following artifacts:
+2026-10-25T19:15:45.7008279Z - blender-codex-bridge-development-8d07ad898ba92c5e94db57b1562fefef9c8e0e1c (ID: 12608052727, Size: 972904, Expected Digest: sha256:73df7fff246f2b98e12ca9a0b50c599dafa54db0fb79fedec274b5f27f8b6ac2)
+2026-10-25T19:15:45.7038303Z Downloading artifact '12608052727' from 'Yoruiopz/Codex-Blender-Bridge'
+2026-10-25T19:15:45.9170464Z Redirecting to blob download url: https://productionresultssa8.blob.core.windows.net/actions-results/8c7879a1-8c1b-8ceb-8e8f-63c2213c2090/workflow-job-run-12cf7844-1d80-5fa6-88ec-f64a5f9900e2/artifacts/ace615943a4f6805e46f64190c1fb2c3d74d8bee787c036916824720499a3cf1.zip
+2026-10-25T19:15:45.9174414Z Starting download of artifact to: /home/runner/work/_temp/accepted-0.7.0-packages
+2026-10-25T19:15:45.9808861Z (node:2421) [DEP0005] DeprecationWarning: Buffer() is deprecated due to security and usability issues. Please use the Buffer.alloc(), Buffer.allocUnsafe(), or Buffer.from() methods instead.
+2026-10-25T19:15:46.0214779Z SHA256 digest of downloaded artifact is 73df7fff246f2b98e12ca9a0b50c599dafa54db0fb79fedec274b5f27f8b6ac2
+2026-10-25T19:15:46.0216277Z Artifact download completed successfully.
+2026-10-25T19:15:46.0216989Z Total of 1 artifact(s) downloaded
+2026-10-25T19:15:46.0223780Z Download artifact has finished successfully
+2026-10-25T19:15:46.0491613Z ##[group]Run python3 -I -B - <<'PY'
+2026-10-25T19:15:46.0492728Z [36;1mpython3 -I -B - <<'PY'[0m
+2026-10-25T19:15:46.0493092Z [36;1mimport hashlib[0m
+2026-10-25T19:15:46.0493381Z [36;1mimport json[0m
+2026-10-25T19:15:46.0493645Z [36;1mimport os[0m
+2026-10-25T19:15:46.0493930Z [36;1mfrom pathlib import Path[0m
+2026-10-25T19:15:46.0494572Z [36;1mimport re[0m
+2026-10-25T19:15:46.0494847Z [36;1mimport stat[0m
+2026-10-25T19:15:46.0495110Z [36;1mimport sys[0m
+2026-10-25T19:15:46.0495450Z [36;1mfrom urllib.error import HTTPError, URLError[0m
+2026-10-25T19:15:46.0495896Z [36;1mfrom urllib.parse import quote, urlsplit[0m
+2026-10-25T19:15:46.0496404Z [36;1mfrom urllib.request import HTTPRedirectHandler, Request, build_opener[0m
+2026-10-25T19:15:46.0496859Z [36;1m[0m
+2026-10-25T19:15:46.0497142Z [36;1mREPO = 'Yoruiopz/Codex-Blender-Bridge'[0m
+2026-10-25T19:15:46.0497491Z [36;1mREPO_ID = 1327089885[0m
+2026-10-25T19:15:46.0497913Z [36;1mSOURCE = '8d07ad898ba92c5e94db57b1562fefef9c8e0e1c'[0m
+2026-10-25T19:15:46.0498376Z [36;1mTREE = '4a9dccf8b3c9a6a05aad1d1d19187381fb4e6bbb'[0m
+2026-10-25T19:15:46.0498751Z [36;1mRUN = 40217002252[0m
+2026-10-25T19:15:46.0499055Z [36;1mARTIFACT = 12608052727[0m
+2026-10-25T19:15:46.0499347Z [36;1mRELEASE = 423590242[0m
+2026-10-25T19:15:46.0499629Z [36;1mTAG = 'v0.7.0'[0m
+2026-10-25T19:15:46.0500004Z [36;1mAPI = 'https://api.github.com/repos/' + REPO[0m
+2026-10-25T19:15:46.0500616Z [36;1mUPLOAD = 'https://uploads.github.com/repos/' + REPO + '/releases/' + str(RELEASE) + '/assets'[0m
+2026-10-25T19:15:46.0501242Z [36;1mTOKEN = None  # The unarmed guard precedes credential access.[0m
+2026-10-25T19:15:46.0501678Z [36;1mARMED = True[0m
+2026-10-25T19:15:46.0501988Z [36;1mVERSION = '0.7.0'[0m
+2026-10-25T19:15:46.0502365Z [36;1mTITLE = '0.7.0 alpha — guarded weights and raw curve points'[0m
+2026-10-25T19:15:46.0502875Z [36;1mSOURCE_BRANCH = 'codex/integration-0.7-candidate-20261025'[0m
+2026-10-25T19:15:46.0503296Z [36;1mNOTES_BYTES = 3244[0m
+2026-10-25T19:15:46.0503679Z [36;1mEVIDENCE_BLOB_SHA = 'cba736e01a3931f5901b4bc9bddc5338d754536a'[0m
+2026-10-25T19:15:46.0504588Z [36;1mEVIDENCE_BLOB_PATH = 'release-evidence/0.7.0/blender-codex-bridge-0.7.0-development-evidence.tar.gz'[0m
+2026-10-25T19:15:46.0505372Z [36;1mPRESERVED_LATEST = {'observed': True, 'release_id': None}  # Root observed HTTP404: no latest stable[0m
+2026-10-25T19:15:46.0506057Z [36;1mNOTES_SHA = '80c81dfda4957f1b10974784a394832fe07547bd7010bc8f8c91b31ca6b4f6f3'[0m
+2026-10-25T19:15:46.0506758Z [36;1mEXPECTED = {'SHA256SUMS.txt': (311, '7709a150983ae0c56742b19139abae358d1df7a64ea132ddc5480312f6eb4c50'),[0m
+2026-10-25T19:15:46.0507370Z [36;1m 'blender-codex-bridge-plugin-0.7.0.zip': (6639,[0m
+2026-10-25T19:15:46.0507929Z [36;1m                                           '0971e6d3fba35592af9e6d3263a02025f78246a5307183ef50422ef6aadd9184'),[0m
+2026-10-25T19:15:46.0508507Z [36;1m 'blender_codex_bridge-0.7.0-py3-none-any.whl': (165133,[0m
+2026-10-25T19:15:46.0509083Z [36;1m                                                 '450772458e6fe7ba37370f2a790a44d4b826c63569c66cddc05635a013b5dcc4'),[0m
+2026-10-25T19:15:46.0509621Z [36;1m 'blender_codex_bridge-0.7.0.zip': (821714,[0m
+2026-10-25T19:15:46.0510135Z [36;1m                                    '0afc38c1315fedc952c3c657c82f510c720ce79a669df319f8278c959f67eaf4'),[0m
+2026-10-25T19:15:46.0511008Z [36;1m 'blender-codex-bridge-0.7.0-development-evidence.tar.gz': (17290139,[0m
+2026-10-25T19:15:46.0511655Z [36;1m                                                            '731ed512976328553601057a827024cac3ecb9388e72bc22fbea2f650390411a'),[0m
+2026-10-25T19:15:46.0512399Z [36;1m 'EVIDENCE-SHA256SUMS.txt': (121, 'a12e2bea16e9e0f93096ed7637c226d717ecef1042d5e2f253ea568b5bcafe0e')}[0m
+2026-10-25T19:15:46.0513711Z [36;1mPACKAGE_NAMES = set(EXPECTED) - {'blender-codex-bridge-0.7.0-development-evidence.tar.gz', 'EVIDENCE-SHA256SUMS.txt'}[0m
+2026-10-25T19:15:46.0514711Z [36;1m[0m
+2026-10-25T19:15:46.0515237Z [36;1mPROTECTED_PRIOR_RELEASES = {422510687: {'tag': 'v0.4.0',[0m
+2026-10-25T19:15:46.0515737Z [36;1m             'source': '4470d88bb4d8fb1ed75e86090dd6886fb55eb589',[0m
+2026-10-25T19:15:46.0516210Z [36;1m             'notes_bytes': 3580,[0m
+2026-10-25T19:15:46.0516711Z [36;1m             'notes_sha256': '575411e1002676966a760c21660850527769ac31180736da767d9d0f54f5a7cb',[0m
+2026-10-25T19:15:46.0517280Z [36;1m             'assets': {'blender_codex_bridge-0.4.0.zip': (732258,[0m
+2026-10-25T19:15:46.0517867Z [36;1m                                                           '1d212a02a5a1a4a30bab62c8043d3ae63e7a626687507a5262c2fec29c9b357b'),[0m
+2026-10-25T19:15:46.0518483Z [36;1m                        'blender_codex_bridge-0.4.0-py3-none-any.whl': (161122,[0m
+2026-10-25T19:15:46.0519123Z [36;1m                                                                        '591d088cfe842174c3e13faf2c56a1fa60ae311a1d5a63971d545e5c7c9f09d0'),[0m
+2026-10-25T19:15:46.0519746Z [36;1m                        'blender-codex-bridge-plugin-0.4.0.zip': (6640,[0m
+2026-10-25T19:15:46.0520359Z [36;1m                                                                  '61a16a96aa6fa2e20ef7d6c4e3ca25527eb96e871c78fd24d20be7664242bc84'),[0m
+2026-10-25T19:15:46.0520913Z [36;1m                        'SHA256SUMS.txt': (311,[0m
+2026-10-25T19:15:46.0521427Z [36;1m                                           '69c86fd4881099147cfa7bee3b7dcb873498e8861e48ba241801bc105ba99c48'),[0m
+2026-10-25T19:15:46.0522098Z [36;1m                        'blender-codex-bridge-0.4.0-development-evidence.tar.gz': (22157039,[0m
+2026-10-25T19:15:46.0522842Z [36;1m                                                                                   'f6bc5dce6ecb2d495e7390be4cfcf81127c9d8a597eb63f578d010f8e594fc1a'),[0m
+2026-10-25T19:15:46.0523484Z [36;1m                        'EVIDENCE-SHA256SUMS.txt': (121,[0m
+2026-10-25T19:15:46.0524059Z [36;1m                                                    'c5dbdaa22890f6ce0a94a1a8a8964e466fdc183bae53cfb20ca1bd0f0754cecd')}},[0m
+2026-10-25T19:15:46.0524759Z [36;1m 423225358: {'tag': 'v0.5.0',[0m
+2026-10-25T19:15:46.0525139Z [36;1m             'source': '4a45b99927082e1448a963140d4895c4ae82a4c7',[0m
+2026-10-25T19:15:46.0525556Z [36;1m             'notes_bytes': 4627,[0m
+2026-10-25T19:15:46.0526055Z [36;1m             'notes_sha256': '7ed2beb0a2ea2055f06025dfe36173302a65157287b03c7a0346e50cc38456ab',[0m
+2026-10-25T19:15:46.0526753Z [36;1m             'assets': {'blender-codex-bridge-0.5.0-development-evidence.tar.gz': (10630959,[0m
+2026-10-25T19:15:46.0527484Z [36;1m                                                                                   '21c976d22ae42af3eddef7cf9685dda908a2fc877b460eddac2f18e7e45dd892'),[0m
+2026-10-25T19:15:46.0528115Z [36;1m                        'blender-codex-bridge-plugin-0.5.0.zip': (6640,[0m
+2026-10-25T19:15:46.0528714Z [36;1m                                                                  '37d5d3cd3089b643290a403eba1534e2ca35ef10ac6c21357e5205d2b5d88427'),[0m
+2026-10-25T19:15:46.0529332Z [36;1m                        'blender_codex_bridge-0.5.0-py3-none-any.whl': (162330,[0m
+2026-10-25T19:15:46.0529960Z [36;1m                                                                        '0d0e1c2355d13c8ba442001196148565a20ca41fa914cc2373b8f1745de6aa7f'),[0m
+2026-10-25T19:15:46.0530541Z [36;1m                        'blender_codex_bridge-0.5.0.zip': (751218,[0m
+2026-10-25T19:15:46.0531248Z [36;1m                                                           '1d87c87d8a67bdf237c51d96ee39683e021c2b3d13d8c001be687d6922bfb56d'),[0m
+2026-10-25T19:15:46.0531810Z [36;1m                        'EVIDENCE-SHA256SUMS.txt': (121,[0m
+2026-10-25T19:15:46.0532359Z [36;1m                                                    '9aac9cc93252b3c3d345bfb353e41d9c5d7f72724ad26159e48c6c63563b571a'),[0m
+2026-10-25T19:15:46.0532889Z [36;1m                        'SHA256SUMS.txt': (311,[0m
+2026-10-25T19:15:46.0533536Z [36;1m                                           'b24b359333ff4d56d49f2815a04bb59cfef10449a5b509ec9193db3fda551e20')}},[0m
+2026-10-25T19:15:46.0534045Z [36;1m 423442432: {'tag': 'v0.6.0',[0m
+2026-10-25T19:15:46.0534599Z [36;1m             'source': '73cad805903fcd0be9175b49a5ecf78505ecd4a5',[0m
+2026-10-25T19:15:46.0535007Z [36;1m             'notes_bytes': 6131,[0m
+2026-10-25T19:15:46.0535503Z [36;1m             'notes_sha256': '9dc8f687486e81af8adf049c16e92a075b067368a3895a62a07d1e74fa5fb7f5',[0m
+2026-10-25T19:15:46.0536197Z [36;1m             'assets': {'blender-codex-bridge-0.6.0-development-evidence.tar.gz': (13117771,[0m
+2026-10-25T19:15:46.0536918Z [36;1m                                                                                   'b52f506fc29e37ec0c23d5a5c0923c4612b93004e9bf3ded731a1ea2e8e137d0'),[0m
+2026-10-25T19:15:46.0537544Z [36;1m                        'blender-codex-bridge-plugin-0.6.0.zip': (6640,[0m
+2026-10-25T19:15:46.0538145Z [36;1m                                                                  'bc1218c89055649fbce9c56710392750030f6a00dcd6d1e0295aeb33f9ee5900'),[0m
+2026-10-25T19:15:46.0538757Z [36;1m                        'blender_codex_bridge-0.6.0-py3-none-any.whl': (164460,[0m
+2026-10-25T19:15:46.0539397Z [36;1m                                                                        '03ed0476082be3783abb0efaf6eda21a9ce94f5f43a4ae5a429e6e31a0785972'),[0m
+2026-10-25T19:15:46.0539980Z [36;1m                        'blender_codex_bridge-0.6.0.zip': (785382,[0m
+2026-10-25T19:15:46.0540545Z [36;1m                                                           '10358beb21520123f6462d9c1e0c7c6184c74f5768132365cb700178023a300e'),[0m
+2026-10-25T19:15:46.0541089Z [36;1m                        'EVIDENCE-SHA256SUMS.txt': (121,[0m
+2026-10-25T19:15:46.0541631Z [36;1m                                                    'c8837b72505d13a8af5b7539219d2589f75b63a8d75d9757a9e597fc12c1cfa7'),[0m
+2026-10-25T19:15:46.0542169Z [36;1m                        'SHA256SUMS.txt': (311,[0m
+2026-10-25T19:15:46.0542716Z [36;1m                                           'babfd2c80be03d8ddec2e88a0e097cd84d1d03dfc23247ac48e12a16d30c007a')}}}[0m
+2026-10-25T19:15:46.0543219Z [36;1m[0m
+2026-10-25T19:15:46.0543476Z [36;1mclass Refused(RuntimeError):[0m
+2026-10-25T19:15:46.0543792Z [36;1m    pass[0m
+2026-10-25T19:15:46.0544039Z [36;1m[0m
+2026-10-25T19:15:46.0544458Z [36;1mdef require(value, message):[0m
+2026-10-25T19:15:46.0544780Z [36;1m    if not value:[0m
+2026-10-25T19:15:46.0545077Z [36;1m        raise Refused(message)[0m
+2026-10-25T19:15:46.0545379Z [36;1m[0m
+2026-10-25T19:15:46.0545658Z [36;1mclass SafeRedirect(HTTPRedirectHandler):[0m
+2026-10-25T19:15:46.0546152Z [36;1m    def redirect_request(self, request, fp, code, message, headers, newurl):[0m
+2026-10-25T19:15:46.0546625Z [36;1m        parsed = urlsplit(newurl)[0m
+2026-10-25T19:15:46.0547104Z [36;1m        require(request.get_method() == 'GET', 'Refuse redirecting a mutating request')[0m
+2026-10-25T19:15:46.0547676Z [36;1m        require(parsed.scheme == 'https' and parsed.hostname in {[0m
+2026-10-25T19:15:46.0548194Z [36;1m            'api.github.com', 'release-assets.githubusercontent.com',[0m
+2026-10-25T19:15:46.0548690Z [36;1m            'objects.githubusercontent.com', 'github.com'} and[0m
+2026-10-25T19:15:46.0549261Z [36;1m            parsed.port in (None, 443) and parsed.username is None and parsed.password is None,[0m
+2026-10-25T19:15:46.0549998Z [36;1m            'Refuse an unexpected download redirect')[0m
+2026-10-25T19:15:46.0550531Z [36;1m        redirected = super().redirect_request(request, fp, code, message, headers, newurl)[0m
+2026-10-25T19:15:46.0551110Z [36;1m        require(redirected is not None, 'Unsupported redirect')[0m
+2026-10-25T19:15:46.0551556Z [36;1m        if parsed.hostname != 'api.github.com':[0m
+2026-10-25T19:15:46.0552031Z [36;1m            for mapping in (redirected.headers, redirected.unredirected_hdrs):[0m
+2026-10-25T19:15:46.0552504Z [36;1m                for key in list(mapping):[0m
+2026-10-25T19:15:46.0553051Z [36;1m                    if key.lower() in {'authorization', 'proxy-authorization'}:[0m
+2026-10-25T19:15:46.0553512Z [36;1m                        del mapping[key][0m
+2026-10-25T19:15:46.0553854Z [36;1m        return redirected[0m
+2026-10-25T19:15:46.0554321Z [36;1m[0m
+2026-10-25T19:15:46.0554597Z [36;1mOPENER = build_opener(SafeRedirect())[0m
+2026-10-25T19:15:46.0554930Z [36;1m[0m
+2026-10-25T19:15:46.0555308Z [36;1mdef request(path, method='GET', data=None, *, binary=False, missing=False):[0m
+2026-10-25T19:15:46.0555917Z [36;1m    require(path.startswith('/'), 'Only fixed repository API paths are accepted')[0m
+2026-10-25T19:15:46.0556561Z [36;1m    headers = {'Authorization': 'Bearer ' + TOKEN, 'X-GitHub-Api-Version': '2022-11-28',[0m
+2026-10-25T19:15:46.0557242Z [36;1m               'Accept': 'application/octet-stream' if binary else 'application/vnd.github+json'}[0m
+2026-10-25T19:15:46.0557763Z [36;1m    if data is not None:[0m
+2026-10-25T19:15:46.0558130Z [36;1m        headers['Content-Type'] = 'application/json'[0m
+2026-10-25T19:15:46.0558570Z [36;1m        data = json.dumps(data, allow_nan=False).encode()[0m
+2026-10-25T19:15:46.0558944Z [36;1m    try:[0m
+2026-10-25T19:15:46.0559410Z [36;1m        return OPENER.open(Request(API + path, data=data, headers=headers, method=method), timeout=60)[0m
+2026-10-25T19:15:46.0559954Z [36;1m    except HTTPError as error:[0m
+2026-10-25T19:15:46.0560314Z [36;1m        if missing and error.code == 404:[0m
+2026-10-25T19:15:46.0560659Z [36;1m            return None[0m
+2026-10-25T19:15:46.0561119Z [36;1m        raise Refused('GitHub API request refused with HTTP ' + str(error.code)) from None[0m
+2026-10-25T19:15:46.0561614Z [36;1m    except URLError:[0m
+2026-10-25T19:15:46.0562107Z [36;1m        raise Refused('GitHub API transport failed; mutation outcome may need inspection') from None[0m
+2026-10-25T19:15:46.0562626Z [36;1m[0m
+2026-10-25T19:15:46.0562944Z [36;1mdef api(path, method='GET', data=None, *, missing=False):[0m
+2026-10-25T19:15:46.0563421Z [36;1m    response = request(path, method, data, missing=missing)[0m
+2026-10-25T19:15:46.0563827Z [36;1m    if response is None:[0m
+2026-10-25T19:15:46.0564268Z [36;1m        return None[0m
+2026-10-25T19:15:46.0564556Z [36;1m    with response:[0m
+2026-10-25T19:15:46.0564881Z [36;1m        body = response.read(4 * 1024 * 1024 + 1)[0m
+2026-10-25T19:15:46.0565330Z [36;1m    require(len(body) <= 4 * 1024 * 1024, 'Unbounded API response')[0m
+2026-10-25T19:15:46.0565745Z [36;1m    return json.loads(body)[0m
+2026-10-25T19:15:46.0566050Z [36;1m[0m
+2026-10-25T19:15:46.0566295Z [36;1mdef files_in(folder, names):[0m
+2026-10-25T19:15:46.0566774Z [36;1m    require(folder.is_dir() and not folder.is_symlink(), 'Missing owned input directory')[0m
+2026-10-25T19:15:46.0567283Z [36;1m    paths = list(folder.rglob('*'))[0m
+2026-10-25T19:15:46.0567763Z [36;1m    require(all(not path.is_symlink() for path in paths), 'Input symlink refused')[0m
+2026-10-25T19:15:46.0568429Z [36;1m    require({path.relative_to(folder).as_posix() for path in paths if path.is_file()} == names,[0m
+2026-10-25T19:15:46.0568982Z [36;1m            'Unexpected input file inventory')[0m
+2026-10-25T19:15:46.0569488Z [36;1m    require(all(path.is_file() for path in paths), 'Unexpected nested input directory')[0m
+2026-10-25T19:15:46.0569958Z [36;1m[0m
+2026-10-25T19:15:46.0570233Z [36;1mdef local_bytes(path, length, expected):[0m
+2026-10-25T19:15:46.0570943Z [36;1m    require(stat.S_ISREG(path.lstat().st_mode) and not path.is_symlink() and path.stat().st_size == length,[0m
+2026-10-25T19:15:46.0571514Z [36;1m            'Local input size/type differs')[0m
+2026-10-25T19:15:46.0571864Z [36;1m    data = path.read_bytes()[0m
+2026-10-25T19:15:46.0572410Z [36;1m    require(len(data) == length and hashlib.sha256(data).hexdigest() == expected, 'Local input hash differs')[0m
+2026-10-25T19:15:46.0572958Z [36;1m    return data[0m
+2026-10-25T19:15:46.0573224Z [36;1m[0m
+2026-10-25T19:15:46.0573454Z [36;1mdef ci():[0m
+2026-10-25T19:15:46.0573853Z [36;1m    run = api('/actions/runs/' + str(RUN))[0m
+2026-10-25T19:15:46.0574471Z [36;1m    require(run['id'] == RUN and run['head_sha'] == SOURCE and run['event'] == 'push' and[0m
+2026-10-25T19:15:46.0575125Z [36;1m            run['status'] == 'completed' and run['conclusion'] == 'success' and run['run_attempt'] == 1 and[0m
+2026-10-25T19:15:46.0575684Z [36;1m            run['head_branch'] == SOURCE_BRANCH and[0m
+2026-10-25T19:15:46.0576188Z [36;1m            run['repository']['id'] == REPO_ID and run['repository']['full_name'] == REPO and[0m
+2026-10-25T19:15:46.0576807Z [36;1m            run['head_repository']['id'] == REPO_ID, 'Accepted CI run identity/status differs')[0m
+2026-10-25T19:15:46.0577377Z [36;1m    jobs = api('/actions/runs/' + str(RUN) + '/jobs?per_page=100')[0m
+2026-10-25T19:15:46.0577868Z [36;1m    names = {'packages'} | {'test (' + python + ', ' + sdk + ')'[0m
+2026-10-25T19:15:46.0578361Z [36;1m        for python in ('3.10', '3.11', '3.12') for sdk in ('2.0.0', '2.2.0')}[0m
+2026-10-25T19:15:46.0578991Z [36;1m    require(jobs['total_count'] == len(jobs['jobs']) == 7 and {job['name'] for job in jobs['jobs']} == names and[0m
+2026-10-25T19:15:46.0579696Z [36;1m            all(job['run_id'] == RUN and job['head_sha'] == SOURCE and job['status'] == 'completed' and[0m
+2026-10-25T19:15:46.0580392Z [36;1m                job['conclusion'] == 'success' for job in jobs['jobs']), 'All seven accepted CI jobs are required')[0m
+2026-10-25T19:15:46.0580996Z [36;1m    artifact = api('/actions/artifacts/' + str(ARTIFACT))[0m
+2026-10-25T19:15:46.0581622Z [36;1m    require(artifact['id'] == ARTIFACT and artifact['name'] == 'blender-codex-bridge-development-' + SOURCE and[0m
+2026-10-25T19:15:46.0582314Z [36;1m            artifact['expired'] is False and artifact['size_in_bytes'] == 972904 and[0m
+2026-10-25T19:15:46.0583006Z [36;1m            artifact['digest'] == 'sha256:73df7fff246f2b98e12ca9a0b50c599dafa54db0fb79fedec274b5f27f8b6ac2' and[0m
+2026-10-25T19:15:46.0583757Z [36;1m            artifact['workflow_run']['id'] == RUN and artifact['workflow_run']['head_sha'] == SOURCE and[0m
+2026-10-25T19:15:46.0584679Z [36;1m            artifact['workflow_run']['repository_id'] == REPO_ID and artifact['workflow_run']['head_repository_id'] == REPO_ID and[0m
+2026-10-25T19:15:46.0585366Z [36;1m            artifact['workflow_run']['head_branch'] == SOURCE_BRANCH,[0m
+2026-10-25T19:15:46.0585843Z [36;1m            'Accepted immutable artifact metadata differs')[0m
+2026-10-25T19:15:46.0586252Z [36;1m    commit = api('/git/commits/' + SOURCE)[0m
+2026-10-25T19:15:46.0586788Z [36;1m    require(commit['sha'] == SOURCE and commit['tree']['sha'] == TREE, 'Accepted source tree differs')[0m
+2026-10-25T19:15:46.0587296Z [36;1m[0m
+2026-10-25T19:15:46.0587539Z [36;1mdef tag_commit(name):[0m
+2026-10-25T19:15:46.0587958Z [36;1m    reference = api('/git/ref/tags/' + quote(name, safe=''), missing=True)[0m
+2026-10-25T19:15:46.0588408Z [36;1m    if reference is None:[0m
+2026-10-25T19:15:46.0588726Z [36;1m        return None[0m
+2026-10-25T19:15:46.0589028Z [36;1m    value = reference['object'][0m
+2026-10-25T19:15:46.0589353Z [36;1m    for _ in range(5):[0m
+2026-10-25T19:15:46.0589782Z [36;1m        require(re.fullmatch('[a-f0-9]{40}', value['sha']), 'Invalid tag object')[0m
+2026-10-25T19:15:46.0590252Z [36;1m        if value['type'] == 'commit':[0m
+2026-10-25T19:15:46.0590965Z [36;1m            return (reference['object']['type'], reference['object']['sha'], value['sha'])[0m
+2026-10-25T19:15:46.0591539Z [36;1m        require(value['type'] == 'tag', 'Unexpected tag object type')[0m
+2026-10-25T19:15:46.0592016Z [36;1m        value = api('/git/tags/' + value['sha'])['object'][0m
+2026-10-25T19:15:46.0592477Z [36;1m    raise Refused('Tag nesting exceeds the reviewed bound')[0m
+2026-10-25T19:15:46.0592860Z [36;1m[0m
+2026-10-25T19:15:46.0593101Z [36;1mdef release(draft):[0m
+2026-10-25T19:15:46.0593424Z [36;1m    value = api('/releases/' + str(RELEASE))[0m
+2026-10-25T19:15:46.0594093Z [36;1m    require(value['id'] == RELEASE and value['tag_name'] == TAG and value['target_commitish'] == SOURCE and[0m
+2026-10-25T19:15:46.0595007Z [36;1m            value['draft'] is draft and value['prerelease'] is True and value['name'] == TITLE and value['body'] == notes and[0m
+2026-10-25T19:15:46.0595760Z [36;1m            value['upload_url'].split('{', 1)[0] == UPLOAD, 'Fixed release identity/body/state differs')[0m
+2026-10-25T19:15:46.0596279Z [36;1m    target = tag_commit(TAG)[0m
+2026-10-25T19:15:46.0596713Z [36;1m    require(draft or target is not None, 'Published release tag is missing')[0m
+2026-10-25T19:15:46.0597171Z [36;1m    if target is not None:[0m
+2026-10-25T19:15:46.0597638Z [36;1m        require(target[2] == SOURCE, 'Release tag does not resolve to the accepted source')[0m
+2026-10-25T19:15:46.0598119Z [36;1m    return value[0m
+2026-10-25T19:15:46.0598389Z [36;1m[0m
+2026-10-25T19:15:46.0598636Z [36;1mdef asset_list(identifier):[0m
+2026-10-25T19:15:46.0599064Z [36;1m    values = api('/releases/' + str(identifier) + '/assets?per_page=100')[0m
+2026-10-25T19:15:46.0599699Z [36;1m    require(type(values) is list and len(values) < 100, 'Asset pagination exceeds the reviewed bound')[0m
+2026-10-25T19:15:46.0600412Z [36;1m    require(len({value['name'] for value in values}) == len(values), 'Duplicate release asset names')[0m
+2026-10-25T19:15:46.0600927Z [36;1m    return values[0m
+2026-10-25T19:15:46.0601199Z [36;1m[0m
+2026-10-25T19:15:46.0601456Z [36;1mdef protected_prior_releases():[0m
+2026-10-25T19:15:46.0601996Z [36;1m    # Fixed accepted 0.4.0, 0.5.0 and 0.6.0 pins supplement the before/after snapshots of all old releases.[0m
+2026-10-25T19:15:46.0602611Z [36;1m    for identifier, pin in PROTECTED_PRIOR_RELEASES.items():[0m
+2026-10-25T19:15:46.0603068Z [36;1m        value = api('/releases/' + str(identifier))[0m
+2026-10-25T19:15:46.0603565Z [36;1m        require(value['id'] == identifier and value['tag_name'] == pin['tag'] and[0m
+2026-10-25T19:15:46.0604291Z [36;1m                value['target_commitish'] == pin['source'] and value['draft'] is False and[0m
+2026-10-25T19:15:46.0604954Z [36;1m                value['prerelease'] is True, 'Previously accepted alpha identity/state differs')[0m
+2026-10-25T19:15:46.0605474Z [36;1m        body = value['body'].encode('utf-8')[0m
+2026-10-25T19:15:46.0606034Z [36;1m        require(len(body) == pin['notes_bytes'] and hashlib.sha256(body).hexdigest() == pin['notes_sha256'],[0m
+2026-10-25T19:15:46.0606627Z [36;1m                'Previously accepted alpha notes differ')[0m
+2026-10-25T19:15:46.0607028Z [36;1m        target = tag_commit(pin['tag'])[0m
+2026-10-25T19:15:46.0607567Z [36;1m        require(target is not None and target[2] == pin['source'], 'Previously accepted alpha tag differs')[0m
+2026-10-25T19:15:46.0608125Z [36;1m        assets = asset_list(identifier)[0m
+2026-10-25T19:15:46.0608723Z [36;1m        require({item['name'] for item in assets} == set(pin['assets']), 'Previously accepted alpha asset inventory differs')[0m
+2026-10-25T19:15:46.0609312Z [36;1m        for item in assets:[0m
+2026-10-25T19:15:46.0609677Z [36;1m            length, expected = pin['assets'][item['name']][0m
+2026-10-25T19:15:46.0610164Z [36;1m            require(item['state'] == 'uploaded' and item['size'] == length and[0m
+2026-10-25T19:15:46.0610844Z [36;1m                    item.get('digest') == 'sha256:' + expected, 'Previously accepted alpha asset size/state/digest differs')[0m
+2026-10-25T19:15:46.0611530Z [36;1m[0m
+2026-10-25T19:15:46.0611777Z [36;1mdef support_evidence_blob():[0m
+2026-10-25T19:15:46.0612266Z [36;1m    # The checked-out support commit is separate from the accepted product source commit.[0m
+2026-10-25T19:15:46.0612785Z [36;1m    support = os.environ['GITHUB_SHA'][0m
+2026-10-25T19:15:46.0613264Z [36;1m    require(re.fullmatch('[a-f0-9]{40}', support), 'Support push SHA is invalid')[0m
+2026-10-25T19:15:46.0613762Z [36;1m    commit = api('/git/commits/' + support)[0m
+2026-10-25T19:15:46.0614439Z [36;1m    require(commit['sha'] == support, 'Support commit differs')[0m
+2026-10-25T19:15:46.0614951Z [36;1m    tree = api('/git/trees/' + commit['tree']['sha'] + '?recursive=1')[0m
+2026-10-25T19:15:46.0615578Z [36;1m    require(tree['truncated'] is False and len(tree['tree']) <= 4096, 'Support tree exceeds reviewed bound')[0m
+2026-10-25T19:15:46.0616255Z [36;1m    entries = [item for item in tree['tree'] if item['path'] == EVIDENCE_BLOB_PATH][0m
+2026-10-25T19:15:46.0616872Z [36;1m    require(len(entries) == 1, 'Evidence blob is missing or ambiguous in support commit')[0m
+2026-10-25T19:15:46.0617357Z [36;1m    item = entries[0][0m
+2026-10-25T19:15:46.0617695Z [36;1m    name = EVIDENCE_BLOB_PATH.rsplit('/', 1)[1][0m
+2026-10-25T19:15:46.0618245Z [36;1m    require(item['type'] == 'blob' and item['mode'] == '100644' and item['sha'] == EVIDENCE_BLOB_SHA and[0m
+2026-10-25T19:15:46.0618880Z [36;1m            item['size'] == EXPECTED[name][0], 'Support evidence blob metadata differs')[0m
+2026-10-25T19:15:46.0619555Z [36;1m    payload = local_bytes(Path(os.environ['GITHUB_WORKSPACE']) / EVIDENCE_BLOB_PATH, *EXPECTED[name])[0m
+2026-10-25T19:15:46.0620166Z [36;1m    header = ('blob ' + str(len(payload)) + '\0').encode('ascii')[0m
+2026-10-25T19:15:46.0620808Z [36;1m    require(hashlib.sha1(header + payload).hexdigest() == EVIDENCE_BLOB_SHA, 'Evidence Git blob bytes differ')[0m
+2026-10-25T19:15:46.0621376Z [36;1m    return support[0m
+2026-10-25T19:15:46.0621661Z [36;1m[0m
+2026-10-25T19:15:46.0621902Z [36;1mdef old_releases():[0m
+2026-10-25T19:15:46.0622223Z [36;1m    values = api('/releases?per_page=100')[0m
+2026-10-25T19:15:46.0622773Z [36;1m    require(type(values) is list and len(values) < 100, 'Release pagination exceeds the reviewed bound')[0m
+2026-10-25T19:15:46.0623300Z [36;1m    result = [][0m
+2026-10-25T19:15:46.0623586Z [36;1m    for value in values:[0m
+2026-10-25T19:15:46.0623904Z [36;1m        if value['id'] == RELEASE:[0m
+2026-10-25T19:15:46.0624364Z [36;1m            continue[0m
+2026-10-25T19:15:46.0624831Z [36;1m        fields = {key: value.get(key) for key in ('id', 'tag_name', 'target_commitish', 'name', 'body',[0m
+2026-10-25T19:15:46.0625499Z [36;1m            'draft', 'prerelease', 'created_at', 'published_at', 'updated_at', 'html_url')}[0m
+2026-10-25T19:15:46.0626044Z [36;1m        fields['tag_object'] = tag_commit(value['tag_name'])[0m
+2026-10-25T19:15:46.0626627Z [36;1m        fields['assets'] = [{key: item.get(key) for key in ('id', 'name', 'label', 'state', 'content_type',[0m
+2026-10-25T19:15:46.0627250Z [36;1m            'size', 'digest', 'created_at', 'updated_at', 'browser_download_url')}[0m
+2026-10-25T19:15:46.0627823Z [36;1m            for item in sorted(asset_list(value['id']), key=lambda item: item['id'])][0m
+2026-10-25T19:15:46.0628297Z [36;1m        result.append(fields)[0m
+2026-10-25T19:15:46.0628693Z [36;1m    required = {'v0.2.0', 'v0.3.0', 'v0.4.0', 'v0.5.0', 'v0.6.0'}[0m
+2026-10-25T19:15:46.0629312Z [36;1m    require(required <= {value['tag_name'] for value in result}, 'An earlier published release is missing')[0m
+2026-10-25T19:15:46.0629965Z [36;1m    require(all(value['draft'] is False and value['tag_object'] is not None[0m
+2026-10-25T19:15:46.0630637Z [36;1m                for value in result if value['tag_name'] in required), 'An earlier published release/tag is unavailable')[0m
+2026-10-25T19:15:46.0631394Z [36;1m    return sorted(result, key=lambda value: value['id'])[0m
+2026-10-25T19:15:46.0631766Z [36;1m[0m
+2026-10-25T19:15:46.0632012Z [36;1mdef latest_stable():[0m
+2026-10-25T19:15:46.0632360Z [36;1m    value = api('/releases/latest', missing=True)[0m
+2026-10-25T19:15:46.0632767Z [36;1m    return None if value is None else value['id'][0m
+2026-10-25T19:15:46.0633116Z [36;1m[0m
+2026-10-25T19:15:46.0633362Z [36;1mdef verify_asset(value):[0m
+2026-10-25T19:15:46.0633661Z [36;1m    name = value['name'][0m
+2026-10-25T19:15:46.0634406Z [36;1m    require(name in EXPECTED and type(value['id']) is int and value['id'] > 0, 'Unexpected remote asset')[0m
+2026-10-25T19:15:46.0634990Z [36;1m    length, expected = EXPECTED[name][0m
+2026-10-25T19:15:46.0635570Z [36;1m    require(value['state'] == 'uploaded' and value['size'] == length and value.get('digest') == 'sha256:' + expected,[0m
+2026-10-25T19:15:46.0636203Z [36;1m            'Remote asset size/state/digest differs: ' + name)[0m
+2026-10-25T19:15:46.0636624Z [36;1m    digest, total = hashlib.sha256(), 0[0m
+2026-10-25T19:15:46.0637107Z [36;1m    with request('/releases/assets/' + str(value['id']), binary=True) as response:[0m
+2026-10-25T19:15:46.0637658Z [36;1m        for chunk in iter(lambda: response.read(1024 * 1024), b''):[0m
+2026-10-25T19:15:46.0638067Z [36;1m            total += len(chunk)[0m
+2026-10-25T19:15:46.0638500Z [36;1m            require(total <= length, 'Remote asset exceeds pinned size: ' + name)[0m
+2026-10-25T19:15:46.0638958Z [36;1m            digest.update(chunk)[0m
+2026-10-25T19:15:46.0639514Z [36;1m    require(total == length and digest.hexdigest() == expected, 'Downloaded remote asset differs: ' + name)[0m
+2026-10-25T19:15:46.0640054Z [36;1m[0m
+2026-10-25T19:15:46.0640289Z [36;1mdef all_assets():[0m
+2026-10-25T19:15:46.0640587Z [36;1m    values = asset_list(RELEASE)[0m
+2026-10-25T19:15:46.0641133Z [36;1m    require({value['name'] for value in values} == set(EXPECTED), 'Exactly six accepted assets are required')[0m
+2026-10-25T19:15:46.0641686Z [36;1m    for value in values:[0m
+2026-10-25T19:15:46.0641989Z [36;1m        verify_asset(value)[0m
+2026-10-25T19:15:46.0642283Z [36;1m[0m
+2026-10-25T19:15:46.0642527Z [36;1mdef preserved_repository():[0m
+2026-10-25T19:15:46.0642986Z [36;1m    with OPENER.open(Request(API, headers={'Authorization': 'Bearer ' + TOKEN,[0m
+2026-10-25T19:15:46.0643689Z [36;1m            'X-GitHub-Api-Version': '2022-11-28', 'Accept': 'application/vnd.github+json'}), timeout=60) as response:[0m
+2026-10-25T19:15:46.0644442Z [36;1m        payload = response.read(4 * 1024 * 1024 + 1)[0m
+2026-10-25T19:15:46.0644928Z [36;1m    require(len(payload) <= 4 * 1024 * 1024, 'Unbounded repository metadata')[0m
+2026-10-25T19:15:46.0645379Z [36;1m    repo = json.loads(payload)[0m
+2026-10-25T19:15:46.0645890Z [36;1m    require(repo['id'] == REPO_ID and repo['private'] is False and repo['default_branch'] == 'main',[0m
+2026-10-25T19:15:46.0646499Z [36;1m            'Repository identity/visibility/default branch differs')[0m
+2026-10-25T19:15:46.0647109Z [36;1m    require(api('/git/ref/heads/main')['object']['sha'] == '1e3c9898ca1f4cf0d91858a383a0b93bf6438db5',[0m
+2026-10-25T19:15:46.0647646Z [36;1m            'Preserved main differs')[0m
+2026-10-25T19:15:46.0647979Z [36;1m    pr = api('/pulls/8')[0m
+2026-10-25T19:15:46.0648429Z [36;1m    require(pr['draft'] is True and pr['state'] == 'open' and pr['merged'] is False and[0m
+2026-10-25T19:15:46.0649100Z [36;1m            pr['head']['sha'] == '4470d88bb4d8fb1ed75e86090dd6886fb55eb589', 'Preserved draft PR8 differs')[0m
+2026-10-25T19:15:46.0649610Z [36;1m[0m
+2026-10-25T19:15:46.0649847Z [36;1mtry:[0m
+2026-10-25T19:15:46.0650282Z [36;1m    require(ARMED is True, 'Publisher proposal is UNARMED; no credentials or network used')[0m
+2026-10-25T19:15:46.0650946Z [36;1m    require(type(RELEASE) is int and RELEASE > 0, 'Fixed draft release ID is not pinned')[0m
+2026-10-25T19:15:46.0651578Z [36;1m    require(type(NOTES_BYTES) is int and NOTES_BYTES > 0 and type(NOTES_SHA) is str and[0m
+2026-10-25T19:15:46.0652324Z [36;1m            re.fullmatch('[a-f0-9]{64}', NOTES_SHA), 'Release notes are not pinned')[0m
+2026-10-25T19:15:46.0652954Z [36;1m    require(type(EVIDENCE_BLOB_SHA) is str and re.fullmatch('[a-f0-9]{40}', EVIDENCE_BLOB_SHA),[0m
+2026-10-25T19:15:46.0653487Z [36;1m            'Evidence Git blob is not pinned')[0m
+2026-10-25T19:15:46.0654036Z [36;1m    require(len(EXPECTED) == 6 and all(type(length) is int and length > 0 and type(expected) is str and[0m
+2026-10-25T19:15:46.0654960Z [36;1m            re.fullmatch('[a-f0-9]{64}', expected) for length, expected in EXPECTED.values()),[0m
+2026-10-25T19:15:46.0655515Z [36;1m            'All six exact asset size/hash pins are required')[0m
+2026-10-25T19:15:46.0656095Z [36;1m    require(PRESERVED_LATEST['observed'] is True and (PRESERVED_LATEST['release_id'] is None or[0m
+2026-10-25T19:15:46.0656776Z [36;1m            type(PRESERVED_LATEST['release_id']) is int and PRESERVED_LATEST['release_id'] > 0),[0m
+2026-10-25T19:15:46.0657348Z [36;1m            'Actual latest-release observation is not pinned')[0m
+2026-10-25T19:15:46.0657896Z [36;1m    require(TAG == 'v' + VERSION and VERSION == '0.7.0', 'Component/tag version differs')[0m
+2026-10-25T19:15:46.0658391Z [36;1m    TOKEN = os.environ['GH_TOKEN'][0m
+2026-10-25T19:15:46.0658865Z [36;1m    require(os.environ['GITHUB_REPOSITORY'] == REPO and os.environ['GITHUB_REF'] ==[0m
+2026-10-25T19:15:46.0659540Z [36;1m            'refs/heads/codex/publish-reviewed-0.7.0' and os.environ['GITHUB_EVENT_NAME'] == 'push' and[0m
+2026-10-25T19:15:46.0660219Z [36;1m            os.environ['GITHUB_RUN_ATTEMPT'] == '1', 'Publisher event/ref/attempt differs')[0m
+2026-10-25T19:15:46.0660773Z [36;1m    workspace = Path(os.environ['GITHUB_WORKSPACE']).resolve()[0m
+2026-10-25T19:15:46.0661309Z [36;1m    require(Path.cwd().resolve() == workspace, 'Unexpected checkout directory')[0m
+2026-10-25T19:15:46.0661893Z [36;1m    packages = Path(os.environ['RUNNER_TEMP']) / 'accepted-0.7.0-packages'[0m
+2026-10-25T19:15:46.0662389Z [36;1m    evidence = workspace / 'release-evidence/0.7.0'[0m
+2026-10-25T19:15:46.0662784Z [36;1m    files_in(packages, PACKAGE_NAMES)[0m
+2026-10-25T19:15:46.0663456Z [36;1m    files_in(evidence, {'RELEASE-NOTES.md', 'blender-codex-bridge-0.7.0-development-evidence.tar.gz', 'EVIDENCE-SHA256SUMS.txt'})[0m
+2026-10-25T19:15:46.0664436Z [36;1m    notes = local_bytes(evidence / 'RELEASE-NOTES.md', NOTES_BYTES, NOTES_SHA).decode('utf-8')[0m
+2026-10-25T19:15:46.0665143Z [36;1m    paths = {name: (packages if name in PACKAGE_NAMES else evidence) / name for name in EXPECTED}[0m
+2026-10-25T19:15:46.0665718Z [36;1m    for name, (length, expected) in EXPECTED.items():[0m
+2026-10-25T19:15:46.0666142Z [36;1m        local_bytes(paths[name], length, expected)[0m
+2026-10-25T19:15:46.0666702Z [36;1m    require((packages / 'SHA256SUMS.txt').read_text() == ''.join(EXPECTED[name][1] + '  ' + name + '\n'[0m
+2026-10-25T19:15:46.0667582Z [36;1m            for name in ('blender_codex_bridge-0.7.0.zip', 'blender_codex_bridge-0.7.0-py3-none-any.whl', 'blender-codex-bridge-plugin-0.7.0.zip')),[0m
+2026-10-25T19:15:46.0668303Z [36;1m            'Package checksum manifest differs')[0m
+2026-10-25T19:15:46.0669013Z [36;1m    require((evidence / 'EVIDENCE-SHA256SUMS.txt').read_text() == EXPECTED['blender-codex-bridge-0.7.0-development-evidence.tar.gz'][1] +[0m
+2026-10-25T19:15:46.0669957Z [36;1m            '  blender-codex-bridge-0.7.0-development-evidence.tar.gz\n', 'Evidence checksum manifest differs')[0m
+2026-10-25T19:15:46.0670574Z [36;1m    support_commit = support_evidence_blob()[0m
+2026-10-25T19:15:46.0670919Z [36;1m    ci()[0m
+2026-10-25T19:15:46.0671185Z [36;1m    preserved_repository()[0m
+2026-10-25T19:15:46.0671509Z [36;1m    protected_prior_releases()[0m
+2026-10-25T19:15:46.0671826Z [36;1m    release(True)[0m
+2026-10-25T19:15:46.0672172Z [36;1m    previous, latest = old_releases(), latest_stable()[0m
+2026-10-25T19:15:46.0672922Z [36;1m    require(latest == PRESERVED_LATEST['release_id'], 'Latest stable release differs from root observation')[0m
+2026-10-25T19:15:46.0673502Z [36;1m    existing = asset_list(RELEASE)[0m
+2026-10-25T19:15:46.0674090Z [36;1m    require({value['name'] for value in existing} <= set(EXPECTED), 'Unexpected draft asset; never replace/delete it')[0m
+2026-10-25T19:15:46.0674790Z [36;1m    for value in existing:[0m
+2026-10-25T19:15:46.0675108Z [36;1m        verify_asset(value)[0m
+2026-10-25T19:15:46.0675466Z [36;1m    present = {value['name'] for value in existing}[0m
+2026-10-25T19:15:46.0675954Z [36;1m    for name in EXPECTED:[0m
+2026-10-25T19:15:46.0676272Z [36;1m        if name in present:[0m
+2026-10-25T19:15:46.0676576Z [36;1m            continue[0m
+2026-10-25T19:15:46.0676895Z [36;1m        length, expected = EXPECTED[name][0m
+2026-10-25T19:15:46.0677309Z [36;1m        payload = local_bytes(paths[name], length, expected)[0m
+2026-10-25T19:15:46.0677871Z [36;1m        upload = Request(UPLOAD + '?name=' + quote(name, safe=''), data=payload, method='POST',[0m
+2026-10-25T19:15:46.0678550Z [36;1m            headers={'Authorization': 'Bearer ' + TOKEN, 'Accept': 'application/vnd.github+json',[0m
+2026-10-25T19:15:46.0679225Z [36;1m                     'X-GitHub-Api-Version': '2022-11-28', 'Content-Type': 'application/octet-stream'})[0m
+2026-10-25T19:15:46.0679719Z [36;1m        try:[0m
+2026-10-25T19:15:46.0680054Z [36;1m            with OPENER.open(upload, timeout=120) as response:[0m
+2026-10-25T19:15:46.0680583Z [36;1m                require(response.status == 201, 'Asset creation did not return 201')[0m
+2026-10-25T19:15:46.0681081Z [36;1m                result = response.read(1024 * 1024 + 1)[0m
+2026-10-25T19:15:46.0681667Z [36;1m            require(len(result) <= 1024 * 1024 and json.loads(result)['name'] == name, 'Asset creation result differs')[0m
+2026-10-25T19:15:46.0682238Z [36;1m        except (HTTPError, URLError):[0m
+2026-10-25T19:15:46.0682806Z [36;1m            raise Refused('Missing-asset upload failed; no overwrite or automatic retry performed') from None[0m
+2026-10-25T19:15:46.0683443Z [36;1m        print('Uploaded missing accepted asset: ' + name)[0m
+2026-10-25T19:15:46.0683821Z [36;1m    all_assets()[0m
+2026-10-25T19:15:46.0684095Z [36;1m    ci()[0m
+2026-10-25T19:15:46.0684493Z [36;1m    release(True)[0m
+2026-10-25T19:15:46.0685260Z [36;1m    require(old_releases() == previous and latest_stable() == latest, 'Earlier release/tag/latest state changed')[0m
+2026-10-25T19:15:46.0686183Z [36;1m    protected_prior_releases()[0m
+2026-10-25T19:15:46.0686731Z [36;1m    api('/releases/' + str(RELEASE), 'PATCH', {'draft': False, 'prerelease': True, 'make_latest': 'false'})[0m
+2026-10-25T19:15:46.0687299Z [36;1m    release(False)[0m
+2026-10-25T19:15:46.0687612Z [36;1m    preserved_repository()[0m
+2026-10-25T19:15:46.0687916Z [36;1m    all_assets()[0m
+2026-10-25T19:15:46.0688214Z [36;1m    protected_prior_releases()[0m
+2026-10-25T19:15:46.0688836Z [36;1m    require(old_releases() == previous and latest_stable() == latest, 'Earlier release/tag/latest state changed after publication')[0m
+2026-10-25T19:15:46.0689665Z [36;1m    print(json.dumps({'status': 'PUBLISHED_VERIFIED_ALPHA_ONLY', 'release_id': RELEASE, 'tag': TAG,[0m
+2026-10-25T19:15:46.0690333Z [36;1m        'source_commit': SOURCE, 'source_tree': TREE, 'support_commit': support_commit,[0m
+2026-10-25T19:15:46.0691148Z [36;1m        'evidence_archive_git_blob': EVIDENCE_BLOB_SHA, 'component_version': VERSION, 'assets': {name: value[1] for name, value in EXPECTED.items()},[0m
+2026-10-25T19:15:46.0692027Z [36;1m        'all_six_remote_assets_downloaded_and_hashed': True, 'old_releases_and_latest_preserved': True,[0m
+2026-10-25T19:15:46.0692802Z [36;1m        'candidate_code_executed': False, 'evidence_archive_executed_or_unpacked': False, 'main_merged': False}))[0m
+2026-10-25T19:15:46.0693390Z [36;1mexcept Refused as error:[0m
+2026-10-25T19:15:46.0693851Z [36;1m    print('Reviewed alpha publisher stopped: ' + str(error), file=sys.stderr)[0m
+2026-10-25T19:15:46.0694801Z [36;1m    raise SystemExit(1) from None[0m
+2026-10-25T19:15:46.0695145Z [36;1mexcept Exception as error:[0m
+2026-10-25T19:15:46.0695869Z [36;1m    print('Reviewed alpha publisher stopped with unexpected ' + type(error).__name__ + '; inspect fixed release state before a new reviewed push', file=sys.stderr)[0m
+2026-10-25T19:15:46.0696614Z [36;1m    raise SystemExit(1) from None[0m
+2026-10-25T19:15:46.0696928Z [36;1mPY[0m
+2026-10-25T19:15:46.0868665Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-25T19:15:46.0869095Z env:
+2026-10-25T19:15:46.0872141Z   GH_TOKEN: ***
+2026-10-25T19:15:46.0872427Z ##[endgroup]
+2026-10-25T19:16:09.4434824Z Uploaded missing accepted asset: SHA256SUMS.txt
+2026-10-25T19:16:09.4436025Z Uploaded missing accepted asset: blender-codex-bridge-plugin-0.7.0.zip
+2026-10-25T19:16:09.4437279Z Uploaded missing accepted asset: blender_codex_bridge-0.7.0-py3-none-any.whl
+2026-10-25T19:16:09.4438370Z Uploaded missing accepted asset: blender_codex_bridge-0.7.0.zip
+2026-10-25T19:16:09.4439567Z Uploaded missing accepted asset: blender-codex-bridge-0.7.0-development-evidence.tar.gz
+2026-10-25T19:16:09.4440685Z Uploaded missing accepted asset: EVIDENCE-SHA256SUMS.txt
+2026-10-25T19:16:09.4449947Z {"status": "PUBLISHED_VERIFIED_ALPHA_ONLY", "release_id": 423590242, "tag": "v0.7.0", "source_commit": "8d07ad898ba92c5e94db57b1562fefef9c8e0e1c", "source_tree": "4a9dccf8b3c9a6a05aad1d1d19187381fb4e6bbb", "support_commit": "9f8339063af214423c71fd46e315f11b6a274c70", "evidence_archive_git_blob": "cba736e01a3931f5901b4bc9bddc5338d754536a", "component_version": "0.7.0", "assets": {"SHA256SUMS.txt": "7709a150983ae0c56742b19139abae358d1df7a64ea132ddc5480312f6eb4c50", "blender-codex-bridge-plugin-0.7.0.zip": "0971e6d3fba35592af9e6d3263a02025f78246a5307183ef50422ef6aadd9184", "blender_codex_bridge-0.7.0-py3-none-any.whl": "450772458e6fe7ba37370f2a790a44d4b826c63569c66cddc05635a013b5dcc4", "blender_codex_bridge-0.7.0.zip": "0afc38c1315fedc952c3c657c82f510c720ce79a669df319f8278c959f67eaf4", "blender-codex-bridge-0.7.0-development-evidence.tar.gz": "731ed512976328553601057a827024cac3ecb9388e72bc22fbea2f650390411a", "EVIDENCE-SHA256SUMS.txt": "a12e2bea16e9e0f93096ed7637c226d717ecef1042d5e2f253ea568b5bcafe0e"}, "all_six_remote_assets_downloaded_and_hashed": true, "old_releases_and_latest_preserved": true, "candidate_code_executed": false, "evidence_archive_executed_or_unpacked": false, "main_merged": false}
+2026-10-25T19:16:09.4675420Z Post job cleanup.
+2026-10-25T19:16:09.5576189Z [command]/usr/bin/git version
+2026-10-25T19:16:09.5617155Z git version 2.55.0
+2026-10-25T19:16:09.5658300Z Temporarily overriding HOME='/home/runner/work/_temp/b075a703-9ddf-4671-a80e-749eac6bf125' before making global git config changes
+2026-10-25T19:16:09.5659588Z Adding repository directory to the temporary git global config as a safe directory
+2026-10-25T19:16:09.5666615Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/Codex-Blender-Bridge/Codex-Blender-Bridge
+2026-10-25T19:16:09.5706816Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-10-25T19:16:09.5744570Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-10-25T19:16:09.6037768Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-25T19:16:09.6074693Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-10-25T19:16:09.6385112Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-25T19:16:09.6420957Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-10-25T19:16:09.6861818Z Cleaning up orphan processes
+2026-10-25T19:16:09.7293142Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/download-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
