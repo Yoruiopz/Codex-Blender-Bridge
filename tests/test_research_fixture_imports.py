@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import ast
 import importlib
+import inspect
+import json
 import os
 import runpy
 import socket
+import subprocess
 import sys
 import threading
 from pathlib import Path
@@ -1058,6 +1061,103 @@ def test_scene_worker_keeps_stopped_evidence_assertions(scene_worker, drift):
     assert state.resumes == ["complete", "cancel", "permission", "disconnect", "external_edit"]
 
 
+_WEIGHT_OBSERVER_CHILD = "_bcb_weight_observer_test_child"
+_WEIGHT_OBSERVER_CHILD_ENV = "BCB_WEIGHT_OBSERVER_TEST_CHILD"
+_WEIGHT_OBSERVER_MARKER = "BCB_WEIGHT_OBSERVER_TEST_OK "
+_WEIGHT_OBSERVER_BOOTSTRAP = r"""
+import json
+import os
+import sys
+from pathlib import Path
+
+root, nodeid = Path(sys.argv[1]).resolve(strict=True), sys.argv[2]
+target = root / 'tests' / 'test_research_fixture_imports.py'
+assert sys.getprofile() is None and sys.gettrace() is None
+assert not any(key.startswith(('COV_CORE_', 'COVERAGE_', 'PYTEST_')) for key in os.environ
+               if key != 'PYTEST_DISABLE_PLUGIN_AUTOLOAD')
+assert os.environ['PYTEST_DISABLE_PLUGIN_AUTOLOAD'] == '1'
+assert os.environ['BCB_WEIGHT_OBSERVER_TEST_CHILD'] == '1'
+assert nodeid.startswith('tests/test_research_fixture_imports.py::test_weight_observer_')
+sys._bcb_weight_observer_test_child = (str(target), nodeid)
+sys.path[:0] = [str(root), str(root / 'tests')]
+import pytest
+
+class ExactCase:
+    def __init__(self):
+        self.calls = []
+    def pytest_collection_finish(self, session):
+        assert [item.nodeid for item in session.items] == [nodeid]
+    def pytest_runtest_logreport(self, report):
+        if report.when == 'call':
+            self.calls.append((report.nodeid, report.outcome))
+
+exact = ExactCase()
+# The owned child needs only builtin fixtures. Do not autoload coverage/timeout
+# or inherit the repository's plugin-specific configuration in this child.
+status = pytest.main(['-c', os.devnull, '--rootdir', str(root), '-q',
+                      '-p', 'no:cacheprovider', nodeid], plugins=[exact])
+assert status == 0 and exact.calls == [(nodeid, 'passed')], (status, exact.calls)
+assert sys.getprofile() is None and sys.gettrace() is None
+print('BCB_WEIGHT_OBSERVER_TEST_OK ' + json.dumps({'nodeid': nodeid, 'passed': 1,
+      'profile_clear': True, 'trace_clear': True}), flush=True)
+"""
+
+
+def _isolated_weight_observer_test(case):
+    """Keep the parent's collector; run each unchanged instrumentation case once."""
+    signature = inspect.signature(case)
+    assert tuple(signature.parameters)[:2] == ("fixture_imports", "addon_package")
+    parameters = tuple(signature.parameters.values())[2:]
+    assert {parameter.name for parameter in parameters} <= {"drift", "hook"}
+
+    def isolated(request, **arguments):
+        nodeid = request.node.nodeid
+        expected = (str(Path(__file__).resolve()), nodeid)
+        child = getattr(sys, _WEIGHT_OBSERVER_CHILD, None)
+        child_environment = os.environ.get(_WEIGHT_OBSERVER_CHILD_ENV)
+        if child is not None or child_environment is not None:
+            assert child_environment == "1" and child == expected, "An observer child cannot relaunch or select another case"
+            return case(request.getfixturevalue("fixture_imports"),
+                        request.getfixturevalue("addon_package"), **arguments)
+        assert nodeid.split("[", 1)[0] == "tests/test_research_fixture_imports.py::" + case.__name__
+        profile, trace = sys.getprofile(), sys.gettrace()
+        environment = {key: os.environ[key] for key in (
+            "PATH", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "TEMP", "TMP", "TMPDIR",
+            "LANG", "LC_ALL", "LC_CTYPE", "TZ", "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH",
+        ) if key in os.environ}
+        environment["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
+        environment[_WEIGHT_OBSERVER_CHILD_ENV] = "1"
+        try:
+            result = subprocess.run(
+                [sys.executable, "-I", "-B", "-c", _WEIGHT_OBSERVER_BOOTSTRAP, str(ROOT), nodeid],
+                cwd=ROOT, env=environment, capture_output=True, text=True, timeout=30,
+            )
+        finally:
+            # Never pause, replace or clear a foreign hook, including coverage's
+            # CTracer. The real parent collector must survive child failure too.
+            assert sys.getprofile() is profile and sys.gettrace() is trace
+        assert result.returncode == 0, (result.stdout[-8192:], result.stderr[-8192:])
+        markers = [line[len(_WEIGHT_OBSERVER_MARKER):] for line in result.stdout.splitlines()
+                   if line.startswith(_WEIGHT_OBSERVER_MARKER)]
+        assert len(markers) == 1
+        assert json.loads(markers[0]) == {"nodeid": nodeid, "passed": 1,
+                                         "profile_clear": True, "trace_clear": True}
+        request.node.user_properties.extend([
+            ("observer_parent_profile_type", type(profile).__name__),
+            ("observer_parent_trace_type", type(trace).__name__),
+            ("observer_parent_hooks_unchanged", True),
+            ("observer_exact_child_passed", nodeid),
+        ])
+
+    # Parent fixture setup must not install the helper's Thread/Path guards before
+    # subprocess communication. Only the selected child requests those fixtures.
+    isolated.__name__, isolated.__qualname__ = case.__name__, case.__qualname__
+    isolated.__module__, isolated.__doc__ = case.__module__, case.__doc__
+    isolated.__signature__ = inspect.Signature([
+        inspect.Parameter("request", inspect.Parameter.POSITIONAL_OR_KEYWORD), *parameters])
+    return isolated
+
+
 def weight_boundary_model(fixture_imports, addon_package, *, method="append", arguments=(7,)):
     """Actual CPython C callable + unchanged production wrapper; no Blender proof."""
     script = importlib.import_module("scripts.blender_weight_edit_guard_smoke")
@@ -1070,6 +1170,7 @@ def weight_boundary_model(fixture_imports, addon_package, *, method="append", ar
     return NS(script=script, values=values, events=events, leaf=leaf, observer=observer)
 
 
+@_isolated_weight_observer_test
 def test_weight_observer_measures_completed_wrapper_after_actual_C_storage_and_release(fixture_imports, addon_package):
     case = weight_boundary_model(fixture_imports, addon_package)
     with case.observer:
@@ -1084,6 +1185,7 @@ def test_weight_observer_measures_completed_wrapper_after_actual_C_storage_and_r
     assert sys.getprofile() is None and sys.gettrace() is None
 
 
+@_isolated_weight_observer_test
 def test_weight_observer_disarms_hooks_before_external_action_and_never_reenters(fixture_imports, addon_package):
     case = weight_boundary_model(fixture_imports, addon_package)
 
@@ -1102,6 +1204,7 @@ def test_weight_observer_disarms_hooks_before_external_action_and_never_reenters
     assert sys.getprofile() is None and sys.gettrace() is None
 
 
+@_isolated_weight_observer_test
 def test_weight_observer_does_not_admit_exceptional_native_wrapper_completion(fixture_imports, addon_package):
     case = weight_boundary_model(fixture_imports, addon_package, method="index", arguments=(99,))
     with pytest.raises(ValueError), case.observer:
@@ -1112,6 +1215,7 @@ def test_weight_observer_does_not_admit_exceptional_native_wrapper_completion(fi
     assert case.leaf.method is None and sys.getprofile() is None and sys.gettrace() is None
 
 
+@_isolated_weight_observer_test
 def test_weight_observer_ignores_genuine_C_calls_outside_original_wrapper(fixture_imports, addon_package):
     case = weight_boundary_model(fixture_imports, addon_package)
     with case.observer:
@@ -1122,6 +1226,7 @@ def test_weight_observer_ignores_genuine_C_calls_outside_original_wrapper(fixtur
 
 
 @pytest.mark.parametrize("drift", ["arguments", "method_type"])
+@_isolated_weight_observer_test
 def test_weight_observer_refuses_changed_arguments_or_callable_before_execution(fixture_imports, addon_package, drift):
     case = weight_boundary_model(fixture_imports, addon_package)
     if drift == "arguments":
@@ -1134,6 +1239,7 @@ def test_weight_observer_refuses_changed_arguments_or_callable_before_execution(
     assert sys.getprofile() is None and sys.gettrace() is None
 
 
+@_isolated_weight_observer_test
 def test_weight_observer_external_failure_retains_actual_applied_C_state_and_restores_hooks(fixture_imports, addon_package):
     case = weight_boundary_model(fixture_imports, addon_package)
 
@@ -1150,6 +1256,7 @@ def test_weight_observer_external_failure_retains_actual_applied_C_state_and_res
 
 
 @pytest.mark.parametrize("hook", ["profile", "trace"])
+@_isolated_weight_observer_test
 def test_weight_observer_refuses_occupied_hook_without_replacing_it(fixture_imports, addon_package, hook):
     case = weight_boundary_model(fixture_imports, addon_package)
     getter, setter = (sys.getprofile, sys.setprofile) if hook == "profile" else (sys.gettrace, sys.settrace)
