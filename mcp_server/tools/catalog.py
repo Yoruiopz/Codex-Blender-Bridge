@@ -80,6 +80,8 @@ from .modifiers import DESTRUCTIVE_TOOL_NAMES as MODIFIER_DESTRUCTIVE_TOOL_NAMES
 from .modifiers import TOOL_DATA as MODIFIER_TOOL_DATA
 from .modifiers import TOOL_NAMES as MODIFIER_TOOL_NAMES
 from .modifiers import load_definitions as load_modifier_definitions
+from .native_save import PERMISSIONS as NATIVE_SAVE_PERMISSIONS
+from .native_save import TOOL_DATA as NATIVE_SAVE_TOOL_DATA
 from .nla_lifecycle import DESTRUCTIVE_TOOL_NAMES as NLA_DESTRUCTIVE_TOOL_NAMES
 from .nla_lifecycle import TOOL_DATA as NLA_TOOL_DATA
 from .nla_lifecycle import load_definitions as _load_nla_definitions
@@ -172,9 +174,10 @@ def load_scene_edit_definitions() -> tuple[ToolDefinition, ...]:
     return (*_load_base_scene_edit_definitions(), *_load_scene_variant_definitions())
 
 CORE_REMOTE_TOOLS: tuple[tuple[str, str, bool, tuple[str, ...]], ...] = (
+    *((name, description, modifying, NATIVE_SAVE_PERMISSIONS) for name, description, modifying in NATIVE_SAVE_TOOL_DATA),
     *((name, description, modifying, GEOMETRY_PREVIEW_PERMISSIONS) for name, description, modifying in GEOMETRY_PREVIEW_TOOL_DATA),
-    ("jobs.inspect", "Inspect session-local image or bounded rigid-evaluation job progress, result/error and retained effects.", False, ("INSPECT_SCENE",)),
-    ("jobs.list", "List bounded session-local image and rigid-evaluation jobs and retained Scene receipts; no durable queue.", False, ("INSPECT_SCENE",)),
+    ("jobs.inspect", "Inspect session-local image, geometry, native-save or bounded rigid-evaluation job progress, result/error and retained effects.", False, ("INSPECT_SCENE",)),
+    ("jobs.list", "List bounded session-local image, geometry, native-save and rigid-evaluation jobs with retained receipts; no durable queue.", False, ("INSPECT_SCENE",)),
     ("jobs.cancel", "Request safe-point cancellation of an exact job, not rollback; available while paused.", False, ()),
     ("bridge.status", "Report Blender bridge, project, mode, and permission status.", False, ()),
     ("bridge.task.set", "Show the current high-level Codex task in Blender's UI.", False, ()),
@@ -303,6 +306,7 @@ DESTRUCTIVE_TOOL_NAMES = frozenset(
     | {
         "checkpoint.undo_last",
         "project.save",
+        "project.native_save_start",
         "asset.export",
         "viewport.capture",
         "object.delete",

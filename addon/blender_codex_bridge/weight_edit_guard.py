@@ -6,6 +6,7 @@ separately reviewed ordinary-call window; models do not qualify a native reader.
 
 from __future__ import annotations
 
+import dis
 import hashlib
 import json
 import math
@@ -13,10 +14,13 @@ import struct
 import sys
 import threading
 from dataclasses import dataclass, replace
-from types import CodeType, FunctionType, MethodDescriptorType, WrapperDescriptorType
+from enum import Enum
+from types import CodeType, FunctionType, MethodDescriptorType, ModuleType, WrapperDescriptorType
 from typing import Any, ClassVar
 from weakref import ref
 
+from . import native_save_policy as _save_policy
+from . import permissions as _permissions
 from . import runtime as _runtime
 from . import weight_edit_plan as intent
 from .errors import BridgeError, ErrorCode
@@ -30,13 +34,172 @@ _PREFERENCES = _runtime._preferences
 _PREFERENCES_CODE = _PREFERENCES.__code__
 _PERMISSION_SNAPSHOT = _runtime.permission_snapshot
 _PERMISSION_SNAPSHOT_CODE = _PERMISSION_SNAPSHOT.__code__
+# Runtime must initialize before this source module: its jobs import depends on
+# the canonical runtime definitions. Pin the actual loaded jobs module afterward.
+_save_jobs = sys.modules[__package__ + ".native_save_jobs"]
+_NATIVE_SAVE_JOBS = _save_jobs.NativeSaveJobs
+_CONSTRUCTOR_CODE = _RUNTIME_CLASS.__init__.__code__
+_PROVIDER_CODE, = (code for code in _CONSTRUCTOR_CODE.co_consts
+                  if type(code) is CodeType and code.co_names == ("permission_snapshot", "_preferences")
+                  and code.co_name == "<lambda>" and not code.co_freevars)
+_MISSING = object()
+_PURE_TYPE, _PURE_VARS, _PURE_LEN, _PURE_ANY, _PURE_ALL, _PURE_ZIP, _PURE_OBJECT = type, vars, len, any, all, zip, object
+_PURE_TYPE_NAMESPACE = type.__dict__["__dict__"]
+_PURE_NAMESPACE = globals()
+_LOCAL_NAMESPACE_ORIGIN = _PURE_NAMESPACE
+_PURE_BUILTINS = __builtins__ if type(__builtins__) is dict else vars(__builtins__)
+_PURE_BUILTIN_FACTS = tuple((name, _PURE_BUILTINS[name]) for name in (
+    "type", "vars", "len", "any", "all", "zip", "object", "__import__"))
+_ORIGIN_ERROR = BridgeError
+_PURE_ALIASES = tuple((name, _PURE_NAMESPACE[name]) for name in (
+    "_PURE_TYPE", "_PURE_VARS", "_PURE_LEN", "_PURE_ANY", "_PURE_ALL", "_PURE_ZIP", "_PURE_OBJECT",
+    "_PURE_TYPE_NAMESPACE", "_ORIGIN_ERROR"))
+
+
+def _global_names(code):
+    names = {instruction.argval for instruction in dis.get_instructions(code)
+             if instruction.opname in {"LOAD_GLOBAL", "LOAD_NAME"}}
+    for child in code.co_consts:
+        if type(child) is CodeType:
+            names.update(_global_names(child))
+    return tuple(sorted(names))
+
+
+def _function_fact(function):
+    """Retain exact executable dependencies without running their callbacks."""
+    namespace, builtins = function.__globals__, function.__builtins__
+    bindings = tuple((name, name in namespace, namespace.get(name, builtins.get(name, _MISSING)))
+                     for name in _global_names(function.__code__))
+    return (function, function.__code__, namespace, builtins, function.__defaults__,
+            function.__kwdefaults__, tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__, tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()), bindings,
+            builtins.get("__import__", _MISSING), namespace.get("__builtins__", _MISSING))
+
+
+def _function_intact(fact):
+    function, code, namespace, builtins, defaults, kwdefaults, keywords, closure, cells, bindings, importer, alias = fact
+    if (_PURE_TYPE(function) is not FunctionType or function.__code__ is not code
+            or function.__globals__ is not namespace or function.__builtins__ is not builtins
+            or function.__defaults__ is not defaults or function.__kwdefaults__ is not kwdefaults
+            or function.__closure__ is not closure or builtins.get("__import__", _MISSING) is not importer
+            or namespace.get("__builtins__", _MISSING) is not alias):
+        return False
+    if kwdefaults is not None and (_PURE_TYPE(kwdefaults) is not dict or _PURE_LEN(kwdefaults) != _PURE_LEN(keywords)
+            or _PURE_ANY(key not in kwdefaults or kwdefaults[key] is not value for key, value in keywords)):
+        return False
+    if _PURE_ANY(cell.cell_contents is not value for cell, value in cells):
+        return False
+    return _PURE_ALL((name in namespace) is present
+               and namespace.get(name, builtins.get(name, _MISSING)) is value
+               for name, present, value in bindings)
+
+
+_GRANT_CLASS = _save_policy.NativeSaveGrant
+_STATEMENT_CLASS = _save_policy.GrantStatement
+_GRANT_PROPERTY = _PURE_VARS(_GRANT_CLASS)["generation"]
+_ENUM_VALUE_PROPERTY = _PURE_VARS(Enum)["value"]
+_ENUM_VALUE_ITEMS = tuple(_PURE_VARS(_ENUM_VALUE_PROPERTY).items())
+_GRAPH_CLASSES = (_RUNTIME_CLASS, _permissions.PermissionManager, _permissions.Permission,
+                  Enum, _PURE_TYPE(_permissions.Permission), *_PURE_TYPE(_ENUM_VALUE_PROPERTY).__mro__[:-1],
+                  _GRANT_CLASS, _STATEMENT_CLASS, *_NATIVE_SAVE_JOBS.__mro__[:-1])
+_CLASS_FACTS = tuple((cls, tuple(_PURE_VARS(cls).items())) for cls in _GRAPH_CLASSES)
+_GRAPH_FUNCTIONS = (
+    _RUNTIME_CLASS.__init__, _PREFERENCES, _PERMISSION_SNAPSHOT,
+    _runtime.native_save_permission_provider_intact, _permissions.permission_snapshot,
+    _STATEMENT_CLASS.__init__, _GRANT_PROPERTY.fget,
+    *(getattr(_GRANT_CLASS, name) for name in ("__init__", "__setattr__", "_main", "_now", "arm", "revoke",
+                                             "active", "statement", "check", "status")),
+    _save_policy.threading.current_thread, _save_policy.threading.main_thread,
+    _ENUM_VALUE_PROPERTY.fget, _PURE_TYPE(_ENUM_VALUE_PROPERTY).__get__, _PURE_TYPE(_permissions.Permission).__iter__,
+)
+_FUNCTION_FACTS = tuple(_function_fact(function) for function in _GRAPH_FUNCTIONS)
+_RUNTIME_PINS = tuple((name, _PURE_VARS(_runtime)[name]) for name in (
+    "_BASE_PERMISSION_SNAPSHOT", "_BASE_PERMISSION_SNAPSHOT_CODE", "_NATIVE_SAVE_GRANT_CLASS",
+    "_NATIVE_SAVE_STATEMENT_CLASS", "_GRANT_STATEMENT_INIT_CODE", "_NATIVE_SAVE_POLICY_VERSION", "_GRANT_HELPERS",
+    "_GRANT_GENERATION_PROPERTY", "_GRANT_GENERATION_GETTER_CODE", "_CANONICAL_RUNTIME_CLASS",
+    "_RUNTIME_CONSTRUCTOR_CODE", "_PERMISSION_PROVIDER_CODE", "_PREFERENCES_FUNCTION", "_PREFERENCES_CODE",
+    "_PERMISSION_MANAGER_CLASS", "_PERMISSION_SNAPSHOT_FUNCTION", "_PERMISSION_SNAPSHOT_CODE",
+    "_PERMISSION_PROVIDER_GUARD", "_PERMISSION_PROVIDER_GUARD_CODE", "NativeSaveJobs", "NativeSaveGrant",
+    "GrantStatement", "POLICY_VERSION", "_native_save_policy_module", "_base_permission_snapshot", "Permission"))
+_MODULE_PINS = tuple((module, name, _PURE_VARS(module)[name]) for module, names in (
+    (_save_policy, ("NativeSaveGrant", "GrantStatement", "POLICY_VERSION", "math", "time", "threading")),
+    (_permissions, ("Permission", "PermissionManager", "permission_snapshot", "PREFERENCE_PROPERTIES")),
+    (_save_jobs, ("NativeSaveJobs",)),
+    (_save_policy.math, ("ceil", "isfinite")),
+    (_save_policy.time, ("monotonic",)),
+    (_save_policy.threading, ("current_thread", "main_thread", "get_ident")),
+) for name in names)
+_PREFERENCE_MAP = _permissions.PREFERENCE_PROPERTIES
+_PREFERENCE_ITEMS = tuple(_PREFERENCE_MAP.items())
+_ENUM_NAMES = _permissions.Permission._member_names_
+_ENUM_NAME_ITEMS = tuple(_ENUM_NAMES)
+_ENUM_MAPS = tuple((mapping, tuple(mapping.items())) for mapping in (
+    _permissions.Permission._member_map_, _permissions.Permission._value2member_map_))
+_PERMISSION_MEMBERS = tuple((member, _PURE_VARS(member)["_name_"], _PURE_VARS(member)["_value_"])
+                            for member in _permissions.Permission)
+_H01_TOKEN = object()
+
+
+def _mapping_intact(mapping, items):
+    return _PURE_TYPE(mapping) is dict and _PURE_LEN(mapping) == _PURE_LEN(items) and _PURE_ALL(
+        key is expected_key and value is expected_value
+        for (key, value), (expected_key, expected_value) in _PURE_ZIP(mapping.items(), items, strict=True))
+
+
+def _h01_origin(active):
+    """Independent closed comparison, before any provider or native getter.
+
+    The native save grant's volatile statement/epoch/expiry do not confer ordinary
+    edit authority. This is a canonical-source fence, not a hostile Python sandbox.
+    """
+    if _PURE_TYPE(_runtime) is not ModuleType or _PURE_ANY(_PURE_TYPE(module) is not ModuleType for module, _name, _value in _MODULE_PINS):
+        raise _error("Canonical weight permission modules changed.")
+    for cls, attributes in _CLASS_FACTS:
+        current = _PURE_TYPE_NAMESPACE.__get__(cls, _PURE_TYPE(cls))
+        if _PURE_LEN(current) != _PURE_LEN(attributes) or _PURE_ANY(current.get(name, _MISSING) is not value
+                                                 for name, value in attributes):
+            raise _error("Canonical weight permission dependency class changed.")
+    if (_PURE_ANY(not _function_intact(fact) for fact in _FUNCTION_FACTS)
+            or _PURE_ANY(_PURE_VARS(_runtime).get(name, _MISSING) is not value for name, value in _RUNTIME_PINS)
+            or _PURE_ANY(_PURE_VARS(module).get(name, _MISSING) is not value for module, name, value in _MODULE_PINS)
+            or _RUNTIME_CLASS.__init__.__code__ is not _CONSTRUCTOR_CODE
+            or not _mapping_intact(_PREFERENCE_MAP, _PREFERENCE_ITEMS)
+            or _PURE_LEN(_ENUM_NAMES) != _PURE_LEN(_ENUM_NAME_ITEMS)
+            or _PURE_ANY(name is not expected for name, expected in _PURE_ZIP(_ENUM_NAMES, _ENUM_NAME_ITEMS, strict=True))
+            or _PURE_ANY(not _mapping_intact(mapping, items) for mapping, items in _ENUM_MAPS)
+            or not _mapping_intact(_PURE_VARS(_ENUM_VALUE_PROPERTY), _ENUM_VALUE_ITEMS)
+            or _PURE_ANY(_PURE_VARS(member).get("_name_") is not name or _PURE_VARS(member).get("_value_") is not value
+                   for member, name, value in _PERMISSION_MEMBERS)):
+        raise _error("Canonical weight permission dependency graph changed.")
+    if _PURE_TYPE(active) is not _RUNTIME_CLASS or _PURE_TYPE(_PURE_VARS(active).get("_registered")) is not bool:
+        raise _error("Canonical weight runtime ownership changed.", native_profile_qualified=False, origin_supported=False)
+    grant = _PURE_VARS(active).get("native_save_policy")
+    if (_PURE_TYPE(grant) is not _GRANT_CLASS or grant is not _PURE_VARS(active).get("_native_save_policy_origin")
+            or _PURE_TYPE(_PURE_VARS(active).get("jobs")) is not _NATIVE_SAVE_JOBS
+            or _PURE_VARS(active.jobs).get("native_save_policy") is not grant
+            or _PURE_TYPE(_PURE_VARS(active).get("_native_save_local_authority")) is not object
+            or _PURE_OBJECT.__getattribute__(grant, "_authority") is not _PURE_VARS(active)["_native_save_local_authority"]
+            or _PURE_OBJECT.__getattribute__(grant, "_generation") is not _PURE_VARS(active).get("_native_save_generation")
+            or _PURE_TYPE(_PURE_OBJECT.__getattribute__(grant, "_generation")) is not str
+            or _PURE_TYPE(_PURE_OBJECT.__getattribute__(grant, "_thread")) is not int
+            or _PURE_OBJECT.__getattribute__(grant, "_thread") != _save_policy.threading.get_ident()):
+        raise _error("Canonical weight native-save grant ownership changed.")
+    return (_H01_TOKEN, grant, _PURE_OBJECT.__getattribute__(grant, "_authority"),
+            _PURE_OBJECT.__getattribute__(grant, "_generation"), _PURE_OBJECT.__getattribute__(grant, "_thread"))
 
 METHODS = frozenset({"weights.assign", "weights.normalize"})
 _CAPTURES: dict[int, list[Any]] = {}
 
 
 def _error(message: str, **context: Any) -> BridgeError:
-    return BridgeError(ErrorCode.NOT_IMPLEMENTED, message, context)
+    # The refusal itself must not invoke a substituted Enum.value getter.
+    return BridgeError("NOT_IMPLEMENTED", message, context)
+
+
+# The entry authenticates these functions inline, before calling any comparator.
+# Retaining function objects alone would miss an in-place __code__ substitution.
+_LOCAL_FACTS = tuple((name, _function_fact(_PURE_NAMESPACE[name])) for name in (
+    "_h01_origin", "_function_intact", "_mapping_intact", "_error"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -431,13 +594,82 @@ class _NativeReader:
         self._ids = self._identity(self._object()), self._identity(self._object().data)
 
     def _ordinary_origin(self):
+        # A literal's immutable native class supplies the bootstrap type anchor;
+        # no caller-replaceable comparator or container is touched first.
+        native_type, native_tuple, native_dict = ().__class__.__class__, ().__class__, {}.__class__
+        native_str, native_function, native_bool = "".__class__, (lambda: None).__class__, True.__class__
+        tuple_length = native_tuple.__len__
+        if (native_type(_PURE_NAMESPACE) is not native_dict
+                or native_type(_LOCAL_NAMESPACE_ORIGIN) is not native_dict
+                or _PURE_NAMESPACE is not _LOCAL_NAMESPACE_ORIGIN
+                or native_type(_PURE_BUILTINS) is not native_dict
+                or native_type(_PURE_ALIASES) is not native_tuple or tuple_length(_PURE_ALIASES) != 9
+                or native_type(_PURE_BUILTIN_FACTS) is not native_tuple or tuple_length(_PURE_BUILTIN_FACTS) != 8
+                or native_type(_LOCAL_FACTS) is not native_tuple or tuple_length(_LOCAL_FACTS) != 4):
+            raise _ORIGIN_ERROR("NOT_IMPLEMENTED", "Weight origin root shape changed.")
+        for rows in (_PURE_ALIASES, _PURE_BUILTIN_FACTS):
+            for row in rows:
+                if (native_type(row) is not native_tuple or tuple_length(row) != 2
+                        or native_type(row[0]) is not native_str):
+                    raise _ORIGIN_ERROR("NOT_IMPLEMENTED", "Weight origin primitive pin shape changed.")
+        for row in _LOCAL_FACTS:
+            if (native_type(row) is not native_tuple or tuple_length(row) != 2
+                    or native_type(row[0]) is not native_str or native_type(row[1]) is not native_tuple
+                    or tuple_length(row[1]) != 12):
+                raise _ORIGIN_ERROR("NOT_IMPLEMENTED", "Weight origin comparator pin shape changed.")
+            fact = row[1]
+            if (native_type(fact[0]) is not native_function or fact[2] is not _PURE_NAMESPACE
+                    or fact[3] is not _PURE_BUILTINS or fact[4] is not None or fact[5] is not None
+                    or native_type(fact[6]) is not native_tuple or tuple_length(fact[6]) != 0
+                    or fact[7] is not None or native_type(fact[8]) is not native_tuple or tuple_length(fact[8]) != 0
+                    or native_type(fact[9]) is not native_tuple or tuple_length(fact[9]) > 128):
+                raise _ORIGIN_ERROR("NOT_IMPLEMENTED", "Weight origin comparator pin contents changed.")
+            for binding in fact[9]:
+                if (native_type(binding) is not native_tuple or tuple_length(binding) != 3
+                        or native_type(binding[0]) is not native_str or native_type(binding[1]) is not native_bool):
+                    raise _ORIGIN_ERROR("NOT_IMPLEMENTED", "Weight origin binding pin shape changed.")
+        # No local comparator is called until its complete executable shape and
+        # direct bindings pass this independent inline fence. Native primitive
+        # aliases also make a rejected builtin substitution callback-free.
+        for name, expected in _PURE_ALIASES:
+            if _PURE_NAMESPACE.get(name, _MISSING) is not expected:
+                raise _ORIGIN_ERROR("NOT_IMPLEMENTED", "Weight origin primitive changed.")
+        for name, expected in _PURE_BUILTIN_FACTS:
+            if _PURE_BUILTINS.get(name, _MISSING) is not expected:
+                raise _ORIGIN_ERROR("NOT_IMPLEMENTED", "Weight origin builtin changed.")
+        for name, fact in _LOCAL_FACTS:
+            function, code, namespace, builtins, defaults, kwdefaults, keywords, closure, cells, bindings, importer, alias = fact
+            if (_PURE_NAMESPACE.get(name, _MISSING) is not function
+                    or _PURE_TYPE(function) is not FunctionType or function.__code__ is not code
+                    or function.__globals__ is not namespace or function.__builtins__ is not builtins
+                    or function.__defaults__ is not defaults or function.__kwdefaults__ is not kwdefaults
+                    or function.__closure__ is not closure
+                    or builtins.get("__import__", _MISSING) is not importer
+                    or namespace.get("__builtins__", _MISSING) is not alias):
+                raise _ORIGIN_ERROR("NOT_IMPLEMENTED", "Weight origin comparator changed.")
+            if kwdefaults is not None:
+                if _PURE_TYPE(kwdefaults) is not dict or _PURE_LEN(kwdefaults) != _PURE_LEN(keywords):
+                    raise _ORIGIN_ERROR("NOT_IMPLEMENTED", "Weight origin comparator defaults changed.")
+                for key, value in keywords:
+                    if key not in kwdefaults or kwdefaults[key] is not value:
+                        raise _ORIGIN_ERROR("NOT_IMPLEMENTED", "Weight origin comparator defaults changed.")
+            for cell, value in cells:
+                if cell.cell_contents is not value:
+                    raise _ORIGIN_ERROR("NOT_IMPLEMENTED", "Weight origin comparator closure changed.")
+            for key, present, value in bindings:
+                if ((key in namespace) is not present
+                        or namespace.get(key, builtins.get(key, _MISSING)) is not value):
+                    raise _ORIGIN_ERROR("NOT_IMPLEMENTED", "Weight origin comparator binding changed.")
+        runtime = _runtime
+        if _PURE_TYPE(runtime) is not ModuleType:
+            raise _error("Canonical weight runtime module changed.")
+        active = _PURE_VARS(runtime).get("_RUNTIME")
+        grant_origin = _h01_origin(active)
         from .command_queue import QueuedRequest
         from .executor import MainThreadExecutor
         from .permissions import PermissionManager
         from .tool_registry import ToolContext
         c = self.context
-        runtime = _runtime
-        active = runtime._RUNTIME
         if (threading.current_thread() is not threading.main_thread()
                 or type(c) is not ToolContext or type(active) is not _RUNTIME_CLASS
                 or runtime.BridgeRuntime is not _RUNTIME_CLASS
@@ -447,7 +679,7 @@ class _NativeReader:
                 or active.executor.state is not c.state or active.executor.registry is not c.registry
                 or active.executor.permissions is not c.permissions or active.executor.checkpoints is not c.checkpoints
                 or active.executor.jobs is not c.jobs
-                or c.jobs is not active.jobs or active.jobs.active is not None
+                or c.jobs is not active.jobs or type(active.jobs) is not _NATIVE_SAVE_JOBS or active.jobs.active is not None
                 or type(c.permissions) is not PermissionManager or c.check_final_job is not None):
             raise _error("Direct weight native calls require canonical runtime services and main-thread origin.",
                          native_profile_qualified=False, origin_supported=False)
@@ -456,6 +688,9 @@ class _NativeReader:
                       if type(item) is CodeType and set(item.co_names) == {"permission_snapshot", "_preferences"})
         if (type(source) is not FunctionType or len(codes) != 1 or source.__code__ is not codes[0]
                 or source.__globals__ is not vars(runtime) or source.__closure__ is not None
+                or source.__builtins__ is not _PERMISSION_SNAPSHOT.__builtins__
+                or source.__defaults__ is not None or source.__kwdefaults__ is not None
+                or source.__code__ is not _PROVIDER_CODE
                 or runtime._preferences is not _PREFERENCES or _PREFERENCES.__code__ is not _PREFERENCES_CODE
                 or _PREFERENCES.__globals__ is not vars(runtime)
                 or runtime.permission_snapshot is not _PERMISSION_SNAPSHOT
@@ -482,7 +717,7 @@ class _NativeReader:
                 runtime.permission_snapshot.__code__, runtime.permission_snapshot.__globals__,
                 cancel, final, None if final is None else final.__code__,
                 c.request_lifecycle, request, c.state, c.registry, c.checkpoints,
-                active.executor, active.jobs)
+                active.executor, active.jobs, *grant_origin)
 
     def _check_origin(self):
         current = self._ordinary_origin()

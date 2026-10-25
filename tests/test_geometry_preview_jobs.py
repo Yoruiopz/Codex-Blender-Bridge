@@ -7,8 +7,8 @@ from types import SimpleNamespace as NS
 import pytest
 
 
-@pytest.fixture
-def env(addon_package, monkeypatch, tmp_path):
+@pytest.fixture(params=("geometry", "native_save"))
+def env(addon_package, monkeypatch, tmp_path, request):
     source = importlib.import_module(f"{addon_package}.geometry_preview_source")
     jobs = importlib.import_module(f"{addon_package}.geometry_preview_jobs")
     tools = importlib.import_module(f"{addon_package}.tools.geometry_preview")
@@ -24,7 +24,14 @@ def env(addon_package, monkeypatch, tmp_path):
     def context():
         return registry_module.ToolContext(state, policy, registry, checkpoints, jobs=manager)
 
-    manager = jobs.GeometryPreviewJobs(context, registry=registry)
+    if request.param == "native_save":
+        runtime = importlib.import_module(f"{addon_package}.runtime")
+        policy_module = importlib.import_module(f"{addon_package}.native_save_policy")
+        grant = policy_module.NativeSaveGrant("inherited-geometry-fixture", object())
+        assert not grant.active() and grant.status()["armed"] is False
+        manager = runtime.NativeSaveJobs(context, registry=registry, native_save_policy=grant)
+    else:
+        manager = jobs.GeometryPreviewJobs(context, registry=registry)
     native = NS(raw=b'{"frozen":1}', ids=((1, 1), (2, 2)))
     monkeypatch.setattr(source, "frozen_source", lambda _name: (native.raw, native.ids, 0.1))
     monkeypatch.setattr(
@@ -101,7 +108,7 @@ def test_registered_start_uses_one_slot_and_no_native_checkpoint(env):
     with pytest.raises(env.source.BridgeError):
         start(env)
     row = finish(env)
-    assert row["state"] == "SUCCEEDED" and not row["undo_boundary_created"]
+    assert row["state"] == "SUCCEEDED" and not row["undo_boundary_created"], row
     assert env.calls == ["prepare", "launch", "close", "close"]
     assert env.manager.history[0].origin.raw == b""
     image = env.registry.dispatch(

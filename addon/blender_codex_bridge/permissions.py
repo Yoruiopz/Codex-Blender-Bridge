@@ -22,6 +22,7 @@ class Permission(str, Enum):
     EXECUTE_PYTHON = "EXECUTE_PYTHON"
     ACCESS_EXTERNAL_FILES = "ACCESS_EXTERNAL_FILES"
     SAVE_PROJECT = "SAVE_PROJECT"
+    NATIVE_SAVE_EFFECTS = "NATIVE_SAVE_EFFECTS"
 
 
 PREFERENCE_PROPERTIES: dict[Permission, str] = {
@@ -43,12 +44,16 @@ PREFERENCE_PROPERTIES: dict[Permission, str] = {
 def permission_snapshot(preferences: Any | None) -> dict[str, bool]:
     """Read permission flags from Blender add-on preferences."""
 
+    result = {permission.value: False for permission in Permission}
     if preferences is None:
-        return {permission.value: False for permission in Permission}
-    return {
+        return result
+    result.update({
         permission.value: bool(getattr(preferences, property_name, False))
         for permission, property_name in PREFERENCE_PROPERTIES.items()
-    }
+    })
+    # Runtime session authority is never read from a serialized preference.
+    result[Permission.NATIVE_SAVE_EFFECTS.value] = False
+    return result
 
 
 class PermissionManager:

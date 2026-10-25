@@ -20,6 +20,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 HELPERS = (
+    "scripts.blender_native_save_smoke",
     "scripts.blender_geometry_preview_smoke",
 
 
@@ -116,6 +117,7 @@ def fixture_imports(addon_package, monkeypatch):
 
 
 @pytest.mark.parametrize("name,helper", [
+    ("scripts.blender_native_save_smoke", "main"),
     ("scripts.blender_geometry_preview_smoke", "main"),
 
 
@@ -176,6 +178,473 @@ def test_registered_geometry_fixture_materializes_only_before_pending_state():
     )
     assert updates and updates[0] < action_setup < plan_setup
     assert all(line < pending_base for line in updates)
+
+
+def test_public_native_save_fixture_has_no_child_launcher_or_held_context_paths():
+    source = (ROOT / "scripts" / "blender_native_save_smoke.py").read_text()
+    assert "subprocess" not in source and "Popen" not in source
+    assert "frame_set" not in source and "keyframe_insert" not in source and "libraries.write" not in source
+
+
+def test_native_save_setup_inventory_records_all_families_and_exact_missing_fields(monkeypatch):
+    monkeypatch.setitem(sys.modules, "bpy", ModuleType("bpy"))
+    script = importlib.import_module("scripts.blender_native_save_smoke")
+
+    class Image:
+        bl_rna = NS(identifier="Image", properties={name: object() for name in (
+            "name", "users", "use_fake_user", "source", "type", "packed_file", "has_data", "is_dirty")})
+        name, users, use_fake_user = "Viewer diagnostic", 0, False
+        source, type, packed_file, has_data, is_dirty = "VIEWER", "COMPOSITING", None, False, False
+
+        def as_pointer(self):
+            return 42
+
+        @property
+        def pixels(self):
+            pytest.fail("Setup diagnostics must not prime or copy pixel buffers")
+
+    data = NS(bl_rna=NS(properties=[NS(identifier=name, type="COLLECTION") for name in (
+        "images", "palettes", "unreviewed_family")]), images=[Image()], palettes=[], unreviewed_family=[])
+    result = script.data_inventory(data)
+    assert set(result) == {"images", "palettes", "unreviewed_family"}
+    image = result["images"]["ids"][0]
+    assert result["images"]["count"] == 1 and result["palettes"]["count"] == 0
+    assert "is_runtime_data" in image["absent_descriptors"] and "is_runtime_data" not in image["fields"]
+    assert image["image"]["source"] == "VIEWER" and image["image"]["packed_file"] is None
+    assert "filepath" in image["image_absent_descriptors"]
+
+
+def test_native_save_factory_cleanup_is_attested_named_and_before_artist_asset(monkeypatch):
+    monkeypatch.setitem(sys.modules, "bpy", ModuleType("bpy"))
+    script = importlib.import_module("scripts.blender_native_save_smoke")
+    removed = []
+
+    class Owners(list):
+        def remove(self, owner, *, do_unlink):
+            assert do_unlink is True
+            removed.append(owner.name)
+            super().remove(owner)
+
+    def owner(name, **extra):
+        fields = dict(name=name, library=None, override_library=None, **extra)
+        return NS(**fields, as_pointer=lambda: 7,
+                  bl_rna=NS(identifier="FixtureID", properties={key: object() for key in fields}))
+
+    data = NS(**{family: Owners([owner(family)]) for family in script.FACTORY_FAMILIES},
+              images=Owners([owner("viewer", source="VIEWER"), owner("authored", source="FILE")]),
+              scenes=[owner("scene")], screens=[owner("screen")], window_managers=[owner("wm")])
+    with pytest.raises(AssertionError, match="factory"):
+        script.clean_factory_data(data, attested=False)
+    assert not removed
+    script.clean_factory_data(data, attested=True)
+    assert removed == [*script.FACTORY_FAMILIES, "viewer"]
+    assert [image.name for image in data.images] == ["authored"]
+    assert [data.scenes[0].name, data.screens[0].name, data.window_managers[0].name] == ["scene", "screen", "wm"]
+    tree = ast.parse(Path(script.__file__).read_text())
+    calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)]
+    cleanup = next(node.lineno for node in calls if node.func.id == "clean_factory_data")
+    create = next(node.lineno for node in calls if node.func.id == "fixture")
+    assert cleanup < create
+    remainder = script.unsupported_remainders({"palettes": {"count": 1}, "unknown": {"count": 2},
+                                              "images": {"count": 1}, "scenes": {"count": 1}}, ("scenes", "images"), ())
+    assert set(remainder) == {"palettes", "unknown", "images"}
+
+
+def test_native_save_fixture_persists_structured_error_context_before_expected_code_assertion(
+    addon_package, monkeypatch, tmp_path
+):
+    import json
+
+    monkeypatch.setitem(sys.modules, "bpy", ModuleType("bpy"))
+    script = importlib.import_module("scripts.blender_native_save_smoke")
+    errors = importlib.import_module(f"{addon_package}.errors")
+    error = errors.BridgeError("NOT_IMPLEMENTED", "Narrow profile refusal", {"reason": "UNSUPPORTED_ID_FAMILY:palettes"})
+    report, proof = tmp_path / "failure.json", {"stage": "dispatch:project.native_save_preview"}
+    script.persist_failure(proof, report, error, bridge_error_type=errors.BridgeError)
+    row = json.loads(report.read_text())["failures"][0]
+    assert row["stage"] == proof["stage"] and row["bridge_error"] == error.to_dict()
+    source = Path(script.__file__).read_text()
+    assert source.index("persist_failure(proof, report, error") < source.index("assert error.code == code")
+
+
+def test_native_save_class_census_is_flushed_before_asset_or_profile_and_excludes_value_reflection():
+    source = (ROOT / "scripts" / "blender_native_save_smoke.py").read_text()
+    tree = ast.parse(source)
+    calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)]
+    census = next(node.lineno for node in calls if node.func.id == "schema_census")
+    asset = next(node.lineno for node in calls if node.func.id == "fixture")
+    assert census < asset
+    census_text = source[source.index('proof["schema_census"] = schema_census'):source.index('proof["stage"] = "artist_asset_creation"')]
+    assert census_text.index("report.write_text") < census_text.index('assert not proof["schema_census"]["mismatches"]')
+    profile = ast.parse((ROOT / "addon/blender_codex_bridge/native_save_profile.py").read_text())
+    helpers = [node for node in profile.body if isinstance(node, ast.FunctionDef)
+               and node.name in {"schema_census", "descriptor_metadata"}]
+    assert len(helpers) == 2
+    assert not {node.attr for helper in helpers for node in ast.walk(helper) if isinstance(node, ast.Attribute)} & {
+        "fixed_type", "default", "default_array", "enum_items", "enum_items_static", "pixels", "node_tree"}
+
+
+@pytest.mark.parametrize("rigid_present,sequencer_present", [(False, False), (True, False), (False, True), (True, True)])
+def test_native_save_scene_cache_guard_distinguishes_absence_from_allocated_empty_container(
+    addon_package, rigid_present, sequencer_present
+):
+    from test_native_save import _profile_data
+
+    profile = importlib.import_module(f"{addon_package}.native_save_profile")
+
+    class Pointee:
+        def __getattribute__(self, _name):
+            pytest.fail("The production guard must not inspect or ensure an unsupported cache")
+
+        def __bool__(self):
+            pytest.fail("Allocated-empty cache must not be treated as a false/absent pointer")
+
+    data = _profile_data(profile)
+    data.scenes[0].rigidbody_world = Pointee() if rigid_present else None
+    data.scenes[0].sequence_editor = Pointee() if sequencer_present else None
+    if rigid_present or sequencer_present:
+        with pytest.raises(profile.ProfileRefused, match=r"^SCENE_CACHE_OR_SEQUENCER_UNSUPPORTED$"):
+            profile.capture(data)
+    else:
+        assert profile.capture(data).raw
+
+
+def _owned_scene_diagnostic_model(addon_package, monkeypatch, *, editor_present=True, nonempty=False,
+                                  unknown=False, rigid=False):
+    from test_native_save import _profile_data
+
+    monkeypatch.setitem(sys.modules, "bpy", ModuleType("bpy"))
+    script = importlib.import_module("scripts.blender_native_save_smoke")
+    profile = importlib.import_module(f"{addon_package}.native_save_profile")
+    data = _profile_data(profile)
+    scene = data.scenes[0]
+
+    class Properties(dict):
+        def __iter__(self):
+            return iter(self.values())
+
+    class Editor:
+        bl_rna = NS(identifier="SequenceEditor", properties=Properties({
+            **{name: NS(identifier=name, type="COLLECTION", is_runtime=False)
+               for name in ("sequences", "sequences_all", "meta_stack", "channels")},
+            "active_strip": NS(identifier="active_strip", type="POINTER", is_runtime=False)}))
+        sequences = [object()] if nonempty else []
+        sequences_all, meta_stack, channels, active_strip = [], [], [], None
+
+        def as_pointer(self):
+            return 201
+
+        @property
+        def future_container(self):
+            pytest.fail("Unknown VSE collection must not be traversed")
+
+    editor = Editor()
+    if unknown:
+        editor.bl_rna = NS(identifier="SequenceEditor", properties=Properties({
+            **editor.bl_rna.properties,
+            "future_container": NS(identifier="future_container", type="COLLECTION", is_runtime=False)}))
+    scene.sequence_editor = editor if editor_present else None
+    scene.rigidbody_world = NS(bl_rna=NS(identifier="RigidBodyWorld"), as_pointer=lambda: 202) if rigid else None
+    calls = []
+
+    def clear():
+        calls.append("clear")
+        scene.sequence_editor = None
+
+    scene.sequence_editor_clear = clear
+    scene.sequence_editor_create = lambda: pytest.fail("Diagnostic must not ensure a sequence editor")
+    scene.bl_rna.functions = {"sequence_editor_clear": NS(identifier="sequence_editor_clear")}
+    return script, data, calls
+
+
+@pytest.mark.parametrize("rigid,editor", [(False, False), (True, False), (False, True), (True, True)])
+def test_owned_scene_diagnostics_record_both_pointer_states_without_ensuring(addon_package, monkeypatch, rigid, editor):
+    script, data, calls = _owned_scene_diagnostic_model(addon_package, monkeypatch, rigid=rigid, editor_present=editor)
+    row = script.scene_value_snapshot(data)["scenes"][0]
+    assert row["rigidbody_world"]["present"] is rigid and row["sequence_editor"]["present"] is editor
+    if editor:
+        assert row["sequence_editor"]["empty_candidate"] is True
+        assert row["sequence_editor"]["collections"]["sequences"]["count"] == 0
+    assert not calls
+
+
+@pytest.mark.parametrize("fault", ["nonempty", "unknown", "rigid", "unattested", "incomplete", "other_violation", "stale"])
+def test_owned_sequence_cleanup_refuses_nonempty_unknown_cache_or_unqualified_preflight(
+    addon_package, monkeypatch, fault
+):
+    script, data, calls = _owned_scene_diagnostic_model(
+        addon_package, monkeypatch, nonempty=fault == "nonempty", unknown=fault == "unknown", rigid=fault == "rigid")
+    before = data.scenes[0].sequence_editor
+    preflight = script.value_preflight(data)
+    if fault == "incomplete":
+        preflight["complete"] = False
+    elif fault == "other_violation":
+        preflight["violations"].append({"code": "OBJECT_PROFILE_UNSUPPORTED"})
+    elif fault == "stale":
+        preflight["scene_values"]["scenes"][0]["sequence_editor"]["pointer"] += 1
+    with pytest.raises(AssertionError):
+        script.clear_owned_empty_sequence_editors(data, attested=fault != "unattested", preflight=preflight)
+    assert not calls and data.scenes[0].sequence_editor is before
+
+
+def test_owned_sequence_cleanup_only_clears_empty_attested_editor_after_complete_batch(addon_package, monkeypatch):
+    script, data, calls = _owned_scene_diagnostic_model(addon_package, monkeypatch)
+    preflight = script.value_preflight(data)
+    assert preflight["complete"] and {row["code"] for row in preflight["violations"]} == {"SCENE_SEQUENCE_EDITOR_PRESENT"}
+    assert set(preflight["observations"]) == {
+        "scenes", "collections", "objects", "meshes", "armatures", "actions", "materials", "worlds", "images", "cameras", "lights"}
+    result = script.clear_owned_empty_sequence_editors(data, attested=True, preflight=preflight)
+    assert calls == ["clear"] and data.scenes[0].sequence_editor is None
+    assert result["cleared"][0]["before_pointer"] == 201
+    assert result["after"]["scenes"][0]["sequence_editor"]["present"] is False
+    assert script.value_preflight(data)["violations"] == []
+
+
+def test_owned_value_preflight_reports_multiple_categories_without_decoding_invalid_images(addon_package, monkeypatch):
+    from test_native_save import _profile_id
+
+    script, data, calls = _owned_scene_diagnostic_model(addon_package, monkeypatch)
+    data.meshes = [_profile_id("Mesh", "Editing mesh", is_editmode=True, shape_keys=None,
+                               vertices=[], loops=[], edges=[], polygons=[], uv_layers=[], materials=[])]
+
+    class NoDecode:
+        def __len__(self):
+            pytest.fail("Unsupported image must not trigger a source decode or pixel read")
+
+    data.images = [_profile_id("Image", "Dirty image", source="GENERATED", is_dirty=True, has_data=False,
+                              packed_file=None, channels=4, size=(2, 2), pixels=NoDecode(), filepath="",
+                              colorspace_settings=NS(name="sRGB"), alpha_mode="STRAIGHT")]
+    result = script.value_preflight(data)
+    codes = {row["code"] for row in result["violations"]}
+    assert result["complete"] and {
+        "SCENE_SEQUENCE_EDITOR_PRESENT", "MESH_EDIT_OR_SHAPE_KEYS_UNSUPPORTED",
+        "PACKED_CLEAN_LOADED_FILE_IMAGE_REQUIRED"} <= codes
+    with pytest.raises(AssertionError, match="Other profile violations"):
+        script.clear_owned_empty_sequence_editors(data, attested=True, preflight=result)
+    assert not calls and data.scenes[0].sequence_editor is not None
+
+
+def test_owned_value_diagnostics_finish_before_pending_raw_baseline_and_flush_before_clear():
+    source = (ROOT / "scripts/blender_native_save_smoke.py").read_text()
+    tree = ast.parse(source)
+    calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)]
+    baseline = next(node.lineno for node in ast.walk(tree) if isinstance(node, ast.Assign)
+                    and any(isinstance(target, ast.Subscript) and isinstance(target.slice, ast.Constant)
+                            and target.slice.value == "raw_before_entry" for target in node.targets))
+    assert all(node.lineno < baseline for node in calls if node.func.id in {"scene_value_snapshot", "value_preflight"})
+    preclear = source[source.index('before_clear = value_preflight'):source.index('proof["value_preflights"]["after_owned_clear"] =')]
+    assert preclear.index("report.write_text") < preclear.index("clear_owned_empty_sequence_editors")
+    helpers = [node for node in tree.body if isinstance(node, ast.FunctionDef)
+               and node.name in {"scene_value_snapshot", "value_preflight"}]
+    assert len(helpers) == 2
+    forbidden = {"context", "evaluated_get", "evaluated_depsgraph_get", "sequence_editor_create"}
+    assert not {node.attr for helper in helpers for node in ast.walk(helper) if isinstance(node, ast.Attribute)} & forbidden
+    updates = [node for helper in helpers for node in ast.walk(helper) if isinstance(node, ast.Call)
+               and isinstance(node.func, ast.Attribute) and node.func.attr == "update"]
+    assert all(isinstance(node.func.value, ast.Name) and node.func.value.id == "row" for node in updates)
+
+
+def _factory_channel_model(monkeypatch, build_hash, *, poison_values=False):
+    """Exact public fields from both pinned rna_sequencer.cc definitions only."""
+    monkeypatch.setitem(sys.modules, "bpy", ModuleType("bpy"))
+    script = importlib.import_module("scripts.blender_native_save_smoke")
+
+    class Properties(dict):
+        def __iter__(self):
+            return iter(self.values())
+
+    def descriptor(name, kind, readonly):
+        return NS(identifier=name, type=kind, is_runtime=False, is_readonly=readonly,
+                  array_length=0, bl_rna=NS(properties={"array_length": object()} if kind in {"INT", "BOOLEAN"} else {}))
+
+    fields = {"rna_type": descriptor("rna_type", "POINTER", True),
+              "name": descriptor("name", "STRING", False),
+              "lock": descriptor("lock", "BOOLEAN", False), "mute": descriptor("mute", "BOOLEAN", False)}
+    if build_hash == "d13f752e3b9c":
+        fields["number"] = descriptor("number", "INT", True)
+
+    class Channel:
+        def __init__(self, position):
+            self.position = position
+            self.bl_rna = NS(identifier="SequenceTimelineChannel", properties=Properties(fields), functions=[])
+            self.values = {"name": f"Channel {position}", "lock": False, "mute": False, "number": position}
+
+        def _value(self, name):
+            if poison_values:
+                pytest.fail("All channel metadata must pass before the first public value read")
+            return self.values[name]
+
+        def as_pointer(self):
+            return 1000 + self.position
+
+        @property
+        def name(self):
+            return self._value("name")
+
+        @property
+        def lock(self):
+            return self._value("lock")
+
+        @property
+        def mute(self):
+            return self._value("mute")
+
+        @property
+        def number(self):
+            assert build_hash == "d13f752e3b9c", "Blender4.5 has no public channel-number descriptor"
+            return self._value("number")
+
+        @property
+        def index(self):
+            pytest.fail("Never read or infer hidden channel index storage")
+
+        @property
+        def rna_type(self):
+            pytest.fail("Channel schema screening must not follow a metadata pointee")
+
+    channels = [Channel(position) for position in range(129)]
+    editor = NS(channels=channels, bl_rna=NS(identifier="SequenceEditor", properties=Properties({
+        "channels": descriptor("channels", "COLLECTION", True)})))
+    return script, editor
+
+
+@pytest.mark.parametrize("build_hash", ["62c1db4208e8", "d13f752e3b9c"])
+def test_owned_default_channel_snapshot_uses_complete_ordered_public_state(monkeypatch, build_hash):
+    script, editor = _factory_channel_model(monkeypatch, build_hash)
+    result = script.default_channel_snapshot(editor, build_hash=build_hash)
+    assert result["default_match"] and len(result["rows"]) == result["count"] == 129
+    assert result["index_descriptor_present"] is False
+    assert result["number_descriptor_present"] is (build_hash == "d13f752e3b9c")
+    assert [row["position"] for row in result["rows"]] == list(range(129))
+    assert [row["name"] for row in result["rows"]] == [f"Channel {index}" for index in range(129)]
+    assert all(row["lock"] is False and row["mute"] is False for row in result["rows"])
+    if build_hash == "d13f752e3b9c":
+        assert [row["number"] for row in result["rows"]] == list(range(129))
+    else:
+        assert all("number" not in row for row in result["rows"])
+    assert len(result["fingerprint"]) == 64 and not result["errors"]
+
+
+@pytest.mark.parametrize("fault", ["name", "localized_name", "lock", "mute", "falsey_non_bool", "order", "number"])
+def test_owned_default_channel_snapshot_rejects_any_nondefault_public_field(monkeypatch, fault):
+    script, editor = _factory_channel_model(monkeypatch, "d13f752e3b9c")
+    if fault == "order":
+        editor.channels[127], editor.channels[128] = editor.channels[128], editor.channels[127]
+    else:
+        field, value = {"name": ("name", "Authored channel"), "localized_name": ("name", "Kanal 128"),
+                        "lock": ("lock", True), "mute": ("mute", True),
+                        "falsey_non_bool": ("mute", 0), "number": ("number", 127)}[fault]
+        editor.channels[-1].values[field] = value
+    result = script.default_channel_snapshot(editor, build_hash="d13f752e3b9c")
+    assert not result["default_match"] and result["errors"]
+
+
+@pytest.mark.parametrize("fault", ["class", "extra", "runtime", "wrong_type", "readonly_number", "missing_number", "hidden_index", "function", "array_shape"])
+def test_owned_default_channel_snapshot_screens_all_metadata_before_any_values(monkeypatch, fault):
+    script, editor = _factory_channel_model(monkeypatch, "d13f752e3b9c", poison_values=True)
+    channel = editor.channels[-1]
+    if fault == "class":
+        channel.bl_rna.identifier = "UnreviewedChannel"
+    elif fault == "function":
+        channel.bl_rna.functions = [NS(identifier="unreviewed_function")]
+    elif fault == "missing_number":
+        channel.bl_rna.properties.pop("number")
+    elif fault == "array_shape":
+        channel.bl_rna.properties["lock"].array_length = 1
+    elif fault in {"extra", "hidden_index"}:
+        field = "custom_state" if fault == "extra" else "index"
+        channel.bl_rna.properties[field] = NS(identifier=field, type="INT", is_runtime=False, is_readonly=True)
+    elif fault == "runtime":
+        channel.bl_rna.properties["name"] = NS(identifier="name", type="STRING", is_runtime=True, is_readonly=False)
+    elif fault == "wrong_type":
+        channel.bl_rna.properties["lock"] = NS(identifier="lock", type="INT", is_runtime=False, is_readonly=False)
+    else:
+        channel.bl_rna.properties["number"] = NS(identifier="number", type="INT", is_runtime=False, is_readonly=False)
+    result = script.default_channel_snapshot(editor, build_hash="d13f752e3b9c")
+    assert not result["default_match"] and result["errors"]
+    assert result["index_descriptor_present"] is None and result["number_descriptor_present"] is None
+
+
+@pytest.mark.parametrize("count", [0, 128, 130, 1000000])
+def test_owned_default_channel_snapshot_refuses_wrong_counts_before_iteration(monkeypatch, count):
+    script, editor = _factory_channel_model(monkeypatch, "62c1db4208e8")
+
+    class CountOnly:
+        def __len__(self):
+            return count
+
+        def __iter__(self):
+            pytest.fail("Noncanonical channel count must refuse before traversal")
+
+    editor.channels = CountOnly()
+    result = script.default_channel_snapshot(editor, build_hash="62c1db4208e8")
+    assert not result["default_match"] and result["errors"]
+
+
+@pytest.mark.parametrize("actual_count", [128, 130])
+def test_owned_default_channel_snapshot_bounds_partial_or_growing_iteration(monkeypatch, actual_count):
+    script, editor = _factory_channel_model(monkeypatch, "62c1db4208e8")
+    original = list(editor.channels)
+
+    class Unstable:
+        def __len__(self):
+            return 129
+
+        def __iter__(self):
+            yield from original[:actual_count]
+            if actual_count > 129:
+                yield original[-1]
+                pytest.fail("Traversal must stop immediately at the first excess channel")
+
+    editor.channels = Unstable()
+    result = script.default_channel_snapshot(editor, build_hash="62c1db4208e8")
+    assert not result["default_match"] and result["errors"]
+
+
+@pytest.mark.parametrize("build_hash", ["62c1db4208e8", "d13f752e3b9c"])
+def test_owned_clear_accepts_only_complete_canonical_factory_channels(addon_package, monkeypatch, build_hash):
+    script, data, calls = _owned_scene_diagnostic_model(addon_package, monkeypatch)
+    _script, channels = _factory_channel_model(monkeypatch, build_hash)
+    data.scenes[0].sequence_editor.channels = channels.channels
+    preflight = script.value_preflight(data, build_hash=build_hash)
+    proof = preflight["scene_values"]["scenes"][0]["sequence_editor"]["channel_defaults"]
+    assert proof["default_match"] and {row["code"] for row in preflight["violations"]} == {"SCENE_SEQUENCE_EDITOR_PRESENT"}
+    result = script.clear_owned_empty_sequence_editors(data, attested=True, preflight=preflight, build_hash=build_hash)
+    assert calls == ["clear"] and data.scenes[0].sequence_editor is None
+    assert result["cleared"][0]["owned_default_channel_records_deleted"] == 129
+    assert result["cleared"][0]["channel_fingerprint"] == proof["fingerprint"]
+
+
+@pytest.mark.parametrize("fault", ["nondefault", "nonempty", "unknown", "rigid", "missing_active", "active", "stale_channel", "unattested"])
+def test_owned_clear_retains_every_noncanonical_or_unqualified_channel_layout(addon_package, monkeypatch, fault):
+    build_hash = "d13f752e3b9c"
+    script, data, calls = _owned_scene_diagnostic_model(
+        addon_package, monkeypatch, nonempty=fault == "nonempty", unknown=fault == "unknown", rigid=fault == "rigid")
+    _script, channels = _factory_channel_model(monkeypatch, build_hash)
+    editor = data.scenes[0].sequence_editor
+    editor.channels = channels.channels
+    if fault == "nondefault":
+        editor.channels[-1].values["lock"] = True
+    elif fault == "missing_active":
+        editor.bl_rna.properties.pop("active_strip")
+    elif fault == "active":
+        editor.active_strip = NS(bl_rna=NS(identifier="Strip"), as_pointer=lambda: 999)
+    preflight = script.value_preflight(data, build_hash=build_hash)
+    if fault == "stale_channel":
+        editor.channels[-1].values["name"] = "Manual edit after preflight"
+    with pytest.raises(AssertionError):
+        script.clear_owned_empty_sequence_editors(data, attested=fault != "unattested", preflight=preflight, build_hash=build_hash)
+    assert not calls and data.scenes[0].sequence_editor is editor
+
+
+def test_owned_channel_unknown_build_or_unexposed_number_never_adopts_a_layout(monkeypatch):
+    script, editor = _factory_channel_model(monkeypatch, "62c1db4208e8", poison_values=True)
+    result = script.default_channel_snapshot(editor, build_hash="unqualified")
+    assert not result["default_match"] and result["errors"]
+    assert result["index_descriptor_present"] is None and result["number_descriptor_present"] is None
+    editor.channels[-1].bl_rna.properties["number"] = NS(identifier="number", type="INT", is_runtime=False, is_readonly=True)
+    result = script.default_channel_snapshot(editor, build_hash="62c1db4208e8")
+    assert not result["default_match"] and result["errors"]
 
 
 def test_history_native_fixture_is_opt_in_interactive_and_autoexec_disabled(monkeypatch, tmp_path):

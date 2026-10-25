@@ -14,6 +14,16 @@ rna_env = rna_fixtures.env
 
 
 @pytest.fixture
+def native_save_grant(addon_package):
+    policy = importlib.import_module(f"{addon_package}.native_save_policy")
+    authority = object()
+    grant = policy.NativeSaveGrant("artist-loop-fixture", authority)
+    assert not grant.active() and grant.status()["armed"] is False
+    grant.arm(authority, 900)
+    return grant
+
+
+@pytest.fixture
 def loop(rna_env, addon_package, monkeypatch):
     env = rna_env
     module = importlib.import_module(f"{addon_package}.tools.artist_loop")
@@ -479,7 +489,9 @@ def test_disable_lifetime_revoked_by_last_permission_provider_retains_protection
 
 
 @pytest.mark.parametrize("recovery_in_progress", [False, True])
-def test_native_undo_callback_invalidates_same_state_handles_and_active_boundary(loop, addon_package, monkeypatch, recovery_in_progress):
+def test_native_undo_callback_invalidates_same_state_handles_and_active_boundary(
+    loop, addon_package, monkeypatch, recovery_in_progress, native_save_grant
+):
     arm(loop)
     result = preview(loop)
     store = loop.data.get_task_plans(loop.context.state)
@@ -491,9 +503,11 @@ def test_native_undo_callback_invalidates_same_state_handles_and_active_boundary
     baseline = store.baseline
     runtime = importlib.import_module(f"{addon_package}.runtime")
     monkeypatch.setattr(runtime, "_RUNTIME", NS(state=loop.context.state, jobs=NS(cancel_all=lambda _reason: None),
+        native_save_policy=native_save_grant,
         checkpoints=NS(recovery_in_progress=recovery_in_progress, clear=lambda: None)))
     monkeypatch.setattr(runtime, "clear_selection_references", lambda: None)
     runtime._before_external_undo_redo(None)
+    assert not native_save_grant.active()
     new_guard = loop.module.Boundary(loop.bpy, loop.context, "transform.set", loop.obj, transform=True)
     assert measured_before == (loop.loop._context(loop.bpy), loop.loop._profile(new_guard))
     assert loop.loop.policy_stamp(loop.context) != stamp
@@ -508,13 +522,16 @@ def test_native_undo_callback_invalidates_same_state_handles_and_active_boundary
     assert preview(loop)["scope_complete"]
 
 
-def test_native_history_epoch_during_active_preview_retains_partial_without_compensation(loop, addon_package, monkeypatch):
+def test_native_history_epoch_during_active_preview_retains_partial_without_compensation(
+    loop, addon_package, monkeypatch, native_save_grant
+):
     arm(loop)
     result = preview(loop, scale=[2., 2., 2.])
     store = loop.data.get_task_plans(loop.context.state)
     epoch = store.protection_generation
     runtime = importlib.import_module(f"{addon_package}.runtime")
     monkeypatch.setattr(runtime, "_RUNTIME", NS(state=loop.context.state, jobs=NS(cancel_all=lambda _reason: None),
+        native_save_policy=native_save_grant,
         checkpoints=NS(recovery_in_progress=True, clear=lambda: None)))
     fired = []
     def callback():
@@ -522,10 +539,12 @@ def test_native_history_epoch_during_active_preview_retains_partial_without_comp
             assert store.applying_preview is not None and store.executing_mutators == 1
             fired.append(True)
             runtime._before_external_undo_redo(None)
+            assert not native_save_grant.active()
     loop.provider[0] = callback
     with pytest.raises(loop.module.BridgeError) as error:
         loop.loop.apply_preview(loop.context, {"preview_id": result["preview_id"], "expected_revision": 1})
     assert fired and store.protection_generation > epoch
+    assert not native_save_grant.active()
     assert loop.obj.location == (1., 2., 3.) and loop.obj.scale == (1., 1., 1.)
     assert error.value.context["possible_mutation"] and not error.value.context["rollback_verified"]
     assert store.inspect()["protected_scope_enforced"] and store.executing_mutators == 0
@@ -533,7 +552,9 @@ def test_native_history_epoch_during_active_preview_retains_partial_without_comp
 
 
 @pytest.mark.parametrize("replacement", ["state_reset", "clear_task_plans", "new_store", "runtime_file_load"])
-def test_registry_counter_survives_plan_state_and_project_replacement(loop, addon_package, monkeypatch, replacement):
+def test_registry_counter_survives_plan_state_and_project_replacement(
+    loop, addon_package, monkeypatch, replacement, native_save_grant
+):
     original_store = loop.data.get_task_plans(loop.context.state)
     registry = loop.context.registry
     unsafe_edits = []
@@ -550,9 +571,11 @@ def test_registry_counter_survives_plan_state_and_project_replacement(loop, addo
             runtime_module = importlib.import_module(f"{addon_package}.runtime")
             monkeypatch.setattr(runtime_module, "clear_selection_references", lambda: None)
             runtime = NS(state=context.state, registry=registry, jobs=NS(cancel_all=lambda _reason: None),
+                native_save_policy=native_save_grant,
                 server=NS(stop=lambda: None), command_queue=NS(cancel_all=lambda _reason: None),
                 checkpoints=NS(clear=lambda: None), executor=NS(evidence=NS(clear=lambda: None)))
             runtime_module.BridgeRuntime.prepare_for_file_load(runtime)
+            assert not native_save_grant.active()
         registry.reset_enabled_toolsets()
         fresh = loop.data.get_task_plans(context.state)
         observations.append((registry.executing_mutators, fresh.executing_mutators))

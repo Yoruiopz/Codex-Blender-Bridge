@@ -1,11 +1,18 @@
 # Project saving is blocked pending native side-effect control
 
-Published 0.4.0/0.5.0 alphas and current development source: **`project.save` returns
+Published 0.4.0–0.6.0 alphas and current development source: **`project.save` returns
 `NOT_IMPLEMENTED` for both
 current-file Save and Save As.** The prior alpha's native save capability is
 unavailable in these versions. The tool name, optional `filepath`,
 permission metadata and V1 envelopes remain compatible; successful saving is
 not supported. Earlier published artifacts remain available unchanged.
+
+Unreleased source adds a distinct [native-save session-permission workflow](native-project-saving.md)
+through `project.native_save_preview`/`project.native_save_start`. Combined-source
+native and installed-package qualification is pending. It explicitly authorizes normal
+native callback/catalog effects rather than claiming the exact-path confinement
+that blocked the legacy tool. It does not unquarantine `project.save`, prove a
+complete native effect inventory, or complete portable production delivery.
 
 `SAVE_PROJECT` remains required. Supplying `filepath` also requires
 `ACCESS_EXTERNAL_FILES`; the handler checks both grants together in its final
@@ -54,7 +61,7 @@ publication and a final lifetime check after its additional permission provider.
 
 `libraries.write` is not an approved whole-project replacement. Full Main/UI
 serialization has native failure evidence; asset-only serialization omits state
-or changes fake-user semantics. There is no supported substitute save backend.
+or changes fake-user semantics. It is not an approved whole-project save backend.
 Arbitrary Python remains disabled by default and does not satisfy this missing
 structured workflow.
 

@@ -14,6 +14,11 @@ from test_checkpoint_snapshots import NativeStack, Scene
 from test_image_paint import paint_tools  # noqa: F401
 from test_paint_jobs import jobs, start  # noqa: F401
 
+pytestmark = [
+    pytest.mark.usefixtures("scene_job_manager"),
+    pytest.mark.parametrize("scene_job_manager", ("scene", "native_save")),
+]
+
 
 @pytest.fixture
 def scene_jobs(addon_package, monkeypatch, request):
@@ -52,8 +57,19 @@ def scene_jobs(addon_package, monkeypatch, request):
 
     permissions = permissions_module.PermissionManager(provider)
     executor = None
-    manager = domain.SceneJobs(lambda: executor.context, budget_ms=lambda: 8., registry=registry,
-                              recovery_limit=getattr(request, "param", 8))
+    callspec = getattr(request.node, "callspec", None)
+    manager_kind = "scene" if callspec is None else callspec.params.get("scene_job_manager", "scene")
+    options = {"registry": registry, "recovery_limit": getattr(request, "param", 8)}
+    if manager_kind == "native_save":
+        runtime = importlib.import_module(f"{addon_package}.runtime")
+        policy_module = importlib.import_module(f"{addon_package}.native_save_policy")
+        grant = policy_module.NativeSaveGrant("inherited-scene-fixture", object())
+        assert not grant.active() and grant.status()["armed"] is False
+        manager = runtime.NativeSaveJobs(
+            lambda: executor.context, budget_ms=lambda: 8., native_save_policy=grant, **options,
+        )
+    else:
+        manager = domain.SceneJobs(lambda: executor.context, budget_ms=lambda: 8., **options)
     executor = executor_module.MainThreadExecutor(
         command_queue=queue_module.CommandQueue(), registry=registry, state=state,
         permissions=permissions, checkpoints=checkpoints, jobs=manager,
@@ -954,7 +970,7 @@ def test_recovery_receipt_survives_thirty_three_terminal_summary_evictions(scene
     assert old["checkpoint"] == receipt["checkpoint"] and env.provider_calls == providers
 
 
-def test_image_jobs_keep_their_multiple_cooperative_steps_per_tick(request, monkeypatch):
+def test_image_jobs_keep_their_multiple_cooperative_steps_per_tick(request, monkeypatch, scene_job_manager):
     env = request.getfixturevalue("jobs")
     domain = importlib.import_module(env.module.__package__ + ".scene_jobs")
     registry_module = importlib.import_module(env.module.__package__ + ".tool_registry")
@@ -967,7 +983,16 @@ def test_image_jobs_keep_their_multiple_cooperative_steps_per_tick(request, monk
             original_context.checkpoints, jobs=manager,
         )
 
-    manager = domain.SceneJobs(context, budget_ms=lambda: 8., registry=original_context.registry)
+    if scene_job_manager == "native_save":
+        runtime = importlib.import_module(env.module.__package__ + ".runtime")
+        policy_module = importlib.import_module(env.module.__package__ + ".native_save_policy")
+        grant = policy_module.NativeSaveGrant("inherited-scene-image-fixture", object())
+        assert not grant.active() and grant.status()["armed"] is False
+        manager = runtime.NativeSaveJobs(
+            context, budget_ms=lambda: 8., registry=original_context.registry, native_save_policy=grant,
+        )
+    else:
+        manager = domain.SceneJobs(context, budget_ms=lambda: 8., registry=original_context.registry)
     env.manager, env.context = manager, context
     original_steps, measured = env.paint.brush.paint_steps, []
 

@@ -38,6 +38,13 @@ viewport appearance are excluded. Ordinary viewport capture remains available wh
 is unarmed. Protected viewport capture still refuses until a stock-Blender redesign is
 qualified; see [capture status and preservation requirements](docs/protected-capture-design.md).
 
+Unreleased [native project saving](docs/native-project-saving.md) adds distinct
+preview/start tools for Save Copy, current-file Save and Save As, with a default-off
+locally armed session permission for normal native callback/catalog effects.
+Qualification of this combined source and its installed packages is pending. The older
+[`project.save` refusal](docs/project-save-safety.md) remains in place; this source
+does not claim full portable production delivery.
+
 **1.0 is not ready.** Follow the [development status](docs/development-status.md),
 [roadmap](docs/roadmap.md) and [release plan](docs/plan-1.0.md).
 All 29 implementation items and 14 stable-release gates remain open; the
@@ -201,10 +208,10 @@ registry in CI. It does not describe the 108-tool 0.3.0 download.
 The local recovery UI also has an add-on-only action, not an extra MCP tool.
 
 <!-- BEGIN GENERATED MCP TOOLS -->
-Current registry: **268 MCP tools**.
+Current registry: **270 MCP tools**.
 
 <details>
-<summary>core — 36 tools</summary>
+<summary>core — 38 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
@@ -215,12 +222,14 @@ Current registry: **268 MCP tools**.
 | `checkpoint.list` | List checkpoint labels, operation history and conservative recovery availability. |
 | `checkpoint.undo_last` | Use Blender global undo only with explicit acknowledgement of user-interleaving risk. |
 | `jobs.cancel` | Request safe-point cancellation of an exact job, not rollback; available while paused. |
-| `jobs.inspect` | Inspect session-local image or bounded rigid-evaluation job progress, result/error and retained effects. |
-| `jobs.list` | List bounded session-local image and rigid-evaluation jobs and retained Scene receipts; no durable queue. |
+| `jobs.inspect` | Inspect session-local image, geometry, native-save or bounded rigid-evaluation job progress, result/error and retained effects. |
+| `jobs.list` | List bounded session-local image, geometry, native-save and rigid-evaluation jobs with retained receipts; no durable queue. |
 | `object.inspect` | Inspect one object without dumping raw vertex coordinates. |
 | `preview.geometry_image` | Retrieve a successful fresh geometry-preview PNG from this session; stale/expired handles refuse. |
 | `preview.geometry_start` | Start one bounded isolated authored-geometry preview job; no source Main or original material appearance is changed. |
 | `project.info` | Inspect project metadata and render settings. |
+| `project.native_save_preview` | Preview an explicitly authorized stock native save with exact source/path/overwrite facts; not a passive read or completed save. |
+| `project.native_save_start` | Accept the identical preview as a bounded native-save/reopen job; native callbacks and saved files can persist after cancellation. |
 | `project.save` | Project saving is unavailable until native save side effects can be bounded. |
 | `scene.compare` | Compare current measured object fields with a session snapshot; report incomplete coverage. |
 | `scene.inspect` | Return a compact authoritative structural scene representation. |

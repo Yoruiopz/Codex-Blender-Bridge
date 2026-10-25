@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import importlib
+import sys
+from types import FunctionType
 from types import SimpleNamespace as NS
 
 import pytest
@@ -28,6 +30,295 @@ def test_canonical_runtime_direct_origin_is_admitted_without_blender_getters(mod
     runtime.permissions._source = lambda: pytest.fail("Unknown provider was invoked")
     with pytest.raises(mod.BridgeError, match="Unreviewed point permission providers"):
         reader._ordinary_origin()
+
+
+@pytest.fixture
+def origin_model(mod, monkeypatch):
+    runtime = mod._runtime.BridgeRuntime()
+    monkeypatch.setattr(mod._runtime, "_RUNTIME", runtime)
+    reader = mod.Reader.__new__(mod.Reader)
+    reader.context = runtime.executor.context
+    monkeypatch.setattr(mod, "require_blender", lambda: pytest.fail("Poisoned graph reached Blender"))
+    return NS(runtime=runtime, reader=reader, mod=mod, calls=[])
+
+
+def test_permission_dependency_proof_executes_no_provider_or_grant_helpers(origin_model):
+    env, calls = origin_model, []
+    functions = (env.mod._PERMISSIONS, env.mod._PREFERENCES,
+                 env.mod._runtime.native_save_permission_provider_intact,
+                 env.mod._permission_module.permission_snapshot,
+                 env.mod._GRANT_CLASS.active, env.mod._GENERATION.fget)
+    watched = {function.__code__ for function in functions}
+    def profile(frame, event, _arg):
+        if event == "call" and frame.f_code in watched:
+            calls.append(frame.f_code.co_name)
+    previous = sys.getprofile()
+    try:
+        sys.setprofile(profile)
+        origin = env.reader._ordinary_origin()
+    finally:
+        sys.setprofile(previous)
+    assert calls == [] and type(origin[2]) is env.mod._runtime.NativeSaveJobs
+    assert origin[17] is env.runtime.native_save_policy
+
+
+@pytest.mark.parametrize("change", [
+    "wrapper", "base", "proof", "helper", "helper_code", "helper_globals", "wrapper_code",
+    "wrapper_defaults", "helper_keywords", "statement_closure", "generation_property",
+    "grant_class", "statement_class", "retained_base", "retained_proof", "retained_helpers",
+    "preference_map", "enum_member", "policy_version", "math", "time", "threading",
+    "global_shadow", "jobs_export", "grant_getattribute",
+])
+def test_changed_permission_dependency_graph_refuses_before_any_callback(origin_model, monkeypatch, change):
+    env, mod = origin_model, origin_model.mod
+    def poison(*_args, **_kwargs):
+        env.calls.append(change)
+        raise AssertionError("An unqualified dependency was executed")
+    runtime, policy = mod._runtime, mod._POLICY_MODULE
+    if change in {"wrapper", "base", "proof"}:
+        name = {"wrapper": "permission_snapshot", "base": "_base_permission_snapshot",
+                "proof": "native_save_permission_provider_intact"}[change]
+        monkeypatch.setattr(runtime, name, poison)
+    elif change == "helper":
+        monkeypatch.setattr(mod._GRANT_CLASS, "active", poison)
+    elif change in {"helper_code", "wrapper_code"}:
+        function = mod._GRANT_CLASS.active if change == "helper_code" else mod._PERMISSIONS
+        def body(*_args, **_kwargs):
+            raise AssertionError("An altered code object was executed")
+        monkeypatch.setattr(function, "__code__", body.__code__)
+    elif change == "helper_globals":
+        function = mod._GRANT_CLASS.active
+        monkeypatch.setattr(mod._GRANT_CLASS, "active", FunctionType(function.__code__, {"type": poison}))
+    elif change == "wrapper_defaults":
+        monkeypatch.setattr(mod._PERMISSIONS, "__defaults__", (poison,))
+    elif change == "helper_keywords":
+        monkeypatch.setitem(mod._GRANT_CLASS.active.__kwdefaults__, "now", poison)
+    elif change == "statement_closure":
+        monkeypatch.setattr(mod._STATEMENT_CLASS.__init__.__closure__[0], "cell_contents", poison)
+    elif change == "generation_property":
+        monkeypatch.setattr(mod._GRANT_CLASS, "generation", property(poison))
+    elif change in {"grant_class", "statement_class"}:
+        name = "NativeSaveGrant" if change == "grant_class" else "GrantStatement"
+        monkeypatch.setattr(runtime, name, type("PoisonedGrantClass", (), {"active": poison}))
+    elif change in {"retained_base", "retained_proof", "retained_helpers"}:
+        name = {"retained_base": "_BASE_PERMISSION_SNAPSHOT", "retained_proof": "_PERMISSION_PROVIDER_GUARD",
+                "retained_helpers": "_GRANT_HELPERS"}[change]
+        monkeypatch.setattr(runtime, name, poison)
+    elif change == "preference_map":
+        monkeypatch.setitem(mod._PREFERENCE_MAP, mod._PERMISSION_CLASS.EDIT_ANIMATION, poison)
+    elif change == "enum_member":
+        monkeypatch.setitem(vars(mod._PERMISSION_CLASS.EDIT_ANIMATION), "_value_", poison)
+    elif change == "policy_version":
+        monkeypatch.setattr(policy, "POLICY_VERSION", "unreviewed")
+    elif change in {"math", "time", "threading"}:
+        monkeypatch.setattr(policy, change, NS(isfinite=poison, monotonic=poison, current_thread=poison))
+    elif change == "global_shadow":
+        monkeypatch.setitem(vars(runtime), "all", poison)
+    elif change == "jobs_export":
+        monkeypatch.setattr(runtime, "NativeSaveJobs", type("UnqualifiedJobs", (), {}))
+    else:
+        monkeypatch.setattr(mod._GRANT_CLASS, "__getattribute__", poison)
+    with pytest.raises(mod.BridgeError, match="dependency graph"):
+        env.reader._ordinary_origin()
+    assert env.calls == []
+
+
+@pytest.mark.parametrize("field", ["authority", "generation", "origin", "job_grant", "thread"])
+def test_changed_grant_owner_refuses_before_native_getters(origin_model, field):
+    env, grant = origin_model, origin_model.runtime.native_save_policy
+    if field == "authority":
+        object.__setattr__(grant, "_authority", object())
+    elif field == "generation":
+        object.__setattr__(grant, "_generation", "different-session")
+    elif field == "origin":
+        env.runtime._native_save_policy_origin = object()
+    elif field == "job_grant":
+        env.runtime.jobs.native_save_policy = object()
+    else:
+        object.__setattr__(grant, "_thread", -1)
+    with pytest.raises(env.mod.BridgeError, match="grant"):
+        env.reader._ordinary_origin()
+
+
+def test_native_grant_changes_only_native_flag_and_not_ordinary_origin(origin_model):
+    env, mod = origin_model, origin_model.mod
+    env.runtime._registered = True
+    grant, authority = env.runtime.native_save_policy, env.runtime._native_save_local_authority
+    prefs = NS(allow_edit_animation=True, allow_edit_mesh=True)
+    before = env.reader._ordinary_origin()
+    ordinary = mod._permission_module.permission_snapshot(prefs)
+    def check(expected_native):
+        result = mod._runtime.permission_snapshot(prefs)
+        assert result.pop("NATIVE_SAVE_EFFECTS") is expected_native
+        assert result == {key: value for key, value in ordinary.items() if key != "NATIVE_SAVE_EFFECTS"}
+        now = env.reader._ordinary_origin()
+        assert len(now) == len(before) and all(a is b for a, b in zip(now, before, strict=True))
+    check(False)
+    grant.arm(authority, 60)
+    check(True)
+    grant.revoke()
+    check(False)
+    grant.arm(authority, 1, now=0.)
+    check(False)
+
+
+@pytest.mark.parametrize("name", ["bool", "all", "type", "any", "vars", "len", "__import__"])
+def test_resolved_builtin_poison_is_refused_without_calling_it(origin_model, name):
+    env, calls = origin_model, []
+    builtins = env.mod._PERMISSIONS.__builtins__
+    original = builtins[name]
+    def poison(*_args, **_kwargs):
+        calls.append(name)
+        raise AssertionError("An altered provider builtin was executed")
+    captured = None
+    try:
+        builtins[name] = poison
+        try:
+            env.reader._ordinary_origin()
+        except env.mod.BridgeError as error:
+            captured = error
+    finally:
+        builtins[name] = original
+    assert captured is not None and "dependency" in captured.message and calls == []
+
+
+@pytest.mark.parametrize("target", ["inherited_active", "enum_value", "enum_iterator", "enum_fget", "enum_get_code",
+                                    "enum_metaclass"])
+def test_changed_inherited_descriptor_is_refused_without_getter_callback(origin_model, monkeypatch, target):
+    env, mod = origin_model, origin_model.mod
+    def poison(*_args, **_kwargs):
+        env.calls.append(target)
+        raise AssertionError("An altered inherited descriptor was executed")
+    if target == "inherited_active":
+        monkeypatch.setattr(mod._JOBS_MRO[2], "active", property(poison), raising=False)
+    elif target == "enum_value":
+        original = vars(mod.Enum)["value"]
+        try:
+            mod.Enum.value = property(poison)
+            with pytest.raises(mod.BridgeError, match="dependency graph"):
+                env.reader._ordinary_origin()
+        finally:
+            mod.Enum.value = original
+        assert env.calls == []
+        return
+    elif target == "enum_fget":
+        monkeypatch.setitem(vars(mod._ENUM_VALUE), "fget", poison)
+    elif target == "enum_get_code":
+        def body(*_args, **_kwargs):
+            raise AssertionError("An altered enum descriptor body was executed")
+        monkeypatch.setattr(vars(type(mod._ENUM_VALUE))["__get__"], "__code__", body.__code__)
+    elif target == "enum_metaclass":
+        original = vars(mod._ENUM_META).get("__getattribute__")
+        captured = None
+        try:
+            mod._ENUM_META.__getattribute__ = poison
+            try:
+                env.reader._ordinary_origin()
+            except mod.BridgeError as error:
+                captured = error
+        finally:
+            if original is None:
+                del mod._ENUM_META.__getattribute__
+            else:
+                mod._ENUM_META.__getattribute__ = original
+        assert captured is not None and env.calls == []
+        return
+    else:
+        monkeypatch.setattr(mod._ENUM_META, "__iter__", poison)
+    with pytest.raises(mod.BridgeError, match="dependency graph"):
+        env.reader._ordinary_origin()
+    assert env.calls == []
+
+
+@pytest.mark.parametrize("name", ["_permission_dependencies", "_function_intact", "_same_items", "_class_items",
+                                  "_grant_origin", "refused"])
+@pytest.mark.parametrize("change", ["replacement", "code"])
+def test_local_proof_helpers_are_authenticated_before_first_call(origin_model, monkeypatch, name, change):
+    env, mod = origin_model, origin_model.mod
+    def poison(*_args, **_kwargs):
+        env.calls.append(name)
+        return True
+    if change == "replacement":
+        monkeypatch.setattr(mod, name, poison)
+    else:
+        def body(*_args, **_kwargs):
+            raise AssertionError("An altered local proof body was executed")
+        monkeypatch.setattr(getattr(mod, name), "__code__", body.__code__)
+    with pytest.raises(mod.BridgeError, match="local point dependency proof"):
+        env.reader._ordinary_origin()
+    assert env.calls == []
+
+
+@pytest.mark.parametrize("target", ["_LOCAL_BUILTINS", "_LOCAL_HELPER_PINS", "_LOCAL_NAMESPACE", "row", "pin"])
+def test_local_proof_root_shapes_refuse_before_container_callbacks(origin_model, monkeypatch, target):
+    env, calls = origin_model, []
+    class ForeignContainer:
+        def __iter__(self):
+            calls.append("iter")
+            raise AssertionError("A foreign proof root was iterated")
+
+        def __getitem__(self, _key):
+            calls.append("item")
+            raise AssertionError("A foreign proof root was indexed")
+
+        def get(self, *_args):
+            calls.append("get")
+            raise AssertionError("A foreign proof namespace was read")
+
+    foreign = ForeignContainer()
+    if target == "row":
+        monkeypatch.setattr(env.mod, "_LOCAL_HELPER_PINS", (foreign, *env.mod._LOCAL_HELPER_PINS[1:]))
+    elif target == "pin":
+        name, _pin = env.mod._LOCAL_HELPER_PINS[0]
+        monkeypatch.setattr(env.mod, "_LOCAL_HELPER_PINS", ((name, foreign), *env.mod._LOCAL_HELPER_PINS[1:]))
+    else:
+        monkeypatch.setattr(env.mod, target, foreign)
+    with pytest.raises(env.mod.BridgeError, match="local point dependency"):
+        env.reader._ordinary_origin()
+    assert calls == []
+
+
+def test_local_proof_rejects_foreign_native_namespace_before_lookup(origin_model, monkeypatch):
+    env = origin_model
+    monkeypatch.setattr(env.mod, "_LOCAL_NAMESPACE", dict(vars(env.mod)))
+    with pytest.raises(env.mod.BridgeError, match="local point dependency pin contents"):
+        env.reader._ordinary_origin()
+
+
+def test_permission_graph_is_rechecked_at_existing_perwrite_origin_fence(origin_model, monkeypatch):
+    env, mod = origin_model, origin_model.mod
+    reader = env.reader
+    reader.origin, reader._hooks = reader._ordinary_origin(), reader.hooks()
+    store = mod.get_task_plans(reader.context.state)
+    reader.plan_origin = (store, store.plan, store.baseline, store.protection,
+                          store.protection_generation, store.evidence_epoch)
+    registry_module = importlib.import_module(mod._runtime.__package__ + ".tool_registry")
+    reader.plan_semantic = registry_module._checkpoint_parameters((store.plan, store.scope,
+        store.baseline, store.protection, store.protection_generation, store.evidence_epoch))
+    reader.check_origin()
+    def poison(*_args, **_kwargs):
+        env.calls.append("late dependency")
+        raise AssertionError("A late dependency callback was executed")
+    monkeypatch.setattr(mod._runtime, "_PERMISSION_PROVIDER_GUARD", poison)
+    with pytest.raises(mod.BridgeError, match="dependency graph"):
+        reader.check_origin()
+    assert env.calls == []
+
+
+@pytest.mark.parametrize("attribute", ["__defaults__", "__kwdefaults__", "__globals__", "__closure__"])
+def test_provider_metadata_remains_closed(origin_model, monkeypatch, attribute):
+    env, source = origin_model, origin_model.runtime.permissions._source
+    if attribute == "__globals__":
+        env.runtime.permissions._source = FunctionType(source.__code__, {})
+    elif attribute == "__closure__":
+        captured = object()
+        def replacement():
+            return captured
+        env.runtime.permissions._source = replacement
+    else:
+        monkeypatch.setattr(source, attribute, (object(),) if attribute == "__defaults__" else {"extra": object()})
+    with pytest.raises(env.mod.BridgeError, match="Unreviewed point permission providers"):
+        env.reader._ordinary_origin()
 
 
 def test_canonical_executor_queued_origin_retains_request_hooks(mod, monkeypatch):

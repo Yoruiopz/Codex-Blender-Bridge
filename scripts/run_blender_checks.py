@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 CASES = {
+    "native_project_saving": ("blender_native_save_smoke.py", "BLENDER_NATIVE_PROJECT_SAVING_OK "),
     "geometry_preview": ("blender_geometry_preview_smoke.py", "BLENDER_GEOMETRY_PREVIEW_OK "),
     "geometry_preview_populated_protection": ("blender_geometry_preview_smoke.py", "BLENDER_GEOMETRY_PREVIEW_OK "),
     "weight_edit_guard": ("blender_weight_edit_guard_smoke.py", "BLENDER_WEIGHT_EDIT_GUARD_OK "),
@@ -230,6 +231,8 @@ OPT_IN_CASES.add("render_adversarial")
 OPT_IN_CASES.add("render_boundaries_interactive")
 OPT_IN_CASES.add("render_checkpoint_probe")
 INTERACTIVE_CASES = {"undo_lifecycle", "mesh_edit_recovery", "mesh_repair", "uv_authoring", "prop_workflow", "uv_analysis", "mesh_analysis", "image_assets", "shader_groups", "undo_capacity", "shader_settings", "image_revisions", "field_scanner", "texture_paint"}
+INTERACTIVE_CASES.add("native_project_saving")
+OPT_IN_CASES.add("native_project_saving")
 
 
 INTERACTIVE_CASES.add("geometry_preview")
@@ -343,7 +346,7 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
         directory.mkdir()
         environment[key] = str(directory)
     launch_cwd = ROOT
-    if case in PORTABLE_BLEND_RESEARCH_PHASES or case == "isolated_asset_preview_probe":
+    if case in PORTABLE_BLEND_RESEARCH_PHASES or case in {"isolated_asset_preview_probe", "native_project_saving"}:
         # Research-only operational profile. This is not an OS/network sandbox.
         # Do not inherit credential variables or arbitrary Python/Blender paths.
         environment = {key: os.environ[key] for key in (

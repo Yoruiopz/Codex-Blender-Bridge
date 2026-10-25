@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from .entry_effects import bounded_entry_effects
+from .native_save_policy import POLICY_VERSION
 
 
 def _now() -> str:
@@ -337,6 +338,63 @@ def _bounded_curve_recovery(value: Any) -> dict[str, Any] | None:
 
 
 
+def _bounded_native_save(value: Any) -> dict[str, Any] | None:
+    """Fixed native-save facts; callback destinations are deliberately unknown."""
+    if not isinstance(value, Mapping):
+        return None
+    result: dict[str, Any] = {}
+    incomplete = value.get("evidence_incomplete") is True
+    for key, allowed in (("mode", {"COPY_NEW", "SAVE_CURRENT", "SAVE_AS"}),
+                         ("policy_version", {POLICY_VERSION})):
+        field = value.get(key)
+        if type(field) is str and field in allowed:
+            result[key] = field
+        else:
+            incomplete = True
+    for key in ("native_save_invoked", "native_save_completed", "possible_native_effects",
+                "native_external_effects_authorized", "declared_source_verified",
+                "fresh_process_reopen_verified", "worker_reaped", "cleanup_outcome_unknown"):
+        field = value.get(key)
+        if type(field) is bool:
+            result[key] = field
+        else:
+            incomplete = True
+    if value.get("native_effect_inventory_complete") is False:
+        result["native_effect_inventory_complete"] = False
+    else:
+        incomplete = True
+    cleanup = value.get("reader_cleanup")
+    if type(cleanup) is str and cleanup and len(cleanup) <= 64 and not any(ord(c) < 32 for c in cleanup):
+        try:
+            if len(cleanup.encode("utf8")) <= 64:
+                result["reader_cleanup"] = cleanup
+            else:
+                incomplete = True
+        except UnicodeError:
+            incomplete = True
+    else:
+        incomplete = True
+    for key in ("source_filepath_before", "source_filepath_after", "retained_reader_path"):
+        if key not in value:
+            incomplete = True
+            continue
+        field = value[key]
+        if field is None:
+            result[key] = None
+        elif type(field) is str and len(field) <= 4096 and not any(ord(c) < 32 for c in field):
+            try:
+                if len(field.encode("utf8")) <= 4096:
+                    result[key] = field
+                else:
+                    incomplete = True
+            except UnicodeError:
+                incomplete = True
+        else:
+            incomplete = True
+    result["evidence_incomplete"] = incomplete
+    return result
+
+
 def bounded_external_effects(value: Any) -> dict[str, Any] | None:
     """Retain scalar effects and at most four flat managed-file descriptors.
 
@@ -347,10 +405,14 @@ def bounded_external_effects(value: Any) -> dict[str, Any] | None:
     if not isinstance(value, Mapping):
         return None
     result = _bounded_single_effect(value) or {}
+    if "native_save" in value:
+        native_save = _bounded_native_save(value["native_save"])
+        if native_save is not None:
+            result["native_save"] = native_save
     supplied = value.get("artifacts")
     if isinstance(supplied, list):
         artifacts = []
-        incomplete = False
+        incomplete = value.get("artifacts_incomplete") is True
         for item in supplied[:MAX_EXTERNAL_ARTIFACTS]:
             if not isinstance(item, Mapping):
                 incomplete = True
@@ -361,7 +423,8 @@ def bounded_external_effects(value: Any) -> dict[str, Any] | None:
                 continue
             incomplete = incomplete or parsed.get("file_sha256") is None or parsed.get("file_bytes") is None
             artifacts.append(parsed)
-        result.update(artifacts=artifacts, artifacts_truncated=len(supplied) > MAX_EXTERNAL_ARTIFACTS,
+        result.update(artifacts=artifacts, artifacts_truncated=(len(supplied) > MAX_EXTERNAL_ARTIFACTS
+                      or value.get("artifacts_truncated") is True),
                       artifacts_incomplete=bool(incomplete))
     return result or None
 

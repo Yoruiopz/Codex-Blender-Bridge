@@ -34,6 +34,7 @@ from .mesh_chains import MeshChainTools
 from .mesh_slide import MeshSlideTools
 from .mesh_surface import MeshSurfaceTools
 from .modifiers import ModifierTools
+from .native_save import NativeSaveTools
 from .nla_lifecycle import NlaLifecycleTools
 from .nodes import NodeTools
 from .objects import ObjectTools
@@ -68,6 +69,7 @@ def iter_bindings(registry: ToolRegistry) -> Iterable[MCPToolBinding]:
         AssetImportTools(registry),
         NlaLifecycleTools(registry),
         CoreTools(registry),
+        NativeSaveTools(registry),
         TaskPlanTools(registry),
         BatchTools(registry),
         InteractionTools(registry),

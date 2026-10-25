@@ -46,6 +46,7 @@ def register_all(registry: ToolRegistry) -> None:
         mesh_slide,
         mesh_surface,
         modifiers,
+        native_save,
         nla_lifecycle,
         nodes,
         objects,
@@ -79,6 +80,7 @@ def register_all(registry: ToolRegistry) -> None:
 
     core.register_tools(registry)
     geometry_preview.register_tools(registry)
+    native_save.register_tools(registry)
     task_plan.register_tools(registry)
     animation_curve_inspection.register_tools(registry)
     animation_curve_sampling.register_tools(registry)

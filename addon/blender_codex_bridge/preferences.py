@@ -65,6 +65,16 @@ if bpy is not None:
             default=False,
         )
         allow_save_project: BoolProperty(name="Save Project", default=True)
+        project_directory: StringProperty(
+            name="Approved Project Folder",
+            description="Local .blend artifact folder; the separate native-save session permission covers normal callback/catalog effects outside it. Not configurable through MCP",
+            subtype="DIR_PATH", default="",
+        )
+        native_save_duration_seconds: IntProperty(
+            name="Native Save Permission Duration (seconds)",
+            description="Duration setting only; arm the separate session permission locally",
+            default=900, min=1, max=1800,
+        )
         texture_directory: StringProperty(
             name="Approved Texture Folder",
             description="User-approved absolute local folder for structured image reads; empty blocks loading. Not configurable through MCP",
@@ -136,6 +146,12 @@ if bpy is not None:
             assets.label(text="Asset exports require file and save permission.")
             assets.prop(self, "asset_source_directory")
             assets.label(text="Asset imports require Access External Files.")
+            projects = layout.box()
+            projects.label(text="Native Project Saving", icon="FILE_BLEND")
+            projects.prop(self, "project_directory")
+            projects.prop(self, "native_save_duration_seconds")
+            projects.label(text="Settings do not arm native save effects.")
+            projects.label(text="Arm/revoke the session permission in the Codex Bridge sidebar.")
             interface = layout.box()
             interface.label(text="Interface", icon="WINDOW")
             interface.prop(self, "ui_history_rows")

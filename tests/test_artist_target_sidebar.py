@@ -190,16 +190,22 @@ def test_actual_panel_draw_uses_one_snapshot_latest_receipt_and_eight_step_limit
     recovery = {"native_undo_steps": 32, "global_undo_enabled": True, "native_undo_memory_limit_mb": 0,
                 "tracked_operation_count": 0, "expired_operations_pruned_since_clear": 0,
                 "latest_operation": None, "checkpoints": []}
+    grant_type = importlib.import_module(f"{ui.__package__}.native_save_policy").NativeSaveGrant
+    native_save_policy = grant_type("target-sidebar-model", object())
     runtime = NS(state=NS(snapshot=lambda: state, history=lambda _limit: [], _artist_task_plans=NS(inspect=inspect)),
                  executor=NS(evidence=evidence), command_queue=NS(pending_count=0),
                  registry=NS(describe=lambda: {"toolsets": []}), jobs=NS(list=lambda **_kwargs: {"jobs": []}),
-                 checkpoints=NS(recovery_status=lambda **_kwargs: recovery, editor_session_status=lambda: None))
+                 checkpoints=NS(recovery_status=lambda **_kwargs: recovery, editor_session_status=lambda: None),
+                 native_save_policy=native_save_policy)
     namespace = {**vars(ui), "get_runtime": lambda: runtime, "get_preferences": lambda _context: None}
     exec(compile(ast.Module(body=[draw], type_ignores=[]), ui.__file__, "exec"), namespace)
     layout = Layout()
     namespace["draw"](NS(layout=layout), object())
     labels = [text for text, _icon in layout.labels]
     assert snapshots == [True] and plan_info == before
+    assert native_save_policy.status()["armed"] is False
+    assert native_save_policy.status()["remaining_seconds"] == 0
+    assert "Session permission disarmed" in labels
     target_headings = [index for index, text in enumerate(labels) if text == "Target core channels:"]
     assert len(target_headings) == 8
     assert [labels[index + 1] for index in target_headings] == [

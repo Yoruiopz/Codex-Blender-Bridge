@@ -11,6 +11,21 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_registered_native_save_uses_owned_interactive_sanitized_process(runner, monkeypatch, tmp_path):
+    monkeypatch.setattr(runner.sys, "platform", "linux")
+    monkeypatch.setenv("NATIVE_SAVE_TEST_UNWANTED", "not-a-secret")
+
+    def run(command, **kwargs):
+        assert "--background" not in command and "--disable-autoexec" in command
+        assert "NATIVE_SAVE_TEST_UNWANTED" not in kwargs["env"] and "PYTHONPATH" not in kwargs["env"]
+        kwargs["stdout"].write(b'BLENDER_NATIVE_PROJECT_SAVING_OK {"blender_version":"5.2.2"}')
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(runner.subprocess, "run", run)
+    assert "native_project_saving" in runner.INTERACTIVE_CASES & runner.OPT_IN_CASES
+    assert runner.run_case(Path("blender"), "native_project_saving", tmp_path, 10)["status"] == "passed"
+
+
 @pytest.fixture
 def runner():
     spec = importlib.util.spec_from_file_location(

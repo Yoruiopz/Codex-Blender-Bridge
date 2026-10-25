@@ -8,6 +8,8 @@ from types import SimpleNamespace as NS
 import pytest
 from test_image_paint import Image, paint_tools, stroke  # noqa: F401
 
+pytestmark = pytest.mark.parametrize("jobs", ("paint", "native_save"), indirect=True)
+
 
 @pytest.fixture
 def jobs(request, addon_package, monkeypatch):
@@ -23,7 +25,16 @@ def jobs(request, addon_package, monkeypatch):
                      after_modification=lambda name: marks.append(("after", name)) or True)
     def context():
         return registry_module.ToolContext(state, permissions, registry, checkpoints, jobs=manager)
-    manager = module.PaintJobs(context, budget_ms=lambda: 1.)
+    if getattr(request, "param", "paint") == "native_save":
+        runtime = importlib.import_module(f"{addon_package}.runtime")
+        policy_module = importlib.import_module(f"{addon_package}.native_save_policy")
+        grant = policy_module.NativeSaveGrant("inherited-paint-fixture", object())
+        assert not grant.active() and grant.status()["armed"] is False
+        manager = runtime.NativeSaveJobs(
+            context, budget_ms=lambda: 1., registry=registry, native_save_policy=grant,
+        )
+    else:
+        manager = module.PaintJobs(context, budget_ms=lambda: 1.)
     monkeypatch.setattr(module, "require_blender", lambda: bpy)
     return NS(module=module, manager=manager, context=context, images=images, bpy=bpy,
               grants=grants, marks=marks, checkpoints=checkpoints, paint=paint)

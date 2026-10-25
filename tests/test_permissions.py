@@ -73,3 +73,13 @@ def test_empty_permission_requirement_does_not_invoke_provider(addon_package: st
         pytest.fail("No permission was requested")
 
     permissions.PermissionManager(provider).require([])
+
+
+def test_native_save_effects_cannot_be_armed_by_preferences(addon_package):
+    permissions = importlib.import_module(f"{addon_package}.permissions")
+    preferences = type("Preferences", (), {"allow_native_save_effects": True,
+                       "NATIVE_SAVE_EFFECTS": True, "allow_save_project": True})()
+    snapshot = permissions.permission_snapshot(preferences)
+    assert snapshot["SAVE_PROJECT"] is True and snapshot["NATIVE_SAVE_EFFECTS"] is False
+    assert permissions.Permission.NATIVE_SAVE_EFFECTS not in permissions.PREFERENCE_PROPERTIES
+    assert set(snapshot) == {value.value for value in permissions.Permission}

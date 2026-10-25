@@ -71,6 +71,9 @@ def _target_channels_label(receipt: object) -> str:
 
 def _draw_job(jobs, job):
     """Render cached image or Scene evidence without evaluating native data."""
+    if job.get("kind") == "project.native_save":
+        _draw_native_save_job(jobs, job)
+        return
     label = job.get("new_image", job.get("label", job["kind"]))
     jobs.label(text=f"{job['state']}: {label[:36]}")
     workload = job.get("workload", {})
@@ -114,7 +117,82 @@ def _draw_job(jobs, job):
         jobs.label(text="Image may have changed; inspect recovery", icon="ERROR")
 
 
+def _draw_native_save_effects(layout, effects):
+    """Read bounded cached file facts; never inspect live source or callback state."""
+    native = effects.get("native_save", {})
+    if native.get("native_save_invoked") or native.get("possible_native_effects"):
+        layout.label(text="Native save effects may persist after cancel/undo", icon="INFO")
+    if native.get("native_effect_inventory_complete") is False:
+        layout.label(text="Callback/catalog file effects are not fully enumerated", icon="INFO")
+    before, after = native.get("source_filepath_before"), native.get("source_filepath_after")
+    if before != after and after:
+        layout.label(text="Active project filepath changed; inspect job details", icon="INFO")
+    if effects.get("file_published") or effects.get("publication_outcome_unknown"):
+        layout.label(text="Project file may persist; inspect saved bytes", icon="INFO")
+    if effects.get("retained_staging_path"):
+        layout.label(text="Owned staging retained; inspect job details", icon="ERROR")
+    if native.get("retained_reader_path"):
+        layout.label(text="Owned reader files retained; inspect job details", icon="ERROR")
+    if native.get("worker_reaped") is False:
+        layout.label(text="Reader process exit not verified", icon="ERROR")
+    if native.get("cleanup_outcome_unknown") is True:
+        layout.label(text="Reader cleanup outcome unknown; reinspection required", icon="ERROR")
+    if effects.get("artifacts_truncated") or effects.get("artifacts_incomplete") or native.get("evidence_incomplete"):
+        layout.label(text="File evidence incomplete; reinspection required", icon="ERROR")
+
+
+def _draw_native_save_job(layout, job):
+    layout.label(text=f"{job['state']}: Native project save")
+    layout.label(text=f"Phase: {job.get('progress', {}).get('phase', 'unknown')}")
+    layout.label(text="Native save cannot be preempted; cancellation stops later work")
+    if not job["terminal"]:
+        layout.operator("blender_codex_bridge.cancel_job", icon="CANCEL")
+    if job.get("error"):
+        layout.label(text=job["error"]["code"], icon="ERROR")
+    _draw_native_save_effects(layout, job.get("external_effects", {}))
+
+
 if bpy is not None:
+
+    class BCB_OT_arm_native_save(bpy.types.Operator):
+        bl_idname = "blender_codex_bridge.arm_native_save"
+        bl_label = "Arm Native Save Effects for this Session"
+        bl_description = "Locally permit normal native save callbacks/catalogs/history effects for a bounded session; no automatic renewal"
+
+        def invoke(self, context, event):
+            del event
+            return context.window_manager.invoke_props_dialog(self, width=560)
+
+        def draw(self, context):
+            preferences = get_preferences(context)
+            self.layout.label(text="Normal native Save can synchronize/flush project state.")
+            self.layout.label(text="Callbacks, asset catalogs and history may write outside the project folder.")
+            self.layout.label(text="Native overwrite is not atomic; cancel/undo cannot remove saved files.")
+            self.layout.label(text="Applies to this Bridge session and its connected clients.")
+            if preferences:
+                self.layout.prop(preferences, "native_save_duration_seconds")
+
+        def execute(self, context):
+            preferences = get_preferences(context)
+            if preferences is None:
+                self.report({"ERROR"}, "Add-on preferences are unavailable")
+                return {"CANCELLED"}
+            try:
+                get_runtime().arm_native_save_effects(preferences.native_save_duration_seconds)
+            except (BridgeError, ValueError) as error:
+                self.report({"ERROR"}, error.message if isinstance(error, BridgeError) else str(error))
+                return {"CANCELLED"}
+            return {"FINISHED"}
+
+
+    class BCB_OT_revoke_native_save(bpy.types.Operator):
+        bl_idname = "blender_codex_bridge.revoke_native_save"
+        bl_label = "Revoke Native Save Effects"
+
+        def execute(self, context):
+            del context
+            get_runtime().revoke_native_save_effects()
+            return {"FINISHED"}
 
     class BCB_OT_start_bridge(bpy.types.Operator):
         bl_idname = "blender_codex_bridge.start"
@@ -500,6 +578,7 @@ if bpy is not None:
                 danger.prop(preferences, "allow_execute_python")
                 danger.prop(preferences, "allow_external_files")
                 permissions.prop(preferences, "texture_directory")
+                permissions.prop(preferences, "project_directory")
                 if preferences.allow_execute_python:
                     danger.label(
                         text="Python bypasses structured edit gates and is not a sandbox.",
@@ -508,6 +587,15 @@ if bpy is not None:
                     danger.label(
                         text="It also requires Delete, External Files, and Save permissions."
                     )
+
+            native_save = layout.box()
+            native_save.label(text="Native Project Saving", icon="FILE_BLEND")
+            native_status = runtime.native_save_policy.status()
+            native_save.label(text=(f"Armed: {native_status['remaining_seconds']} seconds remaining"
+                                    if native_status["armed"] else "Session permission disarmed"))
+            native_save.label(text="Includes native callback/catalog effects outside the project folder")
+            native_save.operator("blender_codex_bridge.arm_native_save", icon="UNLOCKED")
+            native_save.operator("blender_codex_bridge.revoke_native_save", icon="LOCKED")
 
             jobs = layout.box()
             jobs.label(text="Jobs", icon="BRUSH_DATA")
@@ -536,6 +624,9 @@ if bpy is not None:
                     history.label(text=f"Affected: {', '.join(record['affected_objects'][:4])}")
                 if record["error_code"]:
                     history.label(text=f"{record['error_code']}: {record['description'][:72]}")
+                effects = record.get("external_effects")
+                if effects and effects.get("native_save"):
+                    _draw_native_save_effects(history, effects)
             history_controls = history.row(align=True)
             history_controls.operator(
                 "blender_codex_bridge.copy_diagnostics",
@@ -590,6 +681,8 @@ if bpy is not None:
 
 
     CLASSES = (
+        BCB_OT_arm_native_save,
+        BCB_OT_revoke_native_save,
         BCB_OT_start_bridge,
         BCB_OT_stop_bridge,
         BCB_OT_toggle_pause,

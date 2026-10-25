@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import builtins
 import importlib
 import struct
 from contextlib import contextmanager
 from dataclasses import replace
+from types import FunctionType, ModuleType
 from types import SimpleNamespace as NS
 
 import pytest
@@ -324,6 +326,267 @@ def test_unknown_ordinary_hook_origin_refuses_before_blender(ordinary_origin, mo
         context.check_cancelled = lambda: None
     else:
         context.check_final_job = lambda: None
+    with pytest.raises(case.guard.BridgeError):
+        case.reader._ordinary_origin()
+
+
+def _callback_poison(calls):
+    namespace = {"calls": calls}
+    exec("def poison(*args, **kwargs):\n calls.append('callback')\n raise AssertionError('Unexpected callback')", namespace)
+    return namespace["poison"]
+
+
+@pytest.mark.parametrize("change", [
+    "wrapper", "wrapper_code", "wrapper_defaults", "wrapper_foreign_globals",
+    "base", "base_code", "base_globals", "base_defaults", "base_map",
+    "proof", "proof_code", "proof_globals", "proof_retained_code", "proof_helpers",
+    "constructor_code", "preferences_code", "preferences_defaults", "source_defaults", "source_closure",
+    "grant_class", "statement_class", "statement_init", "grant_helper", "grant_helper_code",
+    "grant_helper_globals", "grant_helper_kwdefaults", "grant_helper_closure", "generation_property", "generation_code",
+    "grant_attribute", "runtime_attribute", "enum_iterator", "enum_value", "enum_map", "enum_member",
+    "jobs_export", "jobs_subclass", "jobs_grant", "foreign_grant", "foreign_authority", "foreign_generation",
+    "grant_origin", "grant_thread", "registered_type", "time_helper", "thread_helper", "builtins_alias",
+    "runtime_module", "policy_module", "permissions_module", "math_module", "import_hook",
+    "enum_descriptor_fget", "enum_descriptor_get",
+])
+def test_h01_dependency_poison_refuses_before_provider_or_blender(ordinary_origin, monkeypatch, addon_package, change):
+    case, calls = ordinary_origin, []
+    runtime, guard = case.runtime, case.guard
+    policy, permissions = guard._save_policy, guard._permissions
+    poison = _callback_poison(calls)
+    utils = importlib.import_module(f"{addon_package}.utils")
+    with monkeypatch.context() as patch:
+        patch.setattr(utils, "require_blender", poison)
+        if change.endswith("_module"):
+            class ForeignModule(ModuleType):
+                def __getattribute__(self, name):
+                    return poison()
+            module = {"runtime_module": runtime, "policy_module": policy,
+                      "permissions_module": permissions, "math_module": policy.math}[change]
+            patch.setattr(module, "__class__", ForeignModule)
+        elif change == "builtins_alias":
+            patch.setitem(vars(runtime), "__builtins__", {"__import__": poison})
+        elif change == "import_hook":
+            patch.setitem(vars(runtime), "__builtins__", {**runtime._preferences.__builtins__, "__import__": poison})
+            foreign = FunctionType(runtime._preferences.__code__, vars(runtime))
+            patch.setattr(runtime, "_preferences", foreign)
+            patch.setattr(runtime, "_PREFERENCES_FUNCTION", foreign)
+        elif change == "enum_descriptor_fget":
+            patch.setattr(guard._ENUM_VALUE_PROPERTY, "fget", poison)
+        elif change == "enum_descriptor_get":
+            patch.setattr(type(guard._ENUM_VALUE_PROPERTY).__get__, "__code__", poison.__code__)
+        elif change in {"wrapper", "base", "proof"}:
+            module, name = {"wrapper": (runtime, "permission_snapshot"),
+                            "base": (runtime, "_base_permission_snapshot"),
+                            "proof": (runtime, "native_save_permission_provider_intact")}[change]
+            patch.setattr(module, name, poison)
+        elif change in {"wrapper_code", "base_code", "proof_code", "constructor_code", "preferences_code",
+                        "grant_helper_code", "generation_code", "enum_iterator", "enum_value"}:
+            function = {"wrapper_code": runtime.permission_snapshot, "base_code": permissions.permission_snapshot,
+                        "proof_code": runtime.native_save_permission_provider_intact,
+                        "constructor_code": runtime.BridgeRuntime.__init__, "preferences_code": runtime._preferences,
+                        "grant_helper_code": policy.NativeSaveGrant._now,
+                        "generation_code": policy.NativeSaveGrant.generation.fget,
+                        "enum_iterator": type(permissions.Permission).__iter__,
+                        "enum_value": vars(guard.Enum)["value"].fget}[change]
+            patch.setattr(function, "__code__", poison.__code__)
+        elif change == "wrapper_foreign_globals":
+            function = runtime.permission_snapshot
+            patch.setattr(runtime, "permission_snapshot", FunctionType(function.__code__, {**vars(runtime),
+                "_base_permission_snapshot": poison}))
+        elif change in {"wrapper_defaults", "base_defaults", "preferences_defaults", "source_defaults"}:
+            function = {"wrapper_defaults": runtime.permission_snapshot, "base_defaults": permissions.permission_snapshot,
+                        "preferences_defaults": runtime._preferences, "source_defaults": case.active.permissions._source}[change]
+            patch.setattr(function, "__defaults__", (poison,))
+        elif change == "base_globals":
+            patch.setitem(vars(permissions), "getattr", poison)
+        elif change == "base_map":
+            patch.setitem(permissions.PREFERENCE_PROPERTIES, permissions.Permission.EDIT_MESH, "allow_delete_objects")
+        elif change in {"proof_globals", "proof_retained_code", "proof_helpers"}:
+            patch.setattr(runtime, {"proof_globals": "FunctionType", "proof_retained_code": "_BASE_PERMISSION_SNAPSHOT_CODE",
+                                   "proof_helpers": "_GRANT_HELPERS"}[change], poison)
+        elif change in {"grant_class", "statement_class"}:
+            patch.setattr(policy, "NativeSaveGrant" if change == "grant_class" else "GrantStatement", poison)
+        elif change == "statement_init":
+            patch.setattr(policy.GrantStatement, "__init__", poison)
+        elif change == "grant_helper":
+            patch.setattr(policy.NativeSaveGrant, "active", poison)
+        elif change == "grant_helper_globals":
+            patch.setattr(policy, "time", NS(monotonic=poison))
+        elif change == "grant_helper_kwdefaults":
+            patch.setitem(policy.NativeSaveGrant.active.__kwdefaults__, "now", poison)
+        elif change in {"source_closure", "grant_helper_closure"}:
+            def make_foreign(callback):
+                return lambda *args, **kwargs: callback()
+            if change == "source_closure":
+                patch.setattr(case.active.permissions, "_source", make_foreign(poison))
+            else:
+                patch.setattr(policy.NativeSaveGrant, "active", make_foreign(poison))
+        elif change == "generation_property":
+            patch.setattr(policy.NativeSaveGrant, "generation", property(poison))
+        elif change in {"grant_attribute", "runtime_attribute"}:
+            patch.setattr(policy.NativeSaveGrant if change == "grant_attribute" else runtime.BridgeRuntime,
+                          "__getattribute__", poison, raising=False)
+        elif change == "enum_map":
+            patch.setitem(permissions.Permission._member_map_, "EDIT_MESH", permissions.Permission.DELETE_OBJECTS)
+        elif change == "enum_member":
+            patch.setattr(permissions.Permission.EDIT_MESH, "_value_", "DELETE_OBJECTS")
+        elif change == "jobs_export":
+            patch.setattr(runtime, "NativeSaveJobs", poison)
+        elif change == "jobs_subclass":
+            class ForeignJobs(guard._NATIVE_SAVE_JOBS):
+                @property
+                def active(self):
+                    return poison()
+            foreign = object.__new__(ForeignJobs)
+            patch.setattr(case.active, "jobs", foreign)
+            patch.setattr(case.reader.context, "jobs", foreign)
+            patch.setattr(case.active.executor, "jobs", foreign)
+        elif change in {"jobs_grant", "foreign_grant"}:
+            grant = policy.NativeSaveGrant(case.active._native_save_generation, case.active._native_save_local_authority)
+            if change == "jobs_grant":
+                patch.setattr(case.active.jobs, "native_save_policy", grant)
+            else:
+                patch.setattr(case.active, "native_save_policy", grant)
+                patch.setattr(case.active.jobs, "native_save_policy", grant)
+        elif change == "foreign_authority":
+            patch.setattr(case.active, "_native_save_local_authority", object())
+        elif change == "foreign_generation":
+            patch.setattr(case.active, "_native_save_generation", "foreign-generation")
+        elif change == "grant_origin":
+            patch.setattr(case.active, "_native_save_policy_origin", object())
+        elif change == "grant_thread":
+            grant = policy.NativeSaveGrant(case.active._native_save_generation, case.active._native_save_local_authority)
+            object.__setattr__(grant, "_thread", grant._thread + 1)
+            patch.setattr(case.active, "native_save_policy", grant)
+            patch.setattr(case.active, "_native_save_policy_origin", grant)
+            patch.setattr(case.active.jobs, "native_save_policy", grant)
+        elif change == "registered_type":
+            patch.setattr(case.active, "_registered", poison)
+        elif change == "time_helper":
+            patch.setattr(policy.time, "monotonic", poison)
+        else:
+            patch.setattr(policy.threading, "current_thread", poison)
+        with pytest.raises(guard.BridgeError):
+            guard._NativeReader(case.reader.context, {"object_name": "Mesh"})
+    assert calls == []
+
+
+def test_native_grant_lifecycle_never_becomes_ordinary_weight_authority(ordinary_origin):
+    case = ordinary_origin
+    original = case.reader._ordinary_origin()
+    case.reader._origin = original
+    grant = case.active.native_save_policy
+    grant.arm(case.active._native_save_local_authority, 1, now=0.)  # Already expired on real monotonic time.
+    case.reader._check_origin()
+    grant.revoke()
+    case.reader._check_origin()
+    assert all(first is second for first, second in zip(original, case.reader._ordinary_origin(), strict=True))
+
+
+def test_only_native_flag_changes_with_registered_grant_lifecycle(ordinary_origin):
+    case = ordinary_origin
+    case.active._registered = True
+    case.reader._origin = case.reader._ordinary_origin()
+    preferences = NS(allow_edit_mesh=True)
+    base = case.guard._permissions.permission_snapshot(preferences)
+    snapshots = [case.runtime.permission_snapshot(preferences)]
+    case.active.native_save_policy.arm(case.active._native_save_local_authority, 60)
+    case.reader._check_origin()
+    snapshots.append(case.runtime.permission_snapshot(preferences))
+    case.active.native_save_policy.revoke()
+    case.reader._check_origin()
+    snapshots.append(case.runtime.permission_snapshot(preferences))
+    assert [row["NATIVE_SAVE_EFFECTS"] for row in snapshots] == [False, True, False]
+    assert all({key: value for key, value in row.items() if key != "NATIVE_SAVE_EFFECTS"}
+               == {key: value for key, value in base.items() if key != "NATIVE_SAVE_EFFECTS"} for row in snapshots)
+
+
+def test_h01_dependency_change_after_origin_cannot_pass_final_fence(ordinary_origin, monkeypatch):
+    case = ordinary_origin
+    case.reader._origin = case.reader._ordinary_origin()
+    poison = _callback_poison([])
+    monkeypatch.setattr(case.runtime, "_GRANT_HELPERS", (poison,))
+    with pytest.raises(case.guard.BridgeError):
+        case.reader._check_origin()
+
+
+@pytest.mark.parametrize("name", ["_h01_origin", "_function_intact", "_mapping_intact", "_error"])
+@pytest.mark.parametrize("change", ["replacement", "code", "defaults", "foreign_globals"])
+def test_local_origin_comparators_are_authenticated_before_call(ordinary_origin, monkeypatch, name, change):
+    case, calls = ordinary_origin, []
+    guard = case.guard
+    original = getattr(guard, name)
+    poison = _callback_poison(calls)
+    if change == "replacement":
+        monkeypatch.setattr(guard, name, poison)
+    elif change == "code":
+        monkeypatch.setattr(original, "__code__", poison.__code__)
+    elif change == "defaults":
+        monkeypatch.setattr(original, "__defaults__", (poison,))
+    else:
+        monkeypatch.setattr(guard, name, FunctionType(original.__code__, {**vars(guard), "_PURE_TYPE": poison}))
+    with pytest.raises(guard.BridgeError):
+        case.reader._ordinary_origin()
+    assert calls == []
+
+
+def test_enum_metaclass_attribute_hook_cannot_run_during_raw_namespace_proof(ordinary_origin, monkeypatch):
+    case, calls = ordinary_origin, []
+    meta = type(case.guard._permissions.Permission)
+    with monkeypatch.context() as patch:
+        patch.setattr(meta, "__getattribute__", _callback_poison(calls), raising=False)
+        with pytest.raises(case.guard.BridgeError):
+            case.reader._ordinary_origin()
+    assert calls == []
+
+
+@pytest.mark.parametrize("name", ["type", "any", "all", "vars", "len"])
+def test_actual_builtin_poison_refuses_without_calling_it(ordinary_origin, name):
+    case, calls = ordinary_origin, []
+    original = getattr(builtins, name)
+    poison = _callback_poison(calls)
+    # Restore before pytest handles/asserts anything: its own machinery uses the
+    # same real builtin map. Only the closed entry runs while it is poisoned.
+    caught = None
+    setattr(builtins, name, poison)
+    try:
+        try:
+            case.reader._ordinary_origin()
+        except case.guard.BridgeError as error:
+            caught = error
+    finally:
+        setattr(builtins, name, original)
+    assert caught is not None and calls == []
+
+
+@pytest.mark.parametrize("name", ["_PURE_NAMESPACE", "_PURE_BUILTINS", "_PURE_ALIASES",
+                                  "_PURE_BUILTIN_FACTS", "_LOCAL_FACTS"])
+def test_origin_root_shapes_are_checked_before_container_callbacks(ordinary_origin, monkeypatch, name):
+    case, calls = ordinary_origin, []
+
+    class ForeignContainer:
+        def __iter__(self):
+            calls.append("iter")
+            raise AssertionError("Root iterator must not run")
+
+        def __getitem__(self, _key):
+            calls.append("item")
+            raise AssertionError("Root item callback must not run")
+
+        def get(self, *_args):
+            calls.append("get")
+            raise AssertionError("Root get callback must not run")
+
+    monkeypatch.setattr(case.guard, name, ForeignContainer())
+    with pytest.raises(case.guard.BridgeError):
+        case.reader._ordinary_origin()
+    assert calls == []
+
+
+def test_origin_rejects_foreign_native_namespace_identity(ordinary_origin, monkeypatch):
+    case = ordinary_origin
+    monkeypatch.setattr(case.guard, "_PURE_NAMESPACE", dict(vars(case.guard)))
     with pytest.raises(case.guard.BridgeError):
         case.reader._ordinary_origin()
 

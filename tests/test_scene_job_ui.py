@@ -40,3 +40,28 @@ def test_job_renderer_preserves_image_fields_and_displays_evicted_scene_receipt(
     assert "CANCELLED: Owned Scene evaluation" in labels
     assert "Possible effects; inspect/recover" in labels
     assert layout.operators == [("blender_codex_bridge.cancel_job", "CANCEL")]
+
+
+def test_native_save_job_has_phase_only_progress_and_truthful_file_effects(addon_package):
+    ui = importlib.import_module(f"{addon_package}.ui")
+    row = {"kind": "project.native_save", "state": "RUNNING", "terminal": False,
+           "progress": {"phase": "native_save"}, "workload": {"mode": "SAVE_AS"}, "error": None,
+           "external_effects": {"publication_outcome_unknown": True, "retained_staging_path": "/owned/stage.blend",
+                "artifacts_truncated": True, "native_save": {"native_save_invoked": True,
+                "possible_native_effects": True, "native_effect_inventory_complete": False,
+                "source_filepath_before": "/approved/old.blend", "source_filepath_after": "/approved/new.blend"}}}
+    layout = Layout()
+    ui._draw_job(layout, row)
+    labels = [text for text, _ in layout.labels]
+    assert "Phase: native_save" in labels
+    assert "Native save effects may persist after cancel/undo" in labels
+    assert "Callback/catalog file effects are not fully enumerated" in labels
+    assert "Active project filepath changed; inspect job details" in labels
+    assert "Owned staging retained; inspect job details" in labels
+    assert "File evidence incomplete; reinspection required" in labels
+    assert not any("pixels" in text for text in labels)
+    assert layout.operators == [("blender_codex_bridge.cancel_job", "CANCEL")]
+    terminal = Layout()
+    ui._draw_job(terminal, {**row, "terminal": True, "state": "FAILED",
+                          "error": {"code": "PERMISSION_DENIED"}})
+    assert not terminal.operators and ("PERMISSION_DENIED", "ERROR") in terminal.labels
