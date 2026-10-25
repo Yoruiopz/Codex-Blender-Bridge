@@ -30,6 +30,9 @@ import bpy  # type: ignore
 MODULE = "blender_codex_bridge"
 TOOL_NAME = r"[a-z][a-z0-9_]*(?:\.[a-z_][a-z0-9_]*)+"
 PREVIEW_TOOLS = {"preview.geometry_start", "preview.geometry_image"}
+PROBE_MARKER = "BLENDER_INSTALLED_ADDON_PROBE_OK "
+MAX_PROBE_RECEIPT_BYTES = 4 * 1024 * 1024
+MAX_PROBE_MARKER_BYTES = 32 * 1024
 
 
 def _preview_expected(record: dict, surface: dict) -> bool:
@@ -461,6 +464,66 @@ def _exercise(label: str, archive: Path, members: dict, record: dict, scripts: P
             "original_permission_manager_identities_restored": True}
 
 
+def _receipt_json(value: object) -> bytes:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+                      allow_nan=False).encode("ascii")
+
+
+def _persist_probe_report(payload: dict, owned: Path, *, process_instance: str, process_id: int) -> str:
+    """Retain complete proof; return a compact success line only after exact readback."""
+    assert type(process_instance) is str and re.fullmatch(r"[0-9a-f]{32}", process_instance)
+    assert type(process_id) is int and process_id > 0
+    assert owned.is_dir() and not owned.is_symlink()
+    assert not {"schema_version", "case", "process_instance", "process_id"}.intersection(payload)
+    observations = payload["observations"]
+    assert type(observations) is list and [row["label"] for row in observations] == [
+        "fresh-candidate", "previous", "upgrade", "rollback"]
+    full = {**payload, "schema_version": 1, "case": "installed_addon_probe",
+            "process_instance": process_instance, "process_id": process_id}
+    raw = _receipt_json(full) + b"\n"
+    assert 0 < len(raw) <= MAX_PROBE_RECEIPT_BYTES, "Installed probe receipt exceeds its 4 MiB bound"
+    digest = hashlib.sha256(raw).hexdigest()
+    receipt = owned / "installed-probe-full-receipt.json"
+    compact = []
+    for row in observations:
+        summary = {key: row[key] for key in (
+            "label", "archive_sha256", "version", "documented_tool_count", "public_tool_names_sha256",
+            "hidden_tool_count", "exact_expected_tool_names_verified", "installed_members_verified",
+            "default_deletion_denied", "discovered_in_addon_list", "clean_directory_replacement",
+            "original_permission_manager_identities_restored", "loopback", "created_object", "location",
+            "geometry_preview_expected")}
+        preview = row["geometry_preview"]
+        expected = row["geometry_preview_expected"]
+        assert type(expected) is bool and type(preview["completed"]) is bool
+        assert preview["completed"] is expected
+        summary["geometry_preview"] = {
+            "expected": expected, "completed": preview["completed"],
+            "full_preview_sha256": hashlib.sha256(_receipt_json(preview)).hexdigest(),
+            "png_sha256": preview["png"]["sha256"] if expected else None,
+            **{key: preview.get(key) for key in (
+                "source_geometry_and_transforms_preserved", "actual_process_handle_reaped",
+                "actual_staging_directory_absent", "worker_and_parent_process_separate", "consent_restored")}}
+        summary["observation_sha256"] = hashlib.sha256(_receipt_json(row)).hexdigest()
+        compact.append(summary)
+    marker = {**{key: payload[key] for key in (
+        "blender_version", "configuration_sha256", "unregistered_after_probe", "project_saved",
+        "user_preferences_saved", "scope", "release_readiness")},
+        "schema_version": 1, "case": "installed_addon_probe", "process_instance": process_instance,
+        "process_id": process_id, "observations_compact": True, "observations": compact,
+        "full_observations_sha256": hashlib.sha256(_receipt_json(observations)).hexdigest(),
+        "full_receipt": {"path": str(receipt), "sha256": digest, "bytes": len(raw), "schema_version": 1}}
+    line = PROBE_MARKER + _receipt_json(marker).decode("ascii")
+    assert len((line + "\n").encode("ascii")) <= MAX_PROBE_MARKER_BYTES, "Installed probe marker exceeds 32 KiB"
+    with receipt.open("xb") as stream:
+        assert stream.write(raw) == len(raw)
+    with receipt.open("rb") as stream:
+        readback = stream.read(MAX_PROBE_RECEIPT_BYTES + 1)
+    assert len(readback) <= MAX_PROBE_RECEIPT_BYTES and readback == raw, "Installed probe receipt readback differs"
+    assert hashlib.sha256(readback).hexdigest() == digest, "Installed probe receipt hash differs"
+    assert json.loads(readback) == full, "Installed probe JSON proof was not preserved"
+    return line
+
+
 def main() -> None:
     config_path = os.environ.get("BRIDGE_TEST_PACKAGE_PROBE_CONFIG")
     assert config_path, "Select explicit pinned ZIPs with --package-probe-config"
@@ -493,12 +556,16 @@ def main() -> None:
     finally:
         _unload()
     assert not addon_utils.check(MODULE)[1]
-    print("BLENDER_INSTALLED_ADDON_PROBE_OK " + json.dumps({
+    payload = {
         "blender_version": bpy.app.version_string, "configuration_sha256": hashlib.sha256(config_bytes).hexdigest(),
+        "package_configuration": config,
         "observations": observations, "unregistered_after_probe": True,
         "project_saved": False, "user_preferences_saved": False,
         "scope": "Actual isolated installed ZIP enable/disable, exact member/import proof, default denial, loopback reconnect, bounded creation/transform and clean-directory upgrade/rollback. Explicitly pinned preview-capable packages additionally exercise installed public geometry start/inspect/image with real preference denial/consent, worker identity, independent Cube/PNG evidence and cleanup. No preferences migration, UI-uninstall, reviewed appearance, complete installed artist scenarios or Windows qualification. Previous alpha may require known-name enablement because its nonliteral metadata is undiscoverable.",
-        "release_readiness": "NOT_ASSESSED"}), flush=True)
+        "release_readiness": "NOT_ASSESSED"}
+    marker = _persist_probe_report(payload, owned,
+                                   process_instance=os.environ["BRIDGE_TEST_PROCESS_TOKEN"], process_id=os.getpid())
+    print(marker, flush=True)
 
 
 if __name__ == "__main__":
