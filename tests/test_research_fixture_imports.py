@@ -19,7 +19,80 @@ from types import SimpleNamespace as NS
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_installed_native_fixture_has_distinct_exact_candidate_and_no_scheduler_service_substitution():
+    path = ROOT / "scripts/blender_installed_native_save_smoke.py"
+    tree = ast.parse(path.read_text())
+    constants = {node.targets[0].id: ast.literal_eval(node.value)
+                 for node in tree.body if isinstance(node, ast.Assign) and len(node.targets) == 1
+                 and isinstance(node.targets[0], ast.Name) and node.targets[0].id.startswith("ACCEPTED_")}
+    assert constants == {"ACCEPTED_COMMIT": "adfd0468946c7a4147b662715fb520be0afa7ae6",
+                         "ACCEPTED_TREE": "9c24b416ede7b80268496fcd47cfd33ab562c72e",
+                         "ACCEPTED_ZIP_SHA256": "2de08ba5033f3f7ae773f1e63449e2d8c31ac1300341526c027446ad5a9b900e",
+                         "ACCEPTED_VERSION": "0.8.0", "ACCEPTED_PUBLIC_TOOLS": 270}
+    forbidden = {"dispatch", "dispatch_recovery", "_drain_timer", "_timer_callback", "PermissionManager"}
+    called = {node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id
+              for node in ast.walk(tree) if isinstance(node, ast.Call)
+              and isinstance(node.func, (ast.Attribute, ast.Name))}
+    assert not forbidden.intersection(called)
+    assert "PersistentTCP" in called and "start_server" in called and "arm_native_save" in called
+    assert "poll" in called and "submit" in called
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Attribute):
+                    assert not (target.value.attr == "runtime" and target.attr in {
+                        "permissions", "executor", "checkpoints", "registry", "jobs", "command_queue"})
+    tick = next(node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == "tick")
+    assert not any(isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                   and node.func.attr in {"sleep", "join", "result", "_drain_timer"} for node in ast.walk(tick))
+    assert any(isinstance(node, ast.Call) and ast.unparse(node.func) == "bpy.app.timers.register"
+               and ast.unparse(node.args[0]) == "fixture.tick" for node in ast.walk(tree))
+
+
+@pytest.fixture
+def installed_native_receipt(monkeypatch, tmp_path):
+    monkeypatch.setitem(sys.modules, "bpy", NS(app=NS(version_string="5.2.2", build_hash=b"d13f752e3b9c",
+                                                   handlers=NS(save_post=[]))))
+    monkeypatch.setenv("BRIDGE_TEST_SUPPORT_COMMIT", "1" * 40)
+    monkeypatch.setenv("BRIDGE_TEST_PROCESS_TOKEN", "2" * 32)
+    location = ROOT / "scripts/blender_installed_native_save_smoke.py"
+    spec = importlib.util.spec_from_file_location("_receipt_only_installed_native", location)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    fixture = module.InstalledNative("weights", tmp_path, {}, NS(), {})
+    fixture.path = tmp_path / "full-receipt.json"
+    statuses = []
+    monkeypatch.setattr(module, "owned_process_exit", statuses.append)
+    return module, fixture, statuses
+
+
+def test_installed_native_large_full_receipt_has_small_hash_bound_marker(installed_native_receipt, capsys):
+    import hashlib
+    module, fixture, statuses = installed_native_receipt
+    fixture.report["complete_native_projection"] = "x" * (128 * 1024)
+    fixture.report["completed"] = True
+    fixture.finish(0)
+    raw = fixture.path.read_bytes()
+    line = capsys.readouterr().out
+    assert 65536 < len(raw) <= module.MAX_RECEIPT
+    assert len(line.encode()) <= module.MAX_MARKER
+    assert line.startswith(module.MARKERS["weights"])
+    payload = json.loads(line[len(module.MARKERS["weights"]):])
+    assert payload["receipt"] == {"path": str(fixture.path), "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}
+    assert payload["full_artist_workflow_qualified"] is False and statuses == [0]
+
+
+def test_installed_native_receipt_overflow_refuses_before_writing(installed_native_receipt, monkeypatch):
+    module, fixture, _statuses = installed_native_receipt
+    monkeypatch.setattr(module, "MAX_RECEIPT", 128)
+    with pytest.raises(AssertionError):
+        fixture.flush()
+    assert not fixture.path.exists()
 HELPERS = (
+    "scripts.blender_installed_native_save_smoke",
+    "scripts.installed_fixture_transport",
     "scripts.blender_native_save_smoke",
     "scripts.blender_geometry_preview_smoke",
 
@@ -117,6 +190,8 @@ def fixture_imports(addon_package, monkeypatch):
 
 
 @pytest.mark.parametrize("name,helper", [
+    ("scripts.blender_installed_native_save_smoke", "main"),
+    ("scripts.installed_fixture_transport", "PersistentTCP"),
     ("scripts.blender_native_save_smoke", "main"),
     ("scripts.blender_geometry_preview_smoke", "main"),
 

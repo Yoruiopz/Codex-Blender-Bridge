@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 CASES = {
+    "installed_native_save": ("blender_installed_native_save_smoke.py", "BLENDER_INSTALLED_NATIVE_SAVE_OK "),
     "native_project_saving": ("blender_native_save_smoke.py", "BLENDER_NATIVE_PROJECT_SAVING_OK "),
     "geometry_preview": ("blender_geometry_preview_smoke.py", "BLENDER_GEOMETRY_PREVIEW_OK "),
     "geometry_preview_populated_protection": ("blender_geometry_preview_smoke.py", "BLENDER_GEOMETRY_PREVIEW_OK "),
@@ -155,6 +156,7 @@ CASES = {
 }
 # Each phase must exit successfully before a new process can consume its artifacts.
 PHASED_CASES = {
+    "installed_native_save": ("BLENDER_INSTALLED_NATIVE_SAVE_OK ", "BLENDER_INSTALLED_NATIVE_WEIGHTS_OK ", "BLENDER_INSTALLED_NATIVE_CURVE_OK "),
     "isolated_asset_preview_probe": ("BLENDER_ISOLATED_ASSET_PREVIEW_WRITER_OK ", "BLENDER_ISOLATED_ASSET_PREVIEW_WORKER_OK "),
     "image_reopen": ("BLENDER_IMAGE_REOPEN_WRITER_OK ", "BLENDER_IMAGE_REOPEN_READER_OK "),
     "image_portability_probe": ("BLENDER_IMAGE_PORTABILITY_PROBE_WRITER_OK ", "BLENDER_IMAGE_PORTABILITY_PROBE_READER_OK "),
@@ -179,6 +181,20 @@ PHASED_CASES = {
     "rig_binding_reopen": ("BLENDER_RIG_BINDING_WRITER_OK ", "BLENDER_RIG_BINDING_READER_OK "),
     "rigid_lifecycle_probe": ("BLENDER_RIGID_LIFECYCLE_PROBE_WRITER_OK ", "BLENDER_RIGID_LIFECYCLE_PROBE_READER_OK "),
 }
+
+
+def phase_names(case: str) -> tuple[str, ...]:
+    """Return only this source's declared phase order, never report-supplied names."""
+    if case not in CASES:
+        raise ValueError("Unknown registered native case")
+    if case not in PHASED_CASES:
+        return ()
+    names = ("native_save", "weights", "curve") if case == "installed_native_save" else ("writer", "reader")
+    if len(names) != len(PHASED_CASES[case]):
+        raise ValueError("Registered native phase names and markers disagree")
+    return names
+
+
 OPT_IN_CASES = set(PHASED_CASES)
 OPT_IN_CASES.add("surface_projection_probe")
 OPT_IN_CASES.add("simulation_cache_probe")
@@ -232,6 +248,7 @@ OPT_IN_CASES.add("render_boundaries_interactive")
 OPT_IN_CASES.add("render_checkpoint_probe")
 INTERACTIVE_CASES = {"undo_lifecycle", "mesh_edit_recovery", "mesh_repair", "uv_authoring", "prop_workflow", "uv_analysis", "mesh_analysis", "image_assets", "shader_groups", "undo_capacity", "shader_settings", "image_revisions", "field_scanner", "texture_paint"}
 INTERACTIVE_CASES.add("native_project_saving")
+INTERACTIVE_CASES.add("installed_native_save")
 OPT_IN_CASES.add("native_project_saving")
 
 
@@ -315,7 +332,7 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
         "--python",
         str(script),
     ]
-    if case in {"artist_quaternion_storage", "artist_quaternion", "uv_edit_storage", "uv_edit_boundary_probe", "large_surface_paint", "uv_edit_guard", "geometry_preview", "geometry_preview_populated_protection", "executor_history_containment", "animation_intent", "weight_edit_guard"}:
+    if case in {"artist_quaternion_storage", "artist_quaternion", "uv_edit_storage", "uv_edit_boundary_probe", "large_surface_paint", "uv_edit_guard", "geometry_preview", "geometry_preview_populated_protection", "executor_history_containment", "animation_intent", "weight_edit_guard", "installed_native_save"}:
         command.insert(1, "--disable-autoexec")
     interactive = case in INTERACTIVE_CASES
     if case == "isolated_asset_preview_probe":
@@ -340,15 +357,20 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
     environment["BRIDGE_TEST_PROCESS_TOKEN"] = process_instance
     for key, folder in (("BLENDER_USER_CONFIG", "config"), ("BLENDER_USER_SCRIPTS", "scripts"),
                         ("BLENDER_USER_DATAFILES", "datafiles")):
-        if case == "installed_addon_probe" and key == "BLENDER_USER_SCRIPTS":
+        if case in {"installed_addon_probe", "installed_native_save"} and key == "BLENDER_USER_SCRIPTS":
             folder = "installed scripts with spaces"
         directory = temporary / folder
         directory.mkdir()
         environment[key] = str(directory)
+    if case == "installed_native_save":
+        environment["BRIDGE_TEST_SUPPORT_COMMIT"] = git_value("rev-parse", "HEAD") or ""
     launch_cwd = ROOT
-    if case in PORTABLE_BLEND_RESEARCH_PHASES or case in {"isolated_asset_preview_probe", "native_project_saving"}:
+    if case in PORTABLE_BLEND_RESEARCH_PHASES or case in {"isolated_asset_preview_probe", "native_project_saving", "installed_native_save"}:
         # Research-only operational profile. This is not an OS/network sandbox.
         # Do not inherit credential variables or arbitrary Python/Blender paths.
+        installed_profile = {key: environment[key] for key in (
+            "BLENDER_USER_CONFIG", "BLENDER_USER_SCRIPTS", "BLENDER_USER_DATAFILES", "BRIDGE_TEST_SUPPORT_COMMIT")
+            if case == "installed_native_save"}
         environment = {key: os.environ[key] for key in (
             "PATH", "LANG", "LC_ALL", "DISPLAY", "XAUTHORITY", "LD_LIBRARY_PATH",
             "LIBGL_ALWAYS_SOFTWARE", "GALLIUM_DRIVER", "MESA_LOADER_DRIVER_OVERRIDE",
@@ -356,12 +378,19 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
         ) if key in os.environ}
         for key in ("HOME", "BLENDER_USER_CONFIG", "BLENDER_USER_SCRIPTS", "BLENDER_USER_DATAFILES",
                     "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_RUNTIME_DIR"):
+            if key in installed_profile:
+                environment[key] = installed_profile[key]
+                continue
             directory = temporary / ("worker-profile-" + key.lower())
             directory.mkdir(mode=0o700)
             environment[key] = str(directory)
         environment.update(TEMP=str(temporary), TMP=str(temporary), TMPDIR=str(temporary),
                            BRIDGE_TEST_PROCESS_TOKEN=process_instance,
                            GSETTINGS_BACKEND="memory", NO_AT_BRIDGE="1")
+        if case == "installed_native_save":
+            environment["BRIDGE_TEST_SUPPORT_COMMIT"] = installed_profile["BRIDGE_TEST_SUPPORT_COMMIT"]
+            if "BRIDGE_TEST_PACKAGE_PROBE_CONFIG" in os.environ:
+                environment["BRIDGE_TEST_PACKAGE_PROBE_CONFIG"] = os.environ["BRIDGE_TEST_PACKAGE_PROBE_CONFIG"]
         if case in PORTABLE_BLEND_RESEARCH_PHASES:
             environment["BRIDGE_TEST_PORTABLE_BLEND_PHASE"] = PORTABLE_BLEND_RESEARCH_PHASES[case]
         elif interactive and "BRIDGE_TEST_PRIVATE_UI_MANIFEST" in os.environ:
@@ -411,6 +440,13 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
             "image_pixels_or_material_appearance_qualified": False,
             "full_H02_F04_or_protected_object_qualified": False,
         }
+    if case == "installed_native_save":
+        result["qualification_scope"] = {
+            "installed_exact_candidate_only": True, "persistent_owner_TCP_required": True,
+            "genuine_timers_and_original_services_required": True,
+            "complete_installed_artist_workflow_qualified": False,
+            "upgrade_rollback_restart_qualified": False, "windows_testing_deferred": True,
+        }
     with log.open("wb") as stream:
         try:
             if interactive and sys.platform == "win32":
@@ -453,6 +489,13 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
     if case == "geometry_preview_populated_protection":
         phase_evidence = bool(payload and payload.get("variant") == "populated_data_baseline"
                               and payload.get("populated_protected_data_baseline_qualified") is True)
+    if case == "installed_native_save":
+        phase_evidence = bool(phase_evidence and payload
+                              and payload.get("installed_queued_profile_qualified") is True
+                              and payload.get("full_artist_workflow_qualified") is False
+                              and payload.get("accepted_candidate_commit") == "adfd0468946c7a4147b662715fb520be0afa7ae6"
+                              and payload.get("accepted_candidate_tree") == "9c24b416ede7b80268496fcd47cfd33ab562c72e"
+                              and payload.get("accepted_candidate_zip_sha256") == "2de08ba5033f3f7ae773f1e63449e2d8c31ac1300341526c027446ad5a9b900e")
     if result["exit_code"] == 0 and payload is not None and version and phase_evidence:
         result["status"] = "passed"
     result["completed_at"] = datetime.now(timezone.utc).isoformat()
@@ -467,14 +510,15 @@ def run_case(blender: Path, case: str, output: Path, timeout: int) -> dict:
     bundle = output / f"{case}-bundle"
     bundle.mkdir()
     phases = []
-    for phase, marker in zip(("writer", "reader"), PHASED_CASES[case], strict=True):
+    declared_phases = phase_names(case)
+    for phase, marker in zip(declared_phases, PHASED_CASES[case], strict=True):
         result = _run_process(blender, case, output, timeout, phase=phase,
                               bundle=bundle, phase_marker=marker)
         phases.append(result)
         if result["status"] != "passed":
             break
-    passed = len(phases) == 2 and all(p["status"] == "passed" for p in phases)
-    same_version = passed and phases[0]["blender_version"] == phases[1]["blender_version"]
+    passed = len(phases) == len(declared_phases) and all(p["status"] == "passed" for p in phases)
+    same_version = passed and len({p["blender_version"] for p in phases}) == 1
     return {
         "case": case, "script": CASES[case][0],
         "script_sha256": phases[0]["script_sha256"],
@@ -482,8 +526,8 @@ def run_case(blender: Path, case: str, output: Path, timeout: int) -> dict:
         "blender_version": phases[-1]["blender_version"],
         "execution_mode": phases[0]["execution_mode"],
         "phase_sequence": [p["phase"] for p in phases], "phases": phases,
-        "reader_started": len(phases) == 2, "shared_bundle": str(bundle),
-        "fresh_process_verified": bool(same_version and phases[0]["process_instance"] != phases[1]["process_instance"]),
+        "reader_started": "reader" in declared_phases and len(phases) == len(declared_phases), "shared_bundle": str(bundle),
+        "fresh_process_verified": bool(same_version and len({p["process_instance"] for p in phases}) == len(declared_phases)),
         "duration_seconds": round(time.monotonic() - started, 3),
     }
 
@@ -532,10 +576,10 @@ def main() -> int:
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
     defaults = [case for case in CASES if (args.include_interactive or case not in INTERACTIVE_CASES | OPT_IN_CASES)
-                and (case != "installed_addon_probe" or args.package_probe_config is not None)]
+                and (case not in {"installed_addon_probe", "installed_native_save"} or args.package_probe_config is not None)]
     cases = list(dict.fromkeys(args.cases or defaults))
-    if "installed_addon_probe" in cases and args.package_probe_config is None:
-        parser.error("installed_addon_probe requires --package-probe-config")
+    if {"installed_addon_probe", "installed_native_save"}.intersection(cases) and args.package_probe_config is None:
+        parser.error("Installed package checks require --package-probe-config")
     package_proof = None
     # Pass a frozen configuration through only this runner's child environment.
     # The fixture independently freezes and verifies both named ZIP payloads.

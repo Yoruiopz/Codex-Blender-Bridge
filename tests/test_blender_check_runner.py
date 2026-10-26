@@ -11,6 +11,91 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_phase_names_are_source_declared_and_preserve_existing_writer_reader_cases(runner, monkeypatch):
+    assert runner.phase_names("installed_native_save") == ("native_save", "weights", "curve")
+    for case in runner.CASES:
+        expected = () if case not in runner.PHASED_CASES else (
+            ("native_save", "weights", "curve") if case == "installed_native_save" else ("writer", "reader"))
+        assert runner.phase_names(case) == expected
+    with pytest.raises(ValueError, match="Unknown registered"):
+        runner.phase_names("caller_supplied")
+    monkeypatch.setitem(runner.PHASED_CASES, "installed_native_save", ("one", "two"))
+    with pytest.raises(ValueError, match="names and markers disagree"):
+        runner.phase_names("installed_native_save")
+
+
+@pytest.mark.parametrize("failed_phase", [None, "native_save", "weights", "curve"])
+def test_installed_native_save_uses_three_fresh_phases_and_stops_on_failure(runner, monkeypatch, tmp_path, failed_phase):
+    calls = []
+
+    def process(_blender, case, _output, _timeout, *, phase, bundle, phase_marker):
+        assert case == "installed_native_save" and bundle.is_dir()
+        expected = dict(zip(("native_save", "weights", "curve"), runner.PHASED_CASES[case], strict=True))
+        assert phase_marker == expected[phase]
+        calls.append(phase)
+        return {"script_sha256": "fixture", "status": "failed" if phase == failed_phase else "passed",
+                "blender_version": "5.2.2", "execution_mode": "interactive_display",
+                "process_instance": "fresh-" + phase, "phase": phase}
+
+    monkeypatch.setattr(runner, "_run_process", process)
+    result = runner.run_case(Path("blender"), "installed_native_save", tmp_path, 300)
+    expected = ["native_save", "weights", "curve"]
+    if failed_phase is not None:
+        expected = expected[:expected.index(failed_phase) + 1]
+    assert calls == expected and result["phase_sequence"] == expected
+    assert result["fresh_process_verified"] is (failed_phase is None)
+    assert result["status"] == ("passed" if failed_phase is None else "failed")
+    assert result["reader_started"] is False
+
+
+@pytest.mark.parametrize("changed_pin,replacement", [
+    (None, None),
+    ("accepted_candidate_commit", None),
+    ("accepted_candidate_commit", "0" * 40),
+    ("accepted_candidate_commit", "fa81dc35c859c22ebd742dc4034c0a787d2ee49d"),
+    ("accepted_candidate_tree", None),
+    ("accepted_candidate_tree", "0" * 40),
+    ("accepted_candidate_tree", "99d6bc2e30bb536eb52ed6923d547b373d9a30a6"),
+    ("accepted_candidate_zip_sha256", None),
+    ("accepted_candidate_zip_sha256", "0" * 64),
+    ("accepted_candidate_zip_sha256", "3e645b6ff1f2a0ca6125b95b86822802f5d7dc7991b33770ff0ed037e250e054"),
+])
+def test_installed_native_save_child_is_private_pinned_and_disables_autoexec(runner, monkeypatch, tmp_path, changed_pin, replacement):
+    monkeypatch.setattr(runner.sys, "platform", "linux")
+    monkeypatch.setattr(runner, "git_value", lambda *_args: "1" * 40)
+    monkeypatch.setenv("INSTALLED_NATIVE_UNWANTED", "fixture-only")
+    case = "installed_native_save"
+    assert case in runner.OPT_IN_CASES & runner.INTERACTIVE_CASES
+    bundle = tmp_path / "owned-bundle"
+    bundle.mkdir()
+
+    def run(command, **kwargs):
+        assert "--background" not in command and "--disable-autoexec" in command
+        assert command[-4:] == ["--bridge-phase", "native_save", "--bridge-bundle", str(bundle)]
+        assert " " in Path(kwargs["env"]["BLENDER_USER_SCRIPTS"]).name
+        assert kwargs["env"]["BRIDGE_TEST_SUPPORT_COMMIT"]
+        assert "INSTALLED_NATIVE_UNWANTED" not in kwargs["env"] and "PYTHONPATH" not in kwargs["env"]
+        payload = {"blender_version": "5.2.2", "phase": "native_save", "process_id": 123,
+                   "process_instance": kwargs["env"]["BRIDGE_TEST_PROCESS_TOKEN"],
+                   "installed_queued_profile_qualified": True, "full_artist_workflow_qualified": False,
+                   "accepted_candidate_commit": "adfd0468946c7a4147b662715fb520be0afa7ae6",
+                   "accepted_candidate_tree": "9c24b416ede7b80268496fcd47cfd33ab562c72e",
+                   "accepted_candidate_zip_sha256": "2de08ba5033f3f7ae773f1e63449e2d8c31ac1300341526c027446ad5a9b900e"}
+        if changed_pin is not None:
+            if replacement is None:
+                payload.pop(changed_pin)
+            else:
+                payload[changed_pin] = replacement
+        kwargs["stdout"].write((runner.PHASED_CASES[case][0] + json.dumps(payload)).encode())
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(runner.subprocess, "run", run)
+    result = runner._run_process(Path("blender"), case, tmp_path, 300, phase="native_save", bundle=bundle,
+                                 phase_marker=runner.PHASED_CASES[case][0])
+    assert result["status"] == ("passed" if changed_pin is None else "failed")
+    assert result["qualification_scope"]["complete_installed_artist_workflow_qualified"] is False
+
+
 def test_registered_native_save_uses_owned_interactive_sanitized_process(runner, monkeypatch, tmp_path):
     monkeypatch.setattr(runner.sys, "platform", "linux")
     monkeypatch.setenv("NATIVE_SAVE_TEST_UNWANTED", "not-a-secret")

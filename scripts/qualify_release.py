@@ -95,6 +95,7 @@ class Qualification:
         self.source = source.resolve()
         self.blockers: list[str] = []
         self.commit: str | None = None
+        self.tree: str | None = None
         self.inventory = source_inventory(self.source)
         self.source_sha256 = inventory_digest(self.inventory)
         self.package_sha256: dict[str, str] = {}
@@ -163,6 +164,10 @@ class Qualification:
                 ["git", "rev-parse", "HEAD"], cwd=self.source, capture_output=True,
                 text=True, check=True, timeout=10,
             ).stdout.strip()
+            self.tree = subprocess.run(
+                ["git", "rev-parse", self.commit + "^{tree}"], cwd=self.source,
+                capture_output=True, text=True, check=True, timeout=10,
+            ).stdout.strip()
             dirty = subprocess.run(
                 ["git", "status", "--porcelain", "--untracked-files=normal"],
                 cwd=self.source, capture_output=True, text=True, check=True, timeout=10,
@@ -173,6 +178,7 @@ class Qualification:
         except (OSError, subprocess.SubprocessError, ValueError) as exc:
             self.blockers.append(f"cannot establish clean Git provenance ({exc})")
         self.require(bool(self.commit and COMMIT.fullmatch(self.commit)), "exact 40-character Git commit required")
+        self.require(bool(self.tree and COMMIT.fullmatch(self.tree)), "exact 40-character Git tree required")
         self.require(ledger.get("commit") == self.commit and self.commit is not None, "ledger commit does not match checkout")
         self.require(ledger.get("source_sha256") == self.source_sha256, "ledger source digest does not match checkout")
         self.require(ledger.get("source_files") == self.inventory, "ledger source inventory does not match checkout")
@@ -348,20 +354,37 @@ class Qualification:
                     self.require(result.get("execution_mode") == expected_mode, f"{label}/{case}: incorrect Windows execution isolation")
                     if case in run_blender_checks.PHASED_CASES:
                         phases = result.get("phases")
-                        self.require(result.get("fresh_process_verified") is True and result.get("reader_started") is True and result.get("phase_sequence") == ["writer", "reader"], f"{label}/{case}: verified writer/reader sequence required")
-                        if not self.require(isinstance(phases, list) and len(phases) == 2 and all(isinstance(phase, dict) for phase in phases), f"{label}/{case}: both process phases required"):
+                        declared = run_blender_checks.phase_names(case)
+                        has_reader = "reader" in declared
+                        sequence_label = "writer/reader" if has_reader else "declared native_save/weights/curve"
+                        self.require(result.get("fresh_process_verified") is True and result.get("reader_started") is has_reader and result.get("phase_sequence") == list(declared), f"{label}/{case}: verified {sequence_label} sequence required")
+                        count_label = "both process phases" if len(declared) == 2 else "all three declared process phases"
+                        if not self.require(isinstance(phases, list) and len(phases) == len(declared) and all(isinstance(phase, dict) for phase in phases), f"{label}/{case}: {count_label} required"):
                             continue
                         tokens: list[str] = []
-                        for phase, phase_name, marker in zip(phases, ("writer", "reader"), run_blender_checks.PHASED_CASES[case], strict=True):
+                        process_ids: list[int] = []
+                        for phase, phase_name, marker in zip(phases, declared, run_blender_checks.PHASED_CASES[case], strict=True):
                             self.require(phase.get("phase") == phase_name and phase.get("blender_version") == result.get("blender_version"), f"{label}/{case}: wrong phase or Blender version")
                             token = phase.get("process_instance")
                             self.require(isinstance(token, str) and bool(token), f"{label}/{case}: missing process instance")
-                            tokens.append(token)
+                            if isinstance(token, str) and token:
+                                tokens.append(token)
                             proof = phase.get("evidence", {})
                             self.require(isinstance(proof, dict) and proof.get("process_instance") == token and proof.get("phase") == phase_name and type(proof.get("process_id")) is int and proof["process_id"] > 0, f"{label}/{case}: process-instance evidence mismatch")
+                            if case == "installed_native_save":
+                                self.require(isinstance(proof, dict) and bool(self.commit and self.tree)
+                                             and proof.get("accepted_candidate_commit") == self.commit
+                                             and proof.get("accepted_candidate_tree") == self.tree
+                                             and self.package_sha256.get("addon") is not None
+                                             and proof.get("accepted_candidate_zip_sha256") == self.package_sha256["addon"],
+                                             f"{label}/{case}: installed candidate pins must match qualified source/tree/add-on package")
+                            if isinstance(proof, dict) and type(proof.get("process_id")) is int:
+                                process_ids.append(proof["process_id"])
                             self.require(phase.get("script_sha256") == result.get("script_sha256") and phase.get("execution_mode") == expected_mode, f"{label}/{case}: phase source/isolation mismatch")
                             self.check_native_process(phase, logs.get((executable, case, phase_name)), marker, f"{label}/{case}/{phase_name}")
-                        self.require(len(set(tokens)) == 2, f"{label}/{case}: writer/reader must use distinct process instances")
+                        self.require(len(set(tokens)) == len(declared), f"{label}/{case}: declared phases must use distinct process instances")
+                        if not has_reader:
+                            self.require(len(process_ids) == len(declared) and len(set(process_ids)) == len(declared), f"{label}/{case}: declared phases must report distinct process IDs")
                     else:
                         self.check_native_process(result, logs.get((executable, case, None)), run_blender_checks.CASES[case][1], f"{label}/{case}")
                 self.require(len(observed) == 1, f"{label}: inconsistent Blender version for {executable}")

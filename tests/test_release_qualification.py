@@ -40,6 +40,7 @@ def evidence(tmp_path: Path):
     ):
         subprocess.run(command, cwd=source, check=True, capture_output=True)
     commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=source, check=True, capture_output=True, text=True).stdout.strip()
+    tree = subprocess.run(["git", "rev-parse", commit + "^{tree}"], cwd=source, check=True, capture_output=True, text=True).stdout.strip()
     bundle = tmp_path / "bundle"
     bundle.mkdir()
     packages = {}
@@ -95,12 +96,16 @@ def evidence(tmp_path: Path):
             phased = case in gate.run_blender_checks.PHASED_CASES
             processes = []
             markers = gate.run_blender_checks.PHASED_CASES[case] if phased else (marker,)
+            declared_phases = gate.run_blender_checks.phase_names(case)
             for index, process_marker in enumerate(markers):
-                phase = ("writer", "reader")[index] if phased else None
+                phase = declared_phases[index] if phased else None
                 token = f"synthetic-{version}-{case}-{phase}"
                 payload = {"blender_version": version}
                 if phase:
-                    payload.update(phase=phase, process_instance=token, process_id=123)
+                    payload.update(phase=phase, process_instance=token, process_id=123 + index)
+                if case == "installed_native_save":
+                    payload.update(accepted_candidate_commit=commit, accepted_candidate_tree=tree,
+                                   accepted_candidate_zip_sha256=packages["addon"]["sha256"])
                 if not process_marker.endswith(" "):
                     payload[process_marker] = "PASS"
                 log = bundle / f"{version}-{case}-{phase}.log"
@@ -109,7 +114,8 @@ def evidence(tmp_path: Path):
                 processes.append({"case": case, "phase": phase, "process_instance": token, "script_sha256": inventory[f"scripts/{script}"], "status": "passed", "exit_code": 0, "blender_executable": executable, "blender_version": version, "evidence": payload, "execution_mode": "private_windows_desktop" if case in gate.run_blender_checks.INTERACTIVE_CASES else "background"})
             if phased:
                 result = {key: value for key, value in processes[0].items() if key not in {"evidence", "exit_code"}}
-                result.update(phases=processes, phase_sequence=["writer", "reader"], reader_started=True, fresh_process_verified=True)
+                result.update(phases=processes, phase_sequence=list(declared_phases),
+                              reader_started="reader" in declared_phases, fresh_process_verified=True)
                 results.append(result)
             else:
                 results.append(processes[0])
@@ -228,7 +234,8 @@ def test_native_boolean_exit_code_is_rejected_for_each_process_kind(evidence, ph
 
     def modify(receipt):
         def change(report):
-            row = next(item for item in report["results"] if bool(item.get("phases")) == (phase != "single"))
+            row = (next(item for item in report["results"] if item["case"] == "image_reopen") if phase != "single"
+                   else next(item for item in report["results"] if not item.get("phases")))
             process = row if phase == "single" else row["phases"][0 if phase == "writer" else 1]
             process["exit_code"] = False
         rewrite_receipt(receipt["report"], change)
@@ -301,6 +308,7 @@ def test_native_log_marker_is_checked_even_when_rehashed(evidence) -> None:
     (lambda result: result.update(phases=[]), "both process phases"),
     (lambda result: result.update(fresh_process_verified=False), "verified writer/reader sequence"),
     (lambda result: result["phases"][1].update(process_instance=result["phases"][0]["process_instance"]), "distinct process instances"),
+    (lambda result: result["phases"][1].update(process_instance=[]), "missing process instance"),
     (lambda result: result["phases"][0].update(exit_code=1), "native success evidence missing"),
 ])
 def test_phased_native_evidence_cannot_be_replaced_by_parent_success(evidence, change, expected) -> None:
@@ -311,6 +319,87 @@ def test_phased_native_evidence_cannot_be_replaced_by_parent_success(evidence, c
         rewrite_receipt(receipt["report"], modify_report)
     rewrite_receipt(evidence[2]["native_matrices"][0], modify)
     assert any(expected in blocker for blocker in run(evidence)["blockers"])
+
+
+@pytest.mark.parametrize("change,expected", [
+    (lambda result: result["phases"].pop(), "all three declared process phases"),
+    (lambda result: result.update(phase_sequence=["curve", "weights", "native_save"]), "verified declared native_save/weights/curve sequence"),
+    (lambda result: result["phases"].reverse(), "wrong phase or Blender version"),
+    (lambda result: result["phases"][1].update(process_instance=result["phases"][0]["process_instance"]), "distinct process instances"),
+    (lambda result: result["phases"][1].update(process_instance=[]), "missing process instance"),
+    (lambda result: result["phases"][2].update(phase="reader"), "wrong phase or Blender version"),
+    (lambda result: result.update(reader_started=True), "verified declared native_save/weights/curve sequence"),
+    (lambda result: result.update(reader_started=0), "verified declared native_save/weights/curve sequence"),
+    (lambda result: result.update(fresh_process_verified=False), "verified declared native_save/weights/curve sequence"),
+    (lambda result: result["phases"][1]["evidence"].update(process_id=result["phases"][0]["evidence"]["process_id"]), "distinct process IDs"),
+    (lambda result: result["phases"][2]["evidence"].pop("process_id"), "process-instance evidence mismatch"),
+    (lambda result: result["phases"][2].update(script_sha256="0" * 64), "phase source/isolation mismatch"),
+    (lambda result: result["phases"][2].update(execution_mode="background"), "phase source/isolation mismatch"),
+    (lambda result: result["phases"][2].update(blender_version="4.3.2"), "wrong phase or Blender version"),
+])
+def test_three_phase_native_evidence_requires_exact_declared_processes(evidence, change, expected) -> None:
+    def modify(receipt):
+        def modify_report(report):
+            result = next(result for result in report["results"] if result["case"] == "installed_native_save")
+            change(result)
+        rewrite_receipt(receipt["report"], modify_report)
+    rewrite_receipt(evidence[2]["native_matrices"][0], modify)
+    result = run(evidence)
+    assert result["release_readiness"] == "NOT_READY"
+    assert any(expected in blocker for blocker in result["blockers"])
+
+
+@pytest.mark.parametrize("phase_index", [0, 1, 2])
+def test_three_phase_native_boolean_exit_code_is_rejected_in_every_phase(evidence, phase_index) -> None:
+    def modify(receipt):
+        def modify_report(report):
+            result = next(result for result in report["results"] if result["case"] == "installed_native_save")
+            result["phases"][phase_index]["exit_code"] = False
+        rewrite_receipt(receipt["report"], modify_report)
+    rewrite_receipt(evidence[2]["native_matrices"][0], modify)
+    assert any("native success evidence missing" in blocker for blocker in run(evidence)["blockers"])
+
+
+@pytest.mark.parametrize("phase", ["native_save", "weights", "curve"])
+def test_three_phase_native_rehashed_wrong_marker_is_rejected(evidence, phase) -> None:
+    def modify(receipt):
+        entry = next(log for log in receipt["logs"] if log["case"] == "installed_native_save" and log["phase"] == phase)
+        path = Path(entry["artifact"]["path"])
+        path.write_text("BLENDER_FOREIGN_MARKER_OK " + json.dumps({"blender_version": "4.5.1"}) + "\n", encoding="utf-8")
+        entry["artifact"]["sha256"] = gate.sha256(path)
+    rewrite_receipt(evidence[2]["native_matrices"][0], modify)
+    assert any("success marker differs" in blocker for blocker in run(evidence)["blockers"])
+
+
+@pytest.mark.parametrize("field,replacement", [
+    ("accepted_candidate_commit", None),
+    ("accepted_candidate_commit", "fa81dc35c859c22ebd742dc4034c0a787d2ee49d"),
+    ("accepted_candidate_tree", None),
+    ("accepted_candidate_tree", "99d6bc2e30bb536eb52ed6923d547b373d9a30a6"),
+    ("accepted_candidate_zip_sha256", None),
+    ("accepted_candidate_zip_sha256", "3e645b6ff1f2a0ca6125b95b86822802f5d7dc7991b33770ff0ed037e250e054"),
+])
+def test_three_phase_installed_pins_cannot_relabel_old_candidate_even_in_rehashed_logs(evidence, field, replacement) -> None:
+    def modify(receipt):
+        report_path = Path(receipt["report"]["path"])
+        report = json.loads(report_path.read_text())
+        row = next(result for result in report["results"] if result["case"] == "installed_native_save")
+        proof = row["phases"][0]["evidence"]
+        if replacement is None:
+            proof.pop(field)
+        else:
+            proof[field] = replacement
+        marker = gate.run_blender_checks.PHASED_CASES["installed_native_save"][0]
+        entry = next(log for log in receipt["logs"] if log["case"] == "installed_native_save"
+                     and log["phase"] == "native_save" and log["blender_executable"] == row["blender_executable"])
+        log_path = Path(entry["artifact"]["path"])
+        log_path.write_text(marker + json.dumps(proof) + "\n", encoding="utf-8")
+        entry["artifact"]["sha256"] = gate.sha256(log_path)
+        receipt["report"].update(write_json(report_path, report))
+    rewrite_receipt(evidence[2]["native_matrices"][0], modify)
+    result = run(evidence)
+    assert result["release_readiness"] == "NOT_READY"
+    assert any("installed candidate pins must match qualified source/tree/add-on package" in item for item in result["blockers"])
 
 
 def test_staging_retains_only_qualified_matching_bytes_and_evidence(evidence, tmp_path) -> None:
