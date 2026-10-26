@@ -1,0 +1,96 @@
+{
+  "schema_version": 1,
+  "status": "PUBLISHED_VERIFIED_ALPHA_ONLY",
+  "release_url": "https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.8.0",
+  "release_id": 424216061,
+  "tag": "v0.8.0",
+  "published_at": "2026-10-26T12:26:10Z",
+  "prerelease": true,
+  "product_commit": "adfd0468946c7a4147b662715fb520be0afa7ae6",
+  "product_tree": "9c24b416ede7b80268496fcd47cfd33ab562c72e",
+  "accepted_CI_run": 40310834054,
+  "accepted_CI_jobs": 7,
+  "tests_each_matrix_cell": 9687,
+  "Windows_skips_each_matrix_cell": 3,
+  "publisher_commit": "2210de845d132739c5b5f9e2bef56a3379fcf211",
+  "publisher_run": 40322447395,
+  "publisher_job": 121570516351,
+  "release_notes_bytes": 4241,
+  "release_notes_sha256": "6d15661ba2957426dfec2001b4168dc17e6038dfba0ba701008e073ff409f5d8",
+  "assets": [
+    {
+      "name": "blender-codex-bridge-0.8.0-development-evidence.tar.gz",
+      "id": 678094229,
+      "bytes": 33802794,
+      "sha256": "8c3402662db58bce614658f1ed37a85c40efdc403f147f656656f8ccb5bcfca8",
+      "seconds": 1.061,
+      "caller_Authorization_header": false,
+      "downloaded_bytes_match_accepted": true
+    },
+    {
+      "name": "blender-codex-bridge-plugin-0.8.0.zip",
+      "id": 678094177,
+      "bytes": 6830,
+      "sha256": "b2c8aa7eadb99f5dd27b926ebaaba7efda2378005646aa41fd47d91a60ca5197",
+      "seconds": 0.421,
+      "caller_Authorization_header": false,
+      "downloaded_bytes_match_accepted": true
+    },
+    {
+      "name": "blender_codex_bridge-0.8.0-py3-none-any.whl",
+      "id": 678094158,
+      "bytes": 167837,
+      "sha256": "837ffc2be4ce7e2368fe2672438b35d9f1a11d4e60cf7fa362e279d2b1e134b2",
+      "seconds": 0.388,
+      "caller_Authorization_header": false,
+      "downloaded_bytes_match_accepted": true
+    },
+    {
+      "name": "blender_codex_bridge-0.8.0.zip",
+      "id": 678094133,
+      "bytes": 872657,
+      "sha256": "2de08ba5033f3f7ae773f1e63449e2d8c31ac1300341526c027446ad5a9b900e",
+      "seconds": 0.379,
+      "caller_Authorization_header": false,
+      "downloaded_bytes_match_accepted": true
+    },
+    {
+      "name": "EVIDENCE-SHA256SUMS.txt",
+      "id": 678094299,
+      "bytes": 121,
+      "sha256": "4dc238f30714cd5252e7b4d029232645c3796c743ab38d80c0285b0e66f08bfb",
+      "seconds": 0.356,
+      "caller_Authorization_header": false,
+      "downloaded_bytes_match_accepted": true
+    },
+    {
+      "name": "SHA256SUMS.txt",
+      "id": 678094207,
+      "bytes": 311,
+      "sha256": "cd4dd3181b79a067a6c0d011d79039d5968f5b9c399987d24e4e83e6d6c66c91",
+      "seconds": 0.317,
+      "caller_Authorization_header": false,
+      "downloaded_bytes_match_accepted": true
+    }
+  ],
+  "all6_anonymous_bytes_match_exact_accepted_installed_artifacts": true,
+  "independent_postpublication_review_sha256": "f152efedf424d83efffdc5a2b77ef960e9d1d997442e4ab450c32dae75271849",
+  "preserved": {
+    "repository_visibility": "public",
+    "main": "1e3c9898ca1f4cf0d91858a383a0b93bf6438db5",
+    "PR8": {
+      "state": "open",
+      "draft": true,
+      "merged": false,
+      "head": "4470d88bb4d8fb1ed75e86090dd6886fb55eb589"
+    },
+    "older_releases": 6,
+    "older_asset_IDs_digests": 32,
+    "latest_stable": "HTTP404; no stable release"
+  },
+  "qualification_scope": "Exact source/CI/packages,28 selected source-native cases,6 genuine queued fresh installed phases,16 same-process install/reload/upgrade/rollback observations and fresh270-tool wheel/stdio with277 validation denials. Wheel and native TCP are separate; no combined artist workflow, OS restart persistence or complete hidden-state claim.",
+  "stable_1_0_acceptance": false,
+  "all29_implementation_and14_stable_gates": "OPEN",
+  "Windows": "Deferred and unverified",
+  "GitHub_immutable_release_feature_claimed": false
+}
