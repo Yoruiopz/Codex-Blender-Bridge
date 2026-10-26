@@ -1951,3 +1951,151 @@ def test_populated_geometry_manual_controls_never_replace_baseline_or_run_an_inv
     assert not any(isinstance(node, ast.Attribute) and node.attr in {
         "undo", "undo_last", "restore_last", "restore_operation", "frame_set"}
         for node in ast.walk(controls))
+
+
+@pytest.fixture
+def installed_probe_reporting(monkeypatch):
+    import importlib.util
+
+    for name in ("bpy", "addon_utils"):
+        monkeypatch.setitem(sys.modules, name, NS())
+    path = ROOT / "scripts/blender_installed_addon_probe_smoke.py"
+    spec = importlib.util.spec_from_file_location("installed_probe_reporting", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def installed_probe_payload(*, previous_preview=True):
+    names = ["domain.synthetic_" + str(index) + "_x" * 20 for index in range(268)]
+    observations = []
+    for label in ("fresh-candidate", "previous", "upgrade", "rollback"):
+        expected = previous_preview or label in {"fresh-candidate", "upgrade"}
+        phase_names = names if expected else names[:108]
+        preview = {"completed": expected, "worker_evidence": {"retained": "w" * 8192},
+                   "source_geometry_and_transforms_preserved": True, "actual_process_handle_reaped": True,
+                   "actual_staging_directory_absent": True, "worker_and_parent_process_separate": True,
+                   "consent_restored": True}
+        if expected:
+            preview["png"] = {"sha256": "e" * 64}
+        else:
+            preview = {"completed": False, "expected": False, "reason": "Pinned older package has no preview tools"}
+        observations.append({"label": label, "archive_sha256": "a" * 64, "version": "0.7.0" if label in {"fresh-candidate", "upgrade"} else "0.6.0" if previous_preview else "0.3.0",
+            "documented_tool_count": len(phase_names), "public_tool_names": list(phase_names), "public_tool_names_sha256": "b" * 64,
+            "hidden_tool_count": 2, "hidden_tool_metadata": [{"name": "jobs._scene_turn", "remote": False}],
+            "exact_expected_tool_names_verified": True, "installed_members_verified": 300,
+            "all_member_names": ["blender_codex_bridge/module_" + str(i) + ".py" for i in range(300)],
+            "default_deletion_denied": True, "default_permissions": {"EXECUTE_PYTHON": False, "SAVE_PROJECT": False},
+            "discovered_in_addon_list": expected, "clean_directory_replacement": label != "fresh-candidate",
+            "original_permission_manager_identities_restored": True, "loopback": [{"id": label + "-connect", "ok": True}, {"id": label + "-reconnect", "ok": True}],
+            "created_object": label + " installed cube", "location": [1., 2., 3.],
+            "geometry_preview_expected": expected, "geometry_preview": preview})
+    return {"blender_version": "4.5.14 LTS", "configuration_sha256": "c" * 64, "observations": observations,
+            "package_configuration": {"candidate": {"members_sha256": {"blender_codex_bridge/example.py": "f" * 64}}},
+            "unregistered_after_probe": True, "project_saved": False, "user_preferences_saved": False,
+            "scope": "Owned synthetic full reporting proof", "release_readiness": "NOT_ASSESSED"}
+
+
+@pytest.mark.parametrize("previous_preview", [True, False])
+def test_installed_probe_large_complete_receipt_roundtrips_and_compact_marker_survives_tail(installed_probe_reporting, tmp_path, previous_preview):
+    import hashlib
+    import importlib.util
+
+    reporter = installed_probe_reporting
+    payload = installed_probe_payload(previous_preview=previous_preview)
+    original = json.loads(json.dumps(payload))
+    assert len(json.dumps(payload).encode()) > 82535
+    line = reporter._persist_probe_report(payload, tmp_path, process_instance="d" * 32, process_id=47)
+    assert len((line + "\n").encode()) <= 32768
+    marker = json.loads(line[len(reporter.PROBE_MARKER):])
+    receipt = Path(marker["full_receipt"]["path"])
+    raw = receipt.read_bytes()
+    full = json.loads(raw)
+    assert len(raw) <= 4 * 1024 * 1024 and len(raw) == marker["full_receipt"]["bytes"]
+    assert hashlib.sha256(raw).hexdigest() == marker["full_receipt"]["sha256"]
+    assert {key: full[key] for key in payload} == payload == original
+    assert full["process_instance"] == marker["process_instance"] == "d" * 32
+    assert full["process_id"] == marker["process_id"] == 47
+    assert full["configuration_sha256"] == marker["configuration_sha256"] == "c" * 64
+    assert marker["full_observations_sha256"] == hashlib.sha256(reporter._receipt_json(payload["observations"])).hexdigest()
+    for source, compact in zip(payload["observations"], marker["observations"], strict=True):
+        assert compact["observation_sha256"] == hashlib.sha256(reporter._receipt_json(source)).hexdigest()
+        assert compact["label"] == source["label"] and compact["version"] == source["version"]
+        assert compact["geometry_preview"]["expected"] is compact["geometry_preview"]["completed"] is source["geometry_preview_expected"]
+        assert full["observations"][marker["observations"].index(compact)] == source
+    spec = importlib.util.spec_from_file_location("unchanged_probe_runner", ROOT / "scripts/run_blender_checks.py")
+    runner = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(runner)
+    captured = ("x" * 100000 + "\n" + line + "\nBlender quit\n").encode()[-65536:].decode()
+    assert runner.success_payload(captured, reporter.PROBE_MARKER) == marker
+
+
+@pytest.mark.parametrize("failure", ["existing", "symlink", "full_budget", "marker_budget", "nonfinite", "json_roundtrip", "readback"])
+def test_installed_probe_receipt_failure_never_emits_success(installed_probe_reporting, tmp_path, monkeypatch, capsys, failure):
+    import io
+
+    reporter = installed_probe_reporting
+    payload = installed_probe_payload()
+    receipt = tmp_path / "installed-probe-full-receipt.json"
+    expected = AssertionError
+    if failure == "existing":
+        receipt.write_bytes(b"keep original")
+        expected = FileExistsError
+    elif failure == "symlink":
+        sentinel = tmp_path / "sentinel"
+        sentinel.write_bytes(b"keep sentinel")
+        receipt.symlink_to(sentinel)
+        expected = FileExistsError
+    elif failure == "full_budget":
+        payload["unabridged_extra"] = "x" * reporter.MAX_PROBE_RECEIPT_BYTES
+    elif failure == "marker_budget":
+        payload["scope"] = "x" * reporter.MAX_PROBE_MARKER_BYTES
+    elif failure == "nonfinite":
+        payload["unabridged_extra"] = float("nan")
+        expected = ValueError
+    elif failure == "json_roundtrip":
+        payload["unabridged_extra"] = ("tuple is not a JSON array",)
+    else:
+        original_open = Path.open
+
+        def changed_readback(path, mode="r", *args, **kwargs):
+            if path == receipt and mode == "rb":
+                return io.BytesIO(b"corrupted readback")
+            return original_open(path, mode, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "open", changed_readback)
+    with pytest.raises(expected):
+        reporter._persist_probe_report(payload, tmp_path, process_instance="d" * 32, process_id=47)
+    assert reporter.PROBE_MARKER not in capsys.readouterr().out
+    if failure == "existing":
+        assert receipt.read_bytes() == b"keep original"
+    elif failure == "symlink":
+        assert sentinel.read_bytes() == b"keep sentinel"
+    elif failure in {"full_budget", "marker_budget", "nonfinite"}:
+        assert not receipt.exists()
+
+
+def test_installed_probe_main_emits_marker_only_after_full_receipt_and_cleanup():
+    current = ast.parse((ROOT / "scripts/blender_installed_addon_probe_smoke.py").read_text())
+    main = next(n for n in current.body if isinstance(n, ast.FunctionDef) and n.name == "main")
+    text = ast.unparse(main)
+    assert text.index("_unload()") < text.index("_persist_probe_report(payload") < text.index("print(marker, flush=True)")
+
+
+def test_upgrade_probe_uses_preference_grants_without_constructing_or_replacing_permission_services():
+    tree = ast.parse((ROOT / "scripts/blender_installed_addon_probe_smoke.py").read_text())
+    functions = {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            assert not (isinstance(node.func, ast.Attribute) and node.func.attr == "PermissionManager")
+            assert not (isinstance(node.func, ast.Name) and node.func.id == "PermissionManager")
+        if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for target in targets:
+                assert not (isinstance(target, ast.Attribute) and target.attr in {"permissions", "_source"})
+    main = ast.unparse(functions["main"])
+    assert "bpy.context.preferences.use_preferences_save = False" in main
+    assert "bpy.context.preferences.filepaths.use_auto_save_temporary_files = False" in main
+    exercise = ast.unparse(functions["_exercise"])
+    assert "_assert_permission_services(runtime, original_services)" in exercise
+    assert "creation_preference_consent_restored" in exercise

@@ -468,50 +468,65 @@ def test_started_job_cleanup_does_not_depend_on_parsing_accepted_response(probe,
 
 
 @pytest.mark.parametrize("has_preview", [False, True])
-def test_package_row_restores_real_permission_managers_before_optional_preview(probe, monkeypatch, tmp_path, has_preview):
+@pytest.mark.parametrize("failure", [None, "create", "transform", "provider_drift"])
+def test_package_row_keeps_installed_permission_services_and_restores_preference_grants(
+        probe, addon_package, monkeypatch, tmp_path, has_preview, failure):
     import sys
-    from enum import Enum
+
+    permission_module = importlib.import_module(f"{addon_package}.permissions")
 
     class BridgeError(Exception):
         code = "PERMISSION_DENIED"
 
-    class Permission(Enum):
-        EDIT_MESH = "EDIT_MESH"
+    prefs = SimpleNamespace(auto_start=False, allow_inspect_scene=False,
+                            allow_transform_objects=False, allow_external_files=False)
+    default = {"DELETE_OBJECTS": False, "EXECUTE_PYTHON": False, "ACCESS_EXTERNAL_FILES": False,
+               "INSPECT_SCENE": False, "TRANSFORM_OBJECTS": False}
 
-    class PermissionManager:
-        def __init__(self, source):
-            self.source = source
+    def preference_source():
+        return {**default, "INSPECT_SCENE": prefs.allow_inspect_scene,
+                "TRANSFORM_OBJECTS": prefs.allow_transform_objects}
 
-        def snapshot(self):
-            return self.source()
-
-    default = {"DELETE_OBJECTS": False, "EXECUTE_PYTHON": False, "ACCESS_EXTERNAL_FILES": False}
-    real = PermissionManager(lambda: dict(default))
-    executor_real = PermissionManager(lambda: dict(default))
-    prefs = SimpleNamespace(auto_start=False)
+    real = permission_module.PermissionManager(preference_source)
     probe.bpy.context = SimpleNamespace(preferences=SimpleNamespace(addons={probe.MODULE: SimpleNamespace(preferences=prefs)}))
     probe.bpy.data = SimpleNamespace(objects={})
     probe.bpy.ops = SimpleNamespace(preferences=SimpleNamespace(addon_install=lambda **kwargs: {"FINISHED"}))
-    installed_module = SimpleNamespace(__name__=probe.MODULE, __file__=str(tmp_path / "installed.py"), bl_info={"version": (0, 6, 0)})
+    installed_module = SimpleNamespace(__name__=probe.MODULE, __file__=str(tmp_path / "installed.py"), bl_info={"version": (0, 8, 0)})
     probe.addon_utils.modules_refresh = lambda: None
     probe.addon_utils.modules = lambda: [installed_module]
     probe.addon_utils.enable = lambda *args, **kwargs: installed_module
     probe.addon_utils.check = lambda name: (True, True)
-    runtime = SimpleNamespace(permissions=real, executor=SimpleNamespace(permissions=executor_real), registry=object())
-    calls = []
+    runtime = SimpleNamespace(permissions=real, executor=SimpleNamespace(permissions=real), registry=object())
+    calls, foreign_calls = [], []
+
+    def foreign_provider():
+        foreign_calls.append(True)
+        raise AssertionError("A substituted provider must not be invoked")
 
     def dispatch(method, params):
         calls.append(method)
+        assert runtime.permissions is real and runtime.executor.permissions is real
+        assert real._source is preference_source
         if method == "bridge.status":
-            return {"addon_version": "0.6.0"}
+            return {"addon_version": "0.8.0"}
         if method == "object.delete":
-            assert runtime.permissions is real and runtime.executor.permissions is executor_real
+            assert prefs.allow_transform_objects is False
             raise BridgeError()
+        if method in {"object.create", "transform.set"}:
+            assert prefs.allow_transform_objects is True and prefs.allow_inspect_scene is True
+            grants = real.snapshot()
+            assert grants["TRANSFORM_OBJECTS"] is True and grants["INSPECT_SCENE"] is True
+            assert all(grants[key] is False for key in ("DELETE_OBJECTS", "EXECUTE_PYTHON", "ACCESS_EXTERNAL_FILES"))
         if method == "object.create":
-            assert runtime.permissions is runtime.executor.permissions and runtime.permissions is not real
+            if failure == "create":
+                raise RuntimeError("injected create failure")
             probe.bpy.data.objects[params["name"]] = SimpleNamespace(location=(0., 0., 0.))
+            if failure == "provider_drift":
+                real._source = foreign_provider
             return {"object": params["name"]}
         if method == "transform.set":
+            if failure == "transform":
+                raise RuntimeError("injected transform failure")
             probe.bpy.data.objects[params["object_name"]].location = tuple(params["location"])
         else:
             assert method in {"toolsets.enable", "toolsets.disable"}
@@ -519,7 +534,7 @@ def test_package_row_restores_real_permission_managers_before_optional_preview(p
     runtime.dispatch = dispatch
     monkeypatch.setitem(sys.modules, probe.MODULE + ".runtime", SimpleNamespace(get_runtime=lambda: runtime))
     monkeypatch.setitem(sys.modules, probe.MODULE + ".errors", SimpleNamespace(BridgeError=BridgeError))
-    monkeypatch.setitem(sys.modules, probe.MODULE + ".permissions", SimpleNamespace(Permission=Permission, PermissionManager=PermissionManager))
+    monkeypatch.setitem(sys.modules, probe.MODULE + ".permissions", permission_module)
     monkeypatch.setattr(probe, "_unload", lambda: None)
     monkeypatch.setattr(probe, "_installed_bytes", lambda *args: None)
     monkeypatch.setattr(probe, "_network", lambda *args: {"ok": True})
@@ -528,14 +543,30 @@ def test_package_row_restores_real_permission_managers_before_optional_preview(p
     preview_calls = []
 
     def preview(actual, *args):
-        assert actual is runtime and runtime.permissions is real and runtime.executor.permissions is executor_real
+        assert actual is runtime and runtime.permissions is real and runtime.executor.permissions is real
+        assert real._source is preference_source
+        assert prefs.allow_transform_objects is False and prefs.allow_inspect_scene is False
         preview_calls.append(args)
         return {"completed": True}
 
     monkeypatch.setattr(probe, "_installed_preview", preview)
-    observed = probe._exercise("fresh-candidate", tmp_path / "package.zip", {},
-                               {"version": "0.6.0", "sha256": "0" * 64, "expected_geometry_preview": has_preview}, tmp_path)
-    assert runtime.permissions is real and runtime.executor.permissions is executor_real
-    assert len(preview_calls) == int(has_preview) and observed["geometry_preview_expected"] is has_preview
-    assert observed["original_permission_manager_identities_restored"] is True
-    assert "object.create" in calls and "transform.set" in calls and "object.delete" in calls
+    arguments = ("fresh-candidate", tmp_path / "package.zip", {},
+                 {"version": "0.8.0", "sha256": "0" * 64, "expected_geometry_preview": has_preview}, tmp_path)
+    if failure is None:
+        observed = probe._exercise(*arguments)
+        assert len(preview_calls) == int(has_preview) and observed["geometry_preview_expected"] is has_preview
+        assert observed["permission_service_identities_preserved_throughout"] is True
+        assert observed["permission_provider_identities_preserved"] is True
+        assert observed["creation_preference_consent_restored"] is True
+        assert observed["creation_permissions"]["TRANSFORM_OBJECTS"] is True
+        assert "transform.set" in calls
+    else:
+        with pytest.raises(AssertionError if failure == "provider_drift" else RuntimeError):
+            probe._exercise(*arguments)
+        assert preview_calls == []
+        if failure in {"create", "provider_drift"}:
+            assert "transform.set" not in calls
+    assert runtime.permissions is real and runtime.executor.permissions is real
+    assert prefs.allow_transform_objects is False and prefs.allow_inspect_scene is False
+    assert foreign_calls == []
+    assert "object.create" in calls and "object.delete" in calls
