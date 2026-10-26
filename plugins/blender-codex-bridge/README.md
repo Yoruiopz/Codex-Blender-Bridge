@@ -3,22 +3,29 @@
 This optional plugin packages MCP launch configuration and a verification-first Blender
 workflow skill for Codex. Install the standalone MCP server separately.
 
+Use matching accepted **0.8.0 alpha** add-on, MCP server and plugin artifacts from
+one release. The [release evidence](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.8.0)
+identifies accepted bytes and measured limits; matching source version strings or
+a candidate ZIP alone are not an acceptance/publication record. Previous releases,
+including 0.7, remain available with their own artifacts. Windows compatibility and
+testing remain deferred and unverified.
+
 ## Prerequisites
 
-1. Download the matching MCP wheel from [0.3.0 Releases](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.3.0).
+1. Download the matching MCP wheel from [0.8.0 Releases](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.8.0).
    Install it in an environment whose `blender-codex-mcp` executable is on the PATH visible to Codex:
 
    ```powershell
-   python -m pip install ./blender_codex_bridge-0.3.0-py3-none-any.whl
+   python -m pip install ./blender_codex_bridge-0.8.0-py3-none-any.whl
    ```
 
-2. Install the matching `blender_codex_bridge-0.3.0.zip` in Blender and enable it. Use the add-on, MCP server and plugin from the same release.
+2. Install the matching `blender_codex_bridge-0.8.0.zip` in Blender and enable it. Use the add-on, MCP server and plugin from the same release.
 3. Open **3D Viewport → Sidebar → Codex Bridge**, choose the permissions you want, and start the local bridge.
 4. Install or enable this plugin in Codex. Its MCP launch configuration connects only to `127.0.0.1:9876`.
 
 Restart Codex/start a new task after upgrading. Use plugin registration **or** manual MCP
 registration, not both. For an isolated virtual environment without changing PATH, use
-the [manual installation guide](https://github.com/Yoruiopz/Codex-Blender-Bridge/blob/v0.3.0/README.md#install--no-source-build-needed)
+the [manual installation guide](https://github.com/Yoruiopz/Codex-Blender-Bridge/blob/v0.8.0/README.md#install--no-source-build-needed)
 instead.
 
 Run `scripts/doctor.py` with Python for a read-only check of the command installation and Blender listener.

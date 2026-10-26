@@ -1,16 +1,17 @@
 # Working toward 1.0.0
 
 Status: **not release-ready**. This is an acceptance plan, not a feature announcement
-or a promise of a release date. [Published 0.6.0](releases/0.6.0.md)
-(25 October, 14:29:56 UTC) remains the recommended alpha download. Its exact-source
-CI, selected Linux native/installed checks and verified downloads do not complete
-any stable gate. Earlier releases remain available. The prospective
-[0.7.0 source](releases/0.7.0.md) is an alpha candidate with separate development
-evidence and pending exact-candidate qualification. Meaningful,
-reviewed increments are authorized for versioned GitHub
-prereleases at roughly a 2–3 hour cadence, with matching packages, checksums and
-source-specific validation. Tool counts and elapsed time do not establish readiness.
-Prereleases do not bypass any stable 1.0 gate.
+or a promise of a release date. The [0.8.0 alpha scope](releases/0.8.0.md) includes a
+bounded native-save alternative with canonical queued admission. Every accepted
+package must be tied to the actual source/native/installed outcomes retained in
+its [release evidence](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.8.0).
+A version string does not establish publication or passing checks. Previous
+[0.7.0 alpha](releases/0.7.0.md) and its exact-source evidence remain separate and
+available; no earlier smoke result qualifies later bytes or completes a stable gate.
+Meaningful reviewed prereleases require matching packages, checksums and measured
+source-specific behavior. Tool counts and elapsed time do not establish readiness.
+All fourteen stable gates remain open; Windows compatibility/testing remains
+explicitly deferred and unverified until implementation completion.
 
 Follow the [1.0 execution plan](plan-1.0.md) for milestone dependencies, prioritized work,
 end-to-end scenarios and evidence requirements. The [implementation completion
@@ -52,7 +53,7 @@ No current release should be described as a complete human-equivalent artist.
 | Simulate | Scoped cloth setup/configuration, bounded in-memory bake/free, three rigid-body cache tools and two public [bounded evaluation job tools](rigid-body-evaluation-jobs.md) using the [Scene job kernel](scene-job-kernel.md) | Cooperative bake/coverage proof, broader solvers/dependencies, disk caches, native scale/memory/recovery and installed end-to-end qualification |
 | Stage and light | Collections, world, camera/light settings, layout; [persistent static-scene variants and matched previews](cinematic-variants.md) | Broader composition/navigation and lighting workflows, asset-scale and placement constraints, reviewed artistic acceptance |
 | Render and composite | Render settings/execution, captures; reviewed compositor graph editing | Broader nodes/image assets, passes, color/output workflows, render diagnostics and job/progress management |
-| Deliver production assets | Legacy project saving remains [blocked](project-save-safety.md); a distinct [native-save session-permission workflow](native-project-saving.md) has bounded donor-source proof, with combined-source native/installed qualification pending; [cooperative texture export/reimport](texture-delivery.md), fresh texture/project reopen, [packed recovery](image-portability.md), [material-free static/skinned GLB/FBX export and fresh reimport](asset-delivery.md), [approved-source static GLB/material-free FBX import](asset-import.md) | Qualified authorized project save and portable `.blend` delivery; current edited-pixel packing, broader skinned/animated/material asset import, textured FBX exchange, complete dependency packaging, broader recovery/formats and production validation |
+| Deliver production assets | Legacy project saving remains [blocked](project-save-safety.md); a distinct [native-save session-permission workflow](native-project-saving.md) has a finite 0.8 declared-data/local-consent profile whose actual queued/native/installed results require exact release evidence; [cooperative texture export/reimport](texture-delivery.md), fresh texture/project reopen, [packed recovery](image-portability.md), [material-free static/skinned GLB/FBX export and fresh reimport](asset-delivery.md), [approved-source static GLB/material-free FBX import](asset-import.md) | Qualified authorized project save and portable `.blend` delivery; current edited-pixel packing, broader skinned/animated/material asset import, textured FBX exchange, complete dependency packaging, broader recovery/formats and production validation |
 | Operate interactively | Status/history/permissions/stop/pause; [4K painting jobs](painting-jobs.md), [bounded rigid evaluation jobs](rigid-body-evaluation-jobs.md); [persistent plans/exact references/guarded transform previews and corrections](task-plans.md) and [static-scene variants](cinematic-variants.md) | Visual references, wider protected authoring/previews, protected save, broad durable variants and general long-operation/bake jobs |
 | Work safely and improve results | Checkpoints, batch failure evidence, bounded [structural comparisons](scene-evidence.md) including optional rigs/animation/nested shaders; per-domain ownership guards | Enforced complete preservation, remaining mutator/recovery audits, mixed-editor/pressure evidence, aesthetic iteration and whole-project benchmarks |
 

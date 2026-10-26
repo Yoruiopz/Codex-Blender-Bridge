@@ -1,6 +1,6 @@
 # Full artist implementation checklist
 
-Current direction, **2026-10-25**: finish the entire agreed artist workflow through
+Current direction, **2026-10-26**: finish the entire agreed artist workflow through
 structured tools. The 29 items below define the remaining implementation work;
 they are not a tool-count target, a scope reduction or release acceptance.
 All fourteen [release requirements](release-1.0-ledger.json) remain **OPEN**.
@@ -11,29 +11,24 @@ testing are deferred until implementation is complete, remain unverified, and do
 not block this implementation pass.** Windows 11 and installed-package acceptance
 remain mandatory for the later stable 1.0 candidate.
 
-The published [**0.6.0 alpha**](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.6.0)
-dates to 2026-10-25 at **14:29:56 UTC**, from
-`73cad805903fcd0be9175b49a5ecf78505ecd4a5`. Its
-[exact-source evidence](releases/0.6.0.md#verified-evidence) records all seven CI
-jobs, 8,403 tests plus three Windows-only skips per matrix cell, eight selected
-interactive source processes, four installed background processes with sixteen
-phase observations, ten reviewed geometry images and all six anonymous download
-hashes. The fresh wheel exposed 268 tools and passed 240 SDK receipts and 210
-malformed standard-JSON cases. Earlier releases and their separate evidence remain
-available. The [published blocker plan](https://github.com/Yoruiopz/Codex-Blender-Bridge/blob/codex/release-0.6-publication-evidence/docs/releases/0.6.0-blocker-plan.md)
-records actionable next implementation and validation steps; it closes none of
-the 29 items or fourteen gates. Meaningful
-versioned GitHub prereleases are authorized on an approximately two-to-three-hour
-review cadence; this is not a deadline to publish unreviewed changes. Stable 1.0
-criteria are unchanged.
+The previous published [**0.7.0 alpha**](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.7.0)
+dates to 2026-10-25 at **19:16:03 UTC**, from
+`8d07ad898ba92c5e94db57b1562fefef9c8e0e1c`. Its
+[exact-source evidence](releases/0.7.0.md#verified-evidence) records seven CI jobs,
+8,884 tests plus three Windows-only skips per matrix cell, selected source and
+installed native checks, and all six anonymous download hashes. It qualifies only
+the documented direct-weight/raw-point and selected-data preview profiles; it is
+not a complete artist workflow. Earlier releases and evidence remain available.
 
-The current [0.7.0 alpha candidate](releases/0.7.0.md) prepares retained direct
-weights, `RAW_FREE_POINT_V1` and populated selected-field geometry-preview evidence.
-Its final commit/package/installed qualification is pending. The registered
-point-only writer still requires native acceptance within its exact profile;
-non-FREE/current-pose/broad-curve requests remain unsupported. Reported preview
-image-review discrepancies are retained separately from structural success.
-Neither candidate metadata nor these bounded increments closes an item or gate.
+The [0.8.0 alpha scope](releases/0.8.0.md) adds matching components and two distinct
+native-save tools with canonical queued admission and explicit local consent.
+Actual accepted source/package/native/installed identities and measured outcomes
+belong in the [release evidence](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.8.0),
+not self-referential source metadata or inherited donor results. The
+[current blocker plan](releases/0.8.0-blocker-plan.md) gives concrete next steps beyond
+the finite save profile. All 29 items and fourteen gates stay **OPEN**. Meaningful
+tested prereleases are authorized, but elapsed time does not require publication,
+and stable 1.0 criteria remain unchanged.
 
 ## Current foundations and unfinished work
 
@@ -92,7 +87,9 @@ and upgrade/rollback routes described in the release evidence; complete installe
 artist scenarios and restart/preference migration remain unqualified. Ten reviewed
 images establish structural framing and silhouette only. Core history/reporting containment also
 passed real native loopback failure cases on both builds, with no extra finalization
-or work after a rejected job start. Neither increment closes a checklist item.
+or work after a rejected job start. Neither increment closes a checklist item. Published 0.7
+adds separate selected populated-data and raw-point/weight evidence; it does not
+qualify full protected objects, original materials or the new native-save workflow.
 
 ## B0 — Safety, recovery and evidence
 

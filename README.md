@@ -4,75 +4,72 @@ Let Codex inspect and edit Blender through local, permission-controlled MCP tool
 Work with objects, meshes, materials, UVs, rigs, animation, lights and renders, with
 status, permissions and recovery controls inside Blender.
 
-**[Published 0.6.0 alpha](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.6.0)** ·
-[0.7.0 alpha candidate](docs/releases/0.7.0.md) ·
+**[0.8.0 alpha](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.8.0)** ·
+[Scope and qualification requirements](docs/releases/0.8.0.md) ·
 [GitHub releases](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases) ·
-[Release evidence](docs/releases/0.6.0.md#verified-evidence) ·
 [Install](#install--no-source-build-needed) · [Troubleshooting](docs/troubleshooting.md) ·
 [Contribute](CONTRIBUTING.md)
 
 This is **alpha software**. Try it on a disposable scene or a copy of your project.
-The published **0.6.0 alpha** dates to October 25, 2026 at **14:29:56 UTC**, from
-`73cad805903fcd0be9175b49a5ecf78505ecd4a5`. It adds bounded isolated geometry previews
-and history-failure containment, with [exact-source CI, selected Linux native and
-installed-package evidence](docs/releases/0.6.0.md#verified-evidence). All six release
-assets were verified through anonymous downloads. The current development checkout
-can contain later increments; the published evidence applies to that exact release.
-The [GitHub releases page](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases)
-is the authority for accepted artifacts. Earlier releases, including the separate
-[0.5.0 4K/UV evidence](docs/releases/0.5.0.md#verified-evidence), remain available.
-Use matching add-on, MCP server and optional plugin artifacts from one accepted build.
+The 0.8.0 source exposes **270 MCP tools**, including typed native-save preview/start
+with a default-off local effects grant. Use matching accepted 0.8.0 add-on, MCP server
+and optional plugin artifacts. A source checkout or matching version string alone
+is not an accepted build: the [release evidence](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.8.0)
+identifies accepted bytes, measured outcomes and verified limitations. Development
+branches may contain unqualified changes; source metadata does not announce publication.
 
-This checkout prepares the **[0.7.0 alpha candidate](docs/releases/0.7.0.md)** with
-retained direct-weight edits, the bounded `RAW_FREE_POINT_V1` curve writer and a
-populated selected-field protection test for isolated geometry previews. Candidate
-package, exact-commit CI and installed qualification remain pending; **0.6.0 remains
-the recommended download**. The preview's selected-data checks do not qualify
-appearance or complete protected objects. Reported image-review discrepancies are
-retained in the candidate notes and require resolution before visual acceptance.
+The previous [0.7.0 alpha](docs/releases/0.7.0.md), published October 25, 2026 at
+19:16:03 UTC from `8d07ad898ba92c5e94db57b1562fefef9c8e0e1c`, remains available.
+Its retained direct-weight/raw-point and selected-data preview evidence applies only
+to those earlier accepted files, not the 0.8.0 artifacts. Prior releases and their
+separate evidence are preserved.
 
 Development targets **official, unmodified Blender only**, without a fork or custom
-distribution. The new [geometry preview](docs/geometry-preview.md) renders bounded
-authored meshes in a separate official Blender process; original materials and current
-viewport appearance are excluded. Ordinary viewport capture remains available when artist protection
-is unarmed. Protected viewport capture still refuses until a stock-Blender redesign is
-qualified; see [capture status and preservation requirements](docs/protected-capture-design.md).
+distribution. The [geometry preview](docs/geometry-preview.md) renders bounded authored
+meshes in a separate official Blender process; original materials and current
+viewport appearance are excluded. The earlier 0.7 neutral-geometry review used explicit
+PNG alpha composition; its direct-viewer observations remain retained and unexplained.
+Ordinary capture remains available when artist protection is unarmed. Protected
+capture still refuses until a stock-Blender alternative qualifies; see
+[capture status](docs/protected-capture-design.md).
 
-Unreleased [native project saving](docs/native-project-saving.md) adds distinct
-preview/start tools for Save Copy, current-file Save and Save As, with a default-off
-locally armed session permission for normal native callback/catalog effects.
-Qualification of this combined source and its installed packages is pending. The older
-[`project.save` refusal](docs/project-save-safety.md) remains in place; this source
-does not claim full portable production delivery.
+The [native project saving](docs/native-project-saving.md) tools offer Save Copy,
+Save Current and Save As within a finite declared-data profile. They retain canonical
+queued admission and require a distinct locally armed grant for normal native
+callback/catalog effects. The MCP client cannot arm consent. Legacy
+[`project.save`](docs/project-save-safety.md) remains quarantined; the bounded
+alternative does not provide full portable production delivery. The release evidence
+must qualify actual installed queued calls, not a substituted service or classifier.
 
-**1.0 is not ready.** Follow the [development status](docs/development-status.md),
-[roadmap](docs/roadmap.md) and [release plan](docs/plan-1.0.md).
-All 29 implementation items and 14 stable-release gates remain open; the
-[published blocker plan](https://github.com/Yoruiopz/Codex-Blender-Bridge/blob/codex/release-0.6-publication-evidence/docs/releases/0.6.0-blocker-plan.md)
-records the remaining implementation and validation steps.
-Windows compatibility work and Windows testing are **deferred**. Linux development evidence
-does not qualify Windows 11, the Windows Blender 4.5 LTS/stable 5.x matrix, or the installed
-end-to-end workflows required by the [release gates](docs/release-1.0-readiness.md).
+**1.0 is not ready.** All 29 implementation items and 14 stable-release gates remain
+open. Follow the [development status](docs/development-status.md),
+[roadmap](docs/roadmap.md), [release plan](docs/plan-1.0.md) and
+[current blocker plan](docs/releases/0.8.0-blocker-plan.md).
+Windows compatibility work and testing are **deferred and unverified** until
+implementation completion. Linux development evidence does not qualify the later
+Windows 11/Blender 4.5 LTS and stable 5.x installed acceptance matrix.
 
 ## Install — no source build needed
 
-The instructions below install the published **0.6.0 alpha**. Use its matching
-artifacts and [release-specific qualification evidence](docs/releases/0.6.0.md).
+Install the matching **0.8.0 alpha** artifacts accepted on the
+[release page](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.8.0).
+Review its recorded qualification and verify the supplied checksums before installing.
+A development ZIP or source tag alone is not a substitute for that acceptance record.
 
 You need Blender **4.2+**, standalone **Python 3.10+**, and a local Codex client with MCP
 support. Blender's bundled Python does not run the MCP server. The declared minimum is not
 a guarantee that every Blender version or platform is tested; see the
-[accepted 0.6.0 release](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.6.0) for its evidence.
+[0.8.0 qualification record](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.8.0) for its evidence.
 
 ### 1. Download the packages
 
-Get these assets from the [0.6.0 release](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.6.0):
+Get these assets from the [0.8.0 release](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.8.0):
 
 | Asset | Purpose |
 | --- | --- |
-| `blender_codex_bridge-0.6.0.zip` | Required Blender add-on; keep it zipped |
-| `blender_codex_bridge-0.6.0-py3-none-any.whl` | Required standalone MCP server |
-| `blender-codex-bridge-plugin-0.6.0.zip` | Optional Codex plugin and workflow guidance |
+| `blender_codex_bridge-0.8.0.zip` | Required Blender add-on; keep it zipped |
+| `blender_codex_bridge-0.8.0-py3-none-any.whl` | Required standalone MCP server |
+| `blender-codex-bridge-plugin-0.8.0.zip` | Optional Codex plugin and workflow guidance |
 | `SHA256SUMS.txt` | Download checksums |
 
 Verify the three installers against `SHA256SUMS.txt`. Use the release assets

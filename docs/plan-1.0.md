@@ -11,19 +11,26 @@ historical; current feature reopen fixtures use labeled owned setup serializatio
 Safe authorized saving and portable `.blend` delivery remain mandatory open
 requirements, with no scope reduction. See [the safety contract](project-save-safety.md).
 
-## 0.7.0 alpha candidate — 2026-10-25
+## 0.8.0 alpha scope — 2026-10-26
 
-The [candidate notes](releases/0.7.0.md) cover retained direct-weight recovery,
-`RAW_FREE_POINT_V1` and populated selected-field geometry-preview evidence.
-Matching 0.7.0 component metadata prepares qualification; it is not publication.
-Published 0.6.0 remains the recommended download. Exact candidate CI/packages,
-installed checks and supported-profile native acceptance remain pending.
-Reported preview image-review discrepancies must remain retained and resolved
-before visual acceptance. All 29 implementation items and fourteen stable gates
-remain open; Windows remains deferred. Unsupported non-FREE/current-pose/broad
-curve operations have no arbitrary-Python fallback.
+The [0.8 notes](releases/0.8.0.md) describe matching components and the 270-tool
+source inventory, including native-save preview/start with canonical queued
+admission and a default-off local native-effects grant. The
+[release evidence](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.8.0)
+must bind accepted source/packages to their actual native and installed outcomes.
+Metadata alone is not publication or qualification. The
+[blocker plan](releases/0.8.0-blocker-plan.md) defines remaining implementation and
+validation work, not a release date or scope reduction. Legacy `project.save`
+remains held, and native overwrite/callback effects retain their explicit consent.
 
-## Current implementation priorities — 2026-10-25
+Previous [0.7.0 alpha](releases/0.7.0.md) and its selected direct-weight/raw-point/
+populated-protection evidence remain available. That exact-source evidence does not
+qualify 0.8 bytes. Neutral silhouette/framing review uses explicit alpha composition;
+earlier direct-viewer observations remain retained. All 29 implementation items and
+fourteen stable gates stay open; Windows remains deferred. Unsupported curve
+operations have no arbitrary-Python fallback.
+
+## Current implementation priorities — 2026-10-26
 
 The [29-item implementation checklist](implementation-completion.md) is the
 current finite worklist for the full agreed artist workflow. Finish the existing
@@ -41,24 +48,20 @@ protected-capture, shader REMOVE, animation-provider reproduction and exact-buil
 5.2 import holds remain; required capabilities need separately reviewed safe
 designs/alternatives, not retries or weaker evidence.
 
-Meaningful versioned GitHub **pre-releases are authorized**, on an approximately
-two-to-three-hour review cadence. The latest published
-[**0.6.0 alpha**](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.6.0)
-dates to 2026-10-25 at **14:29:56 UTC** from
-`73cad805903fcd0be9175b49a5ecf78505ecd4a5`. Its
-[exact-source evidence](releases/0.6.0.md#verified-evidence) includes all seven CI
-jobs, 8,403 tests with three Windows-only skips per matrix cell, eight selected
-interactive source processes, four installed background processes with sixteen
-phase observations, ten reviewed geometry images and all six anonymous download
-hashes. Those checks do not qualify later development increments or complete
-artist workflows. The [published blocker plan](https://github.com/Yoruiopz/Codex-Blender-Bridge/blob/codex/release-0.6-publication-evidence/docs/releases/0.6.0-blocker-plan.md)
-records the ordered next implementation and verification milestones. All 29
-implementation items and fourteen stable gates remain **OPEN**. Build matching components
-and checksums from a clean reviewed increment, disclose limits and unverified
-Windows status, and verify downloaded bytes. Preserve previous releases. Present
-an exact merge proposal where required; merge permission is not blanket. The
-[stable release gates](release-evidence.md) and historical evidence below are
-unchanged. See the checklist for current foundations and work still in progress.
+Meaningful versioned GitHub **pre-releases are authorized** after a reviewed,
+functional increment, rather than according to elapsed time alone. The previous
+published [**0.7.0 alpha**](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.7.0)
+dates to 2026-10-25 at **19:16:03 UTC** from
+`8d07ad898ba92c5e94db57b1562fefef9c8e0e1c`. Its
+[retained exact-source evidence](releases/0.7.0.md#verified-evidence) includes all
+seven CI jobs, 8,884 tests with three Windows-only skips per matrix cell, selected
+source/installed native checks and all six anonymous download hashes. These do not
+qualify later native-save source or complete artist workflows. Each accepted 0.8 build must meet its
+[source/packages/installed requirements](releases/0.8.0.md) with separate exact-file
+release evidence. Build matching
+components/checksums from one clean reviewed source, disclose limits, retain proof,
+verify downloads and preserve previous releases. No merge authority or stable
+acceptance follows. All 29 items and fourteen gates remain **OPEN**.
 
 The architecture uses **official, unmodified Blender only**: no custom build, fork
 or distribution. The [native witness finding](release-1.0-readiness.md#current-native-witness-blocker)
@@ -113,7 +116,7 @@ acceptance evidence; native smoke reports themselves remain `NOT_ASSESSED`.
   They do not prove interactive UI installation, real undo interleaving or artistic quality.
 - The manifest's 4.2 minimum is not verified by the local matrix. Test it or explicitly resolve
   supported versions before RC. Do not infer Linux/macOS Blender support from Python CI.
-- Published 0.6.0 remains alpha, with older releases still available. Do not
+- Published 0.7.0 remains alpha, with older releases still available. Do not
   replace accepted artifacts or publish 1.0 early.
   Public-facing repository work is now authorized; it does not close any release gate.
 

@@ -4,11 +4,16 @@ from __future__ import annotations
 
 import hashlib
 import importlib
+import math
 import re
 import sys
 import time
-from types import FunctionType
+from _thread import LockType
+from types import CodeType, FunctionType, MethodType
 
+from . import command_queue as _queue_module
+from . import executor as _executor_module
+from . import protocol as _protocol_module
 from .errors import BridgeError, ErrorCode, invalid_argument
 from .geometry_preview_source import semantic
 from .native_save_policy import NativeSaveGrant
@@ -27,6 +32,17 @@ REQUIRED = (Permission.INSPECT_SCENE, Permission.SAVE_PROJECT, Permission.ACCESS
 BUILDS = {(4, 5, 14): "62c1db4208e8", (5, 2, 2): "d13f752e3b9c"}
 SERVICES = ("state", "registry", "permissions", "checkpoints", "jobs")
 HOOKS = ("check_final_request", "check_final_job", "check_cancelled")
+_QUEUED_REQUEST = _queue_module.QueuedRequest
+_QUEUED_CHECK = _QUEUED_REQUEST.check_active
+_QUEUED_CHECK_CODE = _QUEUED_CHECK.__code__
+_QUEUE_ERROR, _QUEUE_ERROR_CODE = _queue_module.BridgeError, _queue_module.ErrorCode
+_QUEUE_TIME, _QUEUE_MONOTONIC = _queue_module.time, _queue_module.time.monotonic
+_REQUEST = _protocol_module.Request
+_EXECUTOR = _executor_module.MainThreadExecutor
+_EXECUTOR_INVOKE = _EXECUTOR._invoke_owned
+_EXECUTOR_INVOKE_CODE = _EXECUTOR_INVOKE.__code__
+_FINAL_REQUEST_CODES = tuple(code for code in _EXECUTOR_INVOKE_CODE.co_consts
+                             if type(code) is CodeType and code.co_freevars == ("queued_owner",))
 
 
 def initial_dependencies(registry, _params):
@@ -65,19 +81,83 @@ _initial_dependencies = initial_dependencies
 _initial_dependencies_code = initial_dependencies.__code__
 
 
+def _queued_hook_signature(context, value):
+    """Authenticate the executor's current bound queue hook without invoking it.
+
+    These facts belong to one entry request. They are not a source fingerprint
+    or authority shared between preview A, start B and subsequent worker turns.
+    """
+    owner, function = value.__self__, value.__func__
+    queue_globals, executor_globals = vars(_queue_module), vars(_executor_module)
+    if (type(owner) is not _QUEUED_REQUEST or function is not _QUEUED_CHECK
+            or queue_globals.get("QueuedRequest") is not _QUEUED_REQUEST
+            or vars(_QUEUED_REQUEST).get("check_active") is not _QUEUED_CHECK
+            or _QUEUED_CHECK.__code__ is not _QUEUED_CHECK_CODE
+            or _QUEUED_CHECK.__globals__ is not queue_globals
+            or _QUEUED_CHECK.__defaults__ is not None or _QUEUED_CHECK.__kwdefaults__ is not None
+            or _QUEUED_CHECK.__closure__ is not None
+            or queue_globals.get("time") is not _QUEUE_TIME
+            or vars(_QUEUE_TIME).get("monotonic") is not _QUEUE_MONOTONIC
+            or queue_globals.get("BridgeError") is not _QUEUE_ERROR
+            or queue_globals.get("ErrorCode") is not _QUEUE_ERROR_CODE
+            or executor_globals.get("MainThreadExecutor") is not _EXECUTOR
+            or executor_globals.get("QueuedRequest") is not _QUEUED_REQUEST
+            or vars(_EXECUTOR).get("_invoke_owned") is not _EXECUTOR_INVOKE
+            or _EXECUTOR_INVOKE.__code__ is not _EXECUTOR_INVOKE_CODE
+            or _EXECUTOR_INVOKE.__globals__ is not executor_globals
+            or _protocol_module.Request is not _REQUEST
+            or type(owner.request) is not _REQUEST
+            or owner.request._lifecycle is not context.request_lifecycle
+            or type(owner.request._lifecycle) is not RequestLifetime
+            or type(owner.request.id) is not str or type(context.request_id) is not str
+            or owner.request.id != context.request_id
+            or type(owner._lock) is not LockType
+            or type(owner.deadline) is not float or not math.isfinite(owner.deadline)):
+        raise refused("CANONICAL_QUEUED_HOOK_REQUIRED")
+    final = context.check_final_request
+    if (type(final) is not FunctionType or len(_FINAL_REQUEST_CODES) != 1
+            or final.__code__ is not _FINAL_REQUEST_CODES[0]
+            or final.__globals__ is not executor_globals
+            or final.__defaults__ is not None or final.__kwdefaults__ is not None
+            or final.__closure__ is None or len(final.__closure__) != 1):
+        raise refused("CANONICAL_QUEUED_FINAL_HOOK_REQUIRED")
+    try:
+        final_owner = final.__closure__[0].cell_contents
+    except ValueError as cause:
+        raise refused("CANONICAL_QUEUED_FINAL_HOOK_REQUIRED") from cause
+    if final_owner is not owner:
+        raise refused("CANONICAL_QUEUED_FINAL_HOOK_REQUIRED")
+    return (owner, function, _QUEUED_CHECK_CODE, owner.request, owner.request._lifecycle,
+            owner._lock, owner.deadline, final, final.__code__, final.__closure__[0])
+
+
+def _hook_signature(context, name, value):
+    if value is None:
+        return None
+    if type(value) is FunctionType:
+        return value.__code__
+    if name == "check_cancelled" and type(value) is MethodType:
+        return _queued_hook_signature(context, value)
+    raise refused("CALLER_HOOK_UNSUPPORTED")
+
+
 def hook_facts(context):
-    values = []
-    for name in HOOKS:
-        value = getattr(context, name)
-        if value is not None and type(value) is not FunctionType:
-            raise refused("CALLER_HOOK_UNSUPPORTED")
-        values.append((name, value, value.__code__ if value is not None else None))
-    return tuple(values)
+    return tuple((name, value, _hook_signature(context, name, value))
+                 for name in HOOKS for value in (getattr(context, name),))
 
 
 def hooks_match(context, original):
-    return all(getattr(context, name) is value and (value is None or value.__code__ is code)
-               for name, value, code in original)
+    for name, value, signature in original:
+        if getattr(context, name) is not value:
+            return False
+        current = _hook_signature(context, name, value)
+        if type(signature) is tuple:
+            if type(current) is not tuple or len(current) != len(signature) or any(
+                    actual is not expected for actual, expected in zip(current, signature, strict=True)):
+                return False
+        elif current is not signature:
+            return False
+    return True
 
 
 def refused(reason, *, started=False):
@@ -192,6 +272,10 @@ class SaveOrigin:
         self.services = tuple(getattr(context, name) for name in SERVICES)
         self.provider = context.permissions._source
         self.hooks = hook_facts(context)
+        if type(context.check_cancelled) is MethodType:
+            queued_request = context.check_cancelled.__self__.request
+            if queued_request.method != method or queued_request.params is not params:
+                raise refused("QUEUED_REQUEST_INTENT_CHANGED")
         self.manager = context.jobs
         qualify_provider(context)
         self.policy = self.manager.native_save_policy

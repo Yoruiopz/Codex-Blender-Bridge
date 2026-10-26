@@ -1,22 +1,29 @@
 # Native project saving with explicit session permission
 
-Unreleased source integration. Qualification of this combined source,
-fresh-installed packages and end-to-end workflows is pending. The older `project.save` tool retains its
-[quarantined refusal](project-save-safety.md). These are distinct typed tools,
-not an arbitrary-Python fallback or completed 1.0 delivery.
+**0.8.0 alpha scope.** The two typed tools use canonical queued admission,
+retained source/path intent, a distinct local effects grant and bounded shared jobs.
+The source inventory has 270 tools and matching 0.8.0 metadata. Each accepted build
+must qualify this real installed path and retain exact source/package identities,
+measured native outcomes and limitations in the
+[release evidence](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.8.0).
+A source version or donor result does not establish acceptance or publication.
+See the [scope and qualification requirements](releases/0.8.0.md). Previous 0.7
+remains a separate 268-tool release with its own accepted files/evidence.
 
-The separate native-save source at `80ec3cb7dd2f64b5baa4fd8193fa9780fd3d93bf`
-passed all nine registered save/interruption scenarios on official Linux Blender
-4.5.14 and 5.2.2. Its follow-up `418d79fda46bae16c59025657d844a452682b061`
-also passed native-save and inherited geometry, Scene and image job replays after
-renaming the save-specific authority helper. Those results qualify that donor
-source's bounded profile; they do not qualify this integration with public 0.7.
-This checkout retains the 0.7 weight and raw-curve recovery bounds and adds exact
-canonical-provider dependency checks for the native-save permission wrapper and
-jobs class. Focused models, full checks, genuine native entry and fresh installed
-replays must all pass on the final combined commit before its support is claimed.
-The published 0.7 packages remain a separate 268-tool release; this unreleased
-source registry has 270 tools and does not change the component version.
+Legacy `project.save` retains its [quarantined refusal](project-save-safety.md).
+The native-save alternative does not provide an arbitrary-Python fallback or
+complete 1.0 production delivery. Normal native effects require separate local
+consent rather than a claim of exact-path confinement or hidden-Main equality.
+
+The separate donor at `80ec3cb7dd2f64b5baa4fd8193fa9780fd3d93bf` passed nine
+registered save/interruption scenarios on official Linux 4.5.14/5.2.2. Its
+`418d79fda46bae16c59025657d844a452682b061` follow-up also passed native-save and
+inherited geometry/Scene/image job replays after renaming the save-specific
+helper. These are historical donor-source results. The 0.8 integration must
+retain the 0.7 weight/raw-curve bounds and canonical-provider/job dependencies,
+and qualify its genuine initial parameter hook through the actual installed TCP
+queue. Direct ToolContext calls or a substituted classifier are not that proof.
+No old source/package identity is reused as final 0.8 qualification.
 
 The first registered native runs stopped before any save at unsupported factory
 palette data. The isolated qualification fixture now inventories all native data

@@ -1,17 +1,26 @@
 # Development status
 
-**0.7.0 alpha candidate; 1.0 is NOT_READY.** The recommended published download is
-[0.6.0 alpha](releases/0.6.0.md). This checkout has matching **0.7.0** component
-metadata and **268 MCP tools**; it is not an accepted or published 0.7.0 build.
-Always pair the add-on and MCP server from one accepted build. A matching version
-string alone does not identify an unpublished build.
+**0.8.0 alpha source; 1.0 is NOT_READY.** The source has matching 0.8.0 component
+metadata and **270 MCP tools**, including native-save preview/start under a distinct
+local effects grant. Install only matching accepted 0.8.0 packages identified by the
+[release evidence](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.8.0).
+A source checkout or version string alone establishes neither publication nor
+qualification; measured outcomes belong to the exact accepted files.
 
-The [candidate notes](releases/0.7.0.md) separate retained direct-weight recovery,
-`RAW_FREE_POINT_V1` and populated selected-field geometry evidence from pending
-candidate qualification. Non-FREE/current-pose/broad-curve authoring remains
-unsupported. Preview structural success does not qualify appearance; reported
-image-review discrepancies remain retained. All 29 implementation items and
-14 stable-release gates remain open; Windows compatibility/testing is deferred.
+The [0.8 scope and qualification requirements](releases/0.8.0.md) retain the canonical
+queued-entry boundary, current permissions and per-write/source checks. Native saving
+requires default-off local consent that the remote client cannot arm. Qualification
+must use the actual installed Runtime and TCP queue; direct or substituted-service
+results do not establish that behavior. Broader native-save project profiles and
+portable production delivery remain required work.
+
+The previous [0.7.0 alpha](releases/0.7.0.md), published 2026-10-25 at 19:16:03 UTC
+from `8d07ad898ba92c5e94db57b1562fefef9c8e0e1c`, and its historical verified downloads
+remain available. Its source-specific evidence is not reassigned to 0.8.0.
+The [blocker plan](releases/0.8.0-blocker-plan.md) records concrete next steps.
+All 29 implementation items and fourteen stable gates remain **OPEN**. Windows
+compatibility/testing remains deferred and unverified. Reviewed neutral-geometry
+previews do not qualify original materials or current viewport appearance.
 
 **Project save safety:** the legacy `project.save` backend is now unavailable for
 both current-file Save and Save As. It retains its schema and permissions but

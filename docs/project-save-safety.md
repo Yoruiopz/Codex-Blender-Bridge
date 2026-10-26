@@ -1,15 +1,15 @@
-# Project saving is blocked pending native side-effect control
+# Legacy project.save remains unavailable
 
-Published 0.4.0–0.6.0 alphas and current development source: **`project.save` returns
+Published 0.4.0–0.7.0 alphas and the 0.8.0 source: **`project.save` returns
 `NOT_IMPLEMENTED` for both
 current-file Save and Save As.** The prior alpha's native save capability is
 unavailable in these versions. The tool name, optional `filepath`,
 permission metadata and V1 envelopes remain compatible; successful saving is
 not supported. Earlier published artifacts remain available unchanged.
 
-Unreleased source adds a distinct [native-save session-permission workflow](native-project-saving.md)
-through `project.native_save_preview`/`project.native_save_start`. Combined-source
-native and installed-package qualification is pending. It explicitly authorizes normal
+The 0.8.0 source adds a distinct [native-save session-permission workflow](native-project-saving.md)
+through `project.native_save_preview`/`project.native_save_start`. Its canonical queued entry and actual native/installed behavior require the
+exact accepted build's separate release evidence. It explicitly authorizes normal
 native callback/catalog effects rather than claiming the exact-path confinement
 that blocked the legacy tool. It does not unquarantine `project.save`, prove a
 complete native effect inventory, or complete portable production delivery.
