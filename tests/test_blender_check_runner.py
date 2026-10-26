@@ -11,6 +11,117 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def paired_fixture_root(runner, monkeypatch, tmp_path):
+    source = tmp_path / "source"
+    scripts = source / "scripts"
+    scripts.mkdir(parents=True)
+    (scripts / "blender_current_pixels_paired_recovery_smoke.py").write_text("# owned fixture model\n")
+    monkeypatch.setattr(runner, "ROOT", source)
+    output = tmp_path / "output"
+    output.mkdir()
+    return output
+
+
+@pytest.mark.parametrize("case,profile", [
+    ("image_current_pixels_paired_recovery", "SMALL2X2"),
+    ("image_current_pixels_paired_recovery_large", "LARGE4K"),
+])
+@pytest.mark.parametrize("requested_timeout", [10, 1200])
+def test_paired_recovery_phases_keep_exact_profile_private_environment_and_deadline(
+        runner, monkeypatch, tmp_path, case, profile, requested_timeout):
+    output = paired_fixture_root(runner, monkeypatch, tmp_path)
+    monkeypatch.setattr(runner.sys, "platform", "linux")
+    monkeypatch.setenv("PAIRED_FIXTURE_UNWANTED", "not-a-secret")
+    monkeypatch.setenv("PYTHONPATH", "/unrelated/python/path")
+    monkeypatch.setenv("BRIDGE_TEST_PRIVATE_UI_MANIFEST", "/owned/private-display.json")
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/owned/runtime")
+    observed = []
+
+    def run(command, **kwargs):
+        phase = command[command.index("--bridge-phase") + 1]
+        assert command[-2:] == ["--bridge-profile", profile]
+        assert command.count("--bridge-profile") == 1
+        assert "--background" not in command and command.count("--disable-autoexec") == 1
+        assert command.index("--disable-autoexec") < command.index("--python")
+        assert kwargs["timeout"] == min(requested_timeout, 300)
+        environment = kwargs["env"]
+        assert "PAIRED_FIXTURE_UNWANTED" not in environment and "PYTHONPATH" not in environment
+        assert environment["BRIDGE_TEST_PRIVATE_UI_MANIFEST"] == "/owned/private-display.json"
+        assert environment["XDG_RUNTIME_DIR"] == "/owned/runtime"
+        assert kwargs["cwd"].name == "working" and kwargs["cwd"].parent == Path(environment["TEMP"])
+        assert all(str(environment[key]).startswith(str(output)) for key in
+                   ("HOME", "BLENDER_USER_CONFIG", "BLENDER_USER_SCRIPTS", "BLENDER_USER_DATAFILES"))
+        marker = runner.PHASED_CASES[case][0 if phase == "writer" else 1]
+        payload = {"blender_version": "5.2.2", "phase": phase, "profile": profile,
+                   "process_instance": environment["BRIDGE_TEST_PROCESS_TOKEN"], "process_id": 77}
+        kwargs["stdout"].write((marker + json.dumps(payload)).encode())
+        observed.append((phase, environment["BRIDGE_TEST_PROCESS_TOKEN"], environment["BLENDER_USER_CONFIG"]))
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(runner.subprocess, "run", run)
+    assert case in runner.OPT_IN_CASES & runner.INTERACTIVE_CASES
+    result = runner.run_case(Path("blender"), case, output, requested_timeout)
+    assert result["status"] == "passed" and result["fresh_process_verified"]
+    assert result["phase_sequence"] == ["writer", "reader"]
+    assert observed[0][1] != observed[1][1] and observed[0][2] != observed[1][2]
+
+
+@pytest.mark.parametrize("case", ["image_current_pixels_paired_recovery", "image_current_pixels_paired_recovery_large"])
+@pytest.mark.parametrize("fault", ["profile", "missing_profile", "phase", "instance", "pid", "exit", "timeout"])
+def test_paired_recovery_refuses_invalid_writer_before_reader(runner, monkeypatch, tmp_path, case, fault):
+    output = paired_fixture_root(runner, monkeypatch, tmp_path)
+    monkeypatch.setattr(runner.sys, "platform", "linux")
+    calls = []
+
+    def run(command, **kwargs):
+        phase = command[command.index("--bridge-phase") + 1]
+        calls.append(phase)
+        payload = {"blender_version": "5.2.2", "phase": phase, "profile": runner.PAIRED_RECOVERY_PROFILES[case],
+                   "process_instance": kwargs["env"]["BRIDGE_TEST_PROCESS_TOKEN"], "process_id": 77}
+        if fault == "missing_profile":
+            del payload["profile"]
+        elif fault in {"profile", "phase", "instance", "pid"}:
+            payload[{"instance": "process_instance", "pid": "process_id"}.get(fault, fault)] = "foreign"
+        kwargs["stdout"].write((runner.PHASED_CASES[case][0] + json.dumps(payload)).encode())
+        if fault == "timeout":
+            raise subprocess.TimeoutExpired(command, 300)
+        return SimpleNamespace(returncode=1 if fault == "exit" else 0)
+
+    monkeypatch.setattr(runner.subprocess, "run", run)
+    result = runner.run_case(Path("blender"), case, output, 1200)
+    assert calls == ["writer"] and not result["reader_started"]
+    assert result["status"] == ("timeout" if fault == "timeout" else "failed")
+    assert not result["fresh_process_verified"]
+
+
+@pytest.mark.parametrize("case", ["image_current_pixels_paired_recovery", "image_current_pixels_paired_recovery_large"])
+def test_paired_recovery_cannot_accept_reader_from_other_profile(runner, monkeypatch, tmp_path, case):
+    output = paired_fixture_root(runner, monkeypatch, tmp_path)
+    monkeypatch.setattr(runner.sys, "platform", "linux")
+
+    def run(command, **kwargs):
+        phase = command[command.index("--bridge-phase") + 1]
+        profile = runner.PAIRED_RECOVERY_PROFILES[case] if phase == "writer" else "FOREIGN"
+        payload = {"blender_version": "5.2.2", "phase": phase, "profile": profile,
+                   "process_instance": kwargs["env"]["BRIDGE_TEST_PROCESS_TOKEN"], "process_id": 77}
+        marker = runner.PHASED_CASES[case][0 if phase == "writer" else 1]
+        kwargs["stdout"].write((marker + json.dumps(payload)).encode())
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(runner.subprocess, "run", run)
+    result = runner.run_case(Path("blender"), case, output, 1200)
+    assert result["status"] == "failed" and result["reader_started"]
+    assert not result["fresh_process_verified"]
+
+
+@pytest.mark.parametrize("case", ["image_current_pixels_paired_recovery", "image_current_pixels_paired_recovery_large"])
+def test_paired_recovery_refuses_unphased_launch(runner, monkeypatch, tmp_path, case):
+    output = paired_fixture_root(runner, monkeypatch, tmp_path)
+    monkeypatch.setattr(runner.subprocess, "run", lambda *_args, **_kwargs: pytest.fail("Unphased launch attempted"))
+    with pytest.raises(ValueError, match="isolated writer or reader"):
+        runner._run_process(Path("blender"), case, output, 1200)
+
+
 def test_registered_native_save_uses_owned_interactive_sanitized_process(runner, monkeypatch, tmp_path):
     monkeypatch.setattr(runner.sys, "platform", "linux")
     monkeypatch.setenv("NATIVE_SAVE_TEST_UNWANTED", "not-a-secret")

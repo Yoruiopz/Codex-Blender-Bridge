@@ -20,6 +20,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 HELPERS = (
+    "scripts.blender_current_pixels_paired_recovery_smoke",
     "scripts.blender_native_save_smoke",
     "scripts.blender_geometry_preview_smoke",
 
@@ -117,6 +118,7 @@ def fixture_imports(addon_package, monkeypatch):
 
 
 @pytest.mark.parametrize("name,helper", [
+    ("scripts.blender_current_pixels_paired_recovery_smoke", "main"),
     ("scripts.blender_native_save_smoke", "main"),
     ("scripts.blender_geometry_preview_smoke", "main"),
 

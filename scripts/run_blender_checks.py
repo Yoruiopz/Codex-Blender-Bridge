@@ -111,6 +111,8 @@ CASES = {
     "image_recovery": ("blender_image_recovery_smoke.py", "BLENDER_IMAGE_RECOVERY_READER_OK "),
     "image_recovery_jobs": ("blender_image_recovery_jobs_smoke.py", "BLENDER_IMAGE_RECOVERY_JOBS_READER_OK "),
     "image_recovery_jobs_large": ("blender_image_recovery_jobs_large_smoke.py", "BLENDER_IMAGE_RECOVERY_JOBS_LARGE_READER_OK "),
+    "image_current_pixels_paired_recovery": ("blender_current_pixels_paired_recovery_smoke.py", "BLENDER_CURRENT_PIXELS_PAIRED_RECOVERY_READER_OK "),
+    "image_current_pixels_paired_recovery_large": ("blender_current_pixels_paired_recovery_smoke.py", "BLENDER_CURRENT_PIXELS_PAIRED_RECOVERY_READER_OK "),
     "installed_addon_probe": ("blender_installed_addon_probe_smoke.py", "BLENDER_INSTALLED_ADDON_PROBE_OK "),
     "asset_import_admission": ("blender_asset_import_admission_smoke.py", "BLENDER_ASSET_IMPORT_ADMISSION_OK "),
     "object_drivers": ("blender_object_drivers_smoke.py", "BLENDER_CODEX_OBJECT_DRIVERS_OK "),
@@ -170,6 +172,8 @@ PHASED_CASES = {
     "image_recovery": ("BLENDER_IMAGE_RECOVERY_WRITER_OK ", "BLENDER_IMAGE_RECOVERY_READER_OK "),
     "image_recovery_jobs": ("BLENDER_IMAGE_RECOVERY_JOBS_WRITER_OK ", "BLENDER_IMAGE_RECOVERY_JOBS_READER_OK "),
     "image_recovery_jobs_large": ("BLENDER_IMAGE_RECOVERY_JOBS_LARGE_WRITER_OK ", "BLENDER_IMAGE_RECOVERY_JOBS_LARGE_READER_OK "),
+    "image_current_pixels_paired_recovery": ("BLENDER_CURRENT_PIXELS_PAIRED_RECOVERY_WRITER_OK ", "BLENDER_CURRENT_PIXELS_PAIRED_RECOVERY_READER_OK "),
+    "image_current_pixels_paired_recovery_large": ("BLENDER_CURRENT_PIXELS_PAIRED_RECOVERY_WRITER_OK ", "BLENDER_CURRENT_PIXELS_PAIRED_RECOVERY_READER_OK "),
     "shader_interface_probe": ("BLENDER_SHADER_INTERFACE_PROBE_WRITER_OK ", "BLENDER_SHADER_INTERFACE_PROBE_READER_OK "),
     "shader_remove_probe": ("BLENDER_SHADER_REMOVE_PROBE_WRITER_OK ", "BLENDER_SHADER_REMOVE_PROBE_READER_OK "),
     "shader_remove_loaded_probe": ("BLENDER_SHADER_REMOVE_LOADED_PROBE_WRITER_OK ", "BLENDER_SHADER_REMOVE_LOADED_PROBE_READER_OK "),
@@ -178,6 +182,10 @@ PHASED_CASES = {
     "rig_edit_reopen": ("BLENDER_RIG_EDIT_WRITER_OK ", "BLENDER_RIG_EDIT_READER_OK "),
     "rig_binding_reopen": ("BLENDER_RIG_BINDING_WRITER_OK ", "BLENDER_RIG_BINDING_READER_OK "),
     "rigid_lifecycle_probe": ("BLENDER_RIGID_LIFECYCLE_PROBE_WRITER_OK ", "BLENDER_RIGID_LIFECYCLE_PROBE_READER_OK "),
+}
+PAIRED_RECOVERY_PROFILES = {
+    "image_current_pixels_paired_recovery": "SMALL2X2",
+    "image_current_pixels_paired_recovery_large": "LARGE4K",
 }
 OPT_IN_CASES = set(PHASED_CASES)
 OPT_IN_CASES.add("surface_projection_probe")
@@ -271,6 +279,7 @@ INTERACTIVE_CASES.add("shader_remove_probe")
 INTERACTIVE_CASES.add("shader_remove_loaded_probe")
 INTERACTIVE_CASES.add("image_recovery_jobs")
 INTERACTIVE_CASES.add("image_recovery_jobs_large")
+INTERACTIVE_CASES.update(PAIRED_RECOVERY_PROFILES)
 INTERACTIVE_CASES.update({"portable_blend_writer_probe", "portable_blend_reader_probe"})
 INTERACTIVE_CASES.add("rigid_startup_defaults_probe")
 INTERACTIVE_CASES.add("rigid_scope_profile_probe")
@@ -330,6 +339,11 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
         if case == "shader_remove_loaded_probe":
             command.append("--bridge-loaded-fixture")
         marker = phase_marker
+    if case in PAIRED_RECOVERY_PROFILES:
+        if phase not in {"writer", "reader"}:
+            raise ValueError("Paired recovery requires an isolated writer or reader phase")
+        command.extend(["--bridge-profile", PAIRED_RECOVERY_PROFILES[case]])
+        timeout = min(timeout, 300)
     if case == "geometry_preview_populated_protection":
         command.extend(["--", "--bridge-populated-protection"])
     # Blender writes quit.blend on normal UI exit. Keep it outside the user's temp recovery.
@@ -346,7 +360,8 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
         directory.mkdir()
         environment[key] = str(directory)
     launch_cwd = ROOT
-    if case in PORTABLE_BLEND_RESEARCH_PHASES or case in {"isolated_asset_preview_probe", "native_project_saving"}:
+    if (case in PORTABLE_BLEND_RESEARCH_PHASES or case in PAIRED_RECOVERY_PROFILES
+            or case in {"isolated_asset_preview_probe", "native_project_saving"}):
         # Research-only operational profile. This is not an OS/network sandbox.
         # Do not inherit credential variables or arbitrary Python/Blender paths.
         environment = {key: os.environ[key] for key in (
@@ -450,6 +465,8 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
         and payload.get("phase") == phase
         and payload.get("process_instance") == process_instance
         and type(payload.get("process_id")) is int and payload["process_id"] > 0)
+    if case in PAIRED_RECOVERY_PROFILES:
+        phase_evidence = phase_evidence and bool(payload and payload.get("profile") == PAIRED_RECOVERY_PROFILES[case])
     if case == "geometry_preview_populated_protection":
         phase_evidence = bool(payload and payload.get("variant") == "populated_data_baseline"
                               and payload.get("populated_protected_data_baseline_qualified") is True)

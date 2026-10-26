@@ -10,6 +10,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import Any
 
+from .current_pixels_contract import validate_receipt as _current_pixels_receipt
 from .entry_effects import bounded_entry_effects
 from .native_save_policy import POLICY_VERSION
 
@@ -107,6 +108,8 @@ def bounded_recovery_evidence(value: Any) -> dict[str, Any] | None:
     """
     if not isinstance(value, Mapping):
         return None
+    if value.get("kind") == "current_pixels_lifecycle":
+        return _current_pixels_receipt(value)
     if value.get("kind") == "scene_mutation":
         return _bounded_scene_recovery(value)
     if value.get("kind") == "weight_mutation":
