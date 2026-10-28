@@ -23,7 +23,18 @@ from types import MappingProxyType
 
 from .errors import BridgeError
 from .native_save_files import MAX_FILE_BYTES, READ_BYTES, refused
-from .native_save_profile import DECLARED_RNA, MAX_MANIFEST, OPTIONAL_RNA, SCHEMA
+from .native_save_profile import (
+    DECLARED_RNA,
+    LEGACY_IMAGE_PIXELS,
+    MAX_MANIFEST,
+    OPTIONAL_RNA,
+    SCHEMA,
+    ProfileRefused,
+    bind_resource_directory,
+    check_large_resources,
+    projection_image_pixels,
+    validate_resource_facts,
+)
 
 REQUEST_SCHEMA = "native_save_reader_request_v1"
 RECEIPT_SCHEMA = "native_save_reader_receipt_v1"
@@ -175,6 +186,7 @@ def _write(path, raw):
 
 class SaveReaderProcess:
     __slots__ = (
+        "_launch_resource_check",
         "_process",
         "_receipt_raw",
         "_schema_observed",
@@ -187,6 +199,7 @@ class SaveReaderProcess:
         "expected_raw",
         "folder",
         "folder_id",
+        "image_pixels",
         "input_ids",
         "launch_wall_ms",
         "prepared",
@@ -229,6 +242,7 @@ class SaveReaderProcess:
                 or json.dumps(expected, sort_keys=True, separators=(",", ":"), allow_nan=False).encode() != expected_raw):
             raise refused("READER_PROJECTION_ENCODING")
         self.expected_raw, self.projection_sha256 = expected_raw, hashlib.sha256(expected_raw).hexdigest()
+        self.image_pixels = projection_image_pixels(expected)
         if type(build_hash) is not str or not 1 <= len(build_hash) <= 64 or type(version) is not str or not 1 <= len(version) <= 128:
             raise refused("READER_BUILD_UNAVAILABLE")
         self.build_hash, self.version = build_hash, version
@@ -242,6 +256,7 @@ class SaveReaderProcess:
         self.prepared = False
         self._process = self._receipt_raw = None
         self._schema_observed = None
+        self._launch_resource_check = None
         self.launch_wall_ms = self.shutdown_wait_ms = None
         self.cleanup_status, self.reaped = "not_created", True
         object.__setattr__(self, "_sealed", True)
@@ -359,6 +374,17 @@ class SaveReaderProcess:
         command = [str(self.binary), "--background", "--factory-startup", "--disable-autoexec", "--threads", "1",
                    "--python-exit-code", "1", "--python-expr", "import sys; sys.dont_write_bytecode = True",
                    "--python", str(self.reader), "--", "--bundle", str(self.folder), "--token", self.token]
+        if self.image_pixels > LEGACY_IMAGE_PIXELS:
+            try:
+                directory = bind_resource_directory(str(self.folder))
+                if directory.ancestry[-1][1:] != self.folder_id:
+                    raise refused("READER_STAGING_CHANGED")
+                facts = check_large_resources(self.image_pixels, directory)
+                validate_resource_facts(facts)
+            except ProfileRefused as cause:
+                raise refused("READER_LARGE_IMAGE_RESOURCES_UNAVAILABLE") from cause
+            object.__setattr__(self, "_launch_resource_check", facts)
+            self._owned()
         gate()
         started = time.monotonic()
         process = subprocess.Popen(command, cwd=self.folder / "working", env=environment, shell=False,
@@ -378,8 +404,64 @@ class SaveReaderProcess:
     def _receipt(self, row):
         if self._process is None:
             raise refused("READER_NOT_LAUNCHED")
-        if type(row) is not dict or set(row) != RECEIPT_KEYS:
+        if type(row) is not dict or set(row) not in (RECEIPT_KEYS, RECEIPT_KEYS | {"resource_checks"}):
             raise refused("READER_RECEIPT_SCHEMA")
+        checks, phases = row.get("resource_checks"), []
+        if checks is not None:
+            if self.image_pixels <= LEGACY_IMAGE_PIXELS or type(checks) is not list or len(checks) > 7:
+                raise refused("READER_RESOURCE_RECEIPT_SCHEMA")
+            for check in checks:
+                if type(check) is not dict or set(check) != {"phase", "facts"}:
+                    raise refused("READER_RESOURCE_RECEIPT_SCHEMA")
+                phase = check["phase"]
+                if type(phase) is not str or phase not in {"before_open", "before_packed_decode", "before_capture"}:
+                    raise refused("READER_RESOURCE_RECEIPT_SCHEMA")
+                try:
+                    validate_resource_facts(check["facts"])
+                except ProfileRefused as cause:
+                    raise refused("READER_RESOURCE_RECEIPT_FACTS") from cause
+                if check["facts"]["aggregate_image_pixels"] != self.image_pixels:
+                    raise refused("READER_RESOURCE_RECEIPT_FACTS")
+                phases.append(phase)
+            expected_phases = ["before_open"] + ["before_packed_decode"] * phases.count("before_packed_decode")
+            decode_count = len(json.loads(self.expected_raw)["images"]) + 1
+            if phases.count("before_packed_decode") > decode_count:
+                raise refused("READER_RESOURCE_RECEIPT_ORDER")
+            if "before_capture" in phases:
+                if phases.count("before_packed_decode") != decode_count:
+                    raise refused("READER_RESOURCE_RECEIPT_ORDER")
+                expected_phases.append("before_capture")
+            if phases and phases != expected_phases:
+                raise refused("READER_RESOURCE_RECEIPT_ORDER")
+            if row.get("status") == "succeeded" and (len(phases) < 3 or phases[-1] != "before_capture"):
+                raise refused("READER_RESOURCE_RECEIPT_INCOMPLETE")
+        elif "resource_checks" in row or (self.image_pixels > LEGACY_IMAGE_PIXELS and row.get("status") == "succeeded"):
+            raise refused("READER_RESOURCE_RECEIPT_INCOMPLETE")
+        if self.image_pixels > LEGACY_IMAGE_PIXELS and row.get("status") == "failed":
+            error = row.get("error")
+            stage = error.get("failure_stage") if type(error) is dict else None
+            if type(stage) is not str:
+                raise refused("READER_RESOURCE_RECEIPT_SCHEMA")
+            if stage in {"build_validation", "program_validation", "input_validation", "runtime_validation"}:
+                if "resource_checks" in row:
+                    raise refused("READER_RESOURCE_RECEIPT_PHASE")
+            elif stage == "expected_projection":
+                if phases not in ([], ["before_open"]):
+                    raise refused("READER_RESOURCE_RECEIPT_PHASE")
+            elif stage in {"reader_preferences", "native_open", "image_preload", "projection_capture",
+                           "projection_compare", "final_input_validation"}:
+                if not phases or phases[0] != "before_open":
+                    raise refused("READER_RESOURCE_RECEIPT_INCOMPLETE")
+                if stage in {"reader_preferences", "native_open"} and phases != ["before_open"]:
+                    raise refused("READER_RESOURCE_RECEIPT_PHASE")
+                if stage == "image_preload" and "before_capture" in phases:
+                    raise refused("READER_RESOURCE_RECEIPT_PHASE")
+                if stage in {"projection_capture", "projection_compare", "final_input_validation"}:
+                    decode_count = len(json.loads(self.expected_raw)["images"]) + 1
+                    if phases.count("before_packed_decode") != decode_count:
+                        raise refused("READER_RESOURCE_RECEIPT_INCOMPLETE")
+                    if stage != "projection_capture" and phases[-1] != "before_capture":
+                        raise refused("READER_RESOURCE_RECEIPT_INCOMPLETE")
         fixed = {"schema": RECEIPT_SCHEMA, "token": self.token, "saved_sha256": self.saved_sha256,
                  "projection_sha256": self.projection_sha256, "program": dict(self.program),
                  "blender_version": self.version, "build_hash": self.build_hash,
@@ -569,7 +651,7 @@ class SaveReaderProcess:
         return self.evidence()
 
     def evidence(self):
-        return {"worker_reaped": self.reaped, "worker_exit_code": self._process.returncode if self._process else None,
+        result = {"worker_reaped": self.reaped, "worker_exit_code": self._process.returncode if self._process else None,
                 "staging_cleanup": self.cleanup_status,
                 "retained_staging_path": str(self.folder) if self.folder and self.cleanup_status != "complete" else None,
                 "launch_wall_ms": self.launch_wall_ms,
@@ -578,3 +660,6 @@ class SaveReaderProcess:
                 "worker_receipt": json.loads(self._receipt_raw) if self._receipt_raw else None,
                 "parent_peak_memory_measured": False, "OS_launch_memory_measured": False,
                 "parent_native_blocking_measured": False, "filesystem_sandbox": False}
+        if self._launch_resource_check is not None:
+            result["launch_resource_check"] = dict(self._launch_resource_check)
+        return result

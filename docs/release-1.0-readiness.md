@@ -27,6 +27,18 @@ can promote it to release-ready.
 
 ## 1.0 product direction: a full 3D-artist workflow
 
+Production acceptance covers ordinary artist projects in official Blender,
+including textured and rigged assets, animation/procedural dependencies and 4K
+texture saving with current edited pixels preserved. Temporary alpha profiles
+must expand through qualified implementations, scoped dependency preservation
+and measured recovery. Evaluate completion against the full required workflows
+and representative projects, retaining the safety and evidence gates.
+
+The current native-save 1M-pixel budget is a save-profile qualification limit.
+Other selected 4K workflows have separate evidence. Complete normal 4K save and
+fresh-process reopen at the artwork's original resolution before production
+delivery acceptance; a smaller fixture cannot supply that evidence.
+
 The intended target is an agent that can carry a brief through a complete Blender art
 workflow: understand references and constraints, plan, create/edit assets, inspect its work,
 make aesthetic revisions, recover from mistakes and prepare deliverables. It should work

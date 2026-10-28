@@ -2,13 +2,15 @@
 from __future__ import annotations
 
 import ast
+import hashlib
 import importlib
 import importlib.util
+import json
 import sys
 import threading
 from dataclasses import FrozenInstanceError, replace
 from pathlib import Path
-from types import FunctionType
+from types import FunctionType, ModuleType
 from types import SimpleNamespace as NS
 
 import pytest
@@ -29,12 +31,14 @@ _MOCK_SOURCE_PINS = {
         "rna_scene.cc": "9cc36eae9c30e76f2a42b2470180a3cc53c5f498293fc4918a26fa8dcff2e025",
         "rna_mesh.cc": "1255053013c441f01512436420881ed2ad5100f4e061e33d92500e813620a926",
         "rna_image.cc": "8efba613364194f3d5cbc4aeee9a9e2cb44e9c2b9f54e0ba571c65117e4e7f23",
+        "rna_sequencer.cc": "e7cbba3d6179607a779f16c4b44e6326ffc305515881df9348495c93eede3194",
     },
     "5.2.2": {
         "rna_ID.cc": "4c53c551002d84193d14c390a5da578ed43759874b24153e373eccc2f5685caa",
         "rna_scene.cc": "eb9cd754fcd09aee2f8c384dc866a2fd1587bc07da0c9e37922462f336deaa30",
         "rna_mesh.cc": "c1430b06bba90ac1d15918117ae6420821d39e2d98c0f0329df273e4cfcf61af",
         "rna_image.cc": "2584af5d5092adc46d82faf84e2a8482e7cbc5b2222561dc6762d70c99b52b87",
+        "rna_sequencer.cc": "45e18b3357f653bce60723fac3d95b6572745a3a9be2bb376ea430354aa5e3fe",
     },
 }
 _MOCK_ID_FIELDS = {
@@ -113,6 +117,331 @@ def _profile_data(module, *, native_version="4.5.14", **families):
     values["scenes"] = [scene]
     values.update(families)
     return NS(**values, bl_rna=NS(properties=[]))
+
+
+class _SequencerProperties(dict):
+    """Model RNA collection lookup and ordered descriptor iteration."""
+
+    def __iter__(self):
+        return iter(self.values())
+
+
+def _sequencer_metadata(native_class, native_version):
+    # Independent declarations from the pinned rna_sequencer.cc definitions.
+    # These are metadata, not defaults, instance fields or profile constants.
+    fields = {
+        "SequenceEditor": {"strips": "COLLECTION", "strips_all": "COLLECTION",
+                           "meta_stack": "COLLECTION", "channels": "COLLECTION", "active_strip": "POINTER"},
+        "SequenceTimelineChannel": {"name": "STRING", "lock": "BOOLEAN", "mute": "BOOLEAN"},
+    }[native_class].copy()
+    if native_class == "SequenceEditor" and native_version == "4.5.14":
+        fields.update(sequences="COLLECTION", sequences_all="COLLECTION")
+    if native_class == "SequenceTimelineChannel" and native_version == "5.2.2":
+        fields["number"] = "INT"
+    properties = _SequencerProperties()
+    for name, kind in fields.items():
+        descriptor = _MockDescriptor(name, kind, 0 if kind in {"INT", "BOOLEAN"} else None)
+        descriptor.is_readonly = kind == "COLLECTION" or name == "number"
+        properties[name] = descriptor
+    return properties
+
+
+def _sequencer_channel(native_version, name, lock=False, mute=False, number=0):
+    values = dict(name=name, lock=lock, mute=mute,
+                  bl_rna=NS(identifier="SequenceTimelineChannel",
+                            properties=_sequencer_metadata("SequenceTimelineChannel", native_version)))
+    if native_version == "5.2.2":
+        values["number"] = number
+    return NS(**values)
+
+
+def _empty_sequencer(native_version, channels=None):
+    values = dict(strips=[], strips_all=[], meta_stack=[], active_strip=None,
+                  channels=[] if channels is None else channels,
+                  bl_rna=NS(identifier="SequenceEditor",
+                            properties=_sequencer_metadata("SequenceEditor", native_version)))
+    if native_version == "4.5.14":
+        values.update(sequences=[], sequences_all=[])
+    return NS(**values)
+
+
+@pytest.fixture
+def sequencer_model_origin(addon_package, monkeypatch):
+    """Explicit synthetic boundary; these namespaces are not native C objects.
+
+    Payload/metadata tests model the result of origin qualification. Separate
+    poison tests exercise the production origin guard without this substitution.
+    """
+    profile = importlib.import_module(f"{addon_package}.native_save_profile")
+    monkeypatch.setattr(profile, "_sequencer_origin",
+                        lambda owner, _kind: object.__getattribute__(owner, "bl_rna"))
+
+
+@pytest.mark.parametrize("native_class", ["SequenceEditor", "SequenceTimelineChannel"])
+@pytest.mark.parametrize("fault", ["opaque", "spoofed_name", "metaclass_getter", "metaclass_getattr",
+                                  "metaclass_call", "module_getattr", "registry_getattr", "registry_name"])
+def test_sequencer_origin_refuses_foreign_objects_without_any_instance_class_or_module_getter(
+    addon_package, monkeypatch, native_class, fault
+):
+    profile = importlib.import_module(f"{addon_package}.native_save_profile")
+    calls = []
+
+    def poisoned(*_args, **_kwargs):
+        calls.append(fault)
+        pytest.fail("Origin refusal must not call any poisoned getter, equality or truth method")
+
+    meta_fields = {"__getattribute__": poisoned} if fault == "metaclass_getter" else {
+        "__getattr__": poisoned} if fault == "metaclass_getattr" else {
+        "__call__": poisoned} if fault == "metaclass_call" else {}
+    meta = type("ForeignMeta", (type,), meta_fields)
+    cls = meta("OpaquePointee" if fault == "opaque" else native_class, (), {
+        "__module__": "bpy.types", "__getattribute__": poisoned, "__bool__": poisoned,
+        "bl_rna": property(poisoned)})
+    owner = object.__new__(cls)
+    bpy, registry = ModuleType("bpy"), ModuleType("bpy.types")
+    if fault == "module_getattr":
+        bpy.__getattr__ = poisoned
+    else:
+        bpy.types = registry
+    if fault == "registry_getattr":
+        registry.__getattr__ = poisoned
+    elif fault == "registry_name":
+        class PoisonedName:
+            __eq__ = poisoned
+
+        registry.__name__ = PoisonedName()
+    # A mutable registry alias is never proof of a native class.
+    registry.__dict__[native_class] = cls
+    monkeypatch.setitem(sys.modules, "bpy", bpy)
+    reason = "SCENE_CACHE_OR_SEQUENCER_UNSUPPORTED" if native_class == "SequenceEditor" else "SEQUENCER_CLASS_UNSUPPORTED"
+    with pytest.raises(profile.ProfileRefused, match="^" + reason + "$"):
+        profile._sequencer_schema(owner, native_class)
+    assert calls == []
+
+
+def test_opaque_channel_origin_refuses_before_any_channel_getter(addon_package, monkeypatch):
+    profile = importlib.import_module(f"{addon_package}.native_save_profile")
+    origin = profile._sequencer_origin
+    calls = []
+
+    class OpaqueChannel:
+        def __getattribute__(self, name):
+            calls.append(name)
+            pytest.fail("Opaque channels must refuse before metadata or value getters")
+
+        def __bool__(self):
+            calls.append("truth")
+            pytest.fail("No channel truth coercion")
+
+    editor = _empty_sequencer("5.2.2", [OpaqueChannel()])
+    monkeypatch.setattr(profile, "_sequencer_origin", lambda owner, kind:
+                        object.__getattribute__(owner, "bl_rna") if owner is editor else origin(owner, kind))
+    with pytest.raises(profile.ProfileRefused, match=r"^SEQUENCER_CLASS_UNSUPPORTED$"):
+        profile.empty_sequencer(editor)
+    assert calls == []
+
+
+@pytest.mark.parametrize("native_version,expected", [
+    ("4.5.14", "7de0e6a1c42bda3248793a5da173493905f25211727c2045139e8c3b04d461ad"),
+    ("5.2.2", "862abe9a25f79c9eebb955c5d104b048da0ce35299faf3883cd98d02941d47d8"),
+])
+def test_null_sequencer_preserves_exact_pre_extension_canonical_bytes(addon_package, native_version, expected):
+    profile = importlib.import_module(f"{addon_package}.native_save_profile")
+    projection = profile.capture(_profile_data(profile, native_version=native_version))
+    assert projection.digest == expected
+    assert "sequence_editor" not in json.loads(projection.raw)["scenes"][0]
+
+
+@pytest.mark.parametrize("native_version", _MOCK_BUILDS)
+def test_empty_sequencer_preserves_complete_ordered_arbitrary_channel_values(addon_package, sequencer_model_origin, native_version):
+    profile = importlib.import_module(f"{addon_package}.native_save_profile")
+    native_channels = [_sequencer_channel(native_version, f"任意 é {128 - index}", bool(index % 2),
+                                         bool(index % 3), number=128 - index) for index in range(129)]
+    editor = _empty_sequencer(native_version, native_channels)
+    data = _profile_data(profile, native_version=native_version)
+    data.scenes[0].sequence_editor = editor
+    before = [(channel.name, channel.lock, channel.mute) for channel in native_channels]
+    projection = profile.capture(data)
+    observed = json.loads(projection.raw)["scenes"][0]["sequence_editor"]
+    assert observed == {"strips": [], "strips_all": [], "meta_stack": [], "active_strip": None,
+                        "native_empty_aliases": ["sequences", "sequences_all"] if native_version == "4.5.14" else [],
+                        "channels": [{"name": name, "lock": lock, "mute": mute,
+                                      "number": 128 - index if native_version == "5.2.2" else "UNOBSERVED"}
+                                     for index, (name, lock, mute) in enumerate(before)]}
+    assert [(channel.name, channel.lock, channel.mute) for channel in native_channels] == before
+    assert data.scenes[0].sequence_editor is editor
+    assert editor.strips == editor.strips_all == editor.meta_stack == []
+    native_channels.reverse()
+    assert profile.capture(data).raw != projection.raw
+
+
+@pytest.mark.parametrize("native_version", _MOCK_BUILDS)
+@pytest.mark.parametrize("field,value", [("name", "renamed 非標準"), ("lock", True), ("mute", True),
+                                         ("number", 42)])
+def test_empty_sequencer_channel_drift_changes_projection(addon_package, sequencer_model_origin, native_version, field, value):
+    profile = importlib.import_module(f"{addon_package}.native_save_profile")
+    channel = _sequencer_channel(native_version, "Free name")
+    editor = _empty_sequencer(native_version, [channel])
+    before = profile.canonical(profile.empty_sequencer(editor))
+    setattr(channel, field, value)
+    after = profile.canonical(profile.empty_sequencer(editor))
+    assert (after == before) is (field == "number" and native_version == "4.5.14")
+
+
+@pytest.mark.parametrize("field", ["strips", "strips_all", "meta_stack", "active_strip", "sequences", "sequences_all"])
+def test_nonempty_sequencer_refuses_with_one_sentinel_and_no_strip_traversal(addon_package, sequencer_model_origin, field):
+    profile = importlib.import_module(f"{addon_package}.native_save_profile")
+
+    class Nonempty:
+        def __len__(self):
+            pytest.fail("Emptiness proof must not query collection length")
+
+        def __iter__(self):
+            yield object()
+            pytest.fail("Only one sentinel may be consumed")
+
+    editor = _empty_sequencer("4.5.14")
+    setattr(editor, field, object() if field == "active_strip" else Nonempty())
+    with pytest.raises(profile.ProfileRefused, match="NONEMPTY_SEQUENCER_UNSUPPORTED"):
+        profile.empty_sequencer(editor)
+
+
+def test_top_level_strips_refuse_before_recursive_collection_getter(addon_package, sequencer_model_origin):
+    profile = importlib.import_module(f"{addon_package}.native_save_profile")
+
+    class Editor:
+        bl_rna = _empty_sequencer("5.2.2").bl_rna
+        strips = (object(),)
+
+        @property
+        def strips_all(self):
+            pytest.fail("Recursive getter allocates; top-level strips must refuse first")
+
+        def __getattr__(self, _name):
+            pytest.fail("No further editor values before top-level empty proof")
+
+    with pytest.raises(profile.ProfileRefused, match="NONEMPTY_SEQUENCER_UNSUPPORTED"):
+        profile.empty_sequencer(Editor())
+
+
+@pytest.mark.parametrize("owner_kind,fault", [(kind, fault) for kind in ("editor", "channel")
+    for fault in ("class", "missing", "identifier", "type", "runtime", "readonly", "array", "unknown_field")
+    if (kind, fault) != ("editor", "array")])
+def test_sequencer_malformed_schema_refuses_before_any_owner_values(addon_package, sequencer_model_origin, fault, owner_kind):
+    profile = importlib.import_module(f"{addon_package}.native_save_profile")
+    native_class = "SequenceEditor" if owner_kind == "editor" else "SequenceTimelineChannel"
+    metadata = _sequencer_metadata(native_class, "5.2.2")
+    field = "strips" if owner_kind == "editor" else "lock"
+    if fault == "missing":
+        del metadata[field]
+    elif fault == "identifier":
+        metadata[field].identifier = "wrong"
+    elif fault == "type":
+        metadata[field].type = "FLOAT"
+    elif fault == "runtime":
+        metadata[field].is_runtime = True
+    elif fault == "readonly":
+        metadata[field].is_readonly = not metadata[field].is_readonly
+    elif fault == "array":
+        metadata[field].array_length = 1
+    elif fault == "unknown_field":
+        metadata["new_dependency"] = _MockDescriptor("new_dependency", "COLLECTION" if owner_kind == "editor" else "STRING")
+
+    class Unread:
+        bl_rna = NS(identifier="OtherNativeClass" if fault == "class" else native_class, properties=metadata)
+
+        def __getattr__(self, _name):
+            pytest.fail("Schema refusal must precede owner values")
+
+    owner = Unread()
+    editor = owner if owner_kind == "editor" else _empty_sequencer("5.2.2", [owner])
+    with pytest.raises(profile.ProfileRefused, match=r"SEQUENCER_(CLASS|SCHEMA)_UNSUPPORTED"):
+        profile.empty_sequencer(editor)
+
+
+def test_all_channel_metadata_precedes_first_channel_value(addon_package, sequencer_model_origin):
+    profile = importlib.import_module(f"{addon_package}.native_save_profile")
+
+    class UnreadChannel:
+        bl_rna = NS(identifier="SequenceTimelineChannel",
+                    properties=_sequencer_metadata("SequenceTimelineChannel", "5.2.2"))
+
+        def __getattr__(self, _name):
+            pytest.fail("No channel values until every channel schema has qualified")
+
+    bad_channel = _sequencer_channel("5.2.2", "Malformed later row")
+    bad_channel.bl_rna.properties["mute"].is_runtime = True
+    with pytest.raises(profile.ProfileRefused, match="SEQUENCER_SCHEMA_UNSUPPORTED"):
+        profile.empty_sequencer(_empty_sequencer("5.2.2", [UnreadChannel(), bad_channel]))
+
+
+@pytest.mark.parametrize("native_version", _MOCK_BUILDS)
+def test_empty_sequencer_never_reads_cache_prefetch_creation_or_absent_number_getters(addon_package, sequencer_model_origin, native_version):
+    profile = importlib.import_module(f"{addon_package}.native_save_profile")
+
+    class Guarded(NS):
+        def __getattr__(self, name):
+            pytest.fail("Undeclared or creating getter: " + name)
+
+    channel = Guarded(**vars(_sequencer_channel(native_version, "Retained UTF-8 雪", True, True)))
+    editor = Guarded(**vars(_empty_sequencer(native_version, [channel])))
+    for name, kind in (("cache_raw_size", "INT"), ("cache_final_size", "INT"),
+                       ("use_prefetch", "BOOLEAN"), ("selected_retiming_keys", "BOOLEAN")):
+        editor.bl_rna.properties[name] = _MockDescriptor(name, kind, 0)
+    row = profile.empty_sequencer(editor)
+    assert row["channels"][0]["name"] == "Retained UTF-8 雪"
+    assert row["channels"][0]["number"] == (0 if native_version == "5.2.2" else "UNOBSERVED")
+
+
+@pytest.mark.parametrize("field,value", [("name", None), ("name", "\ud800"), ("lock", 1),
+                                         ("mute", 0), ("number", True), ("number", 1.)])
+def test_empty_sequencer_rejects_malformed_channel_values(addon_package, sequencer_model_origin, field, value):
+    profile = importlib.import_module(f"{addon_package}.native_save_profile")
+    channel = _sequencer_channel("5.2.2", "Finite")
+    setattr(channel, field, value)
+    with pytest.raises(profile.ProfileRefused, match="SEQUENCER_CHANNEL_VALUE_UNSUPPORTED"):
+        profile.empty_sequencer(_empty_sequencer("5.2.2", [channel]))
+
+
+@pytest.mark.parametrize("reported,actual,reason", [(130, 0, "SEQUENCER_CHANNEL_BUDGET"),
+                                                   (0, 130, "SEQUENCER_CHANNEL_BUDGET"),
+                                                   (2, 1, "SEQUENCER_CHANNEL_LAYOUT_UNSUPPORTED")])
+def test_sequencer_channel_budget_and_complete_count_precede_metadata(addon_package, sequencer_model_origin, reported, actual, reason):
+    profile = importlib.import_module(f"{addon_package}.native_save_profile")
+
+    class Counted:
+        def __len__(self):
+            return reported
+
+        def __iter__(self):
+            if reported > 129:
+                pytest.fail("Overbudget count must refuse before iteration")
+            yield from (object() for _index in range(actual))
+            if actual > 129:
+                pytest.fail("Collection iteration must be bounded")
+
+    with pytest.raises(profile.ProfileRefused, match=reason):
+        profile.empty_sequencer(_empty_sequencer("5.2.2", Counted()))
+
+
+@pytest.mark.parametrize("native_version", _MOCK_BUILDS)
+def test_empty_sequencer_census_declares_only_reviewed_metadata(addon_package, native_version):
+    profile = importlib.import_module(f"{addon_package}.native_save_profile")
+    types = NS(**{name: NS(bl_rna=NS(properties=_sequencer_metadata(name, native_version), functions=[]))
+                  for name in ("SequenceEditor", "SequenceTimelineChannel")})
+    census = profile.schema_census(types)
+    assert not [row for row in census["mismatches"] if row["class"].startswith("Sequence")]
+    fields = census["classes"]["SequenceTimelineChannel"]["fields"]
+    assert (fields["number"]["metadata"] is None) is (native_version == "4.5.14")
+    assert fields["lock"]["metadata"]["array_length"] == fields["mute"]["metadata"]["array_length"] == 0
+
+
+def test_empty_sequencer_census_refuses_writable_channel_number_metadata(addon_package):
+    profile = importlib.import_module(f"{addon_package}.native_save_profile")
+    metadata = _sequencer_metadata("SequenceTimelineChannel", "5.2.2")
+    metadata["number"].is_readonly = False
+    census = profile.schema_census(NS(SequenceTimelineChannel=NS(bl_rna=NS(properties=metadata, functions=[]))))
+    assert {"class": "SequenceTimelineChannel", "field": "number", "reason": "FIELD_METADATA_MISMATCH"} in census["mismatches"]
 
 
 @pytest.mark.parametrize("rna_type,field", [("Scene", "rigid_body_world"), ("Scene", "polygon"),
@@ -285,7 +614,7 @@ def test_profile_checks_packed_size_before_copying_bytes(addon_package):
     module = importlib.import_module(f"{addon_package}.native_save_profile")
 
     class Packed:
-        size = 20 * 1024 * 1024 + 1
+        size = module.MAX_PACKED_BYTES + 1
 
         @property
         def data(self):
@@ -296,6 +625,169 @@ def test_profile_checks_packed_size_before_copying_bytes(addon_package):
                         filepath="//texture.png", colorspace_settings=NS(name="sRGB"), alpha_mode="STRAIGHT")
     with pytest.raises(module.ProfileRefused, match="PACKED_BYTE_BUDGET"):
         module.capture(_profile_data(module, images=[image]))
+
+
+def _resource_memory(module, *, available=None):
+    available = module.LARGE_MEMORY_BYTES if available is None else available
+    return {"available_memory_bytes": available, "host_available_memory_bytes": available,
+            "visible_cgroup_headroom_bytes": None, "visible_cgroup_levels": 1}
+
+
+def test_large_resource_sample_includes_every_visible_limiting_ancestor(addon_package, monkeypatch):
+    module = importlib.import_module(f"{addon_package}.native_save_profile")
+    gib = 1024**3
+    rows = {"/proc/meminfo": "MemAvailable: 33554432 kB\n", "/proc/self/cgroup": "0::/parent/leaf\n",
+            "/proc/self/mountinfo": "1 0 0:1 / /sys/fs/cgroup rw - cgroup2 cgroup2 rw\n",
+            "/sys/fs/cgroup/parent/leaf/memory.max": "max\n", "/sys/fs/cgroup/parent/leaf/memory.current": "1\n",
+            "/sys/fs/cgroup/parent/memory.max": str(12 * gib), "/sys/fs/cgroup/parent/memory.current": str(9 * gib),
+            "/sys/fs/cgroup/memory.max": str(16 * gib), "/sys/fs/cgroup/memory.current": str(4 * gib)}
+    reads = []
+
+    def read(path, _maximum):
+        reads.append(str(path))
+        return rows[str(path)]
+    monkeypatch.setattr(module, "_resource_text", read)
+    result = module.available_memory_facts()
+    assert result == {"available_memory_bytes": 3 * gib, "host_available_memory_bytes": 32 * gib,
+                      "visible_cgroup_headroom_bytes": 3 * gib, "visible_cgroup_levels": 3}
+    assert {name for name in reads if name.endswith("/memory.current")} == {
+        "/sys/fs/cgroup/parent/leaf/memory.current", "/sys/fs/cgroup/parent/memory.current", "/sys/fs/cgroup/memory.current"}
+
+
+@pytest.mark.parametrize("root,group,suffixes", [("/..", "/", [""]), ("/parent", "/parent/leaf", ["leaf", ""])])
+def test_resource_cgroup_namespace_never_invents_hidden_parent_limits(addon_package, root, group, suffixes):
+    module = importlib.import_module(f"{addon_package}.native_save_profile")
+    paths = module._visible_cgroup_paths("0::" + group, "1 0 0:1 " + root + " /sys/fs/cgroup rw - cgroup2 cgroup2 rw")
+    assert [str(path) for path in paths] == ["/sys/fs/cgroup" + ("/" + suffix if suffix else "") for suffix in suffixes]
+
+
+@pytest.mark.parametrize("root", ["relative", "/parent/../escape", "/../child", "//parent"])
+def test_namespace_root_does_not_bypass_mount_root_validation(addon_package, root):
+    module = importlib.import_module(f"{addon_package}.native_save_profile")
+    with pytest.raises(module.ProfileRefused, match="RESOURCE_CGROUP_UNAVAILABLE"):
+        module._visible_cgroup_paths("0::/", "1 0 0:1 " + root + " /sys/fs/cgroup rw - cgroup2 cgroup2 rw")
+
+
+@pytest.mark.parametrize("fault", ["host_missing", "host_duplicate", "host_bad_integer", "group_missing", "group_escape",
+                                  "mount_missing", "limit_bad_integer", "current_missing"])
+def test_unknown_large_memory_measurement_refuses_without_guessing(addon_package, monkeypatch, fault):
+    module = importlib.import_module(f"{addon_package}.native_save_profile")
+    rows = {"/proc/meminfo": "MemAvailable: 16777216 kB\n", "/proc/self/cgroup": "0::/\n",
+            "/proc/self/mountinfo": "1 0 0:1 /.. /sys/fs/cgroup rw - cgroup2 cgroup2 rw\n",
+            "/sys/fs/cgroup/memory.max": "17179869184", "/sys/fs/cgroup/memory.current": "1"}
+    if fault.startswith("host_"):
+        rows["/proc/meminfo"] = {"host_missing": "MemFree: 12 kB", "host_duplicate": rows["/proc/meminfo"] * 2,
+                                  "host_bad_integer": "MemAvailable: -1 kB"}[fault]
+    elif fault == "group_missing":
+        rows["/proc/self/cgroup"] = "1:memory:/"
+    elif fault == "group_escape":
+        rows["/proc/self/cgroup"] = "0::/../escape"
+    elif fault == "mount_missing":
+        rows["/proc/self/mountinfo"] = "1 0 0:1 / /unrelated rw - cgroup2 cgroup2 rw"
+    elif fault == "limit_bad_integer":
+        rows["/sys/fs/cgroup/memory.max"] = "unknown"
+    else:
+        del rows["/sys/fs/cgroup/memory.current"]
+
+    def read(path, _maximum):
+        if str(path) not in rows:
+            raise OSError("Unavailable synthetic OS metadata")
+        return rows[str(path)]
+    monkeypatch.setattr(module, "_resource_text", read)
+    with pytest.raises(module.ProfileRefused, match="RESOURCE_"):
+        module.available_memory_facts()
+
+
+def test_large_resource_gate_pins_directory_before_space_query_and_rechecks_it(addon_package, monkeypatch, tmp_path):
+    module = importlib.import_module(f"{addon_package}.native_save_profile")
+    folder = tmp_path / "approved"
+    folder.mkdir()
+    witness = module.bind_resource_directory(str(folder))
+    folder.rename(tmp_path / "old approved")
+    folder.mkdir()
+    monkeypatch.setattr(module.os, "fstatvfs", lambda _fd: pytest.fail("Space query before pinned ancestry comparison"))
+    with pytest.raises(module.ProfileRefused, match="RESOURCE_DIRECTORY_CHANGED"):
+        module.check_large_resources(module.MAX_IMAGE_PIXELS, witness)
+
+
+def test_large_resource_gate_rejects_directory_swap_after_space_query(addon_package, monkeypatch, tmp_path):
+    module = importlib.import_module(f"{addon_package}.native_save_profile")
+    folder = tmp_path / "approved"
+    folder.mkdir()
+    witness = module.bind_resource_directory(str(folder))
+
+    def changed(_fd):
+        folder.rename(tmp_path / "old approved")
+        folder.mkdir()
+        return NS(f_bavail=module.LARGE_DISK_BYTES, f_frsize=1)
+    monkeypatch.setattr(module.os, "fstatvfs", changed)
+    monkeypatch.setattr(module, "available_memory_facts", lambda: _resource_memory(module))
+    with pytest.raises(module.ProfileRefused, match="RESOURCE_DIRECTORY_CHANGED"):
+        module.check_large_resources(module.MAX_IMAGE_PIXELS, witness)
+
+
+def test_large_resource_directory_refuses_symlink_without_space_or_target_read(addon_package, monkeypatch, tmp_path):
+    module = importlib.import_module(f"{addon_package}.native_save_profile")
+    target = tmp_path / "target"
+    target.mkdir()
+    (tmp_path / "link").symlink_to(target, target_is_directory=True)
+    monkeypatch.setattr(module.os, "fstatvfs", lambda _fd: pytest.fail("No space query through a link"))
+    with pytest.raises(module.ProfileRefused, match="RESOURCE_DIRECTORY_"):
+        module.bind_resource_directory(str(tmp_path / "link"))
+
+
+@pytest.mark.parametrize("resource", ["memory", "disk"])
+def test_large_capture_resource_floor_precedes_packed_copy_and_float_array(addon_package, monkeypatch, tmp_path, resource):
+    module = importlib.import_module(f"{addon_package}.native_save_profile")
+
+    class Packed:
+        size = 67_120_000
+
+        @property
+        def data(self):
+            pytest.fail("Packed data read before resource gate")
+    image = _profile_id("Image", "Ordinary 4K", source="FILE", is_dirty=False, has_data=True,
+        packed_file=Packed(), channels=4, size=(4096, 4096), pixels=None, filepath="//texture.png",
+        colorspace_settings=NS(name="sRGB"), alpha_mode="STRAIGHT")
+    witness = module.bind_resource_directory(str(tmp_path))
+    monkeypatch.setattr(module, "available_memory_facts", lambda: _resource_memory(module,
+        available=module.LARGE_MEMORY_BYTES - 1 if resource == "memory" else module.LARGE_MEMORY_BYTES))
+    monkeypatch.setattr(module.os, "fstatvfs", lambda _fd: NS(
+        f_bavail=module.LARGE_DISK_BYTES - 1 if resource == "disk" else module.LARGE_DISK_BYTES, f_frsize=1))
+    monkeypatch.setattr(module, "array", lambda *_args: pytest.fail("Float allocation before resource gate"))
+    with pytest.raises(module.ProfileRefused, match="LARGE_IMAGE_" + resource.upper() + "_BUDGET"):
+        module.capture(_profile_data(module, images=[image]), resource_directory=witness)
+
+
+def test_large_resource_threshold_and_pixel_metadata_are_exact_without_large_allocations(addon_package, monkeypatch):
+    module = importlib.import_module(f"{addon_package}.native_save_profile")
+    monkeypatch.setattr(module, "available_memory_facts", lambda: pytest.fail("Legacy profile must not add OS resource IO"))
+    assert module.check_large_resources(module.LEGACY_IMAGE_PIXELS, None) is None
+    assert module.projection_image_pixels({"images": [{"size": [4096, 4096]}]}) == 16_777_216
+    with pytest.raises(module.ProfileRefused, match="IMAGE_PIXEL_BUDGET"):
+        module.projection_image_pixels({"images": [{"size": [4096, 4096]}, {"size": [1, 1]}]})
+
+
+def test_memoryview_pixel_digest_preserves_every_float32_bit_and_alpha(addon_package):
+    import struct
+    from array import array
+
+    module = importlib.import_module(f"{addon_package}.native_save_profile")
+    values = (-0., .25, .5, 1., .125, 0., .75, .5, 1., .5, .25, 0., .25, .5, .75, 1.)
+
+    class Pixels:
+        def __len__(self):
+            return 16
+
+        def foreach_get(self, target):
+            target[:] = array("f", values)
+    image = _profile_id("Image", "Ordinary image", source="FILE", is_dirty=False, has_data=True,
+        packed_file=NS(size=3, data=b"PNG"), channels=4, size=(2, 2), pixels=Pixels(), filepath="//texture.png",
+        colorspace_settings=NS(name="sRGB"), alpha_mode="STRAIGHT")
+    projected = module.capture(_profile_data(module, images=[image]))
+    row = json.loads(projected.raw)["images"][0]
+    assert row["pixels_sha256"] == hashlib.sha256(struct.pack("<16f", *values)).hexdigest()
+    assert projected.resource_checks == ()
 
 
 def test_embedded_shader_animation_refuses_before_graph_reads(addon_package):

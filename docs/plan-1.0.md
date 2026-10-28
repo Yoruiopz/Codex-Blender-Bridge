@@ -4,6 +4,20 @@ Status: active, **not release-ready**. Planning baseline: `3ad11a3`, 2026-09-27.
 This is the current execution plan; `implementation-plan.md` describes the historical MVP.
 The [readiness gates](release-1.0-readiness.md) remain the release acceptance contract.
 
+**Production target reaffirmed — 2026-10-26:** complete the original human-equivalent
+artist workflow in official Blender, including ordinary textured and rigged
+projects, animation/procedural work, visual refinement and portable delivery.
+Alpha profiles and refusals define current evidence boundaries. Resolve their
+functional gaps through scoped ownership, supported native effects and measured
+recovery; keep every required workflow on the completion checklist.
+
+Ordinary 4K texture saving and preservation of current edited pixels are required
+production work. The current native-save profile's aggregate 1M-pixel budget
+describes that save implementation's qualification. Selected 4K painting and
+recovery evidence elsewhere has its own scope. Qualify expanded save/reopen and
+portable delivery at the artwork's original resolution; retain resource and
+recovery gates while implementing the necessary capacity.
+
 **Native-save blocker:** `project.save` refuses both current-file
 Save and Save As. Hidden C asset-catalog callbacks and runtime save effects are
 not bounded by existing path/permission checks. Earlier typed-save results are

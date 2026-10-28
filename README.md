@@ -4,19 +4,23 @@ Let Codex inspect and edit Blender through local, permission-controlled MCP tool
 Work with objects, meshes, materials, UVs, rigs, animation, lights and renders, with
 status, permissions and recovery controls inside Blender.
 
-**[0.8.0 alpha](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.8.0)** ·
-[Scope and qualification requirements](docs/releases/0.8.0.md) ·
+**[0.9.0 alpha candidate — qualification pending](docs/releases/0.9.0.md)** ·
+[Published 0.8.0 alpha](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.8.0) ·
 [GitHub releases](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases) ·
 [Install](#install--no-source-build-needed) · [Troubleshooting](docs/troubleshooting.md) ·
 [Contribute](CONTRIBUTING.md)
 
 This is **alpha software**. Try it on a disposable scene or a copy of your project.
-The 0.8.0 source exposes **270 MCP tools**, including typed native-save preview/start
-with a default-off local effects grant. Use matching accepted 0.8.0 add-on, MCP server
-and optional plugin artifacts. A source checkout or matching version string alone
-is not an accepted build: the [release evidence](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.8.0)
-identifies accepted bytes, measured outcomes and verified limitations. Development
-branches may contain unqualified changes; source metadata does not announce publication.
+The 0.9.0 candidate exposes **270 MCP tools** and retains default-off native-save
+effects consent. Its finite increment supports clean, loaded, packed FILE images
+within 16,777,216 aggregate pixels/80 MiB packed bytes and an empty native sequencer
+with ordered public channel data. The prerequisite source passed a genuine queued
+single-4K save/reopen fixture on two official Linux builds; new 0.9.0 metadata and
+packages still require exact-commit full, CI, installed, native and integrity checks.
+This candidate has not been published or accepted. Use matching accepted 0.8.0
+add-on, MCP server and optional plugin artifacts for the published alpha route below.
+A source version alone does not identify accepted bytes or measured qualification.
+See the separate [0.8.0 release evidence](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.8.0).
 
 The previous [0.7.0 alpha](docs/releases/0.7.0.md), published October 25, 2026 at
 19:16:03 UTC from `8d07ad898ba92c5e94db57b1562fefef9c8e0e1c`, remains available.
@@ -44,7 +48,7 @@ must qualify actual installed queued calls, not a substituted service or classif
 **1.0 is not ready.** All 29 implementation items and 14 stable-release gates remain
 open. Follow the [development status](docs/development-status.md),
 [roadmap](docs/roadmap.md), [release plan](docs/plan-1.0.md) and
-[current blocker plan](docs/releases/0.8.0-blocker-plan.md).
+[current blocker plan](docs/releases/0.9.0-blocker-plan.md).
 Windows compatibility work and testing are **deferred and unverified** until
 implementation completion. Linux development evidence does not qualify the later
 Windows 11/Blender 4.5 LTS and stable 5.x installed acceptance matrix.

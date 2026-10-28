@@ -17,7 +17,13 @@ from . import protocol as _protocol_module
 from .errors import BridgeError, ErrorCode, invalid_argument
 from .geometry_preview_source import semantic
 from .native_save_policy import NativeSaveGrant
-from .native_save_profile import ProfileRefused, Projection, canonical, capture
+from .native_save_profile import (
+    ProfileRefused,
+    Projection,
+    bind_resource_directory,
+    canonical,
+    capture,
+)
 from .permissions import Permission
 from .preferences import get_preferences
 from .request_lifecycle import RequestLifetime
@@ -206,9 +212,9 @@ def options():
     return values
 
 
-def snapshot():
+def snapshot(resource_directory=None):
     try:
-        return capture(require_blender().data)
+        return capture(require_blender().data, resource_directory=resource_directory)
     except (ProfileRefused, AttributeError, TypeError, ValueError, RuntimeError) as cause:
         raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "The current project is outside the declared native save profile.",
                           {"reason": str(cause)[:160], "profile": "stock_native_project_v1"}) from cause
@@ -317,10 +323,28 @@ class SaveOrigin:
             raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Native save is qualified only on the recorded official Linux builds.")
         self.build, self.version, self.binary = bpy.app.build_hash.decode(), bpy.app.version_string, bpy.app.binary_path
         self.preferences, self.filepath = options(), bpy.data.filepath
+        if method == START:
+            from .native_save_jobs import SavePreview
+
+            preview = self.manager.native_save_previews.get(params["preview_id"])
+            if type(preview) is not SavePreview or time.monotonic() >= preview.expires:
+                raise invalid_argument("Native-save preview expired or is missing; create a new preview.")
+            if type(preview.origin) is not SaveOrigin or preview.origin.registry is not self.registry:
+                raise refused("PREVIEW_AUTHORITY_CHANGED")
+            self.resource_directory = preview.origin.resource_directory
+            if self.preferences != preview.origin.preferences:
+                raise refused("APPROVED_RESOURCE_DIRECTORY_CHANGED")
+        else:
+            try:
+                self.resource_directory = bind_resource_directory(self.preferences[0])
+            except ProfileRefused as cause:
+                raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Native save cannot verify the Approved Project Folder.",
+                    {"reason": str(cause)[:160], "profile": "stock_native_project_v1"}) from cause
         started = time.perf_counter()
-        self.projection = snapshot()
+        self.projection = snapshot(self.resource_directory)
         self.projection_digest = self.projection.digest
         self.capture_ms = (time.perf_counter() - started) * 1000
+        self.resource_checks = self.projection.resource_checks
         self.capture_observations = []
         self._sealed = True
 
@@ -367,7 +391,7 @@ class SaveOrigin:
         if len(self.capture_observations) >= 256:
             raise refused("SOURCE_COMPARISON_BUDGET")
         started = time.perf_counter()
-        current = snapshot()
+        current = snapshot(self.resource_directory)
         self.capture_observations.append((time.perf_counter() - started) * 1000)
         if (current.raw != self.projection.raw or current.identities != self.projection.identities
                 or (not after_native and current.driven_raw != self.projection.driven_raw)):

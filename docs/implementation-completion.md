@@ -5,6 +5,15 @@ structured tools. The 29 items below define the remaining implementation work;
 they are not a tool-count target, a scope reduction or release acceptance.
 All fourteen [release requirements](release-1.0-ledger.json) remain **OPEN**.
 
+The completion target remains normal human artist work in standard Blender.
+Ordinary textured/rigged projects, existing animation and procedural data, 4K
+textures and portable `.blend`/GLB/FBX delivery must be supported through the
+required structured workflows. Treat alpha exclusions as implementation gaps
+with explicit next steps. Closing an item requires useful operation and measured
+preservation/recovery on representative projects at their original resolution.
+Keep current save-profile limits separate from other tools' 4K evidence, and
+include ordinary 4K save/reopen and current-pixel preservation in H01/A04/I02.
+
 Use the available Linux Blender **4.5.14** (`62c1db4208e8`) and **5.2.2**
 (`d13f752e3b9c`) for implementation checks. **Windows-specific compatibility and
 testing are deferred until implementation is complete, remain unverified, and do

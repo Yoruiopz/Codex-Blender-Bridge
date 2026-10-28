@@ -1,14 +1,15 @@
 # Native project saving with explicit session permission
 
-**0.8.0 alpha scope.** The two typed tools use canonical queued admission,
+**0.9.0 alpha candidate — exact-build qualification pending.** The two typed tools use canonical queued admission,
 retained source/path intent, a distinct local effects grant and bounded shared jobs.
-The source inventory has 270 tools and matching 0.8.0 metadata. Each accepted build
+The source inventory has 270 tools and matching 0.9.0 metadata. Each accepted build
 must qualify this real installed path and retain exact source/package identities,
-measured native outcomes and limitations in the
-[release evidence](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.8.0).
+measured native outcomes and limitations. New 0.9.0 bytes still need exact-commit
+full/static checks, all seven CI jobs, package integrity, installed core/image and
+native-save/4K qualification. See the [candidate scope and gates](releases/0.9.0.md).
 A source version or donor result does not establish acceptance or publication.
-See the [scope and qualification requirements](releases/0.8.0.md). Previous 0.7
-remains a separate 268-tool release with its own accepted files/evidence.
+Published [0.8.0 evidence](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.8.0)
+and the earlier 268-tool 0.7 release remain separate historical records.
 
 Legacy `project.save` retains its [quarantined refusal](project-save-safety.md).
 The native-save alternative does not provide an arbitrary-Python fallback or
@@ -23,7 +24,7 @@ helper. These are historical donor-source results. The 0.8 integration must
 retain the 0.7 weight/raw-curve bounds and canonical-provider/job dependencies,
 and qualify its genuine initial parameter hook through the actual installed TCP
 queue. Direct ToolContext calls or a substituted classifier are not that proof.
-No old source/package identity is reused as final 0.8 qualification.
+No old source/package identity is reused as final 0.9 qualification.
 
 The first registered native runs stopped before any save at unsupported factory
 palette data. The isolated qualification fixture now inventories all native data
@@ -40,20 +41,18 @@ value validation. It reads no property defaults, dynamic enum catalogs, pointee
 types or project values. Missing or mismatched declarations fail together; these
 metadata checks do not replace the nine actual save/reopen/interruption cases.
 Both builds passed that metadata census, then refused a non-absent Scene cache or
-sequencer container before any save. The initial report did not distinguish the
-two pointers. Fixture diagnostics now record them independently and report the
-remaining declared value predicates together. Only an attested fresh fixture's
-verified empty sequencer container may be cleared during owned setup; production
-guards continue to refuse it, and nonempty, unknown or rigid-body data is retained.
-The next run identified the retained state: zero strips/meta stack and no active
-strip, with 129 factory channels. Exact source for both builds initializes those
-channels in order as `Channel 0` through `Channel 128`, unlocked and unmuted.
-The fixture may recognize only that complete public-field state before its owned
-clear. Blender 5.2 also exposes each channel's read-only number; Blender 4.5 does
-not expose the stored index, so no hidden-index equality is claimed. Nondefault
-names, flags, ordering, layouts or incomplete observations refuse; localized names
-are never normalized or renamed. This
-setup exception does not change the production sequencer guard or qualify saves.
+sequencer container before any save. Subsequent diagnostics distinguished the
+pointers and observed an empty editor with 129 channels in an ordinary Scene.
+The source profile now admits an existing empty `SequenceEditor` through the
+finite projection described below. Qualification must retain that editor and
+its channels; clearing the editor or requiring factory names would bypass this
+production requirement. Source commit
+`6112fdf54e6464bf15ef9473ed9a57eef4650e69` subsequently passed the genuine queued
+single-clean-4K fixture with that editor retained on both reviewed Linux builds.
+All ten scenario assertions passed on each build; the source/helper snapshots
+remained unchanged. This is prerequisite source evidence, not acceptance of the
+new 0.9.0 metadata or packages. Earlier refusals and fixture cleanup remain
+historical evidence, and ordinary artist-project admission remains open.
 
 Ordinary Save/Save As on official, unmodified Blender can synchronize/flush
 project state and run callbacks, catalog writes and history/thumbnail effects
@@ -136,12 +135,57 @@ linked/override data, external libraries/caches/movies/scripts/IES and unknown
 families/schemas refuse for this profile.
 
 Images must already be loaded, unanimated, packed, clean FILE images: at most
-four, with 1,048,576 pixels and 20 MiB packed bytes in aggregate. Every raw
+four, with each dimension at most 4,096. The finite source profile permits
+16,777,216 pixels and 80 MiB packed bytes in aggregate. The prerequisite source's
+single-clean-4K native result does not qualify new candidate packages or broader
+4K delivery. Projects above the legacy 1,048,576-pixel budget require fresh
+8 GiB available-memory and 2 GiB free-disk observations before large allocations,
+reader launch and fresh-process open/decode/capture. Unknown or insufficient
+resources refuse. These observations are admission checks, not reservations or
+hard memory limits. Every raw
 Float32 pixel digest, packed original-byte digest, size, color/alpha role and
 binding is compared. No source packing, generated/dirty image conversion, reload
 or equivalent current-edited-pixel backup is inferred. Saved files are capped
 at 256 MiB for hashing/reopen; exceeding a cap after native saving reports its
 retained effects.
+
+A null `Scene.sequence_editor` retains the exact prior projection bytes. An
+existing native `SequenceEditor` is admitted only after its declared, non-runtime
+field metadata qualifies. Before any editor or channel instance getter, a finite
+class-origin guard uses raw built-in type/module descriptors and the already-loaded
+`bpy.types` module's bound native C resolver to establish canonical class identity
+and native getter/constructor origins. It imports no `bpy`, does not trust a class
+name or mutable registry alias alone, and retains the legacy refusal for an opaque
+foreign editor. Synthetic metadata tests explicitly model this origin boundary;
+the official native class shapes were exercised by the prerequisite source run,
+while new package identities still require qualification. This is a stock native
+registry assumption, not a hostile-Python or C-extension security boundary.
+A bounded one-sentinel check proves the direct
+top-level `strips` collection empty before reading `strips_all`, whose native
+getter allocates a temporary recursive vector. The recursive collection,
+`meta_stack` and any 4.5 `sequences`/`sequences_all` aliases must also be empty,
+and `active_strip` must be null. Unknown editor collections, channel schemas,
+nonempty data or more than 129 channels refuse. Rigid-body worlds still refuse.
+
+The comparison includes every ordered `SequenceTimelineChannel` row, including
+channel zero: arbitrary UTF-8 names, lock and mute flags, and the public read-only
+`number` on 5.2. All channel metadata qualifies before any channel values are
+read. On 4.5 the public number and underlying stored index are explicitly
+`UNOBSERVED`; no hidden-index equality is claimed. Names, flags and ordering are
+preserved without default-name checks, normalization or renaming. Inspection
+never calls editor creation/ensure, prefetch or cache getters, reads C property
+defaults/ranges, or clears strips, channels or editor panels. This finite
+projection does not cover other editor settings or cache storage.
+
+Getter provenance is pinned to official Blender source at
+[`62c1db4208e862312bc36db5bc15d4a6dbcfa3e3`](https://github.com/blender/blender/tree/62c1db4208e862312bc36db5bc15d4a6dbcfa3e3)
+and [`d13f752e3b9c4f8c261cda552b1021f8bcc0382c`](https://github.com/blender/blender/tree/d13f752e3b9c4f8c261cda552b1021f8bcc0382c).
+`rna_scene.cc` binds `sequence_editor` directly to `Scene.ed`;
+`seq::editing_get` reads that pointer while `editing_ensure` creates it.
+`rna_sequencer.cc` binds top-level strips and channel names/flags to native SDNA;
+its 5.2 channel-number getter reads the stored index. These source bindings
+support the bounded inspection design; exact-source native save/reopen and
+installed-reader runs remain required to establish preservation in practice.
 
 Reviewed animation-driven raw channels are explicit comparison exclusions while
 their authoritative Action data remains included. Native synchronization there
@@ -190,6 +234,59 @@ that conservative limit is not yet implemented.
 Folder/private environment/hash checks detect bounded races; they are not a
 host filesystem/network sandbox or crash/power-loss proof. No universal blocking
 time or process-memory cap is promised. Fresh reopen of this profile does not
-certify appearance, current edited-pixel packing, 4K, broader assets/dependencies,
+certify appearance, current edited-pixel packing, general 4K workflows, broader assets/dependencies,
 Windows, full portable production delivery or 1.0. Those requirements remain
 mandatory in the [readiness ledger](release-1.0-readiness.md).
+
+
+## Single clean packed 4K source evidence and candidate gates
+
+The explicit `native_project_saving_large` isolated-runner case exercises one
+4096 × 4096 RGBA8, sRGB/STRAIGHT clean FILE image. Its original level-zero PNG
+exceeds the old packed-byte cap and includes transparent, partial and opaque
+alpha. The fixture packs and loads it, removes access to its external source
+folder before creating save intents, and uses a socket worker connected to
+`127.0.0.1` through the actual Runtime queue, response delivery and main-thread
+timers. The legacy small fixture retains its separate direct-dispatch scope.
+
+The prerequisite source passed COPY_NEW, Save As, current-file save and explicit
+replacement, with a distinct fixed standalone Blender reader for every success.
+Each reader compares the complete declared projection, original packed bytes and
+all 67,108,864 Float32 components, including alpha, image roles and bindings.
+Parent identity and declared authored state must also remain unchanged. Ordinary
+Scene/SYSTEM data is retained; unprojected native storage remains outside the
+comparison and is not claimed equal. Retained pixel buffers are not backups.
+
+The same source run passed actual queued denial, cancellation, local grant revocation,
+owner disconnect, stale intent after an owned manual edit and an injected reader
+input failure. It retains source/program/binary identities, full reader receipts,
+resource samples, source/reader peak memory, blocking intervals and bounded
+phase/deadline facts. Native writes remain non-preemptible; interruption must
+report effects already incurred and prevent subsequent unauthorized writes.
+Read-only inspection/history replay must not enter another save.
+
+Constrained-memory native qualification is **false on both builds**. The source
+run allocated zero pressure bytes and reported
+`SAFE_OWNED_PRESSURE_CAP_OR_HEADROOM`; ordinary resource samples and portable
+denial models do not count as pressure acceptance. A bounded pressure
+exercise may run only when it can retain at least 6 GiB available memory with
+at most 2 GiB of disposable pressure buffers. If that cannot be demonstrated,
+the report marks native low-resource qualification false; portable denial models
+and ordinary resource samples do not count as that scenario. The runner retains
+the unchanged 300-second process/phase bound.
+
+The source result belongs to commit `6112fdf54e6464bf15ef9473ed9a57eef4650e69`,
+not to the new 0.9.0 metadata. The two source runs passed in about 226.24 seconds
+combined on official Linux 4.5.14 (`62c1db4208e8`) and 5.2.2 (`d13f752e3b9c`).
+The runner report retains `release_readiness: NOT_ASSESSED`; exact candidate
+native replays, reviewed retained evidence and installed-package qualification
+remain required. Dirty or
+generated images, identity-preserving current-pixel backup, broader artist
+projects, Windows and full H01/1.0 acceptance remain open. Users should not
+downsize artwork to bypass a refusal.
+
+This candidate retains the 256 MiB file ceiling. A separate original/snapshot
+raw-EXR pair can exceed the 16,777,216-pixel and 80 MiB packed limits. Work on
+33,554,432-pixel/640 MiB packed/1 GiB saved-file sizing and source recovery is
+in progress and excluded from 0.9.0. No current-pixel lifecycle, dirty/generated
+conversion or durable backup qualification follows from the clean PNG result.

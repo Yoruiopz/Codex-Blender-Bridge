@@ -3,6 +3,12 @@
 This optional plugin packages MCP launch configuration and a verification-first Blender
 workflow skill for Codex. Install the standalone MCP server separately.
 
+This checkout carries **0.9.0 alpha candidate** metadata. Its exact-commit CI,
+package integrity, installed/native and regression gates remain pending; no
+0.9.0 installer or publication is claimed here. The instructions below retain
+the separate published 0.8.0 installation route. Do not mix candidate plugin
+metadata with accepted 0.8.0 components.
+
 Use matching accepted **0.8.0 alpha** add-on, MCP server and plugin artifacts from
 one release. The [release evidence](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.8.0)
 identifies accepted bytes and measured limits; matching source version strings or

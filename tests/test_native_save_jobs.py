@@ -41,7 +41,7 @@ def save_env(addon_package, monkeypatch, tmp_path):
     runtime.registry, runtime.state, runtime._registered = registry, state, True
     monkeypatch.setattr(runtime_module, "_RUNTIME", runtime)
     monkeypatch.setattr(source, "qualify_provider", lambda _context: None)  # Pure model; separate canonical-runtime poison tests exist.
-    monkeypatch.setattr(source, "snapshot", lambda: projection(native.raw, native.identities, native.driven_raw))
+    monkeypatch.setattr(source, "snapshot", lambda _resource_directory=None: projection(native.raw, native.identities, native.driven_raw))
     monkeypatch.setattr(source, "options", lambda: (str(tmp_path), 0, "NONE", False))
 
     class Data:
@@ -177,6 +177,33 @@ def queued_start(case, value, *, acknowledge=True, request_timeout=30., job_limi
     return queued, execute_queued(case, queued, acknowledge=acknowledge)
 
 
+def test_native_save_start_reuses_preview_resource_ancestry_without_rebinding(queued_save):
+    case, env = queued_save, queued_save.env
+    _preview_request, value = queued_preview(case)
+    previous = env.manager.native_save_previews[value["preview_id"]].origin
+    expected = previous.resource_directory
+    _request, response = queued_start(case, value)
+    assert response.ok, response.error
+    job = env.manager.active
+    assert job.origin.resource_directory is expected
+    assert job.origin.resource_directory.ancestry == previous.resource_directory.ancestry
+    assert finish(env)["state"] == "SUCCEEDED"
+
+
+def test_resource_directory_refusal_is_structured_before_snapshot_or_native_calls(save_env, monkeypatch):
+    env = save_env
+
+    def refuse(_path):
+        raise env.source.ProfileRefused("RESOURCE_DIRECTORY_UNAVAILABLE")
+    monkeypatch.setattr(env.source, "bind_resource_directory", refuse)
+    monkeypatch.setattr(env.source, "snapshot", lambda *_a: pytest.fail("Snapshot after directory refusal"))
+    with pytest.raises(env.source.BridgeError) as failure:
+        preview(env)
+    assert failure.value.code == "NOT_IMPLEMENTED"
+    assert failure.value.context["reason"] == "RESOURCE_DIRECTORY_UNAVAILABLE"
+    assert not env.native.calls and not list(env.folder.iterdir())
+
+
 def captured_queued_hooks(case):
     contexts = []
     case.env.registry.register("fixture.capture_queue_hooks",
@@ -240,7 +267,7 @@ def test_current_queued_request_cancellation_or_expiry_refuses_before_source_or_
     queued = queued_request(case, "project.native_save_preview", {"mode": "COPY_NEW",
         "filepath": str(env.folder / "denied.blend"), "overwrite_policy": "NO_CLOBBER"})
     reads = []
-    monkeypatch.setattr(env.source, "snapshot", lambda: reads.append("source"))
+    monkeypatch.setattr(env.source, "snapshot", lambda _resource_directory=None: reads.append("source"))
     monkeypatch.setattr(env.source, "options", lambda: reads.append("options"))
     if control == "cancelled":
         assert queued.cancel_pending(env.source.BridgeError("TIMEOUT", "Owner cancelled")) is False
@@ -285,7 +312,7 @@ def test_queued_native_save_reaches_unsupported_context_without_touching_source(
     case, env = queued_save, queued_save.env
     reads = []
 
-    def unsupported():
+    def unsupported(_resource_directory=None):
         reads.append("declared context profile")
         raise env.source.BridgeError("NOT_IMPLEMENTED", "Modeled unsupported Edit Mode")
 
@@ -408,7 +435,7 @@ def test_queue_hook_owner_must_match_the_actual_executed_request_intent(queued_s
     queued.request = replace(executed, **({"method": "different.request"} if changed == "method"
                                          else {"params": dict(executed.params)}))
     reads = []
-    monkeypatch.setattr(env.source, "snapshot", lambda: reads.append("source"))
+    monkeypatch.setattr(env.source, "snapshot", lambda _resource_directory=None: reads.append("source"))
     monkeypatch.setattr(env.source, "options", lambda: reads.append("options"))
     response = case.executor.execute_request(executed, check_cancelled=queued.check_active)
     assert not response.ok and response.error["context"]["reason"] == "QUEUED_REQUEST_INTENT_CHANGED"

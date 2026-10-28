@@ -14,8 +14,9 @@ from pathlib import Path
 
 MAX_FILE = 256 * 1024 * 1024
 MAX_EXPECTED = 8 * 1024 * 1024
-MAX_IMAGE_PIXELS = 1048576
-MAX_PACKED_BYTES = 20 * 1024 * 1024
+LEGACY_IMAGE_PIXELS = 1_048_576
+MAX_IMAGE_PIXELS = 16_777_216
+MAX_PACKED_BYTES = 80 * 1024 * 1024
 MAX_SCHEMA_DIAGNOSTIC = 256 * 1024
 FAILURE_STAGES = frozenset({"build_validation", "program_validation", "input_validation", "runtime_validation",
                             "expected_projection", "reader_preferences", "native_open", "image_preload",
@@ -93,7 +94,7 @@ def file_hash(path, maximum):
     return result.hexdigest()
 
 
-def _prime_verified_packed_images(data, expected):
+def _prime_verified_packed_images(data, expected, *, resource_check=None):
     """Decode only verified packed inputs in this fresh reader's owned Main.
 
     Expected dimensions bound the declared input before any decode-triggering
@@ -128,6 +129,9 @@ def _prime_verified_packed_images(data, expected):
         require(all(type(row[key]) is str and re.fullmatch(r"[0-9a-f]{64}", row[key]) is not None
                     for key in ("packed_sha256", "pixels_sha256")), "Reader image digest schema")
 
+    if pixels > LEGACY_IMAGE_PIXELS:
+        require(callable(resource_check), "Reader large-image resource check required")
+        resource_check(pixels)
     require(len(data.images) == len(rows), "Reader image inventory changed")
     images = list(data.images)
     require(len(images) == len(rows), "Reader image inventory changed")
@@ -147,6 +151,8 @@ def _prime_verified_packed_images(data, expected):
 
     # No decode-triggering getter runs until *all* declared inputs pass above.
     for image in images:
+        if pixels > LEGACY_IMAGE_PIXELS:
+            resource_check(pixels)
         image.pixels[0]
         require(image.has_data, "Reader packed image decode failed")
 
@@ -202,7 +208,16 @@ def run(bundle, token):
                 binary_hash.update(block)
         require(binary_hash.hexdigest() == request["binary_sha256"], "Reader binary hash mismatch")
         sys.path.insert(0, str(parent))
-        from native_save_profile import SCHEMA, ProfileRefused, canonical, capture, schema_census
+        from native_save_profile import (
+            SCHEMA,
+            ProfileRefused,
+            bind_resource_directory,
+            canonical,
+            capture,
+            check_large_resources,
+            projection_image_pixels,
+            schema_census,
+        )
 
         profile_refused = ProfileRefused
         stage = "expected_projection"
@@ -214,6 +229,13 @@ def run(bundle, token):
         expected = json.loads(expected_raw)
         require(type(expected) is dict and expected.get("schema") == SCHEMA and canonical(expected) == expected_raw,
                 "Expected projection framing")
+        pixels = projection_image_pixels(expected)
+        resource_directory = None
+        if pixels > LEGACY_IMAGE_PIXELS:
+            row["resource_checks"] = []
+            resource_directory = bind_resource_directory(str(bundle))
+            row["resource_checks"].append({"phase": "before_open",
+                "facts": check_large_resources(pixels, resource_directory)})
         stage = "reader_preferences"
         bpy.context.preferences.use_preferences_save = False
         bpy.context.preferences.filepaths.use_auto_save_temporary_files = False
@@ -228,10 +250,18 @@ def run(bundle, token):
         row["native_open_completed"] = True
         projection_started = time.monotonic()
         try:
+            def resources_before_decode(count):
+                facts = check_large_resources(count, resource_directory)
+                row["resource_checks"].append({"phase": "before_packed_decode", "facts": facts})
+
             stage = "image_preload"
-            _prime_verified_packed_images(bpy.data, expected)
+            _prime_verified_packed_images(bpy.data, expected, resource_check=resources_before_decode)
             stage = "projection_capture"
-            actual = capture(bpy.data)
+            if pixels > LEGACY_IMAGE_PIXELS:
+                row["resource_checks"].append({"phase": "before_capture",
+                    "facts": check_large_resources(pixels, resource_directory)})
+            actual = (capture(bpy.data, resource_directory=resource_directory)
+                      if resource_directory is not None else capture(bpy.data))
         finally:
             row["timings"]["projection_seconds"] = time.monotonic() - projection_started
         stage = "projection_compare"

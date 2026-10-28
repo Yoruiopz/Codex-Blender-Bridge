@@ -737,6 +737,232 @@ def packed_reader_image(name, events):
     return row, image
 
 
+def _large_resource_facts(module):
+    return {"scope": "LINUX_HOST_AND_VISIBLE_CGROUP_V2", "available_memory_bytes": module.LARGE_MEMORY_BYTES,
+            "host_available_memory_bytes": module.LARGE_MEMORY_BYTES, "visible_cgroup_headroom_bytes": None,
+            "visible_cgroup_levels": 1, "disk_free_bytes": module.LARGE_DISK_BYTES,
+            "aggregate_image_pixels": module.MAX_IMAGE_PIXELS, "required_memory_bytes": module.LARGE_MEMORY_BYTES,
+            "required_disk_bytes": module.LARGE_DISK_BYTES, "measurement_is_reservation": False}
+
+
+@pytest.mark.parametrize("low", ["memory", "disk"])
+def test_large_reader_resource_denial_precedes_process_launch(process_module, addon_package, tmp_path, monkeypatch, low):
+    profile = importlib.import_module(f"{addon_package}.native_save_profile")
+    resource = make_process(process_module, tmp_path, images=[{"size": [4096, 4096]}])
+    list(resource.fingerprint_steps(lambda: None))
+    facts = _large_resource_facts(profile)
+    memory = {key: facts[key] for key in ("available_memory_bytes", "host_available_memory_bytes",
+        "visible_cgroup_headroom_bytes", "visible_cgroup_levels")}
+    if low == "memory":
+        memory["available_memory_bytes"] = memory["host_available_memory_bytes"] = profile.LARGE_MEMORY_BYTES - 1
+    monkeypatch.setattr(profile, "available_memory_facts", lambda: memory)
+    monkeypatch.setattr(profile.os, "fstatvfs", lambda _fd: NS(
+        f_bavail=profile.LARGE_DISK_BYTES - 1 if low == "disk" else profile.LARGE_DISK_BYTES, f_frsize=1))
+    monkeypatch.setattr(process_module.subprocess, "Popen", lambda *_a, **_k: pytest.fail("Launch before resource floor"))
+    with pytest.raises(process_module.BridgeError, match="Native project"):
+        resource.launch(lambda: None)
+    assert resource.process is None and "launch_resource_check" not in resource.evidence()
+    resource.close()
+
+
+def test_large_reader_resources_recheck_final_grants_before_launch(process_module, addon_package, tmp_path, monkeypatch):
+    profile = importlib.import_module(f"{addon_package}.native_save_profile")
+    resource = make_process(process_module, tmp_path, images=[{"size": [4096, 4096]}])
+    list(resource.fingerprint_steps(lambda: None))
+    events = []
+
+    def measure(pixels, directory):
+        assert pixels == profile.MAX_IMAGE_PIXELS
+        assert directory.ancestry[-1][1:] == resource.folder_id
+        events.append("resources")
+        return _large_resource_facts(profile)
+
+    def gate():
+        events.append("grant")
+        if "resources" in events:
+            raise process_module.BridgeError("PERMISSION_DENIED", "revoked after resource sample")
+    monkeypatch.setattr(process_module, "check_large_resources", measure)
+    monkeypatch.setattr(process_module.subprocess, "Popen", lambda *_a, **_k: pytest.fail("Launch after revoked grant"))
+    with pytest.raises(process_module.BridgeError) as failure:
+        resource.launch(gate)
+    assert failure.value.code == "PERMISSION_DENIED" and events[-2:] == ["resources", "grant"]
+    assert resource.process is None
+    assert resource.evidence()["launch_resource_check"]["measurement_is_reservation"] is False
+    resource.close()
+
+
+@pytest.mark.parametrize("fault", [None, "missing", "unknown_fact", "low_memory", "count", "order", "missing_decode", "unknown_top"])
+def test_large_reader_optional_resource_receipts_are_complete_and_exact(process_module, addon_package, tmp_path, fault):
+    profile = importlib.import_module(f"{addon_package}.native_save_profile")
+    resource = ready(make_process(process_module, tmp_path, images=[{"size": [4096, 4096]}]))
+    row = receipt(resource)
+    row["resource_checks"] = [{"phase": phase, "facts": _large_resource_facts(profile)} for phase in (
+        "before_open", "before_packed_decode", "before_packed_decode", "before_capture")]
+    if fault == "missing":
+        del row["resource_checks"]
+    elif fault == "unknown_fact":
+        row["resource_checks"][0]["facts"]["trust_me"] = True
+    elif fault == "low_memory":
+        facts = row["resource_checks"][0]["facts"]
+        facts["available_memory_bytes"] = facts["host_available_memory_bytes"] = profile.LARGE_MEMORY_BYTES - 1
+    elif fault == "count":
+        row["resource_checks"][0]["facts"]["aggregate_image_pixels"] -= 1
+    elif fault == "order":
+        row["resource_checks"].reverse()
+    elif fault == "missing_decode":
+        row["resource_checks"].pop(1)
+    elif fault == "unknown_top":
+        row["resource_authority"] = True
+    try:
+        if fault is None:
+            assert resource._receipt(row)["resource_checks"] == row["resource_checks"]
+        else:
+            with pytest.raises(process_module.BridgeError):
+                resource._receipt(row)
+    finally:
+        resource.close()
+
+
+def test_small_reader_receipt_shape_cannot_gain_unrecognized_resource_fields(process_module, tmp_path):
+    resource = ready(make_process(process_module, tmp_path))
+    try:
+        assert set(resource._receipt(receipt(resource))) == process_module.RECEIPT_KEYS
+        with pytest.raises(process_module.BridgeError):
+            resource._receipt(dict(receipt(resource), resource_checks=[]))
+    finally:
+        resource.close()
+
+
+@pytest.mark.parametrize("stage,phases", [
+    ("projection_capture", None), ("projection_capture", []), ("projection_capture", ["before_open"]),
+    ("native_open", None), ("native_open", ["before_open", "before_packed_decode"]),
+    ("projection_compare", ["before_open", "before_packed_decode", "before_packed_decode"]),
+    ("program_validation", ["before_open"]), ([], None),
+])
+def test_failed_large_reader_cannot_omit_or_invent_completed_resource_gates(
+    process_module, addon_package, tmp_path, stage, phases
+):
+    profile = importlib.import_module(f"{addon_package}.native_save_profile")
+    resource = ready(make_process(process_module, tmp_path, images=[{"size": [4096, 4096]}]))
+    row = receipt(resource)
+    row.update(status="failed", actual_projection_sha256=None, declared_projection_reopened=False,
+        error={"code": "NATIVE_SAVE_READER_FAILED", "type": "ValueError", "failure_stage": stage})
+    if stage == "program_validation":
+        row.update(native_open_invoked=False, native_open_completed=False)
+        row["timings"].update(native_open_seconds=None, projection_seconds=None)
+    elif stage == "native_open":
+        row["native_open_completed"] = False
+        row["timings"]["projection_seconds"] = None
+    if stage == "projection_compare":
+        row["actual_projection_sha256"] = "a" * 64
+    if phases is not None:
+        row["resource_checks"] = [{"phase": phase, "facts": _large_resource_facts(profile)} for phase in phases]
+    try:
+        with pytest.raises(process_module.BridgeError, match="Native project"):
+            resource._receipt(row)
+    finally:
+        resource.close()
+
+
+def test_large_preloader_resource_gate_precedes_loaded_image_lookup(addon_package):
+    reader = importlib.import_module(f"{addon_package}.native_save_reader")
+    row, _ = packed_reader_image("4K", [])
+    row["size"] = [4096, 4096]
+
+    class NoLoadedImages:
+        @property
+        def images(self):
+            pytest.fail("Image lookup before resource approval")
+
+    def refuse(pixels):
+        assert pixels == reader.MAX_IMAGE_PIXELS
+        raise ValueError("modeled resource denial")
+    with pytest.raises(ValueError, match="resource denial"):
+        reader._prime_verified_packed_images(NoLoadedImages(), {"images": [row]}, resource_check=refuse)
+
+
+def test_large_preloader_samples_again_immediately_before_explicit_decode(addon_package):
+    reader = importlib.import_module(f"{addon_package}.native_save_reader")
+    events = []
+    row, image = packed_reader_image("4K", events)
+    row["size"] = [4096, 4096]
+
+    def resources(pixels):
+        assert pixels == reader.MAX_IMAGE_PIXELS
+        events.append(("resources", "4K"))
+    reader._prime_verified_packed_images(NS(images=[image]), {"images": [row]}, resource_check=resources)
+    assert events[0] == ("resources", "4K")
+    assert events.index(("packed_bytes", "4K")) > 0
+    assert events[-3:] == [("resources", "4K"), ("pixels_getter", "4K"), ("prime", "4K")]
+
+
+@pytest.mark.parametrize("deny_measurement", [None, 1, 2, 4])
+def test_standalone_large_reader_resource_phases_stop_before_the_next_native_action(
+    process_module, addon_package, tmp_path, monkeypatch, deny_measurement
+):
+    # This executes the installed reader control flow with modeled bpy, not a
+    # 4K decode or native acceptance. The actual retained source must replay it.
+    actual_profile = importlib.import_module(f"{addon_package}.native_save_profile")
+    reader = importlib.import_module(f"{addon_package}.native_save_reader")
+    image_events = []
+    expected_image, image = packed_reader_image("4K", image_events)
+    expected_image["size"] = [4096, 4096]
+    resource = ready(make_process(process_module, tmp_path, images=[expected_image]))
+    object.__setattr__(resource, "_process", fake_process(pid=os.getpid()))
+    events, measurements = [], []
+    fake_bpy = ModuleType("bpy")
+    fake_bpy.app = NS(background=True, version_string=resource.version,
+        build_hash=resource.build_hash.encode(), binary_path=str(resource.binary))
+    fake_bpy.context = NS(preferences=NS(use_preferences_save=True,
+        filepaths=NS(use_auto_save_temporary_files=True)))
+    fake_bpy.types, fake_bpy.data = object(), NS(images=[image])
+
+    def opened(**_params):
+        events.append("open")
+        return {"FINISHED"}
+    fake_bpy.ops = NS(wm=NS(open_mainfile=opened))
+    profile = ModuleType("native_save_profile")
+    profile.SCHEMA, profile.ProfileRefused = actual_profile.SCHEMA, actual_profile.ProfileRefused
+    profile.bind_resource_directory = actual_profile.bind_resource_directory
+    profile.projection_image_pixels = actual_profile.projection_image_pixels
+    profile.canonical = actual_profile.canonical
+    profile.schema_census = lambda _types: census_model(process_module)
+
+    def measure(pixels, directory):
+        assert pixels == actual_profile.MAX_IMAGE_PIXELS and directory.path == str(resource.folder)
+        measurements.append(len(measurements) + 1)
+        if len(measurements) == deny_measurement:
+            raise actual_profile.ProfileRefused("LARGE_IMAGE_MEMORY_BUDGET")
+        return _large_resource_facts(actual_profile)
+
+    def captured(data, *, resource_directory):
+        assert data is fake_bpy.data and resource_directory.path == str(resource.folder)
+        events.append("capture")
+        assert image.has_data
+        return NS(raw=resource.expected_raw)
+    profile.check_large_resources, profile.capture = measure, captured
+    monkeypatch.setitem(sys.modules, "bpy", fake_bpy)
+    monkeypatch.setitem(sys.modules, "native_save_profile", profile)
+    monkeypatch.setattr(reader.sys, "argv", ["blender", "--factory-startup", "--disable-autoexec"])
+    monkeypatch.setattr(reader.sys, "path", list(reader.sys.path))
+    try:
+        result = reader.run(resource.folder, resource.token)
+        row = json.loads((resource.folder / "reader.json").read_text())
+        resource._receipt(row)  # Apply the independent parent's strict validator.
+        assert row["source_restore_writes"] == 0 and not row["source_process_contacted"]
+        if deny_measurement is None:
+            assert result == 0 and events == ["open", "capture"] and measurements == [1, 2, 3, 4]
+            assert [check["phase"] for check in row["resource_checks"]] == [
+                "before_open", "before_packed_decode", "before_packed_decode", "before_capture"]
+        else:
+            assert result == 1 and len(measurements) == deny_measurement and "capture" not in events
+            assert row["native_open_invoked"] is (deny_measurement != 1)
+            if deny_measurement in {1, 2}:
+                assert not image.has_data and not image_events
+    finally:
+        resource.close()
+
+
 @pytest.mark.parametrize("fault", ["source", "filepath", "colorspace", "alpha", "fake_user", "missing_packed",
                                  "packed_size", "packed_length", "packed_hash", "missing_image", "extra_image", "duplicate_name"])
 def test_reader_rejects_all_packed_input_mismatches_before_any_pixel_getter(addon_package, fault):
@@ -798,9 +1024,9 @@ def test_reader_bounds_immutable_expected_images_before_reading_loaded_images(ad
         expected["images"].append(second)
         for item in expected["images"]:
             if fault == "aggregate_pixels":
-                item["size"] = [1024, 513]
+                item["size"] = [4096, 2049]
             else:
-                item["packed_bytes"] = 11 * 1024 * 1024
+                item["packed_bytes"] = reader.MAX_PACKED_BYTES // 2 + 1
     else:
         key, value = {
             "source": ("source", "GENERATED"), "name": ("name", ""), "fake_user": ("fake_user", 0),
@@ -863,6 +1089,9 @@ def test_installed_reader_model_opens_only_owned_copy_and_never_saves_source(
     profile = ModuleType("native_save_profile")
     profile.SCHEMA = "stock_native_project_v1"
     profile.ProfileRefused = importlib.import_module(f"{addon_package}.native_save_profile").ProfileRefused
+    actual_profile = importlib.import_module(f"{addon_package}.native_save_profile")
+    for name in ("bind_resource_directory", "check_large_resources", "projection_image_pixels"):
+        setattr(profile, name, getattr(actual_profile, name))
     profile.canonical = lambda value: json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
 
     def schema_census(types):

@@ -5,20 +5,54 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import platform
+import stat
 import subprocess
 import sys
 import time
 import uuid
+from contextlib import suppress
 from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+CURRENT_PIXELS_CENSUS_CLASSES = frozenset({
+    "ID", "BlendData", "Scene", "Collection", "Object", "MaterialSlot", "Mesh", "MeshVertex", "MeshEdge",
+    "MeshPolygon", "MeshLoop", "UVLoopLayers", "MeshUVLoopLayer", "MeshUVLoop", "Attribute", "FloatVectorAttribute",
+    "FloatVectorAttributeValue", "Int2Attribute", "Int2AttributeValue", "IntAttribute", "IntAttributeValue",
+    "Float2Attribute", "Float2AttributeValue", "BoolAttribute", "BoolAttributeValue", "Material", "ShaderNodeTree",
+    "Node", "NodeTree", "NodeSocket", "NodeLink", "ShaderNodeTexImage", "ShaderNodeBsdfPrincipled",
+    "ShaderNodeOutputMaterial", "ImageUser", "Image", "PackedFile", "ColorManagedInputColorspaceSettings",
+    "PropertyGroup", "CyclesMeshSettings", "CyclesObjectSettings", "CyclesMaterialSettings", "NodeSocketFloat",
+    "NodeSocketFloatFactor", "NodeSocketFloatUnsigned", "NodeSocketFloatDistance", "NodeSocketFloatAngle",
+    "NodeSocketColor", "NodeSocketVector", "NodeSocketShader", "NodeSocketInt", "NodeSocketBool",
+    "TexMapping", "ColorMapping", "ColorRamp", "ColorRampElement", "ColorRampElements",
+})
+CURRENT_PIXELS_GRAPH_ASSERTIONS = frozenset({"positive_complete_graph", "repeat_complete_graph", "four_grant_denials",
+    "native_owner_refusal", "unloaded_helper_refusal", "unlisted_consumer_refusal", "instancer_refusal",
+    "manual_geometry_detected", "manual_uv_detected", "manual_mapping_detected", "manual_socket_detected",
+    "manual_pixel_detected", "cancel_safe_point", "source_binding_refusal", "provider_binding_refusal",
+    "invalid_context_refusal", "no_observation_writes", "source_unchanged"})
+CURRENT_PIXELS_READ_CASES = frozenset({"current_pixels_lifecycle_census", "current_pixels_source_graph"})
+NATIVE_SAVE_LARGE_SOURCES = (
+    "scripts/blender_native_save_smoke.py", "scripts/run_blender_checks.py", "scripts/blender_artist_sidebar_smoke.py",
+    *(f"addon/blender_codex_bridge/{name}.py" for name in (
+        "native_save_profile", "native_save_source", "native_save_process", "native_save_reader", "native_save_jobs",
+        "native_save_files", "native_save_policy", "runtime", "executor", "command_queue", "protocol", "request_lifecycle",
+        "permissions", "server", "transport", "tool_registry", "job_controller")),
+    "addon/blender_codex_bridge/tools/native_save.py",
+)
+NATIVE_SAVE_LARGE_CASES = frozenset({"success_copy", "save_as", "save_current", "replace", "permission_denial",
+    "cancel", "revoke", "disconnect", "manual_drift", "reader_failure"})
 CASES = {
+    "current_pixels_lifecycle_census": ("blender_current_pixels_lifecycle_smoke.py", "BLENDER_CURRENT_PIXELS_LIFECYCLE_CENSUS_OK "),
+    "current_pixels_source_graph": ("blender_current_pixels_lifecycle_smoke.py", "BLENDER_CURRENT_PIXELS_SOURCE_GRAPH_OK "),
     "native_project_saving": ("blender_native_save_smoke.py", "BLENDER_NATIVE_PROJECT_SAVING_OK "),
+    "native_project_saving_large": ("blender_native_save_smoke.py", "BLENDER_NATIVE_PROJECT_SAVING_LARGE_OK "),
     "geometry_preview": ("blender_geometry_preview_smoke.py", "BLENDER_GEOMETRY_PREVIEW_OK "),
     "geometry_preview_populated_protection": ("blender_geometry_preview_smoke.py", "BLENDER_GEOMETRY_PREVIEW_OK "),
     "weight_edit_guard": ("blender_weight_edit_guard_smoke.py", "BLENDER_WEIGHT_EDIT_GUARD_OK "),
@@ -188,6 +222,8 @@ PAIRED_RECOVERY_PROFILES = {
     "image_current_pixels_paired_recovery_large": "LARGE4K",
 }
 OPT_IN_CASES = set(PHASED_CASES)
+OPT_IN_CASES.add("current_pixels_lifecycle_census")
+OPT_IN_CASES.add("current_pixels_source_graph")
 OPT_IN_CASES.add("surface_projection_probe")
 OPT_IN_CASES.add("simulation_cache_probe")
 OPT_IN_CASES.add("action_lifecycle_probe")
@@ -241,6 +277,8 @@ OPT_IN_CASES.add("render_checkpoint_probe")
 INTERACTIVE_CASES = {"undo_lifecycle", "mesh_edit_recovery", "mesh_repair", "uv_authoring", "prop_workflow", "uv_analysis", "mesh_analysis", "image_assets", "shader_groups", "undo_capacity", "shader_settings", "image_revisions", "field_scanner", "texture_paint"}
 INTERACTIVE_CASES.add("native_project_saving")
 OPT_IN_CASES.add("native_project_saving")
+INTERACTIVE_CASES.add("native_project_saving_large")
+OPT_IN_CASES.add("native_project_saving_large")
 
 
 INTERACTIVE_CASES.add("geometry_preview")
@@ -308,6 +346,450 @@ def success_payload(output: str, marker: str) -> dict | None:
     return None
 
 
+def _native_save_file(path: Path, maximum: int, *, capture: bool = False) -> tuple[str, bytes | None]:
+    """Bound and pin an ordinary evidence/source file without following a link."""
+    def identity(value):
+        return value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns
+
+    before = path.lstat()
+    if not stat.S_ISREG(before.st_mode) or not 0 < before.st_size <= maximum:
+        raise ValueError("Native save evidence file shape or budget")
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+    checksum, blocks, count = hashlib.sha256(), [] if capture else None, 0
+    try:
+        if identity(os.fstat(descriptor)) != identity(before):
+            raise ValueError("Native save evidence changed before read")
+        while True:
+            block = os.read(descriptor, min(65536, maximum + 1 - count))
+            if not block:
+                break
+            count += len(block)
+            if count > maximum:
+                raise ValueError("Native save evidence file budget")
+            checksum.update(block)
+            if blocks is not None:
+                blocks.append(block)
+        if (count != before.st_size or identity(os.fstat(descriptor)) != identity(before)
+                or identity(path.lstat()) != identity(before)):
+            raise ValueError("Native save evidence changed during read")
+    finally:
+        os.close(descriptor)
+    return checksum.hexdigest(), b"".join(blocks) if blocks is not None else None
+
+
+def _native_save_json(data: bytes) -> dict:
+    def unique(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("Duplicate native save evidence key")
+            result[key] = value
+        return result
+
+    def nonfinite(_value):
+        raise ValueError("Nonfinite native save evidence")
+
+    def floating(value):
+        result = float(value)
+        if not math.isfinite(result):
+            raise ValueError("Nonfinite native save evidence")
+        return result
+
+    value = json.loads(data, object_pairs_hook=unique, parse_constant=nonfinite, parse_float=floating)
+    if type(value) is not dict:
+        raise ValueError("Native save evidence must be an object")
+    return value
+
+
+def _native_save_sources() -> dict[str, str]:
+    return {name: _native_save_file(ROOT / name, 2 * 1024 * 1024)[0] for name in NATIVE_SAVE_LARGE_SOURCES}
+
+
+def _native_save_resources(facts: dict, *, require_floor: bool = True) -> bool:
+    """Validate measured large-image facts without importing Blender or its add-on."""
+    keys = {"scope", "available_memory_bytes", "host_available_memory_bytes", "visible_cgroup_headroom_bytes",
+        "visible_cgroup_levels", "disk_free_bytes", "aggregate_image_pixels", "required_memory_bytes",
+        "required_disk_bytes", "measurement_is_reservation"}
+    if (type(facts) is not dict or set(facts) != keys or facts["scope"] != "LINUX_HOST_AND_VISIBLE_CGROUP_V2"
+            or facts["measurement_is_reservation"] is not False):
+        return False
+    for name in keys - {"scope", "measurement_is_reservation", "visible_cgroup_headroom_bytes"}:
+        if type(facts[name]) is not int or not 0 <= facts[name] <= 2**63 - 1:
+            return False
+    visible = facts["visible_cgroup_headroom_bytes"]
+    if visible is not None and (type(visible) is not int or not 0 <= visible <= 2**63 - 1):
+        return False
+    effective = facts["host_available_memory_bytes"]
+    if visible is not None:
+        effective = min(effective, visible)
+    return (facts["available_memory_bytes"] == effective and (not require_floor or effective >= 8 * 1024**3)
+        and facts["disk_free_bytes"] >= 2 * 1024**3 and 1 <= facts["visible_cgroup_levels"] <= 128
+        and facts["required_memory_bytes"] == 8 * 1024**3 and facts["required_disk_bytes"] == 2 * 1024**3
+        and facts["aggregate_image_pixels"] == 16_777_216)
+
+
+def _native_save_digest(value: object, length: int = 64) -> bool:
+    return type(value) is str and len(value) == length and all(char in "0123456789abcdef" for char in value)
+
+
+def _native_save_peak(memory: object) -> bool:
+    return (type(memory) is dict and set(memory) == {"available", "metric", "scope", "value", "unit", "platform"}
+        and memory == {"available": True, "metric": "ru_maxrss", "scope": "RUSAGE_SELF",
+                       "value": memory.get("value"), "unit": "KiB", "platform": "linux"}
+        and memory["available"] is True and type(memory["value"]) is int and 0 <= memory["value"] <= 2**53 - 1)
+
+
+def _native_save_reader_receipt(row: dict, full: dict, sources: dict, *, succeeded: bool) -> bool:
+    if type(row) is not dict:
+        return False
+    required = {"schema", "status", "token", "saved_sha256", "projection_sha256", "actual_projection_sha256",
+        "program", "process_id", "blender_version", "build_hash", "native_open_invoked", "native_open_completed",
+        "declared_projection_reopened", "source_process_contacted", "source_restore_writes", "reader_project_save_invoked",
+        "native_effect_inventory_complete", "timings", "peak_memory", "error"}
+    if set(row) != required and set(row) != required | {"resource_checks"}:
+        return False
+    fixed = {"schema": "native_save_reader_receipt_v1", "status": "succeeded" if succeeded else "failed",
+        "blender_version": full["blender_version"], "build_hash": full["source_build"],
+        "source_process_contacted": False, "source_restore_writes": 0, "reader_project_save_invoked": False,
+        "native_effect_inventory_complete": False}
+    if (any(type(row.get(key)) is not type(value) or row.get(key) != value for key, value in fixed.items())
+            or type(row.get("process_id")) is not int or row["process_id"] <= 0 or row["process_id"] == full["process_id"]
+            or not _native_save_digest(row.get("token"), 32)
+            or any(not _native_save_digest(row.get(key)) for key in ("saved_sha256", "projection_sha256"))
+            or row.get("program") != {name: sources["addon/blender_codex_bridge/" + name]
+                                      for name in ("native_save_reader.py", "native_save_profile.py")}):
+        return False
+    if any(type(row[name]) is not bool for name in ("native_open_invoked", "native_open_completed", "declared_projection_reopened")):
+        return False
+    timings = row["timings"]
+    if (type(timings) is not dict or set(timings) != {"worker_elapsed_seconds", "native_open_seconds", "projection_seconds"}
+            or any(value is not None and (type(value) not in {int, float} or not math.isfinite(value) or not 0 <= value <= 300)
+                   for value in timings.values()) or timings["worker_elapsed_seconds"] is None):
+        return False
+    if not _native_save_peak(row["peak_memory"]):
+        return False
+    if succeeded:
+        if (row.get("error") is not None or row.get("actual_projection_sha256") != row["projection_sha256"]
+                or any(row.get(key) is not True for key in
+                       ("native_open_invoked", "native_open_completed", "declared_projection_reopened"))):
+            return False
+        checks = row.get("resource_checks")
+        if (type(checks) is not list or len(checks) != 4
+                or [item.get("phase") if type(item) is dict else None for item in checks] !=
+                   ["before_open", "before_packed_decode", "before_packed_decode", "before_capture"]
+                or any(set(item) != {"phase", "facts"} or not _native_save_resources(item["facts"]) for item in checks)):
+            return False
+        if any(value is None for value in timings.values()):
+            return False
+    else:
+        error = row["error"]
+        if (type(error) is not dict or set(error) not in (
+                {"code", "type", "failure_stage"}, {"code", "type", "failure_stage", "profile_reason"})
+                or error.get("code") != "NATIVE_SAVE_READER_FAILED" or type(error.get("type")) is not str
+                or not 1 <= len(error["type"]) <= 64 or not error["type"].isascii() or not error["type"].isidentifier()
+                or row["declared_projection_reopened"] is not False):
+            return False
+        before_open = {"build_validation", "program_validation", "input_validation", "runtime_validation",
+                       "expected_projection", "reader_preferences"}
+        after_open = {"image_preload", "projection_capture", "projection_compare", "final_input_validation"}
+        stage = error["failure_stage"]
+        if (stage not in before_open | after_open | {"native_open"}
+                or (stage in before_open and row["native_open_invoked"])
+                or (stage == "native_open" and (not row["native_open_invoked"] or row["native_open_completed"]))
+                or (stage in after_open and not row["native_open_completed"])
+                or (row["native_open_completed"] and not row["native_open_invoked"])):
+            return False
+        if "profile_reason" in error and (
+            error["type"] != "ProfileRefused" or stage not in {"expected_projection", "projection_capture"}
+            or type(error["profile_reason"]) is not str or not 0 < len(error["profile_reason"]) <= 160
+        ):
+            return False
+        if not row["native_open_invoked"]:
+            if timings["native_open_seconds"] is not None or timings["projection_seconds"] is not None:
+                return False
+        elif timings["native_open_seconds"] is None:
+            return False
+        actual = row["actual_projection_sha256"]
+        if ((actual is not None and (not _native_save_digest(actual) or timings["projection_seconds"] is None))
+                or (not row["native_open_completed"] and (actual is not None or timings["projection_seconds"] is not None))
+                or (stage in {"image_preload", "projection_capture"} and actual is not None)
+                or (stage in {"projection_compare", "final_input_validation"} and actual is None)):
+            return False
+        observed_phases = []
+        if "resource_checks" in row:
+            checks = row["resource_checks"]
+            phases = ["before_open", "before_packed_decode", "before_packed_decode", "before_capture"]
+            if (type(checks) is not list or len(checks) > 4
+                    or any(type(item) is not dict or set(item) != {"phase", "facts"}
+                           or item["phase"] != phases[index] or not _native_save_resources(item["facts"])
+                           for index, item in enumerate(checks))):
+                return False
+            observed_phases = [item["phase"] for item in checks]
+        if stage in {"build_validation", "program_validation", "input_validation", "runtime_validation"}:
+            if "resource_checks" in row:
+                return False
+        elif stage == "expected_projection":
+            if observed_phases not in ([], ["before_open"]):
+                return False
+        else:
+            if not observed_phases or observed_phases[0] != "before_open":
+                return False
+            if stage in {"reader_preferences", "native_open"} and observed_phases != ["before_open"]:
+                return False
+            if stage == "image_preload" and "before_capture" in observed_phases:
+                return False
+            if stage in {"projection_capture", "projection_compare", "final_input_validation"}:
+                if observed_phases.count("before_packed_decode") != 2:
+                    return False
+                if stage != "projection_capture" and observed_phases[-1] != "before_capture":
+                    return False
+    return True
+
+
+def _native_save_large_receipt_matches(payload: dict | None, temporary: Path, process_instance: str,
+                                     sources: dict, binary: dict) -> bool:
+    """Require the owned large-mode report, real queued workflow and fresh readers."""
+    try:
+        fixed = {"schema": "native_save_large_fixture_v1", "profile": "NATIVE_SAVE_CLEAN_PACKED_4K_V1",
+            "completed": True, "process_instance": process_instance}
+        if type(payload) is not dict or any(type(payload.get(key)) is not type(value) or payload.get(key) != value
+                                            for key, value in fixed.items()):
+            return False
+        versions = {"62c1db4208e8": "4.5.14", "d13f752e3b9c": "5.2.2"}
+        version = versions[payload["source_build"]]
+        if (payload.get("blender_version") not in {version, version + " LTS"}
+                or type(payload.get("process_id")) is not int or payload["process_id"] <= 0 or payload.get("binary") != binary):
+            return False
+        report, binding = temporary / "native-save-large-evidence.json", payload["full_receipt"]
+        if (type(binding) is not dict or set(binding) != {"path", "bytes", "sha256"} or binding["path"] != str(report)
+                or type(binding["bytes"]) is not int or not 0 < binding["bytes"] <= 8 * 1024 * 1024):
+            return False
+        checksum, data = _native_save_file(report, 8 * 1024 * 1024, capture=True)
+        if len(data) != binding["bytes"] or checksum != binding["sha256"]:
+            return False
+        full = _native_save_json(data)
+        fields = (*fixed, "blender_version", "source_build", "process_id", "binary", "source_snapshot_sha256")
+        if any(type(full.get(key)) is not type(payload.get(key)) or full.get(key) != payload.get(key) for key in fields):
+            return False
+        canonical = json.dumps(sources, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode()
+        if (full.get("source_fingerprints") != sources or payload["source_snapshot_sha256"] != hashlib.sha256(canonical).hexdigest()
+                or _native_save_sources() != sources or _native_save_file(Path(binary["path"]), 1024**3)[0] != binary["sha256"]):
+            return False
+        flags = {"real_queued_loopback": True, "manual_ticks": False, "direct_dispatch": False,
+            "external_source_folder_unavailable": True, "parent_identity_preserved": True,
+            "declared_authored_projection_preserved": True, "full_4k_dirty_generated_qualified": False, "windows_qualified": False}
+        if any(type(full.get(key)) is not type(value) or full.get(key) != value for key, value in flags.items()):
+            return False
+        if (not _native_save_peak(full.get("source_peak_memory")) or type(full.get("phase_timeout_seconds")) is not int
+                or full["phase_timeout_seconds"] != 300 or type(full.get("phase_elapsed_seconds")) not in {int, float}
+                or not math.isfinite(full["phase_elapsed_seconds"]) or not 0 <= full["phase_elapsed_seconds"] <= 300):
+            return False
+        image = full["image"]
+        expected_image = {"width": 4096, "height": 4096, "channels": 4, "components": 67_108_864,
+                          "colorspace": "sRGB", "alpha_mode": "STRAIGHT"}
+        if (type(image) is not dict or any(type(image.get(key)) is not type(value) or image.get(key) != value
+                                         for key, value in expected_image.items())
+                or type(image.get("packed_bytes")) is not int or not 20 * 1024**2 < image["packed_bytes"] <= 80 * 1024**2
+                or any(not _native_save_digest(image.get(key)) for key in ("packed_sha256", "pixels_sha256_float32_le"))):
+            return False
+        assertions, rows = full["assertions"], full["rows"]
+        low_resource = full["low_resource_native_qualified"]
+        if type(low_resource) is not bool:
+            return False
+        cases = NATIVE_SAVE_LARGE_CASES | ({"low_resource"} if low_resource else set())
+        if (type(assertions) is not dict or set(assertions) != cases
+                or any(value is not True for value in assertions.values()) or type(rows) is not list
+                or len(rows) != len(cases) or any(type(row) is not dict for row in rows)
+                or {row.get("case") for row in rows} != cases):
+            return False
+        readers = []
+        for row in rows:
+            job = row["job"]
+            if type(job) is not dict:
+                return False
+            if row["case"] in {"permission_denial", "manual_drift", "low_resource"}:
+                code = {"permission_denial": "PERMISSION_DENIED", "manual_drift": "OPERATION_FAILED",
+                        "low_resource": "NOT_IMPLEMENTED"}[row["case"]]
+                if job.get("ok") is not False or type(job.get("error")) is not dict or job["error"].get("code") != code:
+                    return False
+                if row["case"] in {"manual_drift", "low_resource"}:
+                    reason = "SOURCE_CHANGED" if row["case"] == "manual_drift" else "LARGE_IMAGE_MEMORY_BUDGET"
+                    if (type(job["error"].get("context")) is not dict or job["error"]["context"].get("reason") != reason
+                            or row.get("native_entry_invoked") is not False):
+                        return False
+                    if row["case"] == "manual_drift" and row.get("manual_preserved") is not True:
+                        return False
+                    if row["case"] == "low_resource" and (
+                        not _native_save_resources(row.get("before_resources"))
+                        or not _native_save_resources(row.get("pressured_resources"), require_floor=False)
+                        or not 6 * 1024**3 <= row["pressured_resources"]["available_memory_bytes"] < 8 * 1024**3
+                        or type(row.get("pressure_bytes")) is not int or not 0 < row["pressure_bytes"] <= 2 * 1024**3
+                    ):
+                        return False
+                continue
+            if job.get("terminal") is not True:
+                return False
+            if row["case"] not in {"success_copy", "save_as", "save_current", "replace"}:
+                if job.get("state") not in {"FAILED", "CANCELLED"} or job.get("result") is not None:
+                    return False
+                if row["case"] == "reader_failure":
+                    reader = row.get("reader_evidence")
+                    if type(reader) is dict and "worker_receipt" in reader:
+                        reader = reader["worker_receipt"]
+                    if not _native_save_reader_receipt(reader, full, sources, succeeded=False):
+                        return False
+                    injection = row.get("injection")
+                    if (type(injection) is not dict or injection.get("injected") is not True
+                            or injection.get("kind") != "owned_expected_json_single_space"
+                            or any(type(injection.get(key)) is not type(reader[key]) or injection.get(key) != reader[key]
+                                   for key in ("process_id", "token", "saved_sha256", "projection_sha256"))
+                            or reader["error"].get("type") != "ValueError"
+                            or reader["error"]["failure_stage"] not in {"input_validation", "expected_projection"}
+                            or reader["native_open_invoked"] is not False or reader["native_open_completed"] is not False
+                            or reader["actual_projection_sha256"] is not None):
+                        return False
+                continue
+            result = job["result"]
+            if (job.get("state") != "SUCCEEDED" or type(result) is not dict
+                    or result.get("fresh_process_reopen_verified") is not True or result.get("declared_source_verified") is not True
+                    or type(result.get("native_save_interval_ms")) not in {int, float}
+                    or not math.isfinite(result["native_save_interval_ms"]) or not 0 <= result["native_save_interval_ms"] <= 300_000):
+                return False
+            resources = row.get("source_resources")
+            if type(resources) is not list or not 1 <= len(resources) <= 8 or not all(_native_save_resources(item) for item in resources):
+                return False
+            reader = result["reader_evidence"]
+            if (not _native_save_reader_receipt(reader, full, sources, succeeded=True)
+                    or ("reader_evidence" in row and row["reader_evidence"] != reader)):
+                return False
+            readers.append((reader["process_id"], reader["token"]))
+        return len({item[0] for item in readers}) == len({item[1] for item in readers}) == 4
+    except (OSError, ValueError, KeyError, TypeError, RecursionError):
+        return False
+
+
+def _census_receipt_matches(payload: dict | None, temporary: Path, process_instance: str) -> bool:
+    """Accept census metadata only with its complete owned, source-bound receipt."""
+    try:
+        if not isinstance(payload, dict):
+            return False
+        if (payload.get("completed") is not True or payload.get("profile") != "RNA_CENSUS_ONLY_V1"
+                or payload.get("scope") != "class_metadata_only"
+                or payload.get("lifecycle_functional_acceptance") is not False
+                or payload.get("windows_qualified") is not False
+                or payload.get("process_instance") != process_instance
+                or type(payload.get("process_id")) is not int or payload["process_id"] <= 0):
+            return False
+        build_versions = {"62c1db4208e8": "4.5.14", "d13f752e3b9c": "5.2.2"}
+        version = build_versions[payload["source_build"]]
+        if payload.get("blender_version") not in {version, version + " LTS"}:
+            return False
+        binding = payload["full_receipt"]
+        report = temporary / "current-pixels-census.json"
+        if (type(binding) is not dict or set(binding) != {"path", "bytes", "sha256"}
+                or binding["path"] != str(report) or report.is_symlink()
+                or type(binding["bytes"]) is not int or not 0 < binding["bytes"] <= 2 * 1024 * 1024
+                or report.stat().st_size != binding["bytes"]):
+            return False
+        with report.open("rb") as stream:
+            data = stream.read(2 * 1024 * 1024 + 1)
+        if len(data) != binding["bytes"] or hashlib.sha256(data).hexdigest() != binding["sha256"]:
+            return False
+        full = json.loads(data)
+        fields = ("completed", "profile", "scope", "process_instance", "process_id", "blender_version",
+                  "source_build", "source_snapshot_sha256", "lifecycle_functional_acceptance", "windows_qualified")
+        if type(full) is not dict or any(type(full.get(key)) is not type(payload.get(key))
+                                        or full.get(key) != payload.get(key) for key in fields):
+            return False
+        paths = [ROOT / "scripts/blender_current_pixels_lifecycle_smoke.py", ROOT / "scripts/run_blender_checks.py"]
+        paths.extend(sorted((ROOT / "addon/blender_codex_bridge").rglob("*.py")))
+        if not 3 <= len(paths) <= 512 or any(path.is_symlink() for path in paths):
+            return False
+        expected = {str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}
+        if "addon/blender_codex_bridge/current_pixels_graph.py" not in expected:
+            return False
+        canonical = json.dumps(expected, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode()
+        catalog = full["catalog"]
+        return (full.get("source_fingerprints") == expected
+                and payload["source_snapshot_sha256"] == hashlib.sha256(canonical).hexdigest()
+                and type(catalog) is dict and catalog.get("schema") == "current_pixels_complete_class_census_v1"
+                and catalog.get("build_hash") == payload["source_build"]
+                and type(catalog.get("classes")) is dict and set(catalog["classes"]) == CURRENT_PIXELS_CENSUS_CLASSES)
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+
+
+def _graph_receipt_matches(payload: dict | None, temporary: Path, process_instance: str) -> bool:
+    """Accept complete native graph evidence without granting lifecycle scope."""
+    try:
+        if type(payload) is not dict:
+            return False
+        expected_flags = {"completed": True, "profile": "CURRENT_PIXELS_NATIVE_SOURCE_GRAPH_V1",
+            "scope": "native_source_graph_read_only", "lifecycle_functional_acceptance": False,
+            "current_pixels_origin_qualified": False, "windows_qualified": False, "process_instance": process_instance}
+        if any(type(payload.get(key)) is not type(value) or payload.get(key) != value for key, value in expected_flags.items()):
+            return False
+        versions = {"62c1db4208e8": "4.5.14", "d13f752e3b9c": "5.2.2"}
+        version = versions[payload["source_build"]]
+        if (payload.get("blender_version") not in {version, version + " LTS"}
+                or type(payload.get("process_id")) is not int or payload["process_id"] <= 0):
+            return False
+        binding, report = payload["full_receipt"], temporary / "current-pixels-source-graph.json"
+        if (type(binding) is not dict or set(binding) != {"path", "bytes", "sha256"}
+                or binding["path"] != str(report) or report.is_symlink()
+                or type(binding["bytes"]) is not int or not 0 < binding["bytes"] <= 2 * 1024 * 1024
+                or report.stat().st_size != binding["bytes"]):
+            return False
+        with report.open("rb") as stream:
+            data = stream.read(2 * 1024 * 1024 + 1)
+        if len(data) != binding["bytes"] or hashlib.sha256(data).hexdigest() != binding["sha256"]:
+            return False
+        full = json.loads(data)
+        fields = (*expected_flags, "process_id", "blender_version", "source_build", "source_snapshot_sha256")
+        if type(full) is not dict or any(type(full.get(key)) is not type(payload.get(key)) or full.get(key) != payload.get(key) for key in fields):
+            return False
+        paths = [ROOT / "scripts/blender_current_pixels_lifecycle_smoke.py", ROOT / "scripts/run_blender_checks.py"]
+        paths.extend(sorted((ROOT / "addon/blender_codex_bridge").rglob("*.py")))
+        if not 4 <= len(paths) <= 512 or any(path.is_symlink() for path in paths):
+            return False
+        expected = {str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}
+        if not {"addon/blender_codex_bridge/current_pixels_graph.py", "addon/blender_codex_bridge/current_pixels_source.py"} <= expected.keys():
+            return False
+        canonical = json.dumps(expected, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode()
+        if (full.get("source_fingerprints") != expected or payload["source_snapshot_sha256"] != hashlib.sha256(canonical).hexdigest()
+                or type(full.get("assertions")) is not dict or set(full["assertions"]) != CURRENT_PIXELS_GRAPH_ASSERTIONS
+                or any(value is not True for value in full["assertions"].values())
+                or type(full.get("checks")) is not int or full["checks"] <= 0
+                or type(full.get("foreign_callbacks")) is not int or full["foreign_callbacks"] != 0
+                or type(full.get("peak_rss_bytes")) is not int or full["peak_rss_bytes"] <= 0):
+            return False
+        baseline = full["baseline"]
+        if (type(baseline) is not dict or baseline.get("profile") != "FILE_F32_EXR_DATA_CURRENT_PIXELS_V1"
+                or any(baseline.get(name) is not True for name in ("complete_pixels_verified", "snapshot_canonical_packed_verified", "original_canonical_packed_verified"))):
+            return False
+        for name in ("native_graph_sha256", "portable_graph_sha256", "full_native_prefix_sha256", "full_portable_prefix_sha256"):
+            value = baseline.get(name)
+            if type(value) is not str or len(value) != 64 or any(character not in "0123456789abcdef" for character in value):
+                return False
+        setup, limits, intervals = full["setup"], full["limitations"], full["full_read_intervals"]
+        if (type(setup) is not dict or setup.get("owned_empty_factory") is not True
+                or setup.get("intentional_manual_edits_separate_from_observation") is not True
+                or setup.get("production_files_written") is not False or setup.get("lifecycle_backup_files") != []
+                or type(limits) is not dict or limits.get("current_pixels_origin_qualified") is not False
+                or limits.get("public_tool_acceptance") is not False or limits.get("windows_qualified") is not False
+                or limits.get("first_authorization_pixel_only_change_detection") is not False
+                or limits.get("trusted_canonical_native_registry") is not True
+                or limits.get("provider_source_refusal_is_owned_probe_guard_only") is not True
+                or type(intervals) is not list or not 2 <= len(intervals) <= 16):
+            return False
+        return all(type(row) is dict and type(row.get("full_read_seconds")) in {int, float}
+            and 0 <= row["full_read_seconds"] <= 300
+            and type(row.get("memory_available")) is int and row["memory_available"] >= 512 * 1024 * 1024
+            and type(row.get("disk_available")) is int and row["disk_available"] >= 64 * 1024 * 1024 for row in intervals)
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+
+
 def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
                  phase: str | None = None, bundle: Path | None = None,
                  phase_marker: str | None = None) -> dict:
@@ -348,7 +830,15 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
         command.extend(["--", "--bridge-populated-protection"])
     # Blender writes quit.blend on normal UI exit. Keep it outside the user's temp recovery.
     temporary = output / f"{label}-temp"
-    temporary.mkdir()
+    temporary.mkdir(mode=0o700 if case in CURRENT_PIXELS_READ_CASES or case == "native_project_saving_large" else 0o777)
+    if case == "native_project_saving_large":
+        command.extend(["--", "--bridge-large", "--bridge-report", str(temporary / "native-save-large-evidence.json")])
+        timeout = min(timeout, 300)
+    if case in CURRENT_PIXELS_READ_CASES:
+        flag, report_name = (("--bridge-census-only", "current-pixels-census.json") if case == "current_pixels_lifecycle_census"
+                             else ("--bridge-source-graph", "current-pixels-source-graph.json"))
+        command.extend(["--", flag, "--bridge-report", str(temporary / report_name)])
+        timeout = min(timeout, 300)
     environment = dict(os.environ, TEMP=str(temporary), TMP=str(temporary), TMPDIR=str(temporary))
     process_instance = uuid.uuid4().hex
     environment["BRIDGE_TEST_PROCESS_TOKEN"] = process_instance
@@ -361,7 +851,7 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
         environment[key] = str(directory)
     launch_cwd = ROOT
     if (case in PORTABLE_BLEND_RESEARCH_PHASES or case in PAIRED_RECOVERY_PROFILES
-            or case in {"isolated_asset_preview_probe", "native_project_saving"}):
+            or case in {"isolated_asset_preview_probe", "native_project_saving", "native_project_saving_large", *CURRENT_PIXELS_READ_CASES}):
         # Research-only operational profile. This is not an OS/network sandbox.
         # Do not inherit credential variables or arbitrary Python/Blender paths.
         environment = {key: os.environ[key] for key in (
@@ -426,6 +916,20 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
             "image_pixels_or_material_appearance_qualified": False,
             "full_H02_F04_or_protected_object_qualified": False,
         }
+    if case == "current_pixels_lifecycle_census":
+        result["qualification_scope"] = {"class_metadata_only": True, "lifecycle_functional_acceptance": False,
+                                         "windows_qualified": False, "maximum_report_bytes": 2 * 1024 * 1024}
+    if case == "current_pixels_source_graph":
+        result["qualification_scope"] = {"native_source_graph_read_only": True, "lifecycle_functional_acceptance": False,
+            "current_pixels_origin_qualified": False, "windows_qualified": False, "maximum_report_bytes": 2 * 1024 * 1024}
+    if case == "native_project_saving_large":
+        result["qualification_scope"] = {"profile": "NATIVE_SAVE_CLEAN_PACKED_4K_V1",
+            "actual_queued_runtime_required": True, "fresh_reader_required": True,
+            "full_project_or_H01_or_1_0_qualified": False, "windows_qualified": False,
+            "maximum_report_bytes": 8 * 1024 * 1024, "maximum_native_phase_seconds": 300}
+        large_sources = _native_save_sources()
+        binary_path = blender.resolve(strict=True)
+        large_binary = {"path": str(binary_path), "sha256": _native_save_file(binary_path, 1024**3)[0]}
     with log.open("wb") as stream:
         try:
             if interactive and sys.platform == "win32":
@@ -446,7 +950,15 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
             result["launch_error"] = str(exc)
     with log.open("rb") as stream:
         stream.seek(max(0, log.stat().st_size - 65536))
-        payload = success_payload(stream.read().decode("utf-8", errors="replace"), marker)
+        log_text = stream.read().decode("utf-8", errors="replace")
+    if case == "native_project_saving_large":
+        candidates = [line[len(marker):] for line in log_text.splitlines() if line.startswith(marker)]
+        payload = None
+        if len(candidates) == 1:
+            with suppress(ValueError, TypeError, RecursionError):
+                payload = _native_save_json(candidates[0].encode())
+    else:
+        payload = success_payload(log_text, marker)
     result["evidence"] = payload
     version = (
         next(
@@ -470,6 +982,12 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
     if case == "geometry_preview_populated_protection":
         phase_evidence = bool(payload and payload.get("variant") == "populated_data_baseline"
                               and payload.get("populated_protected_data_baseline_qualified") is True)
+    if case == "current_pixels_lifecycle_census":
+        phase_evidence = _census_receipt_matches(payload, temporary, process_instance)
+    if case == "current_pixels_source_graph":
+        phase_evidence = _graph_receipt_matches(payload, temporary, process_instance)
+    if case == "native_project_saving_large":
+        phase_evidence = _native_save_large_receipt_matches(payload, temporary, process_instance, large_sources, large_binary)
     if result["exit_code"] == 0 and payload is not None and version and phase_evidence:
         result["status"] = "passed"
     result["completed_at"] = datetime.now(timezone.utc).isoformat()
@@ -548,7 +1066,8 @@ def main() -> int:
         parser.error("Each Blender path must be an existing executable file")
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
-    defaults = [case for case in CASES if (args.include_interactive or case not in INTERACTIVE_CASES | OPT_IN_CASES)
+    defaults = [case for case in CASES if case != "native_project_saving_large"
+                and (args.include_interactive or case not in INTERACTIVE_CASES | OPT_IN_CASES)
                 and (case != "installed_addon_probe" or args.package_probe_config is not None)]
     cases = list(dict.fromkeys(args.cases or defaults))
     if "installed_addon_probe" in cases and args.package_probe_config is None:

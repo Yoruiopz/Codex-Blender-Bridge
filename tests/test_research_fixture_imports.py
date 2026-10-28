@@ -20,6 +20,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 HELPERS = (
+    "scripts.blender_current_pixels_lifecycle_smoke",
     "scripts.blender_current_pixels_paired_recovery_smoke",
     "scripts.blender_native_save_smoke",
     "scripts.blender_geometry_preview_smoke",
@@ -118,6 +119,7 @@ def fixture_imports(addon_package, monkeypatch):
 
 
 @pytest.mark.parametrize("name,helper", [
+    ("scripts.blender_current_pixels_lifecycle_smoke", "main"),
     ("scripts.blender_current_pixels_paired_recovery_smoke", "main"),
     ("scripts.blender_native_save_smoke", "main"),
     ("scripts.blender_geometry_preview_smoke", "main"),
@@ -152,6 +154,219 @@ def test_importing_helper_fixture_does_not_start_experiment(fixture_imports, nam
     imported = importlib.import_module(name)
     assert callable(getattr(imported, helper))
     assert fixture_imports.timers == [] and fixture_imports.events == []
+
+
+def test_current_pixels_census_has_no_instance_or_scene_access():
+    source = (ROOT / "scripts/blender_current_pixels_lifecycle_smoke.py").read_text()
+    tree = ast.parse(source)
+    # The explicit source-graph mode owns its separate native setup. The
+    # unchanged census branch must still contain metadata access only.
+    tree = ast.Module(body=[node for node in tree.body if not isinstance(node, ast.FunctionDef)
+                           or node.name != "native_graph_probe"], type_ignores=[])
+    assert not any(isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name)
+                   and node.value.id == "bpy" and node.attr in {"data", "context", "ops"}
+                   for node in ast.walk(tree))
+    calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)
+             and isinstance(node.func, ast.Attribute) and node.func.attr == "catalog_census"]
+    assert len(calls) == 1
+    assert [ast.unparse(argument) for argument in calls[0].args] == ["bpy.types", "bpy.app.build_hash"]
+    assert not any(isinstance(node, (ast.Import, ast.ImportFrom)) and
+                   ((isinstance(node, ast.Import) and any(alias.name == "bpy" for alias in node.names))
+                    or (isinstance(node, ast.ImportFrom) and node.module == "bpy"))
+                   for node in tree.body)
+
+
+def test_current_pixels_census_requires_explicit_opt_in_before_owned_profile(monkeypatch):
+    script = importlib.import_module("scripts.blender_current_pixels_lifecycle_smoke")
+    monkeypatch.setattr(script, "owned_profile", lambda *_args: pytest.fail("Profile checked without opt-in"))
+    with pytest.raises(SystemExit):
+        script.main(["--bridge-report", "/unused/current-pixels-census.json"])
+
+
+def test_current_pixels_modes_are_exclusive_before_profile_or_native_setup(monkeypatch):
+    script = importlib.import_module("scripts.blender_current_pixels_lifecycle_smoke")
+    monkeypatch.setattr(script, "owned_profile", lambda *_args: pytest.fail("Profile checked before mode parsing"))
+    with pytest.raises(SystemExit):
+        script.main(["--bridge-census-only", "--bridge-source-graph", "--bridge-report", "/unused/current-pixels-source-graph.json"])
+
+
+def test_source_graph_mode_preserves_inert_import_and_explicit_lifecycle_limits():
+    script = importlib.import_module("scripts.blender_current_pixels_lifecycle_smoke")
+    tree = ast.parse(Path(script.__file__).read_text())
+    assert script.GRAPH_PROFILE == "CURRENT_PIXELS_NATIVE_SOURCE_GRAPH_V1"
+    assert len(script.GRAPH_ASSERTIONS) == 18
+    assert not any(isinstance(node, (ast.Import, ast.ImportFrom)) and
+                   ((isinstance(node, ast.Import) and any(alias.name == "bpy" for alias in node.names))
+                    or (isinstance(node, ast.ImportFrom) and node.module == "bpy")) for node in tree.body)
+    assert not any(isinstance(node, ast.Assign) and any(isinstance(target, ast.Attribute)
+        and target.attr == "_source" for target in node.targets) for node in ast.walk(tree))
+    source = ast.get_source_segment(Path(script.__file__).read_text(), next(node for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "native_graph_probe"))
+    assert '"current_pixels_origin_qualified": False' in source and '"public_tool_acceptance": False' in source
+
+
+@pytest.mark.parametrize("source_drift", [False, True])
+def test_source_graph_main_dispatch_is_explicit_and_keeps_source_receipt_binding(monkeypatch, tmp_path, capsys, source_drift):
+    """Dispatch model only; the native graph probe is not executed here."""
+    script = importlib.import_module("scripts.blender_current_pixels_lifecycle_smoke")
+    source = tmp_path / "source"
+    for name in ("scripts/blender_current_pixels_lifecycle_smoke.py", "scripts/run_blender_checks.py",
+                 "addon/blender_codex_bridge/current_pixels_graph.py", "addon/blender_codex_bridge/current_pixels_source.py"):
+        path = source / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# explicit source graph dispatch model\n")
+    monkeypatch.setattr(script, "ROOT", source)
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    monkeypatch.setattr(sys, "argv", ["blender", "--background", "--factory-startup", "--disable-autoexec"])
+    events = []
+    monkeypatch.setattr(script, "owned_profile", lambda _path: events.append("owned") or "a" * 32)
+    bpy = ModuleType("bpy")
+    bpy.app = NS(background=True, version=(5, 2, 2), version_string="5.2.2", build_hash=b"d13f752e3b9c", build_type=b"Release")
+    graph = ModuleType("blender_codex_bridge.current_pixels_graph")
+    graph.__file__ = str(source / "addon/blender_codex_bridge/current_pixels_graph.py")
+    graph.catalog_census = lambda *_args: pytest.fail("Source graph dispatch selected census")
+    package = ModuleType("blender_codex_bridge")
+    package.current_pixels_graph = graph
+    monkeypatch.setitem(sys.modules, "bpy", bpy)
+    monkeypatch.setitem(sys.modules, package.__name__, package)
+    monkeypatch.setitem(sys.modules, graph.__name__, graph)
+    def probe(actual_bpy, actual_graph, fingerprints, parent):
+        assert actual_bpy is bpy and actual_graph is graph and parent == tmp_path
+        assert fingerprints == script.source_fingerprints()
+        events.append("native_probe_dispatch_model")
+        if source_drift:
+            Path(graph.__file__).write_text("# changed during modeled probe\n")
+        return {"assertions": {"dispatch_model_only": True}}
+    monkeypatch.setattr(script, "native_graph_probe", probe)
+    report = tmp_path / script.GRAPH_REPORT_NAME
+    args = ["--bridge-source-graph", "--bridge-report", str(report)]
+    if source_drift:
+        with pytest.raises(AssertionError, match="Source changed"):
+            script.main(args)
+        assert not report.exists()
+    else:
+        script.main(args)
+        full = json.loads(report.read_bytes())
+        compact = json.loads(capsys.readouterr().out.removeprefix(script.GRAPH_MARKER))
+        assert compact["profile"] == full["profile"] == script.GRAPH_PROFILE
+        assert compact["current_pixels_origin_qualified"] is full["lifecycle_functional_acceptance"] is False
+        assert compact["full_receipt"]["sha256"] == script.hashlib.sha256(report.read_bytes()).hexdigest()
+    assert events == ["owned", "native_probe_dispatch_model"]
+
+
+def test_current_pixels_census_receipt_is_bounded_create_only_and_reopened(tmp_path):
+    script = importlib.import_module("scripts.blender_current_pixels_lifecycle_smoke")
+    path = tmp_path / script.REPORT_NAME
+    proof = {"profile": script.PROFILE, "lifecycle_functional_acceptance": False,
+             "missing_class": {"present": False}, "missing_descriptor": {"present": False}}
+    binding = script.write_receipt(path, proof)
+    assert binding == {"path": str(path), "bytes": path.stat().st_size,
+                       "sha256": script.hashlib.sha256(path.read_bytes()).hexdigest()}
+    assert json.loads(path.read_bytes()) == proof
+    with pytest.raises(FileExistsError):
+        script.write_receipt(path, proof)
+    oversized = tmp_path / "oversized.json"
+    with pytest.raises(AssertionError, match="complete report bound"):
+        script.write_receipt(oversized, {"too_large": "x" * script.MAX_REPORT})
+    assert not oversized.exists()
+
+
+@pytest.mark.parametrize("fault", [None, "unqualified_build", "interactive", "source_change"])
+def test_current_pixels_census_composes_only_attested_class_metadata(monkeypatch, tmp_path, capsys, fault):
+    """Composition model; it provides no native RNA or lifecycle acceptance."""
+    script = importlib.import_module("scripts.blender_current_pixels_lifecycle_smoke")
+    source = tmp_path / "source"
+    for name in ("scripts/blender_current_pixels_lifecycle_smoke.py", "scripts/run_blender_checks.py",
+                 "addon/blender_codex_bridge/current_pixels_graph.py"):
+        path = source / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# census composition model\n")
+    monkeypatch.setattr(script, "ROOT", source)
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    monkeypatch.setattr(sys, "argv", ["blender", "--background", "--factory-startup", "--disable-autoexec"])
+    events = []
+    monkeypatch.setattr(script, "owned_profile", lambda _path: events.append("owned_profile") or "a" * 32)
+    metadata = NS()
+
+    class MetadataOnlyBlender(ModuleType):
+        def __getattr__(self, name):
+            pytest.fail(f"Census read non-metadata Blender field {name}")
+
+    bpy = MetadataOnlyBlender("bpy")
+    bpy.types = metadata
+    bpy.app = NS(background=fault != "interactive", version=(5, 2, 2), version_string="5.2.2",
+                 build_hash=b"unqualified" if fault == "unqualified_build" else b"d13f752e3b9c", build_type=b"Release")
+    monkeypatch.setitem(sys.modules, "bpy", bpy)
+    graph = ModuleType("blender_codex_bridge.current_pixels_graph")
+    graph.__file__ = str(source / "addon/blender_codex_bridge/current_pixels_graph.py")
+    graph.CENSUS_TYPES = tuple(f"ModelClass{index}" for index in range(57))
+
+    def catalog_census(types, build_hash):
+        assert types is metadata and build_hash == b"d13f752e3b9c"
+        events.append("class_catalog")
+        if fault == "source_change":
+            Path(graph.__file__).write_text("# changed during census\n")
+        return {"schema": "current_pixels_complete_class_census_v1", "build_hash": "d13f752e3b9c",
+                "classes": {name: {"present": False} for name in graph.CENSUS_TYPES}}
+
+    graph.catalog_census = catalog_census
+    package = ModuleType("blender_codex_bridge")
+    package.current_pixels_graph = graph
+    monkeypatch.setitem(sys.modules, "blender_codex_bridge", package)
+    monkeypatch.setitem(sys.modules, "blender_codex_bridge.current_pixels_graph", graph)
+    report = tmp_path / script.REPORT_NAME
+    arguments = ["--bridge-census-only", "--bridge-report", str(report)]
+    if fault is not None:
+        with pytest.raises(AssertionError):
+            script.main(arguments)
+        assert not report.exists()
+        assert events == (["owned_profile", "class_catalog"] if fault == "source_change" else ["owned_profile"])
+    else:
+        script.main(arguments)
+        assert events == ["owned_profile", "class_catalog"]
+        proof = json.loads(report.read_bytes())
+        assert proof["lifecycle_functional_acceptance"] is proof["windows_qualified"] is False
+        assert all(row == {"present": False} for row in proof["catalog"]["classes"].values())
+        assert proof["source_fingerprints"] == script.source_fingerprints()
+        compact = json.loads(capsys.readouterr().out.removeprefix(script.MARKER))
+        assert compact["full_receipt"]["sha256"] == script.hashlib.sha256(report.read_bytes()).hexdigest()
+
+
+@pytest.mark.parametrize("fault", ["relative", "wrong_name", "public_parent", "token", "pythonpath", "working"])
+def test_current_pixels_census_rejects_unowned_profile_before_catalog(monkeypatch, tmp_path, fault):
+    script = importlib.import_module("scripts.blender_current_pixels_lifecycle_smoke")
+    monkeypatch.setattr(script.sys, "platform", "linux")
+    temporary = tmp_path / "private"
+    temporary.mkdir(mode=0o700)
+    for key in ("TEMP", "TMP", "TMPDIR"):
+        monkeypatch.setenv(key, str(temporary))
+    for key in ("HOME", "BLENDER_USER_CONFIG", "BLENDER_USER_SCRIPTS", "BLENDER_USER_DATAFILES",
+                "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_RUNTIME_DIR"):
+        directory = temporary / ("worker-profile-" + key.lower())
+        directory.mkdir(mode=0o700)
+        monkeypatch.setenv(key, str(directory))
+    working = temporary / "working"
+    working.mkdir(mode=0o700)
+    monkeypatch.chdir(working)
+    monkeypatch.delenv("PYTHONPATH", raising=False)
+    monkeypatch.delenv("PYTHONHOME", raising=False)
+    monkeypatch.setenv("BRIDGE_TEST_PROCESS_TOKEN", "a" * 32)
+    report = temporary / script.REPORT_NAME
+    assert script.owned_profile(report) == "a" * 32
+    if fault == "relative":
+        report = Path(script.REPORT_NAME)
+    elif fault == "wrong_name":
+        report = temporary / "different.json"
+    elif fault == "public_parent":
+        temporary.chmod(0o755)
+    elif fault == "token":
+        monkeypatch.setenv("BRIDGE_TEST_PROCESS_TOKEN", "not a runner token")
+    elif fault == "pythonpath":
+        monkeypatch.setenv("PYTHONPATH", "/unrelated")
+    elif fault == "working":
+        monkeypatch.chdir(tmp_path)
+    with pytest.raises(AssertionError):
+        script.owned_profile(report)
 
 
 def test_registered_geometry_fixture_materializes_only_before_pending_state():
@@ -1878,3 +2093,122 @@ def test_populated_geometry_manual_controls_never_replace_baseline_or_run_an_inv
     assert not any(isinstance(node, ast.Attribute) and node.attr in {
         "undo", "undo_last", "restore_last", "restore_operation", "frame_set"}
         for node in ast.walk(controls))
+
+
+@pytest.mark.parametrize("width,height", [(1, 1), (3, 5), (257, 2)])
+def test_large_native_save_png_streams_complete_rgba8_without_compression(monkeypatch, tmp_path, width, height):
+    import struct
+    import zlib
+
+    monkeypatch.setitem(sys.modules, "bpy", ModuleType("bpy"))
+    script = importlib.import_module("scripts.blender_native_save_smoke")
+    path = tmp_path / "owned color.png"
+    facts = script.write_large_png(path, width=width, height=height)
+    raw = path.read_bytes()
+    assert facts == {"bytes": len(raw), "sha256": script.hashlib.sha256(raw).hexdigest()}
+    assert raw[:8] == b"\x89PNG\r\n\x1a\n"
+    offset, payloads, tags = 8, [], []
+    while offset < len(raw):
+        length = struct.unpack(">I", raw[offset:offset + 4])[0]
+        tag = raw[offset + 4:offset + 8]
+        payload = raw[offset + 8:offset + 8 + length]
+        checksum = struct.unpack(">I", raw[offset + 8 + length:offset + 12 + length])[0]
+        assert checksum == zlib.crc32(tag + payload) & 0xffffffff
+        tags.append(tag)
+        if tag == b"IHDR":
+            assert struct.unpack(">IIBBBBB", payload) == (width, height, 8, 6, 0, 0, 0)
+        if tag == b"IDAT":
+            payloads.append(payload)
+        offset += length + 12
+    assert offset == len(raw) and tags[0] == b"IHDR" and tags[-1] == b"IEND"
+    decoded = zlib.decompress(b"".join(payloads))
+    assert len(decoded) == height * (1 + width * 4)
+    for y in range(height):
+        row = decoded[y * (1 + width * 4):(y + 1) * (1 + width * 4)]
+        assert row[0] == 0
+        for x in range(width):
+            assert tuple(row[1 + x * 4:5 + x * 4]) == (
+                x & 255, y & 255, (((x & 255) // 4) + y) & 255, (0, 64, 128, 255)[(x + y) & 3])
+
+
+def test_large_native_save_png_refuses_existing_or_aliased_file(monkeypatch, tmp_path):
+    monkeypatch.setitem(sys.modules, "bpy", ModuleType("bpy"))
+    script = importlib.import_module("scripts.blender_native_save_smoke")
+    target = tmp_path / "existing.png"
+    target.write_bytes(b"preserve")
+    with pytest.raises(AssertionError):
+        script.write_large_png(target, width=1, height=1)
+    alias = tmp_path / "alias.png"
+    alias.symlink_to(target)
+    with pytest.raises(AssertionError):
+        script.write_large_png(alias, width=1, height=1)
+    assert target.read_bytes() == b"preserve"
+
+
+def test_large_native_save_mode_uses_real_worker_and_registered_main_thread_timers():
+    source = (ROOT / "scripts/blender_native_save_smoke.py").read_text()
+    tree = ast.parse(source)
+    functions = {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)}
+    main = ast.get_source_segment(source, functions["large_save_main"])
+    worker = ast.get_source_segment(source, functions["large_save_worker"])
+    assert 'threading.Thread(target=large_save_worker' in main
+    assert 'bpy.app.timers.register(poll' in main and 'controller.observe()' in main
+    assert '"127.0.0.1"' in ast.get_source_segment(source, next(
+        node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "LargeSaveClient"))
+    forbidden = {"bpy", "runtime", "dispatch", "execute_request"}
+    assert not ({node.id for node in ast.walk(functions["large_save_worker"]) if isinstance(node, ast.Name)} & forbidden)
+    assert '.tick(' not in main + worker and '.dispatch(' not in main + worker
+    assert 'checkpoint.list' in worker and 'jobs.inspect' in worker
+    assert worker.index('"permission_denial"') < worker.index('control("arm")')
+    assert 'declared_authored_projection_preserved' in main
+    assert 'clear_owned_empty_sequence_editors' not in main + worker
+
+
+def test_large_native_save_source_fingerprints_match_isolated_runner(monkeypatch):
+    monkeypatch.setitem(sys.modules, "bpy", ModuleType("bpy"))
+    script = importlib.import_module("scripts.blender_native_save_smoke")
+    runner = importlib.import_module("scripts.run_blender_checks")
+    assert script.LARGE_SOURCES == runner.NATIVE_SAVE_LARGE_SOURCES
+    assert len(script.large_source_fingerprints()) == 21
+
+
+def test_large_native_save_diagnostics_survive_product_record_removal(monkeypatch, tmp_path):
+    monkeypatch.setitem(sys.modules, "bpy", ModuleType("bpy"))
+    script = importlib.import_module("scripts.blender_native_save_smoke")
+    observed = {"worker_receipt": None}
+    reader = NS(evidence=lambda: dict(observed))
+    job = NS(job_id="job_" + "1" * 32)
+    record = NS(job=job, origin=NS(resource_checks=({"actual": "resource facts"},)), reader=reader,
+                native_started=True, native_returned=False, native_completed=False, native_interval_ms=None)
+    jobs = NS(_save_records={1: record}, _save_retained={})
+    controller = script.LargeSaveController(tmp_path, NS(jobs=jobs), {})
+    controller.observe()
+    # Product completion removes active records before the next fixture control.
+    jobs._save_records.clear()
+    observed["worker_receipt"] = {"status": "succeeded", "process_id": 42}
+    controller.observe()
+    diagnostic = controller.control("records", {"job_id": job.job_id})
+    assert diagnostic["source_resources"] == [{"actual": "resource facts"}]
+    assert diagnostic["reader_evidence"]["worker_receipt"] == {"status": "succeeded", "process_id": 42}
+    # A different reader must never be silently adopted for the existing job.
+    record.reader = NS(evidence=lambda: {})
+    jobs._save_retained[job.job_id] = record
+    with pytest.raises(AssertionError):
+        controller.observe()
+
+
+def test_large_native_save_manual_restore_preserves_intervening_owned_edit(monkeypatch, tmp_path):
+    monkeypatch.setitem(sys.modules, "bpy", ModuleType("bpy"))
+    script = importlib.import_module("scripts.blender_native_save_smoke")
+    jobs = NS(_save_records={}, _save_retained={})
+    controller = script.LargeSaveController(tmp_path, NS(jobs=jobs), {})
+    coordinate = NS(x=0.)
+    controller.obj = NS(data=NS(vertices=[NS(co=coordinate)]))
+    assert controller.control("manual_change", {}) == .125
+    coordinate.x = .25
+    with pytest.raises(AssertionError):
+        controller.control("manual_restore", {})
+    assert coordinate.x == .25
+    coordinate.x = .125
+    assert controller.control("manual_restore", {}) == {"restored": True}
+    assert coordinate.x == 0.
