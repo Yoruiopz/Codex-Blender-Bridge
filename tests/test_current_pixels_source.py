@@ -302,18 +302,20 @@ def finish_model(env):
     return env.runtime.jobs.history[0]
 
 
+@pytest.mark.timeout(30)
 def test_genuine_queued_preview_a_start_b_and_worker_retain_connection_not_old_rpc_deadline(source_env):
     env = source_env
     owner = env.source.ConnectionLifetime()
-    proof, first, _first_life = queued_preview(env, owner, queue_seconds=4.)
+    proof, first, _first_life = queued_preview(env, owner, queue_seconds=10.)
     env.flags["job_model"] = True
-    response, second, life = queued(env, env.source.METHODS[1], start_parameters(env, proof), owner, "start-B", queue_seconds=4.)
+    response, second, life = queued(env, env.source.METHODS[1], start_parameters(env, proof), owner, "start-B", queue_seconds=10.)
     assert response.ok, response.error
     assert response.result["accepted"] and first is not second
     assert first.request is not second.request and env.runtime.jobs.active.lifetime is life
     # Start delivery transfers authority to the genuine job lifetime. A later
     # reader/worker must not call the completed request's expired check_active.
-    env.source.threading.Event().wait(max(first.deadline, second.deadline) - time.monotonic() + .01)
+    env.source.threading.Event().wait(max(0., max(first.deadline, second.deadline) - time.monotonic()) + .01)
+    assert time.monotonic() >= max(first.deadline, second.deadline)
     record = finish_model(env)
     assert record.state == "SUCCEEDED", json.dumps(record.error, sort_keys=True)
     assert env.flags["steps"] == 1 and env.flags["cleanup"] == 1
@@ -444,6 +446,7 @@ def test_retained_completed_request_origin_cannot_renew_authority(source_env):
     assert (env.flags["grants"], env.flags["captures"]) == before
 
 
+@pytest.mark.timeout(30)
 def test_real_worker_cancellation_during_complete_read_stops_at_provider_free_safe_point(source_env):
     env = source_env
     owner = env.source.ConnectionLifetime()
