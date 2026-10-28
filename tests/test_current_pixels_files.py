@@ -265,7 +265,10 @@ def test_failed_initial_stage_stat_retains_path_and_closes_descriptor(files, mon
         seen.append(descriptor)
         raise OSError("initial stage identity unavailable")
 
-    monkeypatch.setattr(files.module.os, "fstat", fstat)
+    # Fault only this module's I/O; pytest/capture may stat its own descriptors.
+    local_os = NS(**vars(files.module.os))
+    local_os.fstat = fstat
+    monkeypatch.setattr(files.module, "os", local_os)
     with pytest.raises(OSError):
         files.publish(item, "oldpacked", files.old)
     assert len(seen) == 1 and item.failed and item.stage.exists()
