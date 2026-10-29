@@ -80,8 +80,13 @@ class GLBStageService:
                 or vars(_Executor).get("context") is not _EXECUTOR_CONTEXT_PROPERTY
                 or _EXECUTOR_CONTEXT_GETTER.__code__ is not _EXECUTOR_CONTEXT_GETTER_CODE):
             raise refused("GLB_CANONICAL_CONTEXT_FACTORY_CHANGED")
-        if any(vars(cls).get(name) is not fn or fn.__code__ is not code
-               for cls, name, fn, code in _SERVICE_METHOD_ORIGINS):
+        for captured_name, cls, expected in _SERVICE_CLASS_NAMESPACES:
+            namespace = vars(cls)
+            if (globals().get(captured_name) is not cls or len(namespace) != len(expected)
+                    or any(namespace.get(name) is not value for name, value in expected)):
+                raise refused("GLB_CANONICAL_SERVICE_CODE_ORIGIN_CHANGED")
+        if any(vars(cls).get(name) is not raw or fn.__code__ is not code
+               for cls, name, raw, fn, code in _SERVICE_METHOD_ORIGINS):
             raise refused("GLB_CANONICAL_SERVICE_CODE_ORIGIN_CHANGED")
         for cls, expected in _AUTHORITY_CLASS_NAMESPACES:
             namespace = vars(cls)
@@ -193,15 +198,16 @@ class GLBStageService:
                     or scene.collection.library is not None or scene.collection.override_library is not None):
                 raise refused("GLB_LOCAL_OBJECT_MODE_METRE_DESTINATION_REQUIRED", allocation_started=False)
             roles = GLBCheckpointRoles(operations, scene)
-            role_hash = digest(roles.authored())
             view = _ProtectedView(operations)
             protected_ids = protected_reader._inventory(view.bpy)
             protected = view.observe(protected_ids, gate.check)
+            roles.bind_protected(view, protected_ids, protected)
+            role_hash = digest(roles.authored())
             environment = operations.environment({})
             names = dict(_names(plan, _name(params.get("collection_name"))))
             self._names(operations, names, gate)
             record = self.store.prepare(source, params.get("collection_name"), digest(environment),
-                                        overwrite_policy="REFUSE", check=gate.check)
+                                        overwrite_policy="REFUSE", check=gate.check, checkpoint_fingerprint=role_hash)
             if names != dict(record.intent.allocation_names):
                 raise refused("GLB_ALLOCATION_PLAN_CHANGED_DURING_PREVIEW")
             retained = RuntimeStage(connection, self._generation, root, operations, gate, bpy,
@@ -216,6 +222,7 @@ class GLBStageService:
                 "overwrite_policy": "REFUSE", "units_policy": "SOURCE_METRES_REQUIRES_SCENE_SCALE_LENGTH_1",
                 "native_allocation_started": False, "destination_linked": False,
                 "protected_mesh_read_effects": view.read_effects(),
+                "checkpoint_role_effects": roles.report(),
                 "public_import_qualified": False, "project_saved": False}
         finally:
             gate.unbind()
@@ -251,6 +258,8 @@ class GLBStageService:
         record = self.store.lookup(stage_id)
         if record.intent.generation != self.store.generation or record.phase in {"UNKNOWN", "FAILED", "STALE"}:
             raise refused("GLB_STAGE_NOT_WRITABLE")
+        if record.intent.checkpoint_fingerprint != row.roles_sha256:
+            raise refused("GLB_CHECKPOINT_PREVIEW_WITNESS_CHANGED")
         if source:
             root = self._source_root()
             if root != row.root:
@@ -305,6 +314,7 @@ class GLBStageService:
         report = row.operations.report()  # Pure cached fields, never RNA.
         return {**self.store.inspect(stage_id), "job_id": row.job_id,
                 "native_evidence": {"native_entries": report["native_entries"],
+                    "checkpoint_role_effects": row.roles.report(),
                     "native_access_counts": report["native_access_counts"],
                     "protected_mesh_read_effects": row.protected_view.read_effects(),
                     "mesh_return_receipts": report["mesh_return_receipts"],
@@ -408,11 +418,13 @@ class _ProtectedView:
         self.native_ids = {}
         self._meshes, self._groups = {}, {}
         self._observing = False
+        self._complete_observation = None
         self.bpy = SimpleNamespace(data=self.wrap(self.binding.main),
                                    context=self.wrap(self.binding.context), types=self.binding.types)
 
     def observe(self, ids, check, *, ignored_collections=frozenset()):
         """One provider-free bounded pass; discard all detached arrays at exit."""
+        self._complete_observation = None
         if _PROTECTED_DEPENDENCY_GUARD_ORIGIN.__code__ is not _PROTECTED_DEPENDENCY_GUARD_CODE:
             raise refused("GLB_PROTECTED_DEPENDENCY_ORIGIN_CHANGED")
         _PROTECTED_DEPENDENCY_GUARD_ORIGIN()
@@ -441,6 +453,9 @@ class _ProtectedView:
             result["protected_object_groups"] = {
                 str(row["object_identity"]["uid"]): row for row in self._groups.values()}
             check()
+            # Publish a completion witness only after every existing field was
+            # complete and the final stop check passed. Retain no extra arrays.
+            self._complete_observation = ids, id(result), reader._hash(result)
             return result
         finally:
             # Pure releases only. Never improve a stopped report with another
@@ -655,9 +670,62 @@ class GLBCheckpointRoles:
 
     def __init__(self, operations, scene):
         self.operations, self.binding, self.scene = operations, operations._binding, scene
-        self.owners, self.expected, self.active = self._read()
-        if self.active is None or self.expected not in ((0, None), (1, self.active)):
-            raise refused("GLB_CHECKPOINT_WEAK_ROLE_INITIAL_STATE_UNQUALIFIED")
+        self.bound_witness = None
+        self.owners, self.expected, self.active, active, previous = self._read()
+        if self.active is None or self.expected[0] != int(previous is not None):
+            failure = refused("GLB_CHECKPOINT_WEAK_ROLE_INITIAL_STATE_UNQUALIFIED")
+            failure.context.update(scene_self_use_count=self.expected[0], particle_object_pointer=self.expected[1],
+                                   active_object_pointer=self.active)
+            raise failure
+        self.active_owner = active
+        self.previous_owner = previous
+        # Keep genuine owners, not a future lookup by name, UID or pointer.
+        self.object_origins = ((active, self._object_identity(active)),)
+        if previous is not None and previous is not active:
+            self.object_origins += ((previous, self._object_identity(previous)),)
+        self.expected_counts = self._count_rows()
+        self.initial_roles, self.initial_counts = self.expected, self.expected_counts
+        if previous is not None:
+            old = next(count for identity, count in self.initial_counts if identity[1] == self.expected[1])
+            if old < 1:
+                raise refused("GLB_CHECKPOINT_INITIAL_WEAK_CONSUMER_COUNT_UNQUALIFIED")
+        self.after_roles = 1, self.active
+        self.after_counts = tuple((identity, count + int(identity[1] == self.active and self.expected[1] != self.active)
+                                  - int(identity[1] == self.expected[1] and self.expected[1] != self.active))
+                                 for identity, count in self.initial_counts)
+        self.effect = {"profile": "EXACT_CHECKPOINT_WEAK_OBJECT_TRANSFER_V1",
+            "initial_roles": list(self.initial_roles),
+            "initial_owner_counts": [[list(identity), count] for identity, count in self.initial_counts],
+            "expected_after_roles": list(self.after_roles),
+            "expected_after_owner_counts": [[list(identity), count] for identity, count in self.after_counts],
+            "current_owner_identity": list(self.object_origins[0][1]),
+            "previous_owner_identity": (None if previous is None else list(self._object_identity(previous))),
+            "protected_closure_bound": False, "native_push_completed": False,
+            "after_readback_measured": False, "physical_cache_passivity_claimed": False}
+
+    def _object_identity(self, owner):
+        b = self.binding
+        if type(owner) is not b.classes["Object"]:
+            raise refused("GLB_CHECKPOINT_NATIVE_OBJECT_OWNER_REQUIRED")
+        pointer = b._pointer(owner)
+        if type(pointer) is not int or not 0 < pointer < 2**64:
+            raise refused("GLB_CHECKPOINT_OBJECT_IDENTITY_CHANGED")
+        uid = b.get(owner, "session_uid")
+        if type(uid) is not int or not 0 < uid < 2**64:
+            raise refused("GLB_CHECKPOINT_OBJECT_IDENTITY_CHANGED")
+        return uid, pointer
+
+    def _count_rows(self):
+        b = self.binding
+        result = []
+        for owner, identity in self.object_origins:
+            if self._object_identity(owner) != identity:
+                raise refused("GLB_CHECKPOINT_OBJECT_IDENTITY_CHANGED")
+            count = b._access("ID.user_of_id", b.callable(self.scene, "ID", "user_of_id"), owner)
+            if type(count) is not int or not 0 <= count <= 2**63 - 1:
+                raise refused("GLB_CHECKPOINT_OBJECT_USER_COUNT_UNQUALIFIED")
+            result.append((identity, count))
+        return tuple(result)
 
     def _read(self):
         b, scene = self.binding, self.scene
@@ -683,12 +751,55 @@ class GLBCheckpointRoles:
             raise refused("GLB_CHECKPOINT_SCENE_SELF_USE_UNQUALIFIED")
         owners = (b._pointer(scene), b._pointer(settings), b._pointer(particle),
                   None if original is None else b._pointer(original), pointer)
-        return owners, (count, None if particle_object is None else b._pointer(particle_object)), pointer
+        return owners, (count, None if particle_object is None else b._pointer(particle_object)), pointer, active, particle_object
+
+    def _check_native_state(self):
+        owners, expected, active, owner, _previous = self._read()
+        if owners != self.owners or expected != self.expected or active != self.active or owner is not self.active_owner:
+            raise refused("GLB_CHECKPOINT_WEAK_ROLE_OR_OWNER_CHANGED")
+        if self._count_rows() != self.expected_counts:
+            raise refused("GLB_CHECKPOINT_OBJECT_CONSUMER_COUNTS_CHANGED")
+
+    def bind_protected(self, view, ids, protected):
+        # A previous native weak owner is admissible only after the unchanged
+        # complete Main observer has captured both owners and every dependency.
+        if self.bound_witness is not None or type(view) is not _ProtectedView or view.binding is not self.binding:
+            raise refused("GLB_CHECKPOINT_PROTECTED_OWNER_BINDING_UNQUALIFIED")
+        if (type(ids) is not dict or type(ids.get("objects")) is not dict
+                or type(protected) is not dict or type(protected.get("objects")) is not dict):
+            raise refused("GLB_CHECKPOINT_COMPLETE_PROTECTED_OWNER_REQUIRED")
+        completion = vars(view).get("_complete_observation")
+        if (type(completion) is not tuple or len(completion) != 3
+                or completion[0] is not ids or type(completion[1]) is not int or completion[1] != id(protected)
+                or type(completion[2]) is not str):
+            raise refused("GLB_CHECKPOINT_COMPLETE_PROTECTED_OWNER_REQUIRED")
+        from .tools import asset_import as reader
+        protected_hash = reader._hash(protected)
+        if protected_hash != completion[2]:
+            raise refused("GLB_CHECKPOINT_COMPLETE_PROTECTED_OWNER_REQUIRED")
+        self._check_native_state()
+        for owner, identity in self.object_origins:
+            uid, _pointer = identity
+            member = ids["objects"].get(uid)
+            if member is None or _ProtectedView.unwrap(member) is not owner or uid not in protected["objects"]:
+                raise refused("GLB_CHECKPOINT_COMPLETE_PROTECTED_OWNER_REQUIRED")
+        self.bound_witness = {"schema": "GLB_CHECKPOINT_INITIAL_OWNER_WITNESS_V1",
+            "owners": list(self.owners), "initial_roles": list(self.initial_roles),
+            "objects": [[list(identity), count] for identity, count in self.initial_counts],
+            "protected_main_sha256": protected_hash}
+        self.effect["protected_closure_bound"] = True
+        self.check_after_read()
 
     def check_after_read(self):
-        owners, expected, active = self._read()
-        if owners != self.owners or expected != self.expected or active != self.active:
-            raise refused("GLB_CHECKPOINT_WEAK_ROLE_OR_OWNER_CHANGED")
+        if self.bound_witness is None:
+            raise refused("GLB_CHECKPOINT_COMPLETE_PROTECTED_OWNER_REQUIRED")
+        self._check_native_state()
+        if self.effect["native_push_completed"]:
+            self.effect["after_readback_measured"] = True
+
+    def report(self):
+        # Cached literals only: this remains safe after cancellation/disconnect.
+        return plain(self.effect)
 
     def authored(self):
         b = self.binding
@@ -716,12 +827,19 @@ class GLBCheckpointRoles:
             elif type(value) not in {bool, int, float, str}:
                 value = b.copy(value)
             rows.append([name, kind, value])
-        return [list(self.owners), rows]
+        return [list(self.owners), rows, self.bound_witness]
 
     def after_native_push(self):
         from .checkpoint_completion import claim_native_push_delegate
+        if self.bound_witness is None:
+            raise refused("GLB_CHECKPOINT_COMPLETE_PROTECTED_OWNER_REQUIRED")
         claim_native_push_delegate(self)
-        self.expected = 1, self.active
+        # Every row and receipt cell was allocated before the native entry.
+        # A successful claim predicts a transition; only a later authorized
+        # independent read can mark its actual roles/counts as measured.
+        self.effect["native_push_completed"] = True
+        self.effect["after_readback_measured"] = False
+        self.expected, self.expected_counts = self.after_roles, self.after_counts
 
 
 from types import FunctionType as _FunctionType  # noqa: E402
@@ -740,9 +858,12 @@ _DETACHED_FUNCTION_ORIGINS = tuple((name, function, function.__code__)
 _PROTECTED_DEPENDENCY_GUARD_ORIGIN = _check_protected_dependencies
 _PROTECTED_DEPENDENCY_GUARD_CODE = _check_protected_dependencies.__code__
 
-_SERVICE_METHOD_ORIGINS = tuple((cls, name, fn, fn.__code__)
-    for cls in (GLBStageService, _ProtectedView, _ProtectedValue, _DetachedCollection, GLBCheckpointRoles)
-    for name, fn in vars(cls).items() if type(fn) is _FunctionType)
+_SERVICE_CLASSES = (GLBStageService, _ProtectedView, _ProtectedValue, _DetachedCollection, GLBCheckpointRoles)
+_SERVICE_CLASS_NAMESPACES = tuple((cls.__name__, cls, tuple(vars(cls).items())) for cls in _SERVICE_CLASSES)
+_SERVICE_METHOD_ORIGINS = tuple((cls, name, raw, raw.__func__ if type(raw) is staticmethod else raw,
+                               (raw.__func__ if type(raw) is staticmethod else raw).__code__)
+    for cls in _SERVICE_CLASSES for name, raw in vars(cls).items()
+    if type(raw) is _FunctionType or (type(raw) is staticmethod and type(raw.__func__) is _FunctionType))
 
 
 def _exact_instance_keys(value, expected):

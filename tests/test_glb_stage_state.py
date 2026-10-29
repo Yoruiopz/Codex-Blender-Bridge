@@ -527,3 +527,100 @@ def test_publication_failure_and_trailing_checkpoint_failure_retain_unknown(mode
     store.invalidate()
     store.mark_unknown(stage_id, "LATER_CALLBACK")
     assert store.inspect(stage_id)["phase"] == "STALE"
+
+
+def test_optional_checkpoint_witness_preserves_legacy_intent_and_destination(model, monkeypatch):
+    module, store, source = model
+    payloads, dumps = [], module.json.dumps
+
+    def capture(value, *args, **kwargs):
+        if type(value) is dict and "destination_fingerprint" in value and "plan_sha256" in value:
+            payloads.append(dict(value))
+        return dumps(value, *args, **kwargs)
+
+    monkeypatch.setattr(module.json, "dumps", capture)
+    record = store.prepare(source, "Asset", "a" * 64, overwrite_policy="REFUSE")
+    intent = record.intent
+    # Old positional construction remains valid, with the optional witness absent.
+    legacy = module.StageIntent(intent.preview_id, intent.stage_id, intent.generation,
+        intent.source, intent.plan, intent.collection_name, intent.destination_fingerprint,
+        intent.allocation_names, intent.expires_at, intent.accounted_bytes, intent.fingerprint)
+    assert legacy.checkpoint_fingerprint is None
+    assert module._fingerprint(legacy) == intent.fingerprint
+    assert payloads and all("checkpoint_fingerprint" not in value for value in payloads)
+    assert intent.destination_fingerprint == "a" * 64
+    assert intent.accounted_bytes == source.accounted_bytes + len(intent.plan.canonical_bytes())
+
+
+def test_checkpoint_witness_is_sealed_separately_from_destination(model):
+    module, store, source = model
+    record = store.prepare(source, "Asset", "a" * 64, overwrite_policy="REFUSE",
+                           checkpoint_fingerprint="b" * 64)
+    intent = record.intent
+    assert intent.checkpoint_fingerprint == "b" * 64
+    assert intent.destination_fingerprint == "a" * 64
+    assert intent.accounted_bytes == source.accounted_bytes + len(intent.plan.canonical_bytes()) + 64
+    assert store.retained_bytes == intent.accounted_bytes
+    changed = replace(intent, checkpoint_fingerprint="c" * 64)
+    assert module._fingerprint(changed) != intent.fingerprint
+    assert changed.destination_fingerprint == intent.destination_fingerprint
+    object.__setattr__(intent, "checkpoint_fingerprint", "c" * 64)
+    with pytest.raises(module.invalid_argument("x").__class__):
+        store.begin(intent.preview_id, intent.fingerprint, list(intent.plan.required_accepted_losses))
+    assert store.lookup(intent.stage_id).phase == "PREPARED" and store._active is None
+
+
+@pytest.mark.parametrize("value", [True, False, 1, b"b" * 64, "", "B" * 64, "b" * 63, "z" * 64, [], {}])
+def test_checkpoint_fingerprint_rejects_nonliteral_or_malformed_values_before_planning(model, value):
+    module, store, source = model
+    callbacks = []
+    with pytest.raises(module.invalid_argument("x").__class__):
+        store.prepare(source, "Asset", "a" * 64, overwrite_policy="REFUSE",
+                      checkpoint_fingerprint=value, check=lambda: callbacks.append("planner"))
+    assert callbacks == [] and not store._records and store.retained_bytes == 0
+
+
+@pytest.mark.parametrize("string_subclass", [False, True])
+def test_checkpoint_fingerprint_rejects_foreign_protocol_callbacks_without_invoking_them(model, string_subclass):
+    module, store, source = model
+    callbacks = []
+
+    class Foreign(str if string_subclass else object):
+        def __eq__(self, other):
+            callbacks.append("eq")
+            raise AssertionError("foreign equality")
+
+        def __hash__(self):
+            callbacks.append("hash")
+            raise AssertionError("foreign hash")
+
+        def __str__(self):
+            callbacks.append("str")
+            raise AssertionError("foreign string conversion")
+
+    value = Foreign("b" * 64) if string_subclass else Foreign()
+    with pytest.raises(module.invalid_argument("x").__class__):
+        store.prepare(source, "Asset", "a" * 64, overwrite_policy="REFUSE", checkpoint_fingerprint=value)
+    assert callbacks == [] and not store._records
+
+
+def test_checkpoint_witness_respects_existing_retained_byte_limit(model, monkeypatch):
+    module, _store, source = model
+    record = prepare(model)
+    maximum = record.intent.accounted_bytes + 63
+    monkeypatch.setattr(module, "MAX_RETAINED_BYTES", maximum)
+    other = module.GLBStageStore()
+    with pytest.raises(module.invalid_argument("x").__class__):
+        other.prepare(source, "Asset", "a" * 64, overwrite_policy="REFUSE", checkpoint_fingerprint="b" * 64)
+    assert not other._records and other.retained_bytes == 0
+
+
+def test_active_intent_cannot_drop_checkpoint_witness(model):
+    module, store, source = model
+    record = store.prepare(source, "Asset", "a" * 64, overwrite_policy="REFUSE", checkpoint_fingerprint="b" * 64)
+    intent = record.intent
+    store.begin(intent.preview_id, intent.fingerprint, list(intent.plan.required_accepted_losses))
+    object.__setattr__(intent, "checkpoint_fingerprint", None)
+    with pytest.raises(module.invalid_argument("x").__class__):
+        store.note_allocation(intent.stage_id, "collection", "Asset", 1, 1000)
+    assert store.lookup(intent.stage_id).allocations == ()

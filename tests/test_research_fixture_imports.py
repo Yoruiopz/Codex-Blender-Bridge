@@ -2811,3 +2811,44 @@ def test_glb_runtime_setup_requires_canonical_enable_before_live_preferences_and
         assert set(vars(prefs)) == {"auto_start"}
     assert preferences.use_preferences_save is False
     assert fixture_imports.events == [] and fixture_imports.timers == []
+
+
+@pytest.mark.parametrize("change", [None, "missing", "extra", "name", "index", "lock", "weight", "second_group_weight", "missing_vertex", "bool_index", "float_index", "int_lock", "bool_membership_index"])
+def test_glb_runtime_shared_mesh_groups_require_both_complete_definitions(fixture_imports, change):
+    import copy
+    import importlib
+    script = importlib.import_module("scripts.blender_glb_stage_runtime_smoke")
+    helper = importlib.import_module("scripts.blender_glb_stage_smoke")
+    groups = {"object_identity": {"uid": 41, "pointer": 410}, "groups": [
+        {"index": 0, "name": "Runtime Protected Group", "lock_weight": False},
+        {"index": 1, "name": "Runtime Shared Group", "lock_weight": False}],
+        "memberships": [[[0, helper.numeric((weight,))[0]]] for weight in (.25, .75, .75)]}
+    if change == "missing":
+        groups["groups"].pop()
+    elif change == "extra":
+        groups["groups"].append({"index": 2, "name": "Extra", "lock_weight": False})
+    elif change in {"name", "index", "lock"}:
+        groups["groups"][1][{"name": "name", "index": "index", "lock": "lock_weight"}[change]] = {
+            "name": "Renamed", "index": 0, "lock": True}[change]
+    elif change == "weight":
+        groups["memberships"][0][0][1] = helper.numeric((.5,))[0]
+    elif change == "second_group_weight":
+        groups["memberships"][0].append([1, helper.numeric((.5,))[0]])
+    elif change == "missing_vertex":
+        groups["memberships"].pop()
+    if change == "bool_index":
+        groups["groups"][0]["index"] = False
+    elif change == "float_index":
+        groups["groups"][0]["index"] = 0.
+    elif change == "int_lock":
+        groups["groups"][0]["lock_weight"] = 0
+    elif change == "bool_membership_index":
+        groups["memberships"][0][0][0] = False
+    before = copy.deepcopy(groups)
+    if change is None:
+        script.assert_shared_group_fixture(groups)
+    else:
+        with pytest.raises(AssertionError):
+            script.assert_shared_group_fixture(groups)
+    assert groups == before
+    assert fixture_imports.events == [] and fixture_imports.timers == []

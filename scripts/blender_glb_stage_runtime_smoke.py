@@ -1426,6 +1426,27 @@ class TCPClient:
         self.socket.close()
 
 
+def assert_shared_group_fixture(groups):
+    """Both Objects share the complete Mesh definitions and deformation data."""
+    from scripts.blender_glb_stage_smoke import numeric
+
+    expected = [
+        {"index": 0, "name": "Runtime Protected Group", "lock_weight": False},
+        {"index": 1, "name": "Runtime Shared Group", "lock_weight": False}]
+    assert type(groups["groups"]) is list and len(groups["groups"]) == 2
+    assert all(type(row) is dict and set(row) == {"index", "name", "lock_weight"}
+               and type(row["index"]) is int and type(row["name"]) is str
+               and type(row["lock_weight"]) is bool for row in groups["groups"])
+    assert groups["groups"] == expected, {"expected": expected,
+        "observed": groups["groups"], "object_identity": groups["object_identity"]}
+    memberships = [[[0, numeric((weight,))[0]]] for weight in (.25, .75, .75)]
+    assert type(groups["memberships"]) is list and len(groups["memberships"]) == 3
+    assert all(type(row) is list and len(row) == 1 and type(row[0]) is list and len(row[0]) == 2
+               and type(row[0][0]) is int and type(row[0][1]) is str for row in groups["memberships"])
+    assert groups["memberships"] == memberships, {"expected": memberships,
+        "observed": groups["memberships"], "object_identity": groups["object_identity"]}
+
+
 class RuntimeFixture:
     """Owned main-thread setup, raw fault actions and independent observations."""
     def __init__(self, root, folder, bpy, attestation):
@@ -2004,8 +2025,7 @@ class RuntimeFixture:
                         groups = self.raw_observer.capture_object_groups(value, projection)
                         row.update(vertex_group_definitions=groups["groups"], memberships=groups["memberships"])
                         if value in (self.sentinel, self.sentinel_shared):
-                            assert len(groups["groups"]) == 1 and groups["groups"][0]["index"] == 0
-                            assert groups["memberships"] == [[[0, numeric((weight,))[0]]] for weight in (.25, .75, .75)]
+                            assert_shared_group_fixture(groups)
                     elif value.type == "ARMATURE":
                         row["pose_bones"] = [{"name": bone.name, "location": numeric(bone.location),
                             "rotation_mode": bone.rotation_mode, "euler": numeric(bone.rotation_euler),

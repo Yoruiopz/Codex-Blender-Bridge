@@ -433,3 +433,251 @@ def test_protected_reader_dependencies_reject_changes_before_foreign_call(addon_
             view.mesh_field(object(), "vertices")
     assert failure.value.context["reason"] == "GLB_PROTECTED_DEPENDENCY_ORIGIN_CHANGED"
     assert callbacks == []
+
+
+@pytest.fixture
+def checkpoint_role_model(addon_package):
+    """Qualified-access-shaped reads; this model is not native qualification."""
+    module = importlib.import_module(addon_package + ".glb_stage_runtime")
+    class Object:
+        pass
+    active, previous = Object(), Object()
+    for owner, uid, kind in ((active, 20, "EMPTY"), (previous, 21, "ARMATURE")):
+        owner.session_uid, owner.type = uid, kind
+        owner.modifiers = owner.constraints = owner.particle_systems = ()
+        owner.soft_body = owner.animation_data = None
+    particle = NS(object=previous)
+    settings = NS(particle_edit=particle)
+    scene = NS(tool_settings=settings)
+    scene.original = scene
+    context = NS(scene=scene, view_layer=NS(objects=NS(active=active)))
+    pointers = {id(scene): 10, id(settings): 30, id(particle): 35, id(active): 40, id(previous): 50}
+    counts = {id(scene): 1, id(active): 3, id(previous): 5}
+    case = NS(module=module, error_type=module.invalid_argument("x").__class__,
+        active=active, previous=previous, scene=scene, settings=settings,
+        particle=particle, pointers=pointers, counts=counts, context=context, calls=[], stopped=False)
+    def gate(label):
+        if case.stopped:
+            raise module.refused("MODELED_STOP_BEFORE_NATIVE_ENTRY")
+        case.calls.append(label)
+    def get(owner, name):
+        gate("get:"+name)
+        return getattr(owner, name)
+    def pointer(owner):
+        gate("pointer")
+        return pointers[id(owner)]
+    def access(label, function, *args):
+        gate(label)
+        return function(*args)
+    def callable_(owner, kind, name):
+        gate("callable:"+name)
+        assert owner is scene and kind == "ID" and name == "user_of_id"
+        return lambda target: counts[id(target)]
+    binding = NS(context=context, classes={"Object": Object}, get=get, _pointer=pointer,
+        _access=access, callable=callable_, length=lambda value: len(value),
+        _rna=lambda _type: NS(properties={}), _raw=lambda owner, name: getattr(owner, name),
+        items=lambda value: tuple(value), copy=lambda value: value)
+    case.binding = binding
+    case.operations = NS(_binding=binding)
+    case.view = object.__new__(module._ProtectedView)
+    case.view.binding = binding
+    case.ids = {"objects": {20: active, 21: previous}}
+    case.protected = {"objects": {20: {"complete": True}, 21: {"complete": True}}, "scope": "MODEL_ONLY"}
+    reader = importlib.import_module(addon_package + ".tools.asset_import")
+    case.view._complete_observation = case.ids, id(case.protected), reader._hash(case.protected)
+    def build(*, bind=True):
+        plan = module.GLBCheckpointRoles(case.operations, scene)
+        if bind:
+            plan.bind_protected(case.view, case.ids, case.protected)
+        return plan
+    case.build = build
+    def push():
+        old = particle.object
+        if old is not active:
+            counts[id(active)] += 1
+            if old is not None:
+                counts[id(old)] -= 1
+        counts[id(scene)] = 1
+        particle.object = active
+    case.push = push
+    return case
+
+
+@pytest.mark.parametrize("prior", ["none", "active", "rig", "mesh"])
+def test_checkpoint_roles_bind_previous_owner_and_exact_native_transfer(checkpoint_role_model, addon_package, monkeypatch, prior):
+    from checkpoint_completion_support import complete_plan_push
+    case = checkpoint_role_model
+    if prior == "none":
+        case.particle.object, case.counts[id(case.scene)] = None, 0
+    elif prior == "active":
+        case.particle.object = case.active
+    elif prior == "mesh":
+        case.previous.type = "MESH"
+    plan = case.build()
+    before = plan.authored()
+    first = plan.report()
+    assert first["protected_closure_bound"] and not first["native_push_completed"]
+    assert first["initial_owner_counts"][0] == [[20, 40], 3]
+    snapshots = []
+    original = plan.after_native_push
+    def observe_completion():
+        original()
+        snapshots.append(plan.report())
+    monkeypatch.setattr(plan, "after_native_push", observe_completion)
+    complete_plan_push(addon_package, monkeypatch, plan, effect=case.push)
+    assert snapshots and snapshots[0]["native_push_completed"]
+    assert snapshots[0]["after_readback_measured"] is False
+    plan.check_after_read()
+    after = plan.report()
+    assert after["after_readback_measured"] is True
+    assert plan.authored() == before  # Initial owner/settings seal is never rebased.
+    assert plan.expected == (1, 40)
+    assert case.counts[id(case.active)] == (3 if prior == "active" else 4)
+    assert case.counts[id(case.previous)] == (4 if prior in {"rig", "mesh"} else 5)
+    complete_plan_push(addon_package, monkeypatch, plan, effect=case.push)
+    assert plan.authored() == before and plan.report()["after_readback_measured"]
+
+
+@pytest.mark.parametrize("missing", ["current", "previous", "snapshot_current", "snapshot_previous", "replacement"])
+def test_checkpoint_role_previous_owner_requires_full_existing_protected_closure(checkpoint_role_model, missing):
+    case = checkpoint_role_model
+    if missing == "current":
+        del case.ids["objects"][20]
+    elif missing == "previous":
+        del case.ids["objects"][21]
+    elif missing.startswith("snapshot_"):
+        del case.protected["objects"][20 if missing == "snapshot_current" else 21]
+    else:
+        case.ids["objects"][21] = type(case.previous)()
+    with pytest.raises(case.error_type) as error:
+        case.build()
+    assert error.value.context["reason"] == "GLB_CHECKPOINT_COMPLETE_PROTECTED_OWNER_REQUIRED"
+
+
+@pytest.mark.parametrize("change", ["self", "role", "active", "previous_uid", "previous_pointer", "previous_count", "current_count"])
+def test_checkpoint_role_manual_changes_cannot_authorize_or_rebase_previous_owner(checkpoint_role_model, change):
+    case = checkpoint_role_model
+    plan = case.build()
+    expected, counts = plan.expected, plan.expected_counts
+    if change == "self":
+        case.counts[id(case.scene)] = 0
+    elif change == "role":
+        case.particle.object = case.active
+    elif change == "active":
+        case.context.view_layer.objects.active = case.previous
+    elif change == "previous_uid":
+        case.previous.session_uid += 1
+    elif change == "previous_pointer":
+        case.pointers[id(case.previous)] += 1
+    elif change == "previous_count":
+        case.counts[id(case.previous)] += 1
+    else:
+        case.counts[id(case.active)] += 1
+    with pytest.raises(case.error_type):
+        plan.check_after_read()
+    assert plan.expected == expected and plan.expected_counts == counts
+    assert not plan.report()["native_push_completed"]
+
+
+def test_checkpoint_role_unclaimed_push_does_not_predict_or_read_native_state(checkpoint_role_model):
+    case = checkpoint_role_model
+    plan = case.build()
+    before, calls = plan.report(), list(case.calls)
+    with pytest.raises(case.error_type) as error:
+        plan.after_native_push()
+    assert error.value.context["native_push_completion_valid"] is False
+    assert plan.report() == before and case.calls == calls
+
+
+def test_completed_checkpoint_claim_cannot_fake_independent_owner_count_readback(checkpoint_role_model, addon_package, monkeypatch):
+    from checkpoint_completion_support import complete_plan_push
+    case = checkpoint_role_model
+    plan = case.build()
+    def wrong_delta():
+        case.push()
+        case.counts[id(case.previous)] += 1
+    with pytest.raises(case.error_type):
+        complete_plan_push(addon_package, monkeypatch, plan, effect=wrong_delta)
+    report = plan.report()
+    assert report["native_push_completed"] is True
+    assert report["after_readback_measured"] is False
+    assert plan.expected_counts[1][1] == 4 and case.counts[id(case.previous)] == 5
+
+
+def test_stopped_checkpoint_role_keeps_cached_receipt_without_providers_or_native_reads(checkpoint_role_model):
+    case = checkpoint_role_model
+    plan = case.build()
+    cached, calls = plan.report(), list(case.calls)
+    case.stopped = True
+    with pytest.raises(case.error_type) as error:
+        plan.check_after_read()
+    assert error.value.context["reason"] == "MODELED_STOP_BEFORE_NATIVE_ENTRY"
+    assert case.calls == calls and plan.report() == cached
+
+
+@pytest.mark.parametrize("self_count,owner", [(0, "previous"), (1, "none"), (2, "previous"), (-1, "none")])
+def test_checkpoint_role_initial_pairs_remain_exact_not_wildcard(checkpoint_role_model, self_count, owner):
+    case = checkpoint_role_model
+    case.counts[id(case.scene)] = self_count
+    if owner == "none":
+        case.particle.object = None
+    with pytest.raises(case.error_type):
+        case.build()
+
+
+@pytest.mark.parametrize("owner_name,name", [("_ProtectedView", "unwrap"), ("GLBStageService", "_names")])
+@pytest.mark.parametrize("change", ["descriptor", "code"])
+def test_service_checks_static_helper_origin_before_authorization_callback(runtime_case, monkeypatch, owner_name, name, change):
+    runtime, owner, _context = runtime_case
+    module = importlib.import_module(runtime.__package__ + ".glb_stage_runtime")
+    cls = vars(module)[owner_name]
+    raw = vars(cls)[name]
+    assert type(raw) is staticmethod
+    calls = []
+    monkeypatch.setitem(vars(module), "__static_canary_calls", calls)
+    namespace = {"__static_canary_calls": calls}
+    exec("def foreign(*args, **kwargs):\n    __static_canary_calls.append('FOREIGN')\n    return None\n", namespace)
+    if change == "descriptor":
+        monkeypatch.setattr(cls, name, staticmethod(namespace["foreign"]))
+    else:
+        monkeypatch.setattr(raw.__func__, "__code__", namespace["foreign"].__code__)
+    with pytest.raises(runtime.BridgeError) as failure:
+        owner.glb_stage.check_context_factory(owner.executor)
+    assert failure.value.context["reason"] == "GLB_CANONICAL_SERVICE_CODE_ORIGIN_CHANGED"
+    assert calls == []
+
+
+@pytest.mark.parametrize("poison", ["missing", "inventory", "result", "changed_contents"])
+def test_checkpoint_protection_requires_actual_complete_observer_result(checkpoint_role_model, poison):
+    case = checkpoint_role_model
+    plan = case.build(bind=False)
+    if poison == "missing":
+        case.view._complete_observation = None
+    elif poison == "inventory":
+        case.view._complete_observation = dict(case.ids), id(case.protected), "0"*64
+    elif poison == "result":
+        case.protected = dict(case.protected)
+    else:
+        case.protected["objects"][21]["complete"] = False
+    calls = list(case.calls)
+    with pytest.raises(case.error_type) as error:
+        plan.bind_protected(case.view, case.ids, case.protected)
+    assert error.value.context["reason"] == "GLB_CHECKPOINT_COMPLETE_PROTECTED_OWNER_REQUIRED"
+    assert plan.bound_witness is None and case.calls == calls
+
+
+@pytest.mark.parametrize("name", ["_ProtectedView", "_ProtectedValue", "_DetachedCollection", "GLBCheckpointRoles"])
+def test_service_checks_protected_class_binding_before_constructor(runtime_case, monkeypatch, name):
+    runtime, owner, _context = runtime_case
+    module = importlib.import_module(runtime.__package__ + ".glb_stage_runtime")
+    calls = []
+
+    def foreign(*args, **kwargs):
+        calls.append("FOREIGN_CONSTRUCTOR")
+        raise AssertionError("Foreign constructor must not be entered")
+
+    monkeypatch.setattr(module, name, foreign)
+    with pytest.raises(runtime.BridgeError) as failure:
+        owner.glb_stage.check_context_factory(owner.executor)
+    assert failure.value.context["reason"] == "GLB_CANONICAL_SERVICE_CODE_ORIGIN_CHANGED"
+    assert calls == []
