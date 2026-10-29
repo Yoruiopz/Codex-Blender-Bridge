@@ -3243,6 +3243,50 @@ def test_glb_trace_adapter_has_six_return_pairs_and_no_line_or_opcode_events(fix
     assert len(assignments) == 2 and all(isinstance(node.value, ast.Constant) and node.value.value is False for node in assignments)
 
 
+def test_glb_trace_call_admission_matches_original_observer_names(fixture_imports):
+    script = importlib.import_module("scripts.blender_glb_stage_runtime_smoke")
+    tree = ast.parse(Path(script.__file__).read_text())
+    cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "RuntimeFixture")
+    profile = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == "profile")
+    callback = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "selective_trace_callbacks")
+    called = next(node for node in callback.body if isinstance(node, ast.FunctionDef) and node.name == "called")
+    original = ast.literal_eval(profile.body[1].test.values[0].comparators[0])
+    admitted = ast.literal_eval(called.body[2].test.values[0].comparators[0])
+    assert original == admitted and len(admitted) == 13
+    seen = []
+    trace, _ = script.selective_trace_callbacks(lambda frame, event, value: seen.append((frame, event, value)))
+    for name in sorted(admitted):
+        frame = glb_runtime_profile_frame("unrelated.py", name)
+        trace(frame, "call", "value")
+        assert seen[-1] == (frame, "call", "value")
+        assert frame.f_trace_lines is False and frame.f_trace_opcodes is False
+    assert len(seen) == 13
+
+
+@pytest.mark.parametrize("path", ["ordinary.py", "tools/not_glb_stage.py", "foreign/glb_stage.py"])
+@pytest.mark.parametrize("name", ["unobserved", "<genexpr>", "<lambda>"])
+def test_glb_trace_discards_irrelevant_calls_without_observer_or_local_flags(fixture_imports, path, name):
+    script = importlib.import_module("scripts.blender_glb_stage_runtime_smoke")
+    trace, _ = script.selective_trace_callbacks(lambda *_args: pytest.fail("Irrelevant CALL reached observer"))
+    frame = glb_runtime_profile_frame(path, name)
+    assert trace(frame, "call", None) is None
+    assert not hasattr(frame, "f_trace_lines") and not hasattr(frame, "f_trace_opcodes")
+
+
+@pytest.mark.parametrize("backslashes", [False, True])
+@pytest.mark.parametrize("name", ["future_glb_wrapper", "<lambda>", "unknown_factory"])
+def test_glb_trace_admits_unknown_handler_calls_with_normalized_exact_path(fixture_imports, backslashes, name):
+    script = importlib.import_module("scripts.blender_glb_stage_runtime_smoke")
+    seen = []
+    trace, _ = script.selective_trace_callbacks(lambda frame, event, value: seen.append((frame, event, value)))
+    frame = glb_runtime_profile_frame("tools/glb_stage.py", name)
+    if backslashes:
+        frame.f_code.co_filename = frame.f_code.co_filename.replace("/", "\\")
+    assert trace(frame, "call", "value") is None
+    assert seen == [(frame, "call", "value")]
+    assert frame.f_trace_lines is False and frame.f_trace_opcodes is False
+
+
 def glb_failure_cache_model():
     identifier = "last-request"
     data = {"completed": False, "tcp": [{"request": {"id": "old", "method": "old"}},

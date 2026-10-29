@@ -1515,10 +1515,18 @@ def selective_trace_callbacks(observe):
     def called(frame, event, value):
         if event != "call":
             return None
+        name = frame.f_code.co_name
+        if (name not in {
+                "submit", "_capture_mesh_return", "attach_job", "_invoke_owned", "enter",
+                "capture_job_markers", "_access", "check", "advance", "permission_snapshot",
+                "claim_pending", "begin_owned", "_stamp"}
+                and not (frame.f_code.co_filename.endswith("glb_stage.py")
+                    and frame.f_code.co_filename.replace("\\", "/").endswith(
+                        "/blender_codex_bridge/tools/glb_stage.py"))):
+            return None
         frame.f_trace_lines = False
         frame.f_trace_opcodes = False
         observe(frame, event, value)
-        name = frame.f_code.co_name
         if name in {"submit", "_capture_mesh_return", "attach_job", "_invoke_owned", "_access", "advance"}:
             path = frame.f_code.co_filename.replace("\\", "/")
             if any(name == expected and path.endswith("/blender_codex_bridge/" + suffix)
