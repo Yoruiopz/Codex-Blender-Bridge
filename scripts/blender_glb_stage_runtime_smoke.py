@@ -1652,6 +1652,10 @@ class RuntimeFixture:
         threading.Thread(target=self.worker, name="GLBStageRuntimeTCPFixture", daemon=True).start()
 
     def profile(self, frame, event, _value):
+        # All observations below use Python call/return frames. C events carry
+        # no fixture evidence and must not pay thread/path dispatch per getter.
+        if event not in ("call", "return"):
+            return
         # Transport lifecycle objects are ordinary thread-safe Python events,
         # never bpy wrappers. The network-thread observer performs no bpy work.
         if event == "return" and frame.f_code.co_filename.replace("\\", "/").endswith("/blender_codex_bridge/server.py") and frame.f_code.co_name == "submit":

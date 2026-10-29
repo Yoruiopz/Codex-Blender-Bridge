@@ -2852,3 +2852,62 @@ def test_glb_runtime_shared_mesh_groups_require_both_complete_definitions(fixtur
             script.assert_shared_group_fixture(groups)
     assert groups == before
     assert fixture_imports.events == [] and fixture_imports.timers == []
+
+
+@pytest.mark.parametrize("event", ["c_call", "c_return", "c_exception"])
+def test_glb_runtime_profile_ignores_c_events_before_frame_or_thread_access(fixture_imports, monkeypatch, event):
+    script = importlib.import_module("scripts.blender_glb_stage_runtime_smoke")
+    class ForeignFrame:
+        def __getattribute__(self, _name):
+            pytest.fail("C event accessed frame data")
+    monkeypatch.setattr(script.threading, "current_thread", lambda: pytest.fail("C event dispatched thread"))
+    fixture = object.__new__(script.RuntimeFixture)
+    assert fixture.profile(ForeignFrame(), event, object()) is None
+
+
+def test_glb_runtime_profile_retains_python_request_and_native_evidence_trace(fixture_imports):
+    script = importlib.import_module("scripts.blender_glb_stage_runtime_smoke")
+    fixture = object.__new__(script.RuntimeFixture)
+    fixture.current_requests, fixture.watch = [], None
+    fixture.request_lifetimes, fixture.start_acceptances, fixture.request_access = {}, {}, {}
+    fixture.request_read_effects, fixture.marker_entries, fixture.histories = {}, {}, {}
+    fixture.data = {"executor_history_frames": []}
+    request = NS(id="preview-model", method="asset.glb_stage_preview", _lifecycle=object())
+    def frame(path, name, **values):
+        return NS(f_code=NS(co_filename="/owned/addon/blender_codex_bridge/" + path, co_name=name), f_locals=values)
+    fixture.profile(frame("server.py", "submit", request=request), "return", None)
+    assert fixture.request_lifetimes == {request.id: request._lifecycle}
+    invocation = frame("executor.py", "_invoke_owned", request=request, undo_boundary=True, handler_entered=True, history_record=None)
+    fixture.profile(invocation, "call", None)
+    assert fixture.current_requests == [request.id]
+    cell = {"kind": "VERTEX_GROUP_READ", "attempts_entered": 1}
+    fixture.profile(frame("glb_stage_protected_mesh.py", "enter", cell=cell), "call", None)
+    fixture.profile(frame("checkpoints.py", "capture_job_markers"), "call", None)
+    counts = {"get:data": {"entered": 2, "returned": 1}}
+    snapshots = []
+    def snapshot():
+        snapshots.append("snapshot")
+        return counts
+    fixture.profile(frame("glb_stage_profile.py", "_access", self=NS(_runtime_gate=NS(snapshot=snapshot))), "return", None)
+    fixture.profile(invocation, "return", {"preview_id": "pure-model"})
+    assert fixture.current_requests == []
+    assert snapshots == ["snapshot"] and fixture.request_access == {request.id: counts}
+    assert fixture.request_read_effects == {request.id: [cell]}
+    assert fixture.request_read_effects[request.id][0] is not cell
+    assert fixture.marker_entries == {request.id: 1}
+    history = fixture.histories[request.id]
+    assert history["request_id"] == request.id and history["method"] == request.method
+    assert history["checkpoint_entered"] is True and history["handler_entered"] is True
+    assert history["raw_history"] is None and history["accepted_result"] is None
+    assert fixture.data["executor_history_frames"] == [history]
+
+
+def test_glb_runtime_profile_retains_worker_lifecycle_before_main_thread_filter(fixture_imports, monkeypatch):
+    script = importlib.import_module("scripts.blender_glb_stage_runtime_smoke")
+    fixture = object.__new__(script.RuntimeFixture)
+    fixture.request_lifetimes = {}
+    request = NS(id="worker-submit", _lifecycle=object())
+    frame = NS(f_code=NS(co_filename="/owned/blender_codex_bridge/server.py", co_name="submit"), f_locals={"request": request})
+    monkeypatch.setattr(script.threading, "current_thread", lambda: object())
+    fixture.profile(frame, "return", None)
+    assert fixture.request_lifetimes == {request.id: request._lifecycle}
