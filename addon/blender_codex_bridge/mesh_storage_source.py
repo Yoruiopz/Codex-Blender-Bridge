@@ -558,6 +558,21 @@ def metadata_matches(actual, initial, completed):
         raise contract.refused("STORAGE_FORWARD_METADATA_CHANGED")
 
 
+def _checkpoint_descriptor_error(facts):
+    """Attach only already-read bounded builtin facts; no failure-time RNA."""
+    error = contract.refused("STORAGE_CHECKPOINT_RUNTIME_DESCRIPTOR_CHANGED")
+    cached = {}
+    for key, value in facts.items():
+        if type(key) is not str or len(key) > 64:
+            continue
+        if (value is None or type(value) is bool
+                or (type(value) is str and len(value) <= 256)
+                or (type(value) is int and -(2**63) <= value < 2**63)):
+            cached[key] = value
+    error.context["checkpoint_descriptor"] = cached
+    return error
+
+
 class _CheckpointRoleAccess:
     """B2-only checked native reads; shared Scene readers stay unchanged."""
     __slots__ = ("_origin", "array_type", "base", "bpy", "check", "collection_getter", "collection_type", "getter", "pointer", "struct_type", "types")
@@ -694,16 +709,37 @@ class _CheckpointRoleAccess:
         allowed = checkpoint_proof.RUNTIME.get(identifier, {})
         for prop in properties:
             name, kind = self.raw(prop, "identifier"), self.raw(prop, "type")
-            if self.raw(prop, "is_runtime"):
-                if (allowed.get(name) != kind or self.raw(prop, "is_readonly") is not (name != "active_selection_set")
-                        or self.raw(prop, "is_registered")):
-                    raise contract.refused("STORAGE_CHECKPOINT_RUNTIME_DESCRIPTOR_CHANGED")
-                if name == "active_selection_set" and (self.raw(prop, "array_length") or self.raw(prop, "default") != 0):
-                    raise contract.refused("STORAGE_CHECKPOINT_RUNTIME_DESCRIPTOR_CHANGED")
+            runtime = self.raw(prop, "is_runtime")
+            if runtime:
+                expected = allowed.get(name)
+                facts = {"owner_identifier": identifier, "property": name, "observed_kind": kind,
+                         "expected_kind": expected, "is_runtime": runtime}
+                if expected != kind:
+                    raise _checkpoint_descriptor_error(facts)
+                readonly = self.raw(prop, "is_readonly")
+                facts.update(readonly=readonly, expected_readonly=name != "active_selection_set")
+                if readonly is not (name != "active_selection_set"):
+                    raise _checkpoint_descriptor_error(facts)
+                registered = self.raw(prop, "is_registered")
+                facts["registered"] = registered
+                if registered:
+                    raise _checkpoint_descriptor_error(facts)
+                if name == "active_selection_set":
+                    array_length = self.raw(prop, "array_length")
+                    facts["array_length"] = array_length
+                    if array_length:
+                        raise _checkpoint_descriptor_error(facts)
+                    default = self.raw(prop, "default")
+                    facts["default"] = default
+                    if default != 0:
+                        raise _checkpoint_descriptor_error(facts)
                 if kind in {"POINTER", "COLLECTION"}:
                     fixed = self.raw(prop, "fixed_type")
-                    if self.raw(fixed, "identifier") != checkpoint_proof.RUNTIME_FIXED.get((identifier, name)):
-                        raise contract.refused("STORAGE_CHECKPOINT_RUNTIME_DESCRIPTOR_CHANGED")
+                    observed = self.raw(fixed, "identifier")
+                    expected_fixed = checkpoint_proof.RUNTIME_FIXED.get((identifier, name))
+                    facts.update(fixed_identifier=observed, expected_fixed_identifier=expected_fixed)
+                    if observed != expected_fixed:
+                        raise _checkpoint_descriptor_error(facts)
         # Runtime declarations such as Scene.cycles carry Python markers.
         # Screen their native metadata here; raw() still proves every field
         # actually read before dispatching its getter. Do not read markers.

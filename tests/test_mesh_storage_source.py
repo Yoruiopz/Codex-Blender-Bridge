@@ -57,13 +57,15 @@ def checkpoint_case(source, roles, monkeypatch):  # noqa: F811
     original_find = source.graph._class_find
     case.native_events, case.native_after_stop = [], []
     case.live = {"stopped": False}
+    case.native_hook = None
     def note(event):
         case.native_events.append(event)
         if case.live["stopped"]:
             case.native_after_stop.append(event)
     def native_get(owner, name):
         note(("get", id(owner), name))
-        return getattr(owner, name)
+        result = getattr(owner, name)
+        return result if case.native_hook is None else case.native_hook(owner, name, result)
     def native_pointer(owner):
         note(("pointer", id(owner)))
         return owner.as_pointer()
@@ -362,6 +364,95 @@ def test_b2_runtime_marker_signature_drift_refuses_before_its_getter(checkpoint_
     with pytest.raises(c.source.contract.BridgeError) as caught:
         c.capture()
     assert caught.value.context["reason"] == "STORAGE_CHECKPOINT_RUNTIME_DESCRIPTOR_CHANGED"
+    assert calls == []
+
+
+@pytest.mark.parametrize("change", ["unknown", "kind", "readonly", "registered", "fixed_type", "array_length", "default"])
+def test_b2_runtime_descriptor_failure_reports_only_original_read_prefix(checkpoint_case, change):
+    c = checkpoint_case
+    role, _ = c.capture()
+    name = "unreviewed" if change == "unknown" else "active_selection_set" if change in {"array_length", "default"} else "cycles"
+    is_scalar = name == "active_selection_set"
+    fixed = NS(identifier="ForeignSettings" if change == "fixed_type" else "CyclesObjectSettings")
+    metadata = prop(name, "STRING" if change == "kind" else "INT" if is_scalar else "POINTER",
+                    is_runtime=True, is_readonly=not (is_scalar or change == "readonly"),
+                    is_registered=change == "registered", fixed_type=fixed,
+                    array_length=1 if change == "array_length" else 0, default=1 if change == "default" else 0)
+    c.active.bl_rna.properties.append(metadata)
+    c.native_events.clear()
+    with pytest.raises(c.source.contract.BridgeError) as caught:
+        role.access.descriptors(c.active)
+    error = caught.value
+    assert error.context["reason"] == "STORAGE_CHECKPOINT_RUNTIME_DESCRIPTOR_CHANGED"
+    facts = error.context["checkpoint_descriptor"]
+    assert facts["owner_identifier"] == "Object" and facts["property"] == name
+    assert facts["observed_kind"] == metadata.type and facts["is_runtime"] is True
+    expected_reads = ["identifier", "type", "is_runtime"]
+    if change not in {"unknown", "kind"}:
+        expected_reads.append("is_readonly")
+        assert facts["readonly"] is metadata.is_readonly
+        if change != "readonly":
+            expected_reads.append("is_registered")
+            assert facts["registered"] is metadata.is_registered
+    if change in {"array_length", "default"}:
+        expected_reads.append("array_length")
+        assert facts["array_length"] == metadata.array_length
+        if change == "default":
+            expected_reads.append("default")
+            assert facts["default"] == 1
+        else:
+            assert "default" not in facts
+    if change == "fixed_type":
+        expected_reads.append("fixed_type")
+        assert facts["fixed_identifier"] == "ForeignSettings"
+        assert facts["expected_fixed_identifier"] == "CyclesObjectSettings"
+    assert [event[2] for event in c.native_events if event[0] == "get" and event[1] == id(metadata)] == expected_reads
+    assert c.native_after_stop == []
+
+
+@pytest.mark.parametrize("fault", ["exception", "stop"])
+def test_b2_descriptor_diagnostic_never_replaces_primary_native_failure(checkpoint_case, fault):
+    c = checkpoint_case
+    primary = c.source.contract.BridgeError("TIMEOUT", "Original native metadata failure")
+    def check():
+        if c.live["stopped"]:
+            raise primary
+    c.gate.pure = check
+    role, _ = c.capture()
+    metadata = prop("cycles", "POINTER", is_runtime=True, is_readonly=False,
+                    fixed_type=NS(identifier="CyclesObjectSettings"))
+    c.active.bl_rna.properties.append(metadata)
+    def hook(owner, name, value):
+        if owner is metadata and name == "is_readonly":
+            if fault == "exception":
+                raise primary
+            c.live["stopped"] = True
+        return value
+    c.native_hook = hook
+    c.native_events.clear()
+    with pytest.raises(c.source.contract.BridgeError) as caught:
+        role.access.descriptors(c.active)
+    assert caught.value is primary
+    assert "checkpoint_descriptor" not in primary.context
+    reads = [event[2] for event in c.native_events if event[0] == "get" and event[1] == id(metadata)]
+    assert reads == ["identifier", "type", "is_runtime", "is_readonly"]
+    assert c.native_after_stop == []
+
+
+def test_b2_descriptor_diagnostic_omits_foreign_values_without_dispatch(source):
+    calls = []
+    class Foreign:
+        def __str__(self):
+            calls.append("string")
+            return "foreign"
+        def __bool__(self):
+            calls.append("truthiness")
+            return True
+        def __repr__(self):
+            calls.append("repr")
+            return "foreign"
+    error = source._checkpoint_descriptor_error({"owner_identifier": "Scene", "property": "cycles", "readonly": Foreign()})
+    assert error.context["checkpoint_descriptor"] == {"owner_identifier": "Scene", "property": "cycles"}
     assert calls == []
 
 

@@ -22,33 +22,38 @@ def test_first_deprecated_RNA_reader_warning_keeps_canonical_cache_and_namespace
     source = importlib.import_module(addon_package + ".mesh_storage_source")
     registry = graph.__warningregistry__
     assert type(registry) is dict and source.graph is graph
-    registry.clear()
-    seal = source.SourceSeal.capture()
-    namespace = {name: id(value) for name, value in vars(graph).items()}
-    entered = []
+    saved = dict(registry)
+    try:
+        registry.clear()
+        seal = source.SourceSeal.capture()
+        namespace = {name: id(value) for name, value in vars(graph).items()}
+        entered = []
 
-    class Material:
-        @property
-        def use_nodes(self):
-            entered.append("use_nodes")
-            # Native 5.2 RNA attributes the deprecation to its Python caller.
-            warnings.warn("'Material.use_nodes' is expected to be removed in Blender 6.0",
-                          DeprecationWarning, stacklevel=2)
-            return True
+        class Material:
+            @property
+            def use_nodes(self):
+                entered.append("use_nodes")
+                # Native 5.2 RNA attributes the deprecation to its Python caller.
+                warnings.warn("'Material.use_nodes' is expected to be removed in Blender 6.0",
+                              DeprecationWarning, stacklevel=2)
+                return True
 
-    reader = NS(catalog=lambda *_args: [Property("use_nodes", "BOOLEAN")], check=seal.verify)
-    with warnings.catch_warnings(record=True) as observed:
-        warnings.simplefilter("default", DeprecationWarning)
-        assert graph._primitive_fields(reader, Material(), "Material") == {"use_nodes": True}
-        seal.verify()
-        assert graph._primitive_fields(reader, Material(), "Material") == {"use_nodes": True}
-        seal.verify()
-    assert entered == ["use_nodes", "use_nodes"] and len(observed) == 1
-    assert observed[0].category is DeprecationWarning and observed[0].filename == graph.__file__
-    assert type(registry["version"]) is int
-    assert any(type(key) is tuple and key[1] is DeprecationWarning for key in registry)
-    assert graph.__warningregistry__ is registry
-    assert {name: id(value) for name, value in vars(graph).items()} == namespace
+        reader = NS(catalog=lambda *_args: [Property("use_nodes", "BOOLEAN")], check=seal.verify)
+        with warnings.catch_warnings(record=True) as observed:
+            warnings.simplefilter("default", DeprecationWarning)
+            assert graph._primitive_fields(reader, Material(), "Material") == {"use_nodes": True}
+            seal.verify()
+            assert graph._primitive_fields(reader, Material(), "Material") == {"use_nodes": True}
+            seal.verify()
+        assert entered == ["use_nodes", "use_nodes"] and len(observed) == 1
+        assert observed[0].category is DeprecationWarning and observed[0].filename == graph.__file__
+        assert type(registry["version"]) is int
+        assert any(type(key) is tuple and key[1] is DeprecationWarning for key in registry)
+        assert graph.__warningregistry__ is registry
+        assert {name: id(value) for name, value in vars(graph).items()} == namespace
+    finally:
+        registry.clear()
+        registry.update(saved)
 
 
 class Property:
