@@ -639,27 +639,102 @@ def test_all_four_graph_literal_tables_are_mandatory_with_separate_fact_budget(s
     # Expanded source-fact wrappers remain invalid as client request/plan data.
     with pytest.raises(env.source.BridgeError):
         env.source._plain(facts)
-    assert all(type(key) is tuple and len(key) == 2 and all(type(part) is str for part in key)
-               for key in env.graph._RUNTIME_MARKER_ROWS)
+    # Graph2 pins are recursively immutable tuple maps, not mutable dicts.
+    # No mutable descendant can hide behind the retained identity fast path.
+    def immutable(value):
+        return value is None or type(value) in {str, bytes, bool, int} or (
+            type(value) is tuple and all(immutable(item) for item in value))
+    for name in required:
+        table = getattr(env.graph, name)
+        assert type(table) is tuple and immutable(table)
+        assert env.source._deeply_immutable_literal(table)
+        with pytest.raises(TypeError):
+            table[0] = table[0]
+    assert all(type(row) is tuple and len(row) == 2
+               and type(row[0]) is tuple and len(row[0]) == 2
+               and all(type(part) is str for part in row[0])
+               and type(row[1]) is tuple and len(row[1]) == 6
+               for row in env.graph._RUNTIME_MARKER_ROWS)
 
 
 @pytest.mark.parametrize("table", ["_FIXED_TARGETS", "_RUNTIME_MARKER_ROWS"])
-def test_current_provider_cannot_mutate_captured_graph_table_in_place(source_env, monkeypatch, table):
+@pytest.mark.parametrize("boundary", ["before_provider", "during_provider"])
+def test_nested_graph_pin_rebinding_refuses_before_further_provider_or_native_work(
+    source_env, monkeypatch, table, boundary,
+):
     env = source_env
+    original = getattr(env.graph, table)
+    if table == "_FIXED_TARGETS":
+        build = env.native.bpy.app.build_hash
+        builds = dict(original)
+        kinds = dict(builds[build])
+        fields = dict(kinds["Material"])
+        assert fields["node_tree"] == "ShaderNodeTree"
+        fields["node_tree"] = "Object"
+        kinds["Material"] = tuple(fields.items())
+        builds[build] = tuple(kinds.items())
+        changed = tuple(builds.items())
+    else:
+        key = ("Scene", "cycles")
+        assert dict(original)[key][0] == "POINTER"
+        changed = tuple((name, ("INT", *values[1:]) if name == key else values)
+                        for name, values in original)
+    assert changed != original and type(changed) is tuple
+    before, native = dict(env.flags), list(env.native.calls)
+    at_hook = []
     def mutate():
         env.flags["hook"] = None
+        at_hook.append(list(env.native.calls))
+        monkeypatch.setattr(env.graph, table, changed)
+    if boundary == "before_provider":
+        monkeypatch.setattr(env.graph, table, changed)
+    else:
+        env.flags["hook"] = mutate
+    with pytest.raises(env.source.BridgeError) as failure:
+        preview(env)
+    assert failure.value.context["reason"] == "DOMAIN_CONSTANT_CHANGED"
+    assert env.flags["handler"] == env.flags["captures"] == env.flags["foreign"] == env.flags["writes"] == 0
+    if boundary == "before_provider":
+        assert env.flags == before and env.native.calls == native and at_hook == []
+    else:
+        assert len(at_hook) == 1 and env.native.calls == at_hook[0]
+        assert env.flags["grants"] > before["grants"]
+
+
+@pytest.mark.parametrize("table", ["_FIXED_TARGETS", "_RUNTIME_MARKER_ROWS"])
+def test_provider_in_place_mutation_of_captured_mutable_model_alias_remains_refused(
+    source_env, monkeypatch, table,
+):
+    """A model-only mutable alias keeps coverage beyond immutable product pins."""
+    env = source_env
+    original = getattr(env.graph, table)
+    if table == "_FIXED_TARGETS":
+        alias = {build: {kind: dict(fields) for kind, fields in rows} for build, rows in original}
+    else:
+        alias = dict(original)
+    monkeypatch.setattr(env.graph, "_MODELED_MUTABLE_PIN_ALIAS", alias, raising=False)
+    env.source.bind_registry(env.runtime.registry)
+    assert not env.source._deeply_immutable_literal(alias)
+    at_hook = []
+    def mutate():
+        env.flags["hook"] = None
+        at_hook.append(list(env.native.calls))
         if table == "_FIXED_TARGETS":
-            values = env.graph._FIXED_TARGETS[env.native.bpy.app.build_hash]["Material"]
+            values = alias[env.native.bpy.app.build_hash]["Material"]
+            assert values["node_tree"] == "ShaderNodeTree"
             monkeypatch.setitem(values, "node_tree", "Object")
         else:
             key = ("Scene", "cycles")
-            values = env.graph._RUNTIME_MARKER_ROWS[key]
-            monkeypatch.setitem(env.graph._RUNTIME_MARKER_ROWS, key, ("INT", *values[1:]))
+            values = alias[key]
+            assert values[0] == "POINTER"
+            monkeypatch.setitem(alias, key, ("INT", *values[1:]))
     env.flags["hook"] = mutate
     with pytest.raises(env.source.BridgeError) as failure:
         preview(env)
     assert failure.value.context["reason"] == "DOMAIN_CONSTANT_CHANGED"
-    assert env.flags["captures"] == env.flags["foreign"] == env.flags["writes"] == 0
+    assert getattr(env.graph, table) is original
+    assert len(at_hook) == 1 and env.native.calls == at_hook[0]
+    assert env.flags["handler"] == env.flags["captures"] == env.flags["foreign"] == env.flags["writes"] == 0
 
 
 @pytest.mark.parametrize("table", ["_CATALOG_HASHES", "_STATIC_CATALOG_HASHES", "_FIXED_TARGETS", "_RUNTIME_MARKER_ROWS"])
