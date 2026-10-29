@@ -2870,6 +2870,7 @@ def test_glb_runtime_profile_retains_python_request_and_native_evidence_trace(fi
     fixture = object.__new__(script.RuntimeFixture)
     fixture.current_requests, fixture.watch = [], None
     fixture.request_lifetimes, fixture.start_acceptances, fixture.request_access = {}, {}, {}
+    fixture.pending_request_gates = {}
     fixture.request_read_effects, fixture.marker_entries, fixture.histories = {}, {}, {}
     fixture.data = {"executor_history_frames": []}
     request = NS(id="preview-model", method="asset.glb_stage_preview", _lifecycle=object())
@@ -2911,3 +2912,213 @@ def test_glb_runtime_profile_retains_worker_lifecycle_before_main_thread_filter(
     monkeypatch.setattr(script.threading, "current_thread", lambda: object())
     fixture.profile(frame, "return", None)
     assert fixture.request_lifetimes == {request.id: request._lifecycle}
+
+
+def glb_runtime_shader_fixture(*, world=False, packed=False):
+    """Independent fixed raw RNA shape, with no actual Blender construction."""
+    def identity(name, uid, cls):
+        return dict(library=None, override_library=None, name=name, session_uid=uid,
+                    as_pointer=lambda: uid * 10, users=1, use_fake_user=False, bl_rna=NS(identifier=cls))
+    image = NS(**identity("Packed", 30, "Image")) if packed else None
+    source = NS(bl_idname="ShaderNodeBackground" if world else "ShaderNodeBsdfPrincipled", name="Source",
+                location=[-0., 0.], width=240., mute=False,
+                inputs=[NS(type="BOOLEAN", identifier="Boolean", default_value=True),
+                        NS(type="VALUE", identifier="Float", default_value=-0.),
+                        NS(type="RGBA", identifier="Color", default_value=[1., 0., 0., 1.])])
+    output = NS(bl_idname="ShaderNodeOutputWorld" if world else "ShaderNodeOutputMaterial", name="Output",
+                location=[300., 0.], width=140., mute=False, inputs=[], is_active_output=True, target="ALL")
+    nodes = [source, output]
+    links = [NS(from_node=source, from_socket=NS(identifier="Background" if world else "BSDF"),
+                to_node=output, to_socket=NS(identifier="Surface"))]
+    if packed:
+        texture = NS(bl_idname="ShaderNodeTexImage", name="Packed texture", location=[-300., 0.], width=220., mute=False,
+                     inputs=[NS(type="VECTOR", identifier="Vector", default_value=[0., -0., 0.])], image=image,
+                     interpolation="Linear", projection="FLAT", projection_blend=0., extension="REPEAT")
+        nodes.append(texture)
+        links.append(NS(from_node=texture, from_socket=NS(identifier="Color"),
+                        to_node=source, to_socket=NS(identifier="Base Color")))
+    tree = NS(**identity("Tree", 20, "ShaderNodeTree"), nodes=nodes, links=links)
+    material = NS(**identity("Material", 10, "Material"), diffuse_color=[.5, .5, .5, 1.],
+                  use_backface_culling=False, use_nodes=True, node_tree=tree)
+    return NS(tree=tree, material=material, image=image, source=source, output=output)
+
+
+@pytest.mark.parametrize("world,packed", [(False, False), (False, True), (True, False)])
+def test_glb_runtime_protected_tree_oracle_observes_each_exact_fixture_graph(fixture_imports, world, packed):
+    script = importlib.import_module("scripts.blender_glb_stage_runtime_smoke")
+    model = glb_runtime_shader_fixture(world=world, packed=packed)
+    row = script.protected_tree_row(model.tree, image=model.image, world=world)
+    assert len(row["nodes"]) == (3 if packed else 2) and len(row["links"]) == (2 if packed else 1)
+    source = next(node for node in row["nodes"] if node["name"] == "Source")
+    assert source["location"] == ["00000080", "00000000"]
+    assert source["inputs"][0]["default"] == [True]
+    assert source["inputs"][1]["default"] == ["00000080"]
+    assert next(node for node in row["nodes"] if node["name"] == "Output")["active_output"] is True
+    if packed:
+        texture = next(node for node in row["nodes"] if node["type"] == "ShaderNodeTexImage")
+        assert texture["image"]["uid"] == 30
+        assert (texture["interpolation"], texture["projection"], texture["projection_blend"], texture["extension"]) == (
+            "Linear", "FLAT", "00000000", "REPEAT")
+        assert script.protected_material_row(model.material, image=model.image)["tree"] == row
+
+
+@pytest.mark.parametrize("fault", ["extra_node", "missing_node", "duplicate_kind", "extra_link", "missing_link", "wrong_socket", "wrong_target", "other_image", "wrong_profile", "boolean_as_integer"])
+def test_glb_runtime_protected_tree_oracle_rejects_unexpected_graphs_and_bindings(fixture_imports, fault):
+    script = importlib.import_module("scripts.blender_glb_stage_runtime_smoke")
+    model = glb_runtime_shader_fixture(packed=True)
+    world = False
+    if fault == "extra_node":
+        model.tree.nodes.append(model.source)
+    elif fault == "missing_node":
+        model.tree.nodes.pop()
+    elif fault == "duplicate_kind":
+        model.tree.nodes[0] = model.output
+    elif fault == "extra_link":
+        model.tree.links.append(model.tree.links[0])
+    elif fault == "missing_link":
+        model.tree.links.pop()
+    elif fault == "wrong_socket":
+        model.tree.links[-1].from_socket.identifier = "Alpha"
+    elif fault == "wrong_target":
+        model.tree.links[-1].to_socket.identifier = "Roughness"
+    elif fault == "other_image":
+        model.tree.nodes[-1].image = NS(session_uid=30)
+    elif fault == "wrong_profile":
+        world = True
+    else:
+        model.source.inputs[0].default_value = 1
+    with pytest.raises(AssertionError):
+        script.protected_tree_row(model.tree, image=model.image, world=world)
+
+
+def test_glb_runtime_protected_tree_oracle_keeps_binding_and_authored_socket_bits(fixture_imports):
+    script = importlib.import_module("scripts.blender_glb_stage_runtime_smoke")
+    model = glb_runtime_shader_fixture(packed=True)
+    baseline = script.protected_tree_row(model.tree, image=model.image)
+    for owner, field, changed in ((model.source.inputs[1], "default_value", 0.),
+                                  (model.output, "is_active_output", False),
+                                  (model.output, "target", "CYCLES"),
+                                  (model.tree.nodes[-1], "projection_blend", .5),
+                                  (model.tree.nodes[-1], "extension", "CLIP"),
+                                  (model.tree.nodes[-1], "interpolation", "Closest")):
+        original = getattr(owner, field)
+        setattr(owner, field, changed)
+        assert script.protected_tree_row(model.tree, image=model.image) != baseline
+        setattr(owner, field, original)
+    assert script.protected_tree_row(model.tree, image=model.image) == baseline
+
+
+def glb_runtime_profile_model(script):
+    fixture = object.__new__(script.RuntimeFixture)
+    fixture.current_requests, fixture.watch, fixture.pending_request_gates = [], None, {}
+    fixture.request_lifetimes, fixture.start_acceptances, fixture.request_access = {}, {}, {}
+    fixture.request_read_effects, fixture.marker_entries, fixture.histories = {}, {}, {}
+    fixture.data = {"executor_history_frames": []}
+    return fixture
+
+
+def glb_runtime_profile_frame(path, name, **values):
+    return NS(f_code=NS(co_filename="/owned/blender_codex_bridge/" + path, co_name=name), f_locals=values)
+
+
+class GLBProfileCounterGate:
+    def __init__(self):
+        self.counts, self.snapshots = {"get:data": {"entered": 0, "returned": 0}}, 0
+    def snapshot(self):
+        self.snapshots += 1
+        return {key: dict(value) for key, value in self.counts.items()}
+
+
+@pytest.mark.parametrize("terminal", ["success", "native_error", "timeout", "disconnected", "undelivered", "cancelled"])
+def test_glb_runtime_profile_materializes_one_terminal_snapshot_without_caller_delivery(fixture_imports, terminal):
+    script = importlib.import_module("scripts.blender_glb_stage_runtime_smoke")
+    fixture, gate = glb_runtime_profile_model(script), GLBProfileCounterGate()
+    request = NS(id=terminal, method="asset.glb_stage_preview")
+    invocation = glb_runtime_profile_frame("executor.py", "_invoke_owned", request=request)
+    access = glb_runtime_profile_frame("glb_stage_profile.py", "_access", self=NS(_runtime_gate=gate))
+    fixture.profile(invocation, "call", None)
+    for index in range(1000):
+        gate.counts["get:data"]["entered"] += 1
+        if terminal != "native_error" or index < 999:
+            gate.counts["get:data"]["returned"] += 1
+        fixture.profile(access, "return", None)
+    assert gate.snapshots == 0 and fixture.request_access == {}
+    fixture.profile(invocation, "return", {} if terminal == "success" else None)
+    assert gate.snapshots == 1
+    assert fixture.request_access == {terminal: {"get:data": {"entered": 1000, "returned": 999 if terminal == "native_error" else 1000}}}
+    assert fixture.pending_request_gates == {} and fixture.current_requests == []
+
+
+def test_glb_runtime_profile_freezes_shared_gate_ancestor_before_nested_request(fixture_imports):
+    script = importlib.import_module("scripts.blender_glb_stage_runtime_smoke")
+    fixture, gate = glb_runtime_profile_model(script), GLBProfileCounterGate()
+    outer = glb_runtime_profile_frame("executor.py", "_invoke_owned", request=NS(id="outer", method="asset.glb_stage_preview"))
+    nested = glb_runtime_profile_frame("executor.py", "_invoke_owned", request=NS(id="nested", method="asset.glb_stage_preview"))
+    access = glb_runtime_profile_frame("glb_stage_profile.py", "_access", self=NS(_runtime_gate=gate))
+    fixture.profile(outer, "call", None)
+    gate.counts["get:data"].update(entered=1, returned=1)
+    fixture.profile(access, "return", None)
+    fixture.profile(nested, "call", None)
+    assert fixture.request_access["outer"] == {"get:data": {"entered": 1, "returned": 1}}
+    gate.counts["get:data"].update(entered=3, returned=3)
+    fixture.profile(access, "return", None)
+    fixture.profile(nested, "return", None)
+    fixture.profile(outer, "return", None)
+    assert fixture.request_access == {"outer": {"get:data": {"entered": 1, "returned": 1}},
+                                      "nested": {"get:data": {"entered": 3, "returned": 3}}}
+    assert gate.snapshots == 2 and fixture.pending_request_gates == {} and fixture.current_requests == []
+
+
+@pytest.mark.parametrize("native_returned", [True, False])
+def test_glb_runtime_profile_refreshes_inflight_ancestor_after_nested_request(fixture_imports, native_returned):
+    script = importlib.import_module("scripts.blender_glb_stage_runtime_smoke")
+    fixture, gate = glb_runtime_profile_model(script), GLBProfileCounterGate()
+    outer = glb_runtime_profile_frame("executor.py", "_invoke_owned", request=NS(id="outer", method="asset.glb_stage_preview"))
+    nested = glb_runtime_profile_frame("executor.py", "_invoke_owned", request=NS(id="nested", method="asset.glb_stage_preview"))
+    access = glb_runtime_profile_frame("glb_stage_profile.py", "_access", self=NS(_runtime_gate=gate))
+    fixture.profile(outer, "call", None)
+    gate.counts["get:data"].update(entered=1, returned=1)
+    fixture.profile(access, "return", None)
+    gate.counts["get:data"].update(entered=2, returned=1)  # Outer native call is in flight.
+    fixture.profile(nested, "call", None)
+    gate.counts["get:data"].update(entered=3, returned=2)
+    fixture.profile(access, "return", None)
+    fixture.profile(nested, "return", None)
+    gate.counts["get:data"]["returned"] += int(native_returned)
+    fixture.profile(access, "return", object() if native_returned else None)
+    fixture.profile(outer, "return", None)
+    assert fixture.request_access["outer"] == {"get:data": {"entered": 3, "returned": 3 if native_returned else 2}}
+    assert fixture.request_access["nested"] == {"get:data": {"entered": 3, "returned": 2}}
+    assert fixture.pending_request_gates == {} and fixture.current_requests == []
+
+
+def test_glb_runtime_profile_preserves_last_gate_and_absent_receipts(fixture_imports):
+    script = importlib.import_module("scripts.blender_glb_stage_runtime_smoke")
+    fixture = glb_runtime_profile_model(script)
+    first, last = GLBProfileCounterGate(), GLBProfileCounterGate()
+    request = glb_runtime_profile_frame("executor.py", "_invoke_owned", request=NS(id="two-gates", method="asset.glb_stage_preview"))
+    fixture.profile(request, "call", None)
+    for gate, count in ((first, 10), (last, 20)):
+        gate.counts["get:data"].update(entered=count, returned=count)
+        fixture.profile(glb_runtime_profile_frame("glb_stage_profile.py", "_access", self=NS(_runtime_gate=gate)), "return", None)
+    fixture.profile(request, "return", None)
+    assert first.snapshots == 0 and last.snapshots == 1
+    assert fixture.request_access == {"two-gates": {"get:data": {"entered": 20, "returned": 20}}}
+    no_access = glb_runtime_profile_frame("executor.py", "_invoke_owned", request=NS(id="no-access", method="asset.glb_stage_inspect"))
+    fixture.profile(no_access, "call", None)
+    fixture.profile(no_access, "return", None)
+    assert "no-access" not in fixture.request_access and fixture.pending_request_gates == {}
+
+
+def test_glb_runtime_profile_releases_pending_gate_and_stack_when_cached_snapshot_fails(fixture_imports):
+    script = importlib.import_module("scripts.blender_glb_stage_runtime_smoke")
+    fixture = glb_runtime_profile_model(script)
+    request = glb_runtime_profile_frame("executor.py", "_invoke_owned", request=NS(id="snapshot-error", method="asset.glb_stage_preview"))
+    def failed():
+        raise MemoryError("bounded reporting allocation failed")
+    gate = NS(snapshot=failed)
+    fixture.profile(request, "call", None)
+    fixture.profile(glb_runtime_profile_frame("glb_stage_profile.py", "_access", self=NS(_runtime_gate=gate)), "return", None)
+    with pytest.raises(MemoryError):
+        fixture.profile(request, "return", None)
+    assert fixture.pending_request_gates == {} and fixture.current_requests == []

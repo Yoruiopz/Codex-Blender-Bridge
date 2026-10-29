@@ -1447,6 +1447,61 @@ def assert_shared_group_fixture(groups):
         "observed": groups["memberships"], "object_identity": groups["object_identity"]}
 
 
+def protected_tree_row(tree, *, image=None, world=False):
+    """Strict raw oracle for the three shader graphs authored by this fixture."""
+    from scripts.blender_glb_stage_smoke import bits, header, numeric
+    assert type(world) is bool and not (world and image is not None)
+    types = ({"ShaderNodeBackground", "ShaderNodeOutputWorld"} if world else
+             {"ShaderNodeBsdfPrincipled", "ShaderNodeOutputMaterial"})
+    if image is not None:
+        types.add("ShaderNodeTexImage")
+    assert len(tree.nodes) == len(types) and len(tree.links) == (2 if image is not None else 1)
+    assert {node.bl_idname for node in tree.nodes} == types
+    nodes = []
+    for node in tree.nodes:
+        assert len(node.inputs) <= 64
+        inputs = []
+        for input_socket in node.inputs:
+            if input_socket.type == "SHADER":
+                default = None
+            elif input_socket.type == "BOOLEAN":
+                assert type(input_socket.default_value) is bool
+                default = [input_socket.default_value]
+            elif input_socket.type == "VALUE":
+                default = [bits(input_socket.default_value)]
+            else:
+                assert input_socket.type in {"RGBA", "VECTOR"}
+                default = numeric(input_socket.default_value)
+            inputs.append({"identifier": input_socket.identifier, "type": input_socket.type, "default": default})
+        assert len({row["identifier"] for row in inputs}) == len(inputs)
+        output = node.bl_idname in {"ShaderNodeOutputMaterial", "ShaderNodeOutputWorld"}
+        row = {"type": node.bl_idname, "name": node.name, "location": numeric(node.location),
+               "width": bits(node.width), "mute": node.mute, "inputs": inputs,
+               "active_output": node.is_active_output if output else None,
+               "target": node.target if output else None}
+        if node.bl_idname == "ShaderNodeTexImage":
+            assert node.image is image
+            row.update(image=header(node.image), interpolation=node.interpolation,
+                       projection=node.projection, projection_blend=bits(node.projection_blend), extension=node.extension)
+        nodes.append(row)
+    links = sorted([link.from_node.bl_idname, link.from_socket.identifier,
+                    link.to_node.bl_idname, link.to_socket.identifier] for link in tree.links)
+    expected = ([["ShaderNodeBackground", "Background", "ShaderNodeOutputWorld", "Surface"]] if world else
+                [["ShaderNodeBsdfPrincipled", "BSDF", "ShaderNodeOutputMaterial", "Surface"]])
+    if image is not None:
+        expected.append(["ShaderNodeTexImage", "Color", "ShaderNodeBsdfPrincipled", "Base Color"])
+    assert links == sorted(expected)
+    return {"identity": header(tree), "nodes": sorted(nodes, key=lambda row: row["type"]), "links": links}
+
+
+def protected_material_row(material, *, image=None):
+    from scripts.blender_glb_stage_smoke import header, numeric
+    assert image is None or material.node_tree is not None
+    return {"identity": header(material), "color": numeric(material.diffuse_color),
+            "backface": material.use_backface_culling, "use_nodes": material.use_nodes,
+            "tree": None if material.node_tree is None else protected_tree_row(material.node_tree, image=image)}
+
+
 class RuntimeFixture:
     """Owned main-thread setup, raw fault actions and independent observations."""
     def __init__(self, root, folder, bpy, attestation):
@@ -1482,6 +1537,7 @@ class RuntimeFixture:
         self.current_requests = []
         self.start_acceptances = {}
         self.request_access = {}
+        self.pending_request_gates = {}
         self.request_read_effects = {}
         self.marker_entries = {}
         self.disconnect_watch = None
@@ -1685,9 +1741,24 @@ class RuntimeFixture:
             request = frame.f_locals.get("request")
             if request is not None:
                 if event == "call":
+                    # Freeze ancestor receipts before a nested request can
+                    # change a shared gate. An in-flight ancestor _access will
+                    # refresh its receipt on return, including exception unwind.
+                    pending = self.pending_request_gates
+                    self.pending_request_gates = {}
+                    for identifier, gate in pending.items():
+                        self.request_access[identifier] = gate.snapshot()
                     self.current_requests.append(request.id)
                 elif event == "return" and self.current_requests and self.current_requests[-1] == request.id:
-                    self.current_requests.pop()
+                    # All native-access counter writes belong to _access.
+                    # Snapshot after all finally/exception paths at this
+                    # terminal boundary, before a nested parent resumes.
+                    gate = self.pending_request_gates.pop(request.id, None)
+                    try:
+                        if gate is not None:
+                            self.request_access[request.id] = gate.snapshot()
+                    finally:
+                        self.current_requests.pop()
         if event == "call" and self.current_requests and path.endswith("/blender_codex_bridge/glb_stage_protected_mesh.py") and frame.f_code.co_name == "enter":
             cell = frame.f_locals.get("cell")
             if type(cell) is dict:
@@ -1700,7 +1771,7 @@ class RuntimeFixture:
             if self.current_requests and binding is not None:
                 gate = getattr(binding, "_runtime_gate", None)
                 if gate is not None:
-                    self.request_access[self.current_requests[-1]] = gate.snapshot()
+                    self.pending_request_gates[self.current_requests[-1]] = gate
         if event == "call" and path.endswith("/blender_codex_bridge/glb_stage_jobs.py") and frame.f_code.co_name == "check":
             caller = frame.f_back
             if caller is not None and caller.f_code is self.entry_code:
@@ -2010,10 +2081,8 @@ class RuntimeFixture:
     def raw_snapshot(self, allocations=None):
         from scripts.blender_glb_stage_smoke import (
             header,
-            material_row,
             numeric,
             structure_object_row,
-            tree_row,
         )
         bpy = self.bpy
         protected = {}
@@ -2040,7 +2109,7 @@ class RuntimeFixture:
                 elif family == "meshes":
                     row, _projection = self.mesh_observation(value)
                 elif family == "materials":
-                    row = material_row(value)
+                    row = protected_material_row(value, image=self.protected_image if value is self.sentinel_material else None)
                     row["image_consumers"] = [] if value.node_tree is None else [[node.name,
                         None if node.image is None else node.image.session_uid, node.interpolation, node.projection, node.extension]
                         for node in value.node_tree.nodes if node.bl_idname == "ShaderNodeTexImage"]
@@ -2092,7 +2161,7 @@ class RuntimeFixture:
                         "use_shadow": value.use_shadow, "cutoff_distance": value.cutoff_distance}
                 elif family == "worlds":
                     row = {"identity": header(value), "color": numeric(value.color), "use_nodes": value.use_nodes,
-                        "tree": None if value.node_tree is None else tree_row(value.node_tree)}
+                        "tree": None if value.node_tree is None else protected_tree_row(value.node_tree, world=True)}
                 elif family == "collections":
                     row = {"identity": header(value), "children": sorted(child.session_uid for child in value.children),
                         "objects": sorted(obj.session_uid for obj in value.objects), "hide_viewport": value.hide_viewport,
