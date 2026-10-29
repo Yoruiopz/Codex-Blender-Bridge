@@ -39,7 +39,11 @@ class SourceSeal(tuple):
     @classmethod
     def capture(cls):
         names = ("mesh_storage_source", "mesh_storage_contract", "mesh_storage_effects", "tools._mesh_storage_job",
-                 "tools.mesh_storage", "native_save_profile", "state", "permissions", "task_plans", "tool_registry",
+                 # check_affected keeps its defining globals even when imported
+                 # into tools.mesh_storage. Pin its directly reached helpers
+                 # before a permission provider can replace those bindings.
+                 "tools.mesh_storage", "tools.artist_loop", "tools._animation_scope", "errors",
+                 "native_save_profile", "state", "permissions", "task_plans", "tool_registry",
                  "request_lifecycle", "scene_jobs", "scene_job_authority", "executor", "command_queue",
                  "checkpoints", "checkpoint_completion", "current_pixels_graph", "mesh_storage_prepare", "uv_edit_guard")
         modules = tuple(importlib.import_module(__package__ + "." + name) for name in names)
