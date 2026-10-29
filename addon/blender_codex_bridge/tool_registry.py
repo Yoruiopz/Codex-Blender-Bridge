@@ -505,7 +505,39 @@ class ToolRegistry:
                 f"Toolset '{spec.toolset}' is disabled in Blender.",
                 {"tool": name, "toolset": spec.toolset},
             )
+        storage_entry = None
+        if name == "mesh.attribute_storage_prepare_preview" and context.checkpoint_admission is not None:
+            # Only the concrete fixture-local domain supplies this proof. Keep
+            # it before the first provider: a new Gate in the handler would
+            # otherwise adopt altered final hooks after generic code used them.
+            from .tools.mesh_storage import _PreviewAdmission
+            callback = context.checkpoint_admission.callback
+            if type(callback) is _PreviewAdmission:
+                storage_entry = callback.entry_proof
+                storage_type, storage_len, storage_any, storage_zip = type, len, any, zip
+                storage_function_type = type(lambda: None)
+                storage_value_error = ValueError
+                storage_failure = BridgeError(ErrorCode.NOT_IMPLEMENTED, "Storage preview entry source changed.",
+                                              {"reason": "STORAGE_CONTEXT_CHANGED"})
+        if storage_entry is not None:
+            def checked_storage_entry():
+                function, code, namespace, defaults, keywords, cells, contents = storage_entry
+                try:
+                    if (storage_type(function) is not storage_function_type or function.__code__ is not code
+                            or function.__globals__ is not namespace or function.__defaults__ is not defaults
+                            or function.__kwdefaults__ is not keywords or function.__closure__ is not cells
+                            or storage_len(cells or ()) != storage_len(contents)
+                            or storage_any(actual is not cell or actual.cell_contents is not value
+                                           for actual, (cell, value) in storage_zip(cells or (), contents, strict=True))):
+                        raise storage_failure
+                except storage_value_error:
+                    raise storage_failure from None
+                function()
+
+            checked_storage_entry()
         context.permissions.require(spec.permissions)
+        if storage_entry is not None:
+            checked_storage_entry()
         if self.get(name) is not spec:
             raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Registered tool identity changed during permission validation.",
                               {"checkpoint_parameters_unchanged": False})
@@ -706,7 +738,30 @@ class ToolRegistry:
                 # This branch cannot enter a handler or create a push consumer;
                 # its local origin buys only a leased, provider-ordered read.
                 record = self._scene_reservations.current(context)
+                storage_proof = record.owner.job.storage_driver_proof
+                storage_guard = None
+                storage_context_proof = None
+                if storage_proof is not None:
+                    # Capture the concrete source checker BEFORE the provider.
+                    # A permission callback cannot substitute the driver or its
+                    # read callback during a paused/undelivered turn.
+                    from .scene_jobs import _check_storage_driver
+                    storage_guard = (_check_storage_driver, _check_storage_driver.__code__,
+                                     _check_storage_driver.__defaults__, _check_storage_driver.__kwdefaults__)
+                    _check_storage_driver(storage_proof)
+                    from .mesh_storage_source import capture_context
+                    storage_context_proof = capture_context(context, storage_proof[4])
                 context.require(*record.owner.authority.required_permissions)
+                if storage_guard is not None:
+                    guard, code, defaults, keywords = storage_guard
+                    if (guard.__code__ is not code or guard.__defaults__ is not defaults or guard.__kwdefaults__ is not keywords
+                            or record.owner.job.storage_driver_proof is not storage_proof
+                            or record.owner.job.driver is not storage_proof[0]):
+                        raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Storage job source changed before its next read.",
+                                          {"reason": "MESH_STORAGE_DRIVER_SOURCE_CHANGED"})
+                    guard(storage_proof)
+                    from .mesh_storage_source import verify_context
+                    verify_context(context, storage_context_proof)
                 record.owner.job.checkpoint_manager.check_pending_markers(record.owner.job.pending, turn)
                 record.owner.job.driver.check_after_read(context)
                 self._scene_reservations.check_turn(turn)

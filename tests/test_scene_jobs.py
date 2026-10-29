@@ -1009,3 +1009,276 @@ def test_image_jobs_keep_their_multiple_cooperative_steps_per_tick(request, monk
     terminal = manager.inspect(accepted["job_id"])
     assert terminal["state"] == "SUCCEEDED" and measured == list(range(25))
     assert terminal["undo_boundary_finalized"] and env.images.get("Painted") is not None
+
+
+def storage_model(env, monkeypatch):
+    """Concrete source-seal model; no result here qualifies a native helper."""
+    import sys
+    from types import ModuleType
+
+    effects = importlib.import_module(env.domain.__package__ + ".mesh_storage_effects")
+    driver_module = ModuleType(env.domain.__package__ + ".tools._mesh_storage_job")
+    original_source = importlib.import_module(env.domain.__package__ + ".mesh_storage_source")
+    original_seal = original_source.SourceSeal
+    source_module = ModuleType(env.domain.__package__ + ".mesh_storage_source")
+    vars(source_module).update(vars(original_source))
+    env.storage_source_calls = 0
+
+    class SourceSeal(tuple):
+        __slots__ = ()
+
+        def __new__(cls):
+            return tuple.__new__(cls, original_seal.capture())
+
+        def verify(self):
+            env.storage_source_calls += 1
+            original_seal.verify(self)
+
+    source_module.SourceSeal = SourceSeal
+
+    class MeshStorageDriver(env.driver_type):
+        def __init__(self, context, params):
+            super().__init__(context, params)
+            self.source_seal = SourceSeal()
+            self.storage_effects = effects.MeshStorageJournal(("uv",))
+            journal = object.__new__(effects.PreparationJournal)
+            row = dict.fromkeys(("data_lookup_entered", "data_lookup_returned", "materialize_entered", "materialize_returned",
+                                 "after_storage_observed", "verified", "baseline_conflict"), False)
+            row.update(name="uv", action="MATERIALIZE_SINGLE", entry_kind="FOREACH_GET", before_storage="SINGLE",
+                       after_storage=None, readback_entries=0, readback_returns=0, logical_values_sha256=None,
+                       retained_physical_transition="NOT_ENTERED")
+            journal._cells, journal._plan = (row,), object()
+            self.storage_effects.attach(0, journal)
+            self.cell = row
+
+        def advance(self, context):
+            progress = super().advance(context)
+            for flag in ("data_lookup_entered", "data_lookup_returned", "materialize_entered", "materialize_returned",
+                         "after_storage_observed", "verified"):
+                self.cell[flag] = True
+            self.cell.update(after_storage="ARRAY", readback_entries=self.count, readback_returns=self.count,
+                             logical_values_sha256="a" * 64, retained_physical_transition="OBSERVED_SINGLE_TO_ARRAY")
+            return progress
+
+    MeshStorageDriver.__module__ = driver_module.__name__
+    driver_module.MeshStorageDriver = MeshStorageDriver
+    monkeypatch.setitem(sys.modules, driver_module.__name__, driver_module)
+    monkeypatch.setitem(sys.modules, source_module.__name__, source_module)
+    env.start_spec = env.registry.register("fixture.storage_start",
+        lambda context, params: context.jobs.start_scene(context, params, time_limit=60.),
+        modifies=True, permissions=MeshStorageDriver.required_permissions, automatic_checkpoint=False,
+        exclusive_mutation=True, checkpoint_owns_finalization=True, record_history=False,
+        protected_scope_resolver=lambda _context, _params: {"scope_complete": True},
+        checkpoint_admission_factory=env.domain.start_admission(MeshStorageDriver))
+    env.storage_effects_module, env.storage_driver_type = effects, MeshStorageDriver
+    return env
+
+
+def test_storage_terminal_journal_survives_driver_retirement_and_history_eviction(scene_jobs, monkeypatch):
+    env = storage_model(scene_jobs, monkeypatch)
+    stopped = stop_after_one_advance(env)
+    job = stopped.job
+    receipt = deepcopy(env.manager.recovery_ledger[job.job_id])
+    assert receipt["summary"]["storage_effects"]["rows"][0]["verified"]
+    assert receipt["summary"]["storage_effects"]["sealed"]
+    assert job.driver is None and job.storage_driver_proof is None and job.storage_reader_proof is None
+    assert job.storage_effects.sealed
+    for _ in range(33):
+        env.start(steps=1)
+        assert drain(env)["state"] == "SUCCEEDED"
+    assert all(record.job_id != job.job_id for record in env.manager.history)
+    providers, sources = env.provider_calls, env.storage_source_calls
+    monkeypatch.setattr(env.checkpoint_module, "require_blender", lambda: pytest.fail("Stopped native read"))
+    inspected = env.manager.inspect(job.job_id)
+    assert inspected["storage_effects"] == receipt["summary"]["storage_effects"]
+    assert inspected["terminal_history_evicted"] and env.provider_calls == providers and env.storage_source_calls == sources
+    history = next(record for record in env.state.history(100) if record["operation_id"] == job.operation_id)
+    assert history["job_evidence"]["storage_effects"] == inspected["storage_effects"]
+
+
+@pytest.mark.parametrize("paused", [False, True])
+@pytest.mark.parametrize("replacement", ["instance", "class", "seal"])
+def test_storage_post_provider_callback_replacement_refused_without_execution(scene_jobs, monkeypatch, paused, replacement):
+    env = storage_model(scene_jobs, monkeypatch)
+    accepted = env.start(delivered=False)
+    driver = accepted.job.driver
+    frames = deepcopy(env.stack.frames)
+    env.state.set_paused(paused)
+    foreign = []
+
+    def replace_callback():
+        if replacement == "instance":
+            driver.check_after_read = lambda _context: foreign.append("instance")
+        elif replacement == "class":
+            monkeypatch.setattr(type(driver), "check_after_read", lambda _self, _context: foreign.append("class"))
+        else:
+            monkeypatch.setattr(type(driver.source_seal), "verify", lambda _self: foreign.append("seal"))
+
+    env.provider_hook = replace_callback
+    terminal = drain(env)
+    assert terminal["state"] == "FAILED" and terminal["error"]["context"]["reason"] == "MESH_STORAGE_DRIVER_SOURCE_CHANGED"
+    assert foreign == [] and env.advances == [] and env.stack.frames == frames
+
+
+def test_storage_snapshot_allocation_failure_retains_owner_then_retries_without_providers(scene_jobs, monkeypatch):
+    env = storage_model(scene_jobs, monkeypatch)
+    accepted = env.start()
+    for _ in range(6):
+        env.manager.tick()
+        if env.advances:
+            break
+    env.manager.cancel(accepted.job.job_id)
+    original = env.domain._storage_snapshot
+    attempts = []
+
+    def exhausted(job, *, seal=False):
+        attempts.append(job)
+        raise MemoryError("injected snapshot allocation")
+
+    monkeypatch.setattr(env.domain, "_storage_snapshot", exhausted)
+    with pytest.raises(MemoryError):
+        env.manager.tick()
+    assert env.manager.active is accepted.job and accepted.job.state == "FINALIZING"
+    assert accepted.job.driver is not None and accepted.job.storage_effects_snapshot is None
+    providers, sources = env.provider_calls, env.storage_source_calls
+    frames, advances = len(env.stack.frames), list(env.advances)
+    monkeypatch.setattr(env.domain, "_storage_snapshot", original)
+    monkeypatch.setattr(env.manager, "context_factory", lambda: pytest.fail("Stopped context factory"))
+    assert not env.manager.tick()
+    assert accepted.job.state == "CANCELLED" and accepted.job.driver is None
+    assert env.provider_calls == providers and env.storage_source_calls == sources
+    assert (len(env.stack.frames), env.advances) == (frames, advances) and attempts == [accepted.job]
+
+
+def test_storage_terminal_never_calls_replaced_stopped_driver(scene_jobs, monkeypatch):
+    env = storage_model(scene_jobs, monkeypatch)
+    accepted = env.start()
+    for _ in range(6):
+        env.manager.tick()
+        if env.advances:
+            break
+    driver = accepted.job.driver
+    env.manager.cancel(accepted.job.job_id)
+    source_count, providers = env.storage_source_calls, env.provider_calls
+    foreign = []
+    for name in ("check_after_read", "advance", "native_push_delegates", "after_native_push"):
+        monkeypatch.setattr(type(driver), name, lambda *_args: foreign.append("stopped callback"))
+    assert not env.manager.tick()
+    assert accepted.job.state == "CANCELLED" and accepted.job.driver is None
+    assert accepted.job.storage_effects_snapshot["rows"][0]["verified"]
+    assert foreign == [] and env.storage_source_calls == source_count and env.provider_calls == providers
+
+
+def test_storage_terminal_descriptor_default_poison_refuses_then_retries_without_callbacks(scene_jobs, monkeypatch):
+    env = storage_model(scene_jobs, monkeypatch)
+    accepted = env.start()
+    env.manager.cancel(accepted.job.job_id)
+    keywords = env.storage_effects_module.snapshot_storage_effects.__kwdefaults__
+    held = keywords["_names"]
+    calls = []
+
+    class Foreign:
+        def __get__(self, *_args):
+            calls.append("foreign descriptor")
+            raise AssertionError
+
+    monkeypatch.setitem(keywords, "_names", Foreign())
+    with pytest.raises(env.errors.BridgeError) as failure:
+        env.manager.tick()
+    assert failure.value.context["reason"] == "MESH_STORAGE_EFFECTS_SOURCE_CHANGED"
+    assert accepted.job.state == "FINALIZING" and env.manager.active is accepted.job and calls == []
+    providers, sources = env.provider_calls, env.storage_source_calls
+    monkeypatch.setitem(keywords, "_names", held)
+    assert not env.manager.tick()
+    assert accepted.job.state == "CANCELLED" and calls == []
+    assert env.provider_calls == providers and env.storage_source_calls == sources
+
+
+def test_storage_foreign_helper_cell_key_refused_without_equality_then_repaired(scene_jobs, monkeypatch):
+    env = storage_model(scene_jobs, monkeypatch)
+    accepted = env.start()
+    driver = accepted.job.driver
+    env.manager.cancel(accepted.job.job_id)
+    calls = []
+
+    class Key(str):
+        __hash__ = str.__hash__
+
+        def __eq__(self, _other):
+            calls.append("foreign equality")
+            return True
+
+    key = Key("name")
+    driver.cell.pop("name")
+    driver.cell[key] = "uv"
+    calls.clear()
+    with pytest.raises(env.errors.BridgeError) as failure:
+        env.manager.tick()
+    assert failure.value.context["reason"] == "MESH_STORAGE_EFFECTS_INVALID" and calls == []
+    assert env.manager.active is accepted.job and driver.storage_effects.cells[0] is driver.cell
+    providers, sources = env.provider_calls, env.storage_source_calls
+    driver.cell.pop(key)
+    driver.cell["name"] = "uv"
+    assert not env.manager.tick()
+    assert calls == [] and env.provider_calls == providers and env.storage_source_calls == sources
+
+
+def test_storage_held_source_checker_uses_native_bindings_not_mutable_module_builtins(scene_jobs, monkeypatch):
+    env = storage_model(scene_jobs, monkeypatch)
+    accepted = env.start(delivered=False)
+    proof = accepted.job.storage_driver_proof
+    calls = []
+
+    def foreign(*_args, **_kwargs):
+        calls.append("foreign builtin")
+        raise AssertionError
+
+    for name in ("type", "len", "any", "zip"):
+        monkeypatch.setattr(env.domain, name, foreign, raising=False)
+    # Isolated source-checker model only. The real SourceSeal additionally
+    # refuses module namespace changes before returning to the scheduler.
+    with pytest.raises(env.errors.BridgeError) as failure:
+        env.domain._check_storage_driver(proof)
+    assert failure.value.context["reason"] == "STORAGE_SOURCE_CHANGED"
+    assert calls == []
+
+
+def test_storage_terminal_reader_uses_held_native_bindings_and_error_then_retries(scene_jobs, monkeypatch):
+    env = storage_model(scene_jobs, monkeypatch)
+    accepted = env.start()
+    env.manager.cancel(accepted.job.job_id)
+    keywords = env.storage_effects_module.snapshot_storage_effects.__kwdefaults__
+    held = keywords["_names"]
+    calls = []
+
+    class Foreign:
+        def __get__(self, *_args):
+            calls.append("foreign descriptor")
+            raise AssertionError
+
+    def foreign(*_args, **_kwargs):
+        calls.append("foreign checker binding")
+        raise AssertionError
+
+    monkeypatch.setitem(keywords, "_names", Foreign())
+    with pytest.raises(env.errors.BridgeError) as failure:
+        env.manager.tick()
+    assert failure.value.context["reason"] == "MESH_STORAGE_EFFECTS_SOURCE_CHANGED"
+    assert accepted.job.state == "FINALIZING" and env.manager.active is accepted.job
+    providers, sources = env.provider_calls, env.storage_source_calls
+    reader = env.domain._storage_snapshot
+    with monkeypatch.context() as stopped_source:
+        for name in ("type", "len", "any", "zip", "refused"):
+            stopped_source.setattr(env.domain, name, foreign, raising=False)
+        # Isolate the retained reader from unrelated scheduler methods, which
+        # still use their own module's globals. A stopped source verifier is
+        # intentionally unavailable; even refusal must use its retained error.
+        with pytest.raises(env.errors.BridgeError) as failure:
+            reader(accepted.job, seal=True)
+        assert failure.value.context["reason"] == "MESH_STORAGE_EFFECTS_SOURCE_CHANGED"
+    assert calls == [] and env.manager.active is accepted.job
+    monkeypatch.setitem(keywords, "_names", held)
+    monkeypatch.setattr(env.manager, "context_factory", lambda: pytest.fail("Stopped context factory"))
+    assert not env.manager.tick()
+    assert accepted.job.state == "CANCELLED" and accepted.job.driver is None
+    assert env.provider_calls == providers and env.storage_source_calls == sources and calls == []

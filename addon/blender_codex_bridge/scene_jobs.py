@@ -9,12 +9,14 @@ from __future__ import annotations
 import time
 import uuid
 from dataclasses import dataclass, field
+from types import FunctionType, GetSetDescriptorType, ModuleType
 from typing import Any
 
 from .checkpoint_completion import claim_native_push_completion
 from .errors import BridgeError, ErrorCode, invalid_argument
 from .job_controller import TERMINAL
 from .jobs import PaintJobs
+from .mesh_storage_effects import MeshStorageJournal, snapshot_storage_effects
 from .protocol import utc_timestamp
 from .request_lifecycle import RequestLifetime
 from .scene_job_authority import SceneJobAuthority, bind_permissions
@@ -25,6 +27,182 @@ from .scene_job_evidence import progress as progress_report
 from .scene_job_reservations import TURN_METHOD, refused
 from .task_plans import get_task_plans
 from .tool_registry import check_final_mutation
+
+
+def _storage_function_fact(function):
+    if type(function) is not FunctionType:
+        raise refused("MESH_STORAGE_DRIVER_SOURCE_CHANGED")
+    keywords = function.__kwdefaults__
+    if keywords is not None and (type(keywords) is not dict or any(type(key) is not str for key in keywords)):
+        raise refused("MESH_STORAGE_DRIVER_SOURCE_CHANGED")
+    return (function, function.__code__, function.__globals__, function.__defaults__, keywords,
+            () if keywords is None else tuple(keywords.items()),
+            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()))
+
+
+def _storage_class_facts(kind):
+    if type(kind) is not type:
+        raise refused("MESH_STORAGE_DRIVER_SOURCE_CHANGED")
+    result = []
+    for base in type.__dict__["__mro__"].__get__(kind):
+        if type(base) is not type:
+            raise refused("MESH_STORAGE_DRIVER_SOURCE_CHANGED")
+        fields = type.__dict__["__dict__"].__get__(base)
+        if len(fields) > 512 or any(type(key) is not str for key in fields):
+            raise refused("MESH_STORAGE_DRIVER_SOURCE_CHANGED")
+        functions = tuple(_storage_function_fact(value) for value in fields.values() if type(value) is FunctionType)
+        result.append((base, type.__dict__["__mro__"].__get__(base), tuple(fields.items()), functions))
+    return tuple(result)
+
+
+def _capture_storage_driver(driver):
+    """Recognize one concrete private domain, without probing other drivers."""
+    kind = type(driver)
+    if type(kind) is not type:
+        return None
+    native_fields = type.__dict__["__dict__"].__get__(kind)
+    module_name = native_fields.get("__module__")
+    if type(module_name) is not str or module_name != __package__ + ".tools._mesh_storage_job":
+        return None
+    import sys
+    module = sys.modules.get(__package__ + ".tools._mesh_storage_job")
+    if type(module) is not ModuleType or vars(module).get("MeshStorageDriver") is not kind:
+        raise refused("MESH_STORAGE_DRIVER_SOURCE_CHANGED")
+    facts = _storage_class_facts(kind)
+    descriptor = next((value for _base, _mro, fields, _functions in facts
+                       for name, value in fields if name == "__dict__"), None)
+    if type(descriptor) is not GetSetDescriptorType:
+        raise refused("MESH_STORAGE_DRIVER_SOURCE_CHANGED")
+    fields = descriptor.__get__(driver, kind)
+    if type(fields) is not dict or any(type(key) is not str for key in fields):
+        raise refused("MESH_STORAGE_DRIVER_SOURCE_CHANGED")
+    source, journal = fields.get("source_seal"), fields.get("storage_effects")
+    source_module = sys.modules.get(__package__ + ".mesh_storage_source")
+    if type(source_module) is not ModuleType or type(source) is not vars(source_module).get("SourceSeal"):
+        raise refused("MESH_STORAGE_DRIVER_SOURCE_CHANGED")
+    source_facts = _storage_class_facts(type(source))
+    verify = next((value for _base, _mro, rows, _functions in source_facts for name, value in rows if name == "verify"), None)
+    if type(journal) is not MeshStorageJournal:
+        raise refused("MESH_STORAGE_EFFECTS_INVALID")
+    native = (type, len, any, zip, type.__dict__["__dict__"], type.__dict__["__mro__"], dict, str, bool)
+    failure = refused("MESH_STORAGE_DRIVER_SOURCE_CHANGED")
+    owned = tuple((name, fields[name]) for name in ("gate", "origin", "bpy", "initial", "bindings", "parameters",
+                  "excluded", "protected", "protected_digest", "fingerprint", "completed", "value_hashes") if name in fields)
+    proof = (driver, kind, facts, descriptor, source, source_facts, verify, _storage_function_fact(verify), journal,
+             native, failure, owned)
+    _check_storage_driver(proof)
+    return proof
+
+
+def _check_storage_driver(proof):
+    """Pure held-source check before the source verifier or a driver callback."""
+    driver, kind, class_facts, descriptor, source, source_facts, verify, verify_facts, journal, native, failure, owned = proof
+    type_of, length, any_of, zip_pairs, class_dict, class_mro, dict_type, str_type, bool_type = native
+    if type_of(driver) is not kind:
+        raise failure
+    for base, mro, saved, functions in (*class_facts, *source_facts):
+        fields = class_dict.__get__(base)
+        if (class_mro.__get__(base) is not mro or length(fields) != length(saved)
+                or any_of(type_of(key) is not str_type for key in fields)
+                or any_of(name not in fields or fields[name] is not value for name, value in saved)):
+            raise failure
+        for function, code, namespace, defaults, keywords, keyword_rows, cells in functions:
+            closure = function.__closure__ or ()
+            if (function.__code__ is not code or function.__globals__ is not namespace
+                    or function.__defaults__ is not defaults or function.__kwdefaults__ is not keywords
+                    or (keywords is not None and (type_of(keywords) is not dict_type or length(keywords) != length(keyword_rows)
+                        or any_of(type_of(key) is not str_type for key in keywords)
+                        or any_of(name not in keywords or keywords[name] is not value for name, value in keyword_rows)))
+                    or length(closure) != length(cells)
+                    or any_of(actual is not cell or actual.cell_contents is not value
+                              for actual, (cell, value) in zip_pairs(closure, cells, strict=True))):
+                raise failure
+    fields = descriptor.__get__(driver, kind)
+    if (type_of(fields) is not dict_type or any_of(type_of(key) is not str_type for key in fields)
+            or any_of(name in fields for name in ("check_after_read", "advance", "native_push_delegates", "after_native_push"))
+            or fields.get("source_seal") is not source or fields.get("storage_effects") is not journal
+            or any_of(fields.get(name) is not value for name, value in owned)
+            or type_of(fields.get("done")) is not bool_type or type_of(fields.get("phase")) is not str_type):
+        raise failure
+    # verify's complete class/function facts were just checked without calling
+    # it. The exact held function cannot be swapped by an instance attribute.
+    if verify is not verify_facts[0]:
+        raise failure
+    verify(source)
+
+
+def _guard_storage_job(job):
+    proof = job.storage_driver_proof
+    if proof is not None:
+        if job.driver is not proof[0] or job.storage_effects is not proof[8]:
+            raise refused("MESH_STORAGE_DRIVER_SOURCE_CHANGED")
+        _check_storage_driver(proof)
+
+
+def _storage_turn_scope(context, _params):
+    job = context.registry._scene_reservations.current(context).owner.job
+    _guard_storage_job(job)
+    if job.storage_driver_proof is None or job.storage_scope is None:
+        raise refused("MESH_STORAGE_TURN_SCOPE_UNAVAILABLE")
+    spec, resolver, params = job.storage_scope
+    if context.registry.get(spec.name) is not spec or spec.protected_scope_resolver is not resolver:
+        raise refused("MESH_STORAGE_DRIVER_SOURCE_CHANGED")
+    return resolver(context, params)
+
+
+def _storage_reader_fact():
+    module = snapshot_storage_effects.__globals__
+    functions = tuple(_storage_function_fact(value) for value in module.values() if type(value) is FunctionType)
+    classes = tuple(_storage_class_facts(value) for value in module.values()
+                    if type(value) is type and value.__module__ == __package__ + ".mesh_storage_effects")
+    tables = []
+    for function, *_facts in (*functions, *(fact for rows in classes for row in rows for fact in row[3])):
+        table = function.__builtins__
+        if not any(table is held for held, _saved in tables):
+            if type(table) is not dict or any(type(name) is not str for name in table):
+                raise refused("MESH_STORAGE_EFFECTS_SOURCE_CHANGED")
+            tables.append((table, tuple(table.items())))
+    native = (type, len, any, zip, dict, str, type.__dict__["__dict__"].__get__,
+              type.__dict__["__mro__"].__get__, refused("MESH_STORAGE_EFFECTS_SOURCE_CHANGED"))
+    return (snapshot_storage_effects, tuple(module.items()), functions, classes, native, tuple(tables))
+
+
+def _storage_snapshot(job, *, seal=False):
+    function, saved, functions, classes, native, tables = job.storage_reader_proof
+    type_of, length, any_of, zip_pairs, dict_type, str_type, class_dict, class_mro, failure = native
+    # Finalization intentionally skips the stopped driver/source verifier. Its
+    # reader must therefore prove itself using bindings retained before stop,
+    # including an already-created error rather than a mutable error factory.
+    for table, entries in tables:
+        if (type_of(table) is not dict_type or length(table) != length(entries)
+                or any_of(type_of(name) is not str_type for name in table)
+                or any_of(name not in table or table[name] is not value for name, value in entries)):
+            raise failure
+    namespace = function.__globals__
+    if (length(namespace) != length(saved) or any_of(type_of(name) is not str_type for name in namespace)
+            or any_of(name not in namespace or namespace[name] is not value for name, value in saved)):
+        raise failure
+    for owner, mro, fields, methods in (row for rows in classes for row in rows):
+        current = class_dict(owner)
+        if (class_mro(owner) is not mro or length(current) != length(fields)
+                or any_of(type_of(name) is not str_type for name in current)
+                or any_of(name not in current or current[name] is not value for name, value in fields)):
+            raise failure
+        for fact in methods:
+            functions = (*functions, fact)
+    for callback, code, globals_, defaults, keywords, keyword_rows, cells in functions:
+        closure = callback.__closure__ or ()
+        if (callback.__code__ is not code or callback.__globals__ is not globals_ or callback.__defaults__ is not defaults
+                or callback.__kwdefaults__ is not keywords or length(closure) != length(cells)
+                or (keywords is not None and (type_of(keywords) is not dict_type or length(keywords) != length(keyword_rows)
+                    or any_of(type_of(key) is not str_type for key in keywords)
+                    or any_of(name not in keywords or keywords[name] is not value for name, value in keyword_rows)))
+                or any_of(actual is not cell or actual.cell_contents is not value
+                          for actual, (cell, value) in zip_pairs(closure, cells, strict=True))):
+            raise failure
+    if seal:
+        namespace["seal_storage_effects"](job.storage_effects)
+    return function(job.storage_effects)
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -40,6 +218,11 @@ class _StartAdmission:
     kind: str
     label: str
     native_effects: Any
+    storage_effects: Any
+    storage_driver_proof: Any
+    storage_reader_proof: Any
+    storage_scope: Any
+    storage_context_proof: Any
 
     def __init__(self, context, params, factory):
         authority = SceneJobAuthority.capture(context, params)
@@ -47,6 +230,16 @@ class _StartAdmission:
         state_origin = (context.state, get_task_plans(context.state), get_task_plans(context.state).evidence_epoch)
         markers = context.checkpoints.capture_job_markers()
         driver = factory(context, params)  # Freeze authored inputs before providers.
+        storage_driver_proof = _capture_storage_driver(driver)
+        storage_effects = None if storage_driver_proof is None else storage_driver_proof[8]
+        storage_reader_proof = None if storage_driver_proof is None else _storage_reader_fact()
+        storage_scope = None
+        if storage_driver_proof is not None:
+            spec = context.registry.get(authority.method)
+            resolver = spec.protected_scope_resolver
+            if type(resolver) is not FunctionType:
+                raise refused("MESH_STORAGE_TURN_SCOPE_UNAVAILABLE")
+            storage_scope = (spec, resolver, plain(params, field="mesh_storage_start_params"))
         authority = authority.include_driver_permissions(tuple(driver.required_permissions))
         kind, label = plain(driver.kind), plain(driver.label)
         native_effects = getattr(driver, "native_effects", None)
@@ -57,14 +250,32 @@ class _StartAdmission:
         for name, value in (("context", context), ("params", params), ("authority", authority), ("allowlist", allowlist),
                             ("state_origin", state_origin), ("markers", markers), ("driver", driver),
                             ("required_permissions", authority.required_permissions), ("kind", kind), ("label", label),
-                            ("native_effects", native_effects)):
+                            ("native_effects", native_effects), ("storage_effects", storage_effects),
+                            ("storage_driver_proof", storage_driver_proof), ("storage_reader_proof", storage_reader_proof),
+                            ("storage_scope", storage_scope), ("storage_context_proof", None)):
             object.__setattr__(self, name, value)
 
+    def bind_checkpoint(self, _binding):
+        if self.storage_driver_proof is not None:
+            _check_storage_driver(self.storage_driver_proof)
+            from .mesh_storage_source import capture_context
+            object.__setattr__(self, "storage_context_proof", capture_context(self.context, self.storage_driver_proof[4]))
+
     def __call__(self):
+        if self.storage_driver_proof is not None:
+            _check_storage_driver(self.storage_driver_proof)
+            from .mesh_storage_source import verify_context
+            verify_context(self.context, self.storage_context_proof)
         self.context.require(*self.required_permissions)
         self.check_after_read()
 
     def check_after_read(self):
+        if self.storage_driver_proof is not None:
+            if self.driver is not self.storage_driver_proof[0]:
+                raise refused("MESH_STORAGE_DRIVER_SOURCE_CHANGED")
+            _check_storage_driver(self.storage_driver_proof)
+            from .mesh_storage_source import verify_context
+            verify_context(self.context, self.storage_context_proof)
         check_final_mutation(self.context, self.context.checkpoint_method)
         self.authority.check()
         state, store, epoch = self.state_origin
@@ -72,6 +283,10 @@ class _StartAdmission:
             raise refused("SCENE_RUNTIME_RESET")
         self.context.registry._scene_reservations.check_allowlist(self.allowlist)
         self.context.checkpoints.check_job_markers(self.markers)
+        if self.storage_driver_proof is not None:
+            if self.driver is not self.storage_driver_proof[0]:
+                raise refused("MESH_STORAGE_DRIVER_SOURCE_CHANGED")
+            _check_storage_driver(self.storage_driver_proof)
         self.driver.check_after_read(self.context)
         check_final_mutation(self.context, self.context.checkpoint_method)
 
@@ -87,23 +302,41 @@ class _TurnAdmission:
         self.service = context.registry._scene_reservations
         self.turn = self.service.current(context)
         self.job = self.turn.owner.job
+        self.storage_context_proof = None
+
+    def bind_checkpoint(self, _binding):
+        if self.job.storage_driver_proof is not None:
+            _guard_storage_job(self.job)
+            from .mesh_storage_source import capture_context
+            self.storage_context_proof = capture_context(self.context, self.job.storage_driver_proof[4])
 
     def __call__(self):
+        if self.storage_context_proof is not None:
+            _guard_storage_job(self.job)
+            from .mesh_storage_source import verify_context
+            verify_context(self.context, self.storage_context_proof)
         self.context.require(*self.turn.owner.authority.required_permissions)
         self.check_after_read()
 
     def check_after_read(self):
+        if self.storage_context_proof is not None:
+            _guard_storage_job(self.job)
+            from .mesh_storage_source import verify_context
+            verify_context(self.context, self.storage_context_proof)
         self.service.check_turn(self.turn.token)
         self.job.checkpoint_manager.check_pending_markers(self.job.pending, self.turn.token)
+        _guard_storage_job(self.job)
         self.job.driver.check_after_read(self.context)
         check_final_mutation(self.context, TURN_METHOD)
 
     def native_push_delegates(self):
+        _guard_storage_job(self.job)
         return self.job.driver.native_push_delegates()
 
     def after_native_push(self):
         claim_native_push_completion(self.context, TURN_METHOD, self)
         self.service.check_turn(self.turn.token)
+        _guard_storage_job(self.job)
         self.job.driver.after_native_push()
 
 
@@ -152,6 +385,11 @@ class SceneJob:
     terminal_error_captured: bool = False
     native_effects: SceneNativeEffects | None = None
     native_effects_snapshot: dict | None = None
+    storage_effects: MeshStorageJournal | None = None
+    storage_effects_snapshot: dict | None = None
+    storage_driver_proof: Any = None
+    storage_reader_proof: Any = None
+    storage_scope: Any = None
 
     def summary(self):
         return plain({"job_id": self.job_id, "kind": self.kind, "label": self.label, "request_id": self.request_id,
@@ -160,6 +398,8 @@ class SceneJob:
                 "state": self.state, "terminal": self.state in TERMINAL, "revision": self.revision,
                 "phase": self.phase, "progress": dict(self.progress), "checkpoint": dict(self.checkpoint),
                 "effects": dict(self.effects), "result": self.result, "error": self.error,
+                **({"storage_effects": (self.storage_effects_snapshot if self.storage_effects_snapshot is not None
+                                       else _storage_snapshot(self))} if self.storage_effects is not None else {}),
                 **({"native_effects": (self.native_effects_snapshot if self.native_effects_snapshot is not None
                                       else snapshot_native_effects(self.native_effects))} if self.native_effects is not None else {}),
                 "execution_started": self.execution_started, "undo_boundary_created": self.boundary_created,
@@ -181,6 +421,7 @@ class SceneJobs(PaintJobs):
         self._scene_records: dict[int, SceneJob] = {}
         self._turn_spec = registry.register(TURN_METHOD, self._advance, modifies=True, remote=False,
             batchable=False, record_history=False, automatic_checkpoint=False, exclusive_mutation=True,
+            protected_scope_resolver=_storage_turn_scope,
             checkpoint_owns_finalization=True, checkpoint_admission_factory=lambda context, params: _TurnAdmission(context))
 
     def _scene(self, job):
@@ -212,6 +453,8 @@ class SceneJobs(PaintJobs):
             driver, context.checkpoints, admission.kind, admission.label, admission.required_permissions, admission.state_origin,
             admission.authority)
         job.native_effects = admission.native_effects
+        job.storage_effects, job.storage_driver_proof = admission.storage_effects, admission.storage_driver_proof
+        job.storage_reader_proof, job.storage_scope = admission.storage_reader_proof, admission.storage_scope
         start_origin = object()  # Caller-local; the reservation stores only its ID.
         job.reservation = self.reservations.reserve(job, start_origin, allowlist=admission.allowlist, authority=admission.authority)
         try:
@@ -325,6 +568,7 @@ class SceneJobs(PaintJobs):
             self.reservations.close_turn(token)
             job.checkpoint = job.checkpoint_manager.pending_status(job.pending)
         completed = job.phase == "checkpoint_after"
+        _guard_storage_job(job)
         if job.phase == "checkpoint_before":
             job.phase = phase_report(job.driver.phase)
         elif not completed:
@@ -338,6 +582,7 @@ class SceneJobs(PaintJobs):
         job = turn.owner.job
         if not self._scene(job) or self.active is not job:
             raise refused("SCENE_RECORD_LOST")
+        _guard_storage_job(job)
         facts = job.checkpoint_manager.pending_status(job.pending)
         if turn.phase == "checkpoint_after" and (not job.driver.done or not facts["before_verified"]):
             raise refused("SCENE_PHASE_SEQUENCE_CHANGED")
@@ -407,6 +652,14 @@ class SceneJobs(PaintJobs):
             job.terminal_state = state
         if job.finished is None:
             job.finished = time.monotonic()
+        if job.storage_effects is not None and job.storage_effects_snapshot is None:
+            try:
+                # Only preattached literal cells survive a stop. Do not resolve
+                # stopped driver methods, context factories, providers or RNA.
+                job.storage_effects_snapshot = _storage_snapshot(job, seal=True)
+            except BaseException:
+                job.state = "FINALIZING"
+                raise
         if job.native_effects is not None and job.native_effects_snapshot is None:
             # Directly retained fixed cells only. No stopped-driver property,
             # context factory, provider or Blender read is consulted here.
@@ -444,8 +697,9 @@ class SceneJobs(PaintJobs):
                     success=job.terminal_state == "SUCCEEDED", duration_ms=(job.finished-job.started)*1000,
                     error_code=job.error["code"] if job.error else None,
                     **({"job_evidence": {"job_id": job.job_id, "state": job.terminal_state,
-                                         "native_effects": job.native_effects_snapshot}}
-                       if job.native_effects_snapshot is not None else {}))
+                        **({"native_effects": job.native_effects_snapshot} if job.native_effects_snapshot is not None else {}),
+                        **({"storage_effects": job.storage_effects_snapshot} if job.storage_effects_snapshot is not None else {})}}
+                       if job.native_effects_snapshot is not None or job.storage_effects_snapshot is not None else {}))
                 job.operation_id = record.operation_id
             except Exception:
                 job.terminal_state = "FAILED"
@@ -492,6 +746,7 @@ class SceneJobs(PaintJobs):
             self.active = None
         self._scene_records.pop(id(job), None)
         job.driver = None  # Only detached, bounded cached evidence survives.
+        job.storage_driver_proof = job.storage_reader_proof = job.storage_scope = None
 
     def inspect(self, job_id):
         try:
