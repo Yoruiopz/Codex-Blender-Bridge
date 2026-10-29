@@ -1484,14 +1484,18 @@ class RuntimeFixture:
             os.close(descriptor)
 
     def setup(self):
-        import blender_codex_bridge
+        bpy = self.bpy
+        # Canonical enable creates the live preferences entry; direct register()
+        # alone does not. This remains factory-owned setup before the baseline.
+        bpy.context.preferences.use_preferences_save = False
+        assert bpy.ops.preferences.addon_enable(module="blender_codex_bridge") == {"FINISHED"}, "Add-on enable failed"
+        entry = bpy.context.preferences.addons.get("blender_codex_bridge")
+        assert entry is not None, "Enabled add-on entry is missing"
+        self.prefs = entry.preferences
+        assert self.prefs is not None and self.prefs.auto_start is False, "Factory add-on preferences are not ready"
         from blender_codex_bridge.permissions import PREFERENCE_PROPERTIES, Permission
         from blender_codex_bridge.runtime import get_runtime
-        bpy = self.bpy
-        # Explicit factory-owned raw setup, before the Bridge operation baseline.
-        blender_codex_bridge.register()
         self.runtime = get_runtime()
-        self.prefs = bpy.context.preferences.addons["blender_codex_bridge"].preferences
         for grant in CREATE_GRANTS:
             setattr(self.prefs, PREFERENCE_PROPERTIES[Permission(grant)], True)
         self.prefs.allow_execute_python = self.prefs.allow_delete_objects = self.prefs.allow_save_project = False

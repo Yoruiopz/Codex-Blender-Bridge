@@ -2739,3 +2739,75 @@ print(json.dumps({'canonical_helper_resolved': True, 'unowned_entry_refused': Tr
     assert result.returncode == 0, (result.stdout[-4096:], result.stderr[-4096:])
     assert json.loads(result.stdout) == {"canonical_helper_resolved": True, "unowned_entry_refused": True,
         "bpy_unloaded": True, "product_unloaded": True}
+
+
+@pytest.mark.parametrize("outcome", ["enabled", "cancelled", "missing_entry", "missing_preferences", "auto_start"])
+def test_glb_runtime_setup_requires_canonical_enable_before_live_preferences_and_product_work(
+    fixture_imports, addon_package, monkeypatch, outcome
+):
+    script = importlib.import_module("scripts.blender_glb_stage_runtime_smoke")
+    permissions = importlib.import_module(f"{addon_package}.permissions")
+    module = sys.modules["blender_codex_bridge.permissions"]
+    monkeypatch.setattr(module, "PREFERENCE_PROPERTIES", permissions.PREFERENCE_PROPERTIES, raising=False)
+    events, addons = [], {}
+    prefs = NS(auto_start=outcome == "auto_start")
+
+    class Preferences:
+        use_preferences_save = True
+        @property
+        def addons(self):
+            assert events == ["canonical_addon_enable"]
+            events.append("live_addons")
+            return addons
+
+    preferences = Preferences()
+    def enable(*, module):
+        assert module == "blender_codex_bridge" and preferences.use_preferences_save is False
+        assert events == [] and addons == {}
+        events.append("canonical_addon_enable")
+        if outcome == "cancelled":
+            return {"CANCELLED"}
+        if outcome != "missing_entry":
+            addons[module] = NS(preferences=None if outcome == "missing_preferences" else prefs)
+        return {"FINISHED"}
+
+    product = object()
+    def get_runtime():
+        assert events == ["canonical_addon_enable", "live_addons"]
+        assert addons["blender_codex_bridge"].preferences is prefs and prefs.auto_start is False
+        events.append("get_runtime")
+        return product
+
+    class FirstAuthoringBoundary(Exception):
+        pass
+
+    class Folder:
+        def __truediv__(self, name):
+            assert name == "approved GLB source"
+            def mkdir(*, mode):
+                assert mode == 0o700 and events == ["canonical_addon_enable", "live_addons", "get_runtime"]
+                events.append("first_authoring_boundary")
+                raise FirstAuthoringBoundary
+            return NS(mkdir=mkdir)
+
+    monkeypatch.setattr(sys.modules["blender_codex_bridge.runtime"], "get_runtime", get_runtime)
+    fixture = script.RuntimeFixture.__new__(script.RuntimeFixture)
+    fixture.bpy = NS(context=NS(preferences=preferences), ops=NS(preferences=NS(addon_enable=enable)))
+    fixture.folder = Folder()
+    if outcome == "enabled":
+        with pytest.raises(FirstAuthoringBoundary):
+            fixture.setup()
+        assert fixture.runtime is product and fixture.prefs is prefs
+        assert events == ["canonical_addon_enable", "live_addons", "get_runtime", "first_authoring_boundary"]
+        for grant in script.CREATE_GRANTS:
+            assert getattr(prefs, permissions.PREFERENCE_PROPERTIES[permissions.Permission(grant)]) is True
+        assert prefs.allow_execute_python is prefs.allow_delete_objects is prefs.allow_save_project is False
+    else:
+        with pytest.raises(AssertionError):
+            fixture.setup()
+        assert events == (["canonical_addon_enable"] if outcome == "cancelled" else
+                          ["canonical_addon_enable", "live_addons"])
+        assert "runtime" not in vars(fixture)
+        assert set(vars(prefs)) == {"auto_start"}
+    assert preferences.use_preferences_save is False
+    assert fixture_imports.events == [] and fixture_imports.timers == []
