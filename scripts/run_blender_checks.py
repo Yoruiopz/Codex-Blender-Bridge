@@ -45,6 +45,15 @@ MESH_STORAGE_ASSERTIONS = frozenset({"source_unchanged", "selected_active_mesh",
     "protected_measured"})
 
 MESH_STORAGE_CASE = "mesh_storage_owned_job"
+MESH_STORAGE_CONTROL_CASE = "mesh_storage_first_job_control"
+MESH_STORAGE_CONTROL_PROFILE = "MESH_STORAGE_FIRST_JOB_UNTRACED_CONTROL_V1"
+MESH_STORAGE_CONTROL_MARKER = "BLENDER_MESH_STORAGE_FIRST_JOB_CONTROL_DIAGNOSTIC "
+MESH_STORAGE_CONTROL_REPORT = "mesh-storage-first-job-control.json"
+MESH_STORAGE_CONTROL_FLAGS = dict.fromkeys(("source_frame_observer_installed", "native_access_counter_observed",
+    "checkpoint_boundary_observed", "complete_five_phase_qualified", "preservation_qualified",
+    "cancel_disconnect_qualified", "recovery_qualified", "durable_backup_qualified",
+    "full_artist_workflow_qualified", "public_tool_qualified", "installed_qualified", "release_acceptance",
+    "windows_qualified"), False)
 
 MESH_STORAGE_CASES = {"success": frozenset({"two_rows", "recovery"}),
     "cancel": frozenset({"cancel_after_first"}), "native_failure": frozenset({"failure_after_second_native"}),
@@ -81,6 +90,7 @@ NATIVE_SAVE_LARGE_CASES = frozenset({"success_copy", "save_as", "save_current", 
     "cancel", "revoke", "disconnect", "manual_drift", "reader_failure"})
 CASES = {
     MESH_STORAGE_CASE: ("blender_mesh_storage_job_smoke.py", MESH_STORAGE_MARKER),
+    MESH_STORAGE_CONTROL_CASE: ("blender_mesh_storage_job_smoke.py", MESH_STORAGE_CONTROL_MARKER),
     "current_pixels_lifecycle_census": ("blender_current_pixels_lifecycle_smoke.py", "BLENDER_CURRENT_PIXELS_LIFECYCLE_CENSUS_OK "),
     "current_pixels_source_graph": ("blender_current_pixels_lifecycle_smoke.py", "BLENDER_CURRENT_PIXELS_SOURCE_GRAPH_OK "),
     "glb_stage_constructor": ("blender_glb_stage_smoke.py", "BLENDER_GLB_STAGE_CONSTRUCTOR_OK "),
@@ -366,6 +376,8 @@ INTERACTIVE_CASES.add("animation_intent")
 INTERACTIVE_CASES.update({"glb_stage_constructor", "glb_stage_structure", "glb_stage_runtime"})
 INTERACTIVE_CASES.add(MESH_STORAGE_CASE)
 OPT_IN_CASES.add(MESH_STORAGE_CASE)
+INTERACTIVE_CASES.add(MESH_STORAGE_CONTROL_CASE)
+OPT_IN_CASES.add(MESH_STORAGE_CONTROL_CASE)
 
 GLB_STAGE_CASES = frozenset({"glb_stage_constructor", "glb_stage_structure", "glb_stage_runtime"})
 
@@ -1760,6 +1772,198 @@ def _run_mesh_storage_case(blender: Path, output: Path, timeout: int) -> dict:
     return summary
 
 
+def _mesh_storage_control_transcript(full: dict) -> bool:
+    """Independently classify the one real preview/start/inspect RPC sequence."""
+    requests, timings = full["requests"], full["timings"]
+    parsed = _mesh_storage_requests(requests)
+    if (parsed is None or type(timings) is not list or len(timings) != len(requests)
+            or not 1 <= len(requests) <= 2048):
+        return False
+    params = {"object_name": full["before"]["object_identity"][0],
+              "mesh_name": full["before"]["mesh_identity"][0],
+              "attribute_names": [".uv_select_face", "UVSingle"]}
+    methods = ("mesh.attribute_storage_prepare_preview", "mesh.attribute_storage_prepare_job_start", "jobs.inspect")
+    previous = 0.
+    for index, (exchange, timing) in enumerate(zip(requests, timings, strict=True)):
+        request = exchange["request"]
+        response = exchange["response"]
+        if response["ok"] is False and (type(response["error"].get("message")) is not str
+                or not 0 < len(response["error"]["message"]) <= 4096):
+            return False
+        stage = ("preview", "start", "inspect")[min(index, 2)]
+        if (request["method"] != methods[min(index, 2)] or request.get("timeout_ms") != 60000
+                or type(request.get("timeout_ms")) is not int
+                or type(timing) is not dict
+                or set(timing) != {"stage", "request_id", "sent_at", "received_at", "cpu_seconds"}
+                or timing["stage"] != stage or timing["request_id"] != request["id"]
+                or any(type(timing[key]) not in {int, float} or not math.isfinite(timing[key])
+                       or timing[key] < 0 for key in ("sent_at", "received_at", "cpu_seconds"))
+                or not previous <= timing["sent_at"] <= timing["received_at"]
+                # Retain scheduling/transport overhead without extending the
+                # unchanged 60-second socket, wire, job or polling bounds.
+                or not 0 <= timing["received_at"] - timing["sent_at"] <= 65
+                or not 0 <= timing["cpu_seconds"] <= 300):
+            return False
+        previous = timing["received_at"]
+    if timings[-1]["received_at"] - timings[0]["sent_at"] > full["seconds"]:
+        return False
+    if requests[0]["request"]["params"] != params:
+        return False
+    preview = requests[0]["response"]
+    if preview["ok"] is False:
+        return (len(requests) == 1 and full["outcome"] == "PREVIEW_REFUSED" and full["terminal"] is None
+                and full["product_success"] is False)
+    if len(requests) < 2:
+        return False
+    start = requests[1]["response"]
+    expected = {**params, "expected_preparation_fingerprint": preview["result"]["expected_preparation_fingerprint"],
+                "confirm_materialize_storage": True, "confirm_retained_partial_preparation": True,
+                "time_limit_seconds": 60}
+    actual = requests[1]["request"]["params"]
+    if (actual != expected or any(type(actual[key]) is not bool for key in
+            ("confirm_materialize_storage", "confirm_retained_partial_preparation"))
+            or type(actual["time_limit_seconds"]) not in {int, float}):
+        return False
+    if start["ok"] is False:
+        return (len(requests) == 2 and full["outcome"] == "START_REFUSED" and full["terminal"] is None
+                and full["product_success"] is False)
+    accepted, terminals = parsed
+    job_id = start["result"]["job_id"]
+    if (len(requests) < 3 or set(accepted) != {job_id} or set(terminals) != {job_id}
+            or full["outcome"] != "JOB_TERMINAL" or type(full["terminal"]) is not dict
+            or type(full["terminal"].get("terminal")) is not bool or full["terminal"]["terminal"] is not True
+            or full["terminal"] != terminals[job_id]
+            or not _mesh_storage_journal(full["terminal"].get("storage_effects"), full["setup_oracle_values"])):
+        return False
+    for index, exchange in enumerate(requests[2:], 2):
+        response = exchange["response"]
+        if (exchange["request"]["params"] != {"job_id": job_id} or response["ok"] is not True
+                or type(response["result"]) is not dict or response["result"].get("job_id") != job_id
+                or response["result"].get("kind") != "mesh.attribute_storage_preparation"
+                or type(response["result"].get("terminal")) is not bool
+                or response["result"]["terminal"] is not (index == len(requests) - 1)
+                or (response["result"]["terminal"] is False and response["result"].get("state") not in
+                    {"QUEUED", "RUNNING", "PAUSED", "CANCELLING", "FINALIZING"})):
+            return False
+    return requests[-1]["response"]["result"] == full["terminal"]
+
+
+def _mesh_storage_control_matches(payload: object, temporary: Path, process_instance: str,
+                                  pid: int, binary: dict, sources: dict, display: dict) -> dict:
+    """Validate retained diagnostic bytes without trusting fixture classifications."""
+    result = {"diagnostic_completed": False, "qualified": False,
+              "path": str(temporary / MESH_STORAGE_CONTROL_REPORT)}
+    try:
+        common = {"schema", "completed", "diagnostic_only", "process_id", "process_instance", "source_build",
+                  "blender_version", "binary_sha256", "source_snapshot_sha256", "product_success"}
+        if (type(payload) is not dict or set(payload) != common | {"full_receipt"}
+                or type(pid) is not int or pid <= 0 or type(binary) is not dict):
+            raise ValueError("CONTROL_MARKER_SHAPE")
+        expected = {"schema": MESH_STORAGE_CONTROL_PROFILE, "completed": True, "diagnostic_only": True,
+                    "process_id": pid, "process_instance": process_instance, "source_build": "d13f752e3b9c",
+                    "binary_sha256": binary["sha256"]}
+        if (any(type(payload.get(key)) is not type(value) or payload[key] != value for key, value in expected.items())
+                or type(payload["product_success"]) is not bool
+                or type(payload["blender_version"]) is not str or payload["blender_version"] not in {"5.2.2", "5.2.2 LTS"}
+                or binary["sha256"] != MESH_STORAGE_EXECUTABLE_SHA256
+                or type(payload["full_receipt"]) is not dict
+                or payload["full_receipt"].get("path") != str(temporary / MESH_STORAGE_CONTROL_REPORT)):
+            raise ValueError("CONTROL_LAUNCH_IDENTITY")
+        raw = _domain_binding(payload["full_receipt"], temporary, DOMAIN_MAX_REPORT, capture=True)
+        full = _native_save_json(raw)
+        extras = {"phase", "runtime_nonce", "runtime_identity", "helper_sha256", "source_fingerprints", "private_display",
+                  "transport", "flags", "hooks", "requests", "timings", "before", "after", "setup_oracle_values",
+                  "terminal", "outcome", "selected_values_match", "protected_sample_equal", "identities_sample_equal",
+                  "settled", "seconds"}
+        if (set(full) != common | extras
+                or any(type(full[key]) is not type(payload[key]) or full[key] != payload[key] for key in common)
+                or full["phase"] != "success"):
+            raise ValueError("CONTROL_RETAINED_SHAPE")
+        encoded = json.dumps(sources, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False).encode("ascii")
+        if (full["source_fingerprints"] != sources or _mesh_storage_sources() != sources
+                or full["source_snapshot_sha256"] != hashlib.sha256(encoded).hexdigest()
+                or full["private_display"] != display or _domain_display() != display
+                or full["helper_sha256"] != MESH_STORAGE_HELPER_SHA256):
+            raise ValueError("CONTROL_SOURCE_OR_DISPLAY_CHANGED")
+        identity = full["runtime_identity"]
+        if (type(identity) is not dict or set(identity) != {"process_instance", "runtime_id", "registry_id", "queue_id"}
+                or identity["process_instance"] != process_instance
+                or any(type(identity[key]) is not int or not 0 < identity[key] < 2**64
+                       for key in ("runtime_id", "registry_id", "queue_id"))
+                or len({identity[key] for key in ("runtime_id", "registry_id", "queue_id")}) != 3
+                or hashlib.sha256(json.dumps(identity, sort_keys=True, ensure_ascii=True, allow_nan=False,
+                    separators=(",", ":")).encode("ascii")).hexdigest()[:32] != full["runtime_nonce"]):
+            raise ValueError("CONTROL_RUNTIME_IDENTITY")
+        transport = {"host": "127.0.0.1", "socket_json": True, "runtime_timer_queue": True,
+                     "direct_dispatch": False, "manual_scheduler_drain": False}
+        settled = {"job_active": False, "is_executing": False, "executing_mutators": 0,
+                   "executor_frame_present": False, "main_thread": True}
+        if (type(full["transport"]) is not dict or full["transport"] != transport
+                or any(type(full["transport"][key]) is not type(value) for key, value in transport.items())
+                or type(full["flags"]) is not dict or full["flags"] != MESH_STORAGE_CONTROL_FLAGS
+                or any(value is not False for value in full["flags"].values())
+                or type(full["hooks"]) is not dict
+                or set(full["hooks"]) != {"main_before", "worker_before", "main_after", "worker_after"}
+                or any(type(value) is not list or len(value) != 4 or any(hook is not None for hook in value)
+                       for value in full["hooks"].values())
+                or type(full["settled"]) is not dict or full["settled"] != settled
+                or any(type(full["settled"][key]) is not type(value) for key, value in settled.items())
+                or type(full["seconds"]) not in {int, float} or not math.isfinite(full["seconds"])
+                or not 0 <= full["seconds"] <= 300):
+            raise ValueError("CONTROL_HOOK_OR_SCOPE_OR_SETTLEMENT")
+        before, after = full["before"], full["after"]
+        oracle = {".uv_select_face": [True], "UVSingle": [["0000803e", "000000bf"]] * 3}
+        if (not _mesh_storage_snapshot(before) or not _mesh_storage_snapshot(after)
+                or any(row[3] != "SINGLE" for row in before["selected_storage"])
+                or full["setup_oracle_values"] != oracle
+                or any(not _mesh_storage_values(value, name, nonzero=True) for name, value in full["setup_oracle_values"].items())
+                or not _mesh_storage_control_transcript(full)):
+            raise ValueError("CONTROL_SNAPSHOT_OR_TRANSCRIPT")
+        selected = after["selected_values"] == oracle
+        protected = before["protected"] == after["protected"] and before["uv_roles"] == after["uv_roles"]
+        identities = all(before[key] == after[key] for key in ("object_identity", "mesh_identity"))
+        product = (full["outcome"] == "JOB_TERMINAL" and full["terminal"]["state"] == "SUCCEEDED"
+                   and all(row[3] == "ARRAY" for row in after["selected_storage"]) and selected)
+        for key, value in (("selected_values_match", selected), ("protected_sample_equal", protected),
+                           ("identities_sample_equal", identities), ("product_success", product)):
+            if type(full[key]) is not bool or full[key] is not value:
+                raise ValueError("CONTROL_CLASSIFICATION")
+        result.update(diagnostic_completed=True, product_success=product, outcome=full["outcome"],
+                      selected_values_match=selected, sha256=hashlib.sha256(raw).hexdigest(), bytes=len(raw))
+    except (OSError, ValueError, KeyError, TypeError, IndexError, OverflowError, RecursionError, UnicodeError) as cause:
+        result["reason"] = str(cause) if isinstance(cause, ValueError) else "CONTROL_RECEIPT_INVALID"
+    return result
+
+
+def _run_mesh_storage_control(blender: Path, output: Path, timeout: int) -> dict:
+    """One explicitly selected untraced diagnostic; never a qualification pass."""
+    started = time.monotonic()
+    result = {"case": MESH_STORAGE_CONTROL_CASE, "status": "failed",
+              "script": CASES[MESH_STORAGE_CONTROL_CASE][0], "diagnostic_only": True,
+              "qualification_scope": dict(MESH_STORAGE_CONTROL_FLAGS)}
+    try:
+        display = _domain_display()
+        executable = blender.resolve(strict=True)
+        _raw, binary = _domain_regular(executable, executable.parent, 1024**3)
+        if binary["sha256"] != MESH_STORAGE_EXECUTABLE_SHA256:
+            result["unsupported_binary"] = True
+            raise ValueError("Untraced storage control requires the pinned 5.2.2 candidate")
+        sources = _mesh_storage_sources()
+        bundle = output / f"{MESH_STORAGE_CONTROL_CASE}-bundle"
+        bundle.mkdir(mode=0o700)
+        result = _run_process(executable, MESH_STORAGE_CONTROL_CASE, output, timeout,
+            phase="success", bundle=bundle, phase_marker=MESH_STORAGE_CONTROL_MARKER,
+            domain_binary=binary, domain_sources=sources, domain_display=display)
+        _domain_binding(binary, executable.parent, 1024**3)
+        if _mesh_storage_sources() != sources or _domain_display() != display:
+            raise ValueError("Untraced storage control source, display or binary changed")
+    except (OSError, ValueError, KeyError, TypeError, IndexError, UnicodeError, RecursionError):
+        result["status"] = "failed"
+        result["admission_error"] = "Untraced storage diagnostic admission or retained evidence refused"
+    result["duration_seconds"] = round(time.monotonic() - started, 3)
+    return result
+
+
 def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
                  phase: str | None = None, bundle: Path | None = None,
                  phase_marker: str | None = None, domain_binary: dict | None = None,
@@ -1804,13 +2008,21 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
                 or any(type(value) is not dict for value in (domain_binary, domain_sources, domain_display))):
             raise ValueError("Owned storage jobs require a private Linux attested phase")
         timeout = min(timeout, 300)
+    if case == MESH_STORAGE_CONTROL_CASE:
+        if (phase != "success" or bundle is None or sys.platform != "linux"
+                or any(type(value) is not dict for value in (domain_binary, domain_sources, domain_display))):
+            raise ValueError("Untraced storage control requires one private attested Linux success phase")
+        command.append("--bridge-untraced-control")
+        timeout = min(timeout, 300)
     if case == "geometry_preview_populated_protection":
         command.extend(["--", "--bridge-populated-protection"])
     # Blender writes quit.blend on normal UI exit. Keep it outside the user's temp recovery.
     temporary = output / f"{label}-temp"
-    temporary.mkdir(mode=0o700 if case in CURRENT_PIXELS_READ_CASES or case in GLB_STAGE_CASES or case in {"native_project_saving_large", MESH_STORAGE_CASE} else 0o777)
+    temporary.mkdir(mode=0o700 if case in CURRENT_PIXELS_READ_CASES or case in GLB_STAGE_CASES or case in {"native_project_saving_large", MESH_STORAGE_CASE, MESH_STORAGE_CONTROL_CASE} else 0o777)
     if case == MESH_STORAGE_CASE:
         command.extend(["--bridge-report", str(temporary / "mesh-storage-job.json")])
+    if case == MESH_STORAGE_CONTROL_CASE:
+        command.extend(["--bridge-report", str(temporary / MESH_STORAGE_CONTROL_REPORT)])
     if case == "native_project_saving_large":
         command.extend(["--", "--bridge-large", "--bridge-report", str(temporary / "native-save-large-evidence.json")])
         timeout = min(timeout, 300)
@@ -1831,7 +2043,7 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
         environment[key] = str(directory)
     launch_cwd = ROOT
     if (case in PORTABLE_BLEND_RESEARCH_PHASES or case in PAIRED_RECOVERY_PROFILES
-            or case in {"isolated_asset_preview_probe", "native_project_saving", "native_project_saving_large", MESH_STORAGE_CASE, *CURRENT_PIXELS_READ_CASES, *GLB_STAGE_CASES}):
+            or case in {"isolated_asset_preview_probe", "native_project_saving", "native_project_saving_large", MESH_STORAGE_CASE, MESH_STORAGE_CONTROL_CASE, *CURRENT_PIXELS_READ_CASES, *GLB_STAGE_CASES}):
         # Research-only operational profile. This is not an OS/network sandbox.
         # Do not inherit credential variables or arbitrary Python/Blender paths.
         environment = {key: os.environ[key] for key in (
@@ -1872,7 +2084,7 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
         "status": "failed",
         "exit_code": None,
         "execution_mode": (
-            "private_interactive_display" if case == MESH_STORAGE_CASE
+            "private_interactive_display" if case in {MESH_STORAGE_CASE, MESH_STORAGE_CONTROL_CASE}
             else "private_windows_desktop" if interactive and sys.platform == "win32"
             else "interactive_display" if interactive else "background"
         ),
@@ -1927,6 +2139,10 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
     if case == MESH_STORAGE_CASE:
         result["qualification_scope"] = dict(MESH_STORAGE_LIMITS)
         result["binary"] = domain_binary
+    if case == MESH_STORAGE_CONTROL_CASE:
+        result["diagnostic_only"] = True
+        result["binary"] = domain_binary
+        result["qualification_scope"] = dict(MESH_STORAGE_CONTROL_FLAGS)
     if case == "native_project_saving_large":
         result["qualification_scope"] = {"profile": "NATIVE_SAVE_CLEAN_PACKED_4K_V1",
             "actual_queued_runtime_required": True, "fresh_reader_required": True,
@@ -1945,7 +2161,7 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
 
                 process = run_isolated(command, cwd=launch_cwd, stdout=stream,
                                        timeout=timeout, env=environment)
-            elif case == MESH_STORAGE_CASE:
+            elif case in {MESH_STORAGE_CASE, MESH_STORAGE_CONTROL_CASE}:
                 process = subprocess.Popen(command, cwd=launch_cwd, stdout=stream, stderr=subprocess.STDOUT,
                                            env=environment, start_new_session=True)
                 result["os_process_id"] = process.pid
@@ -1974,7 +2190,7 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
                     timeout=timeout, check=False, env=environment,
                     creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
                 )
-            if case != MESH_STORAGE_CASE:
+            if case not in {MESH_STORAGE_CASE, MESH_STORAGE_CONTROL_CASE}:
                 result["exit_code"] = process.returncode
         except subprocess.TimeoutExpired:
             result["status"] = "timeout"
@@ -1984,7 +2200,18 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
             if case not in GLB_STAGE_CASES:
                 raise
             result["input_validation_error"] = str(exc)
-    if case in {"glb_stage_structure", "glb_stage_runtime"}:
+    if case == MESH_STORAGE_CONTROL_CASE:
+        payload = None
+        try:
+            raw_log, _binding = _domain_regular(log, output, 4 * 1024**2, capture=True)
+            candidates = [line[len(marker):] for line in raw_log.decode("utf-8", errors="strict").splitlines()
+                          if line.startswith(marker)]
+            if len(candidates) != 1:
+                raise ValueError("Untraced control marker cardinality")
+            payload = _native_save_json(candidates[0].encode())
+        except (OSError, UnicodeError, ValueError, TypeError, RecursionError):
+            result["marker_validation_error"] = "MESH_STORAGE_CONTROL_MARKER_INVALID"
+    elif case in {"glb_stage_structure", "glb_stage_runtime"}:
         payload = None
         try:
             _log_sha, raw_log = _glb_stage_file(log, 4 * 1024**2, retain=True)
@@ -2003,7 +2230,7 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
         with log.open("rb") as stream:
             stream.seek(max(0, log.stat().st_size - 65536))
             log_text = stream.read().decode("utf-8", errors="replace")
-        if case in {"native_project_saving_large", MESH_STORAGE_CASE}:
+        if case in {"native_project_saving_large", MESH_STORAGE_CASE, MESH_STORAGE_CONTROL_CASE}:
             candidates = [line[len(marker):] for line in log_text.splitlines() if line.startswith(marker)]
             payload = None
             if len(candidates) == 1:
@@ -2041,6 +2268,13 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
     if case == MESH_STORAGE_CASE:
         phase_evidence = _mesh_storage_receipt_matches(payload, temporary, process_instance, phase,
             bundle, result.get("os_process_id"), domain_binary, domain_sources, domain_display)
+    if case == MESH_STORAGE_CONTROL_CASE:
+        phase_evidence = False  # A diagnostic never qualifies the five native phases.
+        validation = _mesh_storage_control_matches(payload, temporary, process_instance,
+            result.get("os_process_id"), domain_binary, domain_sources, domain_display)
+        result["retained_evidence_validation"] = validation
+        if result["exit_code"] == 0 and payload is not None and version and validation["diagnostic_completed"]:
+            result["status"] = "diagnostic_completed"
     if case == "native_project_saving_large":
         phase_evidence = _native_save_large_receipt_matches(payload, temporary, process_instance, large_sources, large_binary)
     if case == "glb_stage_runtime":
@@ -2062,6 +2296,8 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
 def run_case(blender: Path, case: str, output: Path, timeout: int) -> dict:
     if case == MESH_STORAGE_CASE:
         return _run_mesh_storage_case(blender, output, timeout)
+    if case == MESH_STORAGE_CONTROL_CASE:
+        return _run_mesh_storage_control(blender, output, timeout)
     if case not in PHASED_CASES:
         return _run_process(blender, case, output, timeout)
     started = time.monotonic()
@@ -2132,7 +2368,7 @@ def main() -> int:
         parser.error("Each Blender path must be an existing executable file")
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
-    defaults = [case for case in CASES if case != "native_project_saving_large"
+    defaults = [case for case in CASES if case not in {"native_project_saving_large", MESH_STORAGE_CONTROL_CASE}
                 and (args.include_interactive or case not in INTERACTIVE_CASES | OPT_IN_CASES)
                 and (case != "installed_addon_probe" or args.package_probe_config is not None)]
     cases = list(dict.fromkeys(args.cases or defaults))
@@ -2186,10 +2422,14 @@ def main() -> int:
             report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
             print(f"{index}:{case}: {result['status']}", flush=True)
     report["completed_at"] = datetime.now(timezone.utc).isoformat()
-    report["checks_passed"] = all(r["status"] == "passed" for r in report["results"])
+    report["checks_passed"] = all(r["case"] != MESH_STORAGE_CONTROL_CASE and r["status"] == "passed"
+                                  for r in report["results"])
     report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(report_path)
-    return 0 if report["checks_passed"] else 1
+    diagnostics_completed = all((r["case"] != MESH_STORAGE_CONTROL_CASE and r["status"] == "passed") or
+        (r["case"] == MESH_STORAGE_CONTROL_CASE and r["status"] == "diagnostic_completed")
+        for r in report["results"])
+    return 0 if diagnostics_completed else 1
 
 
 if __name__ == "__main__":

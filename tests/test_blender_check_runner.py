@@ -3074,3 +3074,420 @@ def test_mesh_storage_qualifier_accepts_actual_product_contract_methods(runner, 
     assert parsed is not None and set(parsed[0]) == set(parsed[1]) == {"job_" + "1" * 32}
     exchanges[1]["request"]["method"] = "mesh.attribute_storage_prepare_start"
     assert runner._mesh_storage_requests(exchanges) is None
+
+
+def mesh_storage_control_model(runner, command, environment, pid, outcome="success"):
+    """Synthetic retained-byte model; no Blender/native qualification is implied."""
+    report, normal = mesh_storage_full_model(runner, command, environment, pid)
+    positive = normal["cases"]["two_rows"]["evidence"]
+    common = ("process_id", "process_instance", "source_build", "blender_version", "binary_sha256",
+              "source_snapshot_sha256", "runtime_nonce", "runtime_identity", "source_fingerprints",
+              "helper_sha256", "private_display", "transport")
+    full = {key: normal[key] for key in common}
+    full.update(schema=runner.MESH_STORAGE_CONTROL_PROFILE, completed=True, diagnostic_only=True, phase="success",
+        flags=dict(runner.MESH_STORAGE_CONTROL_FLAGS),
+        hooks=dict.fromkeys(("main_before", "worker_before", "main_after", "worker_after"), [None] * 4),
+        requests=normal["cases"]["two_rows"]["requests"], before=positive["before"], after=positive["after"],
+        setup_oracle_values=positive["oracle_values"], terminal=positive["terminal"], outcome="JOB_TERMINAL",
+        product_success=outcome == "success", selected_values_match=True, protected_sample_equal=True,
+        identities_sample_equal=True, seconds=1., settled={"job_active": False, "is_executing": False,
+            "executing_mutators": 0, "executor_frame_present": False, "main_thread": True})
+    full["requests"][1]["request"]["params"]["time_limit_seconds"] = 60
+    if outcome == "failed":
+        full["terminal"]["state"] = "FAILED"
+    elif outcome in {"preview_refused", "start_refused"}:
+        full["outcome"] = "PREVIEW_REFUSED" if outcome == "preview_refused" else "START_REFUSED"
+        full["requests"] = full["requests"][:1 if outcome == "preview_refused" else 2]
+        final = full["requests"][-1]
+        final["response"] = mesh_storage_reply(final["request"], error={"code": "PERMISSION_DENIED", "message": "Measured refusal"})
+        full.update(after=full["before"], terminal=None, selected_values_match=False)
+    full["timings"] = [{"stage": ("preview", "start", "inspect")[min(index, 2)],
+        "request_id": exchange["request"]["id"], "sent_at": 10. + index * .2,
+        "received_at": 10.1 + index * .2, "cpu_seconds": .01}
+        for index, exchange in enumerate(full["requests"])]
+    return report, full
+
+
+def mesh_storage_control_write(runner, report, full, *, raw=None):
+    data = json.dumps(full, sort_keys=True, allow_nan=False, separators=(",", ":")).encode() if raw is None else raw
+    report.write_bytes(data)
+    compact = {key: full[key] for key in ("schema", "completed", "diagnostic_only", "process_id", "process_instance",
+        "source_build", "blender_version", "binary_sha256", "source_snapshot_sha256", "product_success")}
+    compact["full_receipt"] = {"path": str(report), "bytes": len(data), "sha256": runner.hashlib.sha256(data).hexdigest()}
+    return compact
+
+
+def mesh_storage_control_launch(runner, monkeypatch, binary, *, outcome="success", fault=None, marker_fault=None):
+    calls = []
+    class Process:
+        pid = 77
+        def __init__(self, command, **kwargs):
+            calls.append((command, kwargs))
+            report, full = mesh_storage_control_model(runner, command, kwargs["env"], self.pid, outcome)
+            if fault is not None:
+                fault(report, full)
+            compact = mesh_storage_control_write(runner, report, full)
+            marked = runner.MESH_STORAGE_CONTROL_MARKER + json.dumps(compact) + "\n"
+            if marker_fault is not None:
+                marked = marker_fault(report, full, compact, marked)
+            kwargs["stdout"].write(marked.encode())
+        def wait(self, timeout):
+            assert 1 <= timeout <= 300
+            return 0
+    monkeypatch.setattr(runner.subprocess, "Popen", Process)
+    monkeypatch.setenv("BRIDGE_TEST_PRIVATE_UI_MANIFEST", "owned-selector")
+    monkeypatch.setattr(runner.sys, "platform", "linux")
+    return calls
+
+
+@pytest.mark.parametrize("outcome", ["success", "failed", "preview_refused", "start_refused"])
+def test_mesh_storage_untraced_control_is_one_private_diagnostic_and_never_qualification(
+        runner, monkeypatch, tmp_path, outcome):
+    output, binary = mesh_storage_runner_root(runner, monkeypatch, tmp_path)
+    monkeypatch.setenv("UNRELATED_CREDENTIAL", "must-not-be-inherited")
+    monkeypatch.setenv("PYTHONPATH", "/unrelated/path")
+    calls = mesh_storage_control_launch(runner, monkeypatch, binary, outcome=outcome)
+    result = runner.run_case(binary, runner.MESH_STORAGE_CONTROL_CASE, output, 1200)
+    assert result["status"] == "diagnostic_completed"
+    assert result["retained_evidence_validation"]["product_success"] is (outcome == "success")
+    assert result["retained_evidence_validation"]["qualified"] is False
+    assert all(value is False for value in result["qualification_scope"].values())
+    assert len(calls) == 1
+    command, kwargs = calls[0]
+    assert command.count("--bridge-phase") == 1 and command[command.index("--bridge-phase") + 1] == "success"
+    assert command.count("--bridge-untraced-control") == 1
+    assert "--background" not in command and "--disable-autoexec" in command and "--factory-startup" in command
+    assert Path(command[command.index("--bridge-report") + 1]).name == runner.MESH_STORAGE_CONTROL_REPORT
+    assert kwargs["cwd"].is_relative_to(output) and kwargs["start_new_session"] is True
+    assert kwargs["env"]["BRIDGE_TEST_PRIVATE_UI_MANIFEST"] == "owned-selector"
+    assert "UNRELATED_CREDENTIAL" not in kwargs["env"] and "PYTHONPATH" not in kwargs["env"]
+    assert all(Path(kwargs["env"][key]).parent.is_relative_to(output) for key in
+        ("HOME", "BLENDER_USER_CONFIG", "BLENDER_USER_SCRIPTS", "BLENDER_USER_DATAFILES"))
+
+
+@pytest.mark.parametrize("fault", ["wrong_schema", "incomplete", "not_diagnostic", "wrong_phase", "wrong_pid", "bool_pid",
+    "wrong_instance", "wrong_build", "wrong_version", "wrong_binary", "wrong_helper", "wrong_source", "changed_source",
+    "changed_binary", "wrong_source_digest", "wrong_display", "wrong_nonce", "runtime_collision", "runtime_bool",
+    "hostname", "direct_dispatch", "manual_scheduler", "missing_flag", "qualified", "integer_flag", "extra_counter",
+    "installed_hook", "missing_hook", "hook_tuple", "active_job", "active_executor", "active_mutator", "bool_mutator",
+    "executor_frame", "not_mainthread", "bad_total_time", "boolean_total_time", "missing_timing", "wrong_stage",
+    "wrong_timing_id", "negative_cpu", "cpu_budget", "bad_timing_order", "request_wall_budget", "boolean_timing",
+    "missing_start", "missing_terminal", "unknown_terminal", "wrong_job_owner", "poll_refused", "terminal_early",
+    "wrong_fingerprint", "missing_confirmation", "integer_confirmation", "job_budget", "wire_budget", "extra_param",
+    "oracle_drift", "selected_drift", "protected_drift", "identity_drift", "wrong_classification", "false_success"])
+def test_mesh_storage_untraced_control_rejects_counterfeit_retained_facts(runner, monkeypatch, tmp_path, fault):
+    output, binary = mesh_storage_runner_root(runner, monkeypatch, tmp_path)
+    def corrupt(_report, full):
+        requests, timings = full["requests"], full["timings"]
+        if fault == "wrong_schema":
+            full["schema"] = "MESH_STORAGE_OWNED_JOB_NATIVE_V1"
+        elif fault == "incomplete":
+            full["completed"] = False
+        elif fault == "not_diagnostic":
+            full["diagnostic_only"] = False
+        elif fault == "wrong_phase":
+            full["phase"] = "cancel"
+        elif fault == "wrong_pid":
+            full["process_id"] = 78
+        elif fault == "bool_pid":
+            full["process_id"] = True
+        elif fault == "wrong_instance":
+            full["process_instance"] = "b" * 32
+        elif fault == "wrong_build":
+            full["source_build"] = "62c1db4208e8"
+        elif fault == "wrong_version":
+            full["blender_version"] = "5.2.3"
+        elif fault == "wrong_binary":
+            full["binary_sha256"] = "0" * 64
+        elif fault == "wrong_helper":
+            full["helper_sha256"] = "0" * 64
+        elif fault == "wrong_source":
+            full["source_fingerprints"]["scripts/run_blender_checks.py"] = "0" * 64
+        elif fault == "changed_source":
+            (runner.ROOT / "scripts/run_blender_checks.py").write_text("# changed after launch\n")
+        elif fault == "changed_binary":
+            binary.write_bytes(b"changed after launch")
+        elif fault == "wrong_source_digest":
+            full["source_snapshot_sha256"] = "0" * 64
+        elif fault == "wrong_display":
+            full["private_display"]["sha256"] = "0" * 64
+        elif fault == "wrong_nonce":
+            full["runtime_nonce"] = "0" * 32
+        elif fault == "runtime_collision":
+            full["runtime_identity"]["queue_id"] = full["runtime_identity"]["registry_id"]
+        elif fault == "runtime_bool":
+            full["runtime_identity"]["queue_id"] = True
+        elif fault == "hostname":
+            full["transport"]["host"] = "localhost"
+        elif fault == "direct_dispatch":
+            full["transport"]["direct_dispatch"] = True
+        elif fault == "manual_scheduler":
+            full["transport"]["manual_scheduler_drain"] = True
+        elif fault == "missing_flag":
+            full["flags"].pop("preservation_qualified")
+        elif fault == "qualified":
+            full["flags"]["preservation_qualified"] = True
+        elif fault == "integer_flag":
+            full["flags"]["preservation_qualified"] = 0
+        elif fault == "extra_counter":
+            full["native_access_counts"] = {"entries": 0}
+        elif fault == "installed_hook":
+            full["hooks"]["main_before"] = ["profile", None, None, None]
+        elif fault == "missing_hook":
+            full["hooks"].pop("worker_after")
+        elif fault == "hook_tuple":
+            full["hooks"]["main_before"] = [None] * 3
+        elif fault == "active_job":
+            full["settled"]["job_active"] = True
+        elif fault == "active_executor":
+            full["settled"]["is_executing"] = True
+        elif fault == "active_mutator":
+            full["settled"]["executing_mutators"] = 1
+        elif fault == "bool_mutator":
+            full["settled"]["executing_mutators"] = False
+        elif fault == "executor_frame":
+            full["settled"]["executor_frame_present"] = True
+        elif fault == "not_mainthread":
+            full["settled"]["main_thread"] = False
+        elif fault == "bad_total_time":
+            full["seconds"] = 301
+        elif fault == "boolean_total_time":
+            full["seconds"] = True
+        elif fault == "missing_timing":
+            timings.pop()
+        elif fault == "wrong_stage":
+            timings[0]["stage"] = "inspect"
+        elif fault == "wrong_timing_id":
+            timings[0]["request_id"] = "other"
+        elif fault == "negative_cpu":
+            timings[0]["cpu_seconds"] = -.1
+        elif fault == "cpu_budget":
+            timings[0]["cpu_seconds"] = 301
+        elif fault == "bad_timing_order":
+            timings[1]["sent_at"] = 0
+        elif fault == "request_wall_budget":
+            timings[-1]["received_at"] = timings[-1]["sent_at"] + 65.001
+        elif fault == "boolean_timing":
+            timings[0]["sent_at"] = True
+        elif fault == "missing_start":
+            requests.pop(1)
+            timings.pop(1)
+        elif fault == "missing_terminal":
+            full["terminal"] = None
+        elif fault == "unknown_terminal":
+            full["terminal"]["state"] = "UNKNOWN"
+        elif fault == "wrong_job_owner":
+            requests[-1]["request"]["params"]["job_id"] = "job_" + "2" * 32
+        elif fault == "poll_refused":
+            requests[-1]["response"] = mesh_storage_reply(requests[-1]["request"], error={"code": "TIMEOUT"})
+        elif fault == "terminal_early":
+            requests.append(json.loads(json.dumps(requests[-1])))
+            requests[-1]["request"]["id"] = requests[-1]["response"]["id"] = "late-poll"
+            timings.append({**timings[-1], "request_id": "late-poll", "sent_at": 10.6, "received_at": 10.7})
+        elif fault == "wrong_fingerprint":
+            requests[1]["request"]["params"]["expected_preparation_fingerprint"] = "0" * 64
+        elif fault == "missing_confirmation":
+            requests[1]["request"]["params"].pop("confirm_retained_partial_preparation")
+        elif fault == "integer_confirmation":
+            requests[1]["request"]["params"]["confirm_materialize_storage"] = 1
+        elif fault == "job_budget":
+            requests[1]["request"]["params"]["time_limit_seconds"] = 61
+        elif fault == "wire_budget":
+            requests[0]["request"]["timeout_ms"] = 60001
+        elif fault == "extra_param":
+            requests[0]["request"]["params"]["bypass"] = True
+        elif fault == "oracle_drift":
+            full["setup_oracle_values"][".uv_select_face"] = [False]
+        elif fault == "selected_drift":
+            full["after"]["selected_values"][".uv_select_face"] = [False]
+        elif fault == "protected_drift":
+            full["after"]["protected"]["image"]["alpha_mode"] = "PREMUL"
+        elif fault == "identity_drift":
+            full["after"]["object_identity"][1] += 1
+        elif fault == "wrong_classification":
+            full["outcome"] = "START_REFUSED"
+        elif fault == "false_success":
+            full["product_success"] = False
+        else:
+            raise AssertionError(fault)
+    mesh_storage_control_launch(runner, monkeypatch, binary, fault=corrupt)
+    result = runner.run_case(binary, runner.MESH_STORAGE_CONTROL_CASE, output, 300)
+    assert result["status"] == "failed", (fault, result)
+
+
+def test_mesh_storage_untraced_control_can_report_sample_drift_without_claiming_preservation(runner, monkeypatch, tmp_path):
+    output, binary = mesh_storage_runner_root(runner, monkeypatch, tmp_path)
+    def drift(_report, full):
+        full["after"]["protected"]["image"]["alpha_mode"] = "PREMUL"
+        full["protected_sample_equal"] = False
+    mesh_storage_control_launch(runner, monkeypatch, binary, fault=drift)
+    result = runner.run_case(binary, runner.MESH_STORAGE_CONTROL_CASE, output, 300)
+    assert result["status"] == "diagnostic_completed"
+    assert result["retained_evidence_validation"]["product_success"] is True
+    assert result["qualification_scope"]["preservation_qualified"] is False
+
+
+@pytest.mark.parametrize("scenario", ["running_poll", "selected_mismatch", "unentered_failure"])
+def test_mesh_storage_control_distinguishes_actual_target_results_from_completed_measurement(
+        runner, monkeypatch, tmp_path, scenario):
+    output, binary = mesh_storage_runner_root(runner, monkeypatch, tmp_path)
+    def actual(_report, full):
+        if scenario == "selected_mismatch":
+            full["after"]["selected_values"][".uv_select_face"] = [False]
+            full.update(product_success=False, selected_values_match=False)
+        elif scenario == "unentered_failure":
+            full.update(after=full["before"], product_success=False, selected_values_match=False)
+            full["terminal"]["state"] = "FAILED"
+            journal = full["terminal"]["storage_effects"]
+            journal.update(rows=[{"name": name, "helper_attached": False} for name in (".uv_select_face", "UVSingle")],
+                           materialization_entered=False, native_lookup_entered=False)
+        else:
+            poll = json.loads(json.dumps(full["requests"][-1]))
+            poll["request"]["id"] = poll["response"]["id"] = "running-poll"
+            poll["response"]["result"].update(state="RUNNING", terminal=False)
+            full["requests"].insert(2, poll)
+            full["timings"] = [{"stage": ("preview", "start", "inspect")[min(index, 2)],
+                "request_id": exchange["request"]["id"], "sent_at": 10. + index * .2,
+                "received_at": 10.1 + index * .2, "cpu_seconds": .01}
+                for index, exchange in enumerate(full["requests"])]
+    mesh_storage_control_launch(runner, monkeypatch, binary, fault=actual)
+    result = runner.run_case(binary, runner.MESH_STORAGE_CONTROL_CASE, output, 300)
+    assert result["status"] == "diagnostic_completed"
+    assert result["retained_evidence_validation"]["product_success"] is (scenario == "running_poll")
+
+
+@pytest.mark.parametrize("scenario", ["short_total", "refusal_message", "refused_wrong_target", "missing_journal"])
+def test_mesh_storage_control_refuses_inconsistent_duration_or_untyped_refusal(runner, monkeypatch, tmp_path, scenario):
+    output, binary = mesh_storage_runner_root(runner, monkeypatch, tmp_path)
+    def corrupt(_report, full):
+        if scenario == "short_total":
+            full["seconds"] = .0001
+        elif scenario == "refusal_message":
+            full["requests"][0]["response"]["error"].pop("message")
+        elif scenario == "missing_journal":
+            full["terminal"].pop("storage_effects")
+        else:
+            full["requests"][0]["request"]["params"]["object_name"] = "foreign object"
+    mesh_storage_control_launch(runner, monkeypatch, binary,
+        outcome="success" if scenario in {"short_total", "missing_journal"} else "preview_refused", fault=corrupt)
+    result = runner.run_case(binary, runner.MESH_STORAGE_CONTROL_CASE, output, 300)
+    assert result["status"] == "failed"
+
+
+def test_mesh_storage_control_is_excluded_from_defaults_even_when_interactive(runner, monkeypatch, tmp_path):
+    binary = tmp_path / "blender"
+    binary.write_bytes(b"not launched")
+    monkeypatch.setattr(runner.sys, "argv", ["runner", "--blender", str(binary), "--output", str(tmp_path / "evidence"),
+                                           "--include-interactive"])
+    monkeypatch.setattr(runner, "git_value", lambda *_args: "")
+    cases = []
+    def launch(_binary, case, _output, _timeout):
+        cases.append(case)
+        return {"case": case, "status": "passed"}
+    monkeypatch.setattr(runner, "run_case", launch)
+    assert runner.main() == 0
+    assert runner.MESH_STORAGE_CONTROL_CASE not in cases
+
+
+@pytest.mark.parametrize("status,exit_code", [("diagnostic_completed", 0), ("passed", 1), ("failed", 1), ("timeout", 1)])
+def test_mesh_storage_control_cli_completion_never_sets_checks_passed(runner, monkeypatch, tmp_path, status, exit_code):
+    binary = tmp_path / "blender"
+    binary.write_bytes(b"not launched")
+    output = tmp_path / "evidence"
+    monkeypatch.setattr(runner.sys, "argv", ["runner", "--blender", str(binary), "--output", str(output),
+                                           "--case", runner.MESH_STORAGE_CONTROL_CASE])
+    monkeypatch.setattr(runner, "git_value", lambda *_args: "")
+    monkeypatch.setattr(runner, "run_case", lambda *_args: {"case": runner.MESH_STORAGE_CONTROL_CASE, "status": status})
+    assert runner.main() == exit_code
+    report = json.loads((output / "report.json").read_text())
+    assert report["checks_passed"] is False
+    assert report["release_readiness"] == "NOT_ASSESSED"
+
+
+@pytest.mark.parametrize("fault", ["missing_marker", "duplicate_marker", "distant_duplicate", "marker_extra_field",
+    "marker_pid", "marker_digest", "marker_bytes_bool", "missing_binding", "changed_bytes", "duplicate_json_key",
+    "nonfinite_json", "outside_owned_root"])
+def test_mesh_storage_control_requires_unique_marker_and_bound_strict_retained_bytes(runner, monkeypatch, tmp_path, fault):
+    output, binary = mesh_storage_runner_root(runner, monkeypatch, tmp_path)
+    def corrupt(report, full, compact, marked):
+        if fault == "missing_marker":
+            return "no marker\n"
+        if fault == "duplicate_marker":
+            return marked + marked
+        if fault == "distant_duplicate":
+            return marked + "x" * 70000 + "\n" + marked
+        if fault == "marker_extra_field":
+            compact["native_access_counter_observed"] = False
+        elif fault == "marker_pid":
+            compact["process_id"] += 1
+        elif fault == "marker_digest":
+            compact["full_receipt"]["sha256"] = "0" * 64
+        elif fault == "marker_bytes_bool":
+            compact["full_receipt"]["bytes"] = True
+        elif fault == "missing_binding":
+            compact.pop("full_receipt")
+        elif fault == "changed_bytes":
+            report.write_bytes(report.read_bytes() + b" ")
+        elif fault == "duplicate_json_key":
+            raw = report.read_bytes().replace(b'{', b'{"completed":true,', 1)
+            compact = mesh_storage_control_write(runner, report, full, raw=raw)
+        elif fault == "nonfinite_json":
+            raw = report.read_bytes().replace(b'"seconds":1.0', b'"seconds":NaN')
+            assert raw != report.read_bytes()
+            compact = mesh_storage_control_write(runner, report, full, raw=raw)
+        elif fault == "outside_owned_root":
+            outside = tmp_path / "external-report.json"
+            outside.write_bytes(report.read_bytes())
+            compact["full_receipt"]["path"] = str(outside)
+        else:
+            raise AssertionError(fault)
+        return runner.MESH_STORAGE_CONTROL_MARKER + json.dumps(compact) + "\n"
+    mesh_storage_control_launch(runner, monkeypatch, binary, marker_fault=corrupt)
+    result = runner.run_case(binary, runner.MESH_STORAGE_CONTROL_CASE, output, 300)
+    assert result["status"] == "failed", (fault, result)
+
+
+def test_mesh_storage_control_receipt_cannot_pass_original_five_phase_validator(runner, monkeypatch, tmp_path):
+    output, binary = mesh_storage_runner_root(runner, monkeypatch, tmp_path)
+    temporary = output / "temporary"
+    temporary.mkdir()
+    bundle = output / "bundle"
+    bundle.mkdir()
+    report = temporary / runner.MESH_STORAGE_CONTROL_REPORT
+    command = [str(binary), "--bridge-phase", "success", "--bridge-report", str(report)]
+    _report, full = mesh_storage_control_model(runner, command, {"BRIDGE_TEST_PROCESS_TOKEN": "a" * 32}, 77)
+    compact = mesh_storage_control_write(runner, report, full)
+    _raw, binding = runner._domain_regular(binary, binary.parent, 1024**3)
+    assert runner._mesh_storage_receipt_matches(compact, temporary, "a" * 32, "success", bundle,
+        77, binding, runner._mesh_storage_sources(), runner._domain_display()) is False
+
+
+def test_mesh_storage_control_refuses_integer_terminal_flag_in_standalone_summary(runner, monkeypatch, tmp_path):
+    output, binary = mesh_storage_runner_root(runner, monkeypatch, tmp_path)
+    def corrupt(_report, full):
+        full["terminal"] = json.loads(json.dumps(full["terminal"]))
+        full["terminal"]["terminal"] = 1
+        assert full["requests"][-1]["response"]["result"]["terminal"] is True
+    mesh_storage_control_launch(runner, monkeypatch, binary, fault=corrupt)
+    result = runner.run_case(binary, runner.MESH_STORAGE_CONTROL_CASE, output, 300)
+    assert result["status"] == "failed"
+    assert result["retained_evidence_validation"]["diagnostic_completed"] is False
+
+
+def test_mesh_storage_control_preserves_original_five_phase_validator_bodies(runner):
+    import ast
+    source = Path(runner.__file__).read_bytes()
+    lines = source.splitlines(keepends=True)
+    expected = {
+        "_mesh_storage_journal": "53592b236cbcbf66e55c6597c6446eb64b219a919198f584c0d3a5196ccf89cc",
+        "_mesh_storage_phase_cases": "8b04001bde3d0f2b27c5842e36ee69d463753a71f0b3351177f5f230a29bc11e",
+        "_mesh_storage_receipt_matches": "84e7e4a979e1dc708a688a50918ccf4d00cf797a2505205fd9db07ead5057fd0",
+        "_mesh_storage_requests": "5ffb773c9f71ec2ece76ee43087cd27ce5a988c4ed94a28988af294831c883bf",
+        "_mesh_storage_snapshot": "63b4df606502209219a42065a619af19d08bfb50aef5fba947fa787d667f191b",
+        "_mesh_storage_trace": "516bdeb3678473aa01e812781a728e707cbe531cc4dd0ede53fbfcf8e983dcc3",
+        "_mesh_storage_values": "67336eece7eb43efaba00ccd6e21a09c88110de710c5287ca473698953d19d78",
+        "_run_mesh_storage_case": "0aa47dffe7bdf48ba14338b454394c668e5aa09f916335bd9b070bec0219748d",
+    }
+    observed = {node.name: hashlib.sha256(b"".join(lines[node.lineno - 1:node.end_lineno])).hexdigest()
+        for node in ast.walk(ast.parse(source)) if isinstance(node, ast.FunctionDef) and node.name in expected}
+    assert observed == expected

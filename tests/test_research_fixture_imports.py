@@ -4551,3 +4551,187 @@ def test_mesh_storage_hybrid_binds_only_original_pinned_materialize_line():
     assert 'foreach(data, "vector" if header.data_type == "FLOAT2" else "value", output)' in lines[call - 1]
     assert lines[returned - 1].strip() == 'cells[index]["materialize_returned"] = True'
     assert hashlib.sha256(helper.read_bytes()).hexdigest() == script.HELPER_SHA256
+
+
+@pytest.mark.parametrize("slot", range(4))
+def test_mesh_storage_untraced_control_rejects_each_existing_hook(monkeypatch, slot):
+    script = importlib.import_module("scripts.blender_mesh_storage_job_smoke")
+    owners = ((sys, "getprofile"), (sys, "gettrace"), (threading, "getprofile"), (threading, "gettrace"))
+    for owner, name in owners:
+        monkeypatch.setattr(owner, name, lambda: None)
+    assert script.control_hook_state() == [None] * 4
+    owner, name = owners[slot]
+    monkeypatch.setattr(owner, name, lambda: object())
+    with pytest.raises(AssertionError, match="four hooks absent"):
+        script.control_hook_state()
+
+
+def _b2_control_model(monkeypatch, *, executor_class=None):
+    script = importlib.import_module("scripts.blender_mesh_storage_job_smoke")
+    module = ModuleType("blender_codex_bridge.executor")
+    if executor_class is None:
+        class Executor:
+            def execute_request(self):
+                pass
+            def _invoke_owned(self):
+                pass
+            def _drain_timer(self):
+                pass
+        executor_class = Executor
+    module.MainThreadExecutor = executor_class
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    control = object.__new__(script.FirstJobControl)
+    control.runtime = NS(jobs=NS(active=None), state=NS(is_executing=False),
+        registry=NS(executing_mutators=0), executor=NS(_main_thread_id=threading.get_ident()))
+    control.targets = {"main": {"object_name": "B2 owner", "mesh_name": "B2 mesh"}}
+    control.bpy = object()
+    calls = []
+    monkeypatch.setattr(script, "snapshot", lambda *_args: calls.append("RNA") or {"owned_snapshot": True})
+    monkeypatch.setattr(script, "control_hook_state", lambda: [None] * 4)
+    return script, control, calls
+
+
+@pytest.mark.parametrize("fault", ["active_job", "executing", "executing_int", "mutator", "mutator_bool", "wrong_thread"])
+def test_mesh_storage_untraced_post_snapshot_requires_settled_runtime_before_RNA(monkeypatch, fault):
+    _script, control, calls = _b2_control_model(monkeypatch)
+    if fault == "active_job":
+        control.runtime.jobs.active = object()
+    elif fault == "executing":
+        control.runtime.state.is_executing = True
+    elif fault == "executing_int":
+        control.runtime.state.is_executing = 0
+    elif fault == "mutator":
+        control.runtime.registry.executing_mutators = 1
+    elif fault == "mutator_bool":
+        control.runtime.registry.executing_mutators = False
+    else:
+        control.runtime.executor._main_thread_id += 1
+    with pytest.raises(AssertionError, match="settled Runtime"):
+        control.apply("control_snapshot", {"stage": "after"})
+    assert calls == []
+
+
+def test_mesh_storage_untraced_post_snapshot_refuses_actual_executor_frame_before_RNA(monkeypatch):
+    class Executor:
+        def execute_request(self, control):
+            return control.apply("control_snapshot", {"stage": "after"})
+        def _invoke_owned(self):
+            pass
+        def _drain_timer(self):
+            pass
+    _script, control, calls = _b2_control_model(monkeypatch, executor_class=Executor)
+    with pytest.raises(AssertionError, match="settled Runtime"):
+        Executor().execute_request(control)
+    assert calls == []
+    assert control.apply("control_snapshot", {"stage": "after"}) == {
+        "snapshot": {"owned_snapshot": True}, "hooks": [None] * 4,
+        "settled": {"job_active": False, "is_executing": False, "executing_mutators": 0,
+                    "executor_frame_present": False, "main_thread": True}}
+    assert calls == ["RNA"]
+
+
+@pytest.mark.parametrize("scenario", ["success", "preview_refused", "start_refused", "job_failed", "wrong_values"])
+def test_mesh_storage_untraced_control_uses_actual_protocol_shape_and_original_bounds(
+    addon_package, monkeypatch, scenario,
+):
+    import copy
+
+    script = importlib.import_module("scripts.blender_mesh_storage_job_smoke")
+    contract = importlib.import_module(f"{addon_package}.mesh_storage_contract")
+    oracle = {".uv_select_face": [True], "UVSingle": [["0000803e", "000000bf"]] * 3}
+    before = {"object_identity": ["Object", 1, 11], "mesh_identity": ["Mesh", 2, 22],
+        "uv_roles": [0, [["UVSingle", True, False]]], "protected": {"sample": [1, 2, 3]},
+        "selected_storage": [[".uv_select_face", "FACE", "BOOLEAN", "SINGLE", 1],
+                             ["UVSingle", "CORNER", "FLOAT2", "SINGLE", 3]], "selected_values": {}}
+    after = copy.deepcopy(before)
+    after["selected_storage"] = [[*row[:3], "ARRAY", row[4]] for row in after["selected_storage"]]
+    after["selected_values"] = copy.deepcopy(oracle)
+    terminal = {"job_id": "job_" + "1" * 32, "terminal": True,
+                "state": "FAILED" if scenario == "job_failed" else "SUCCEEDED"}
+    replies = [{"ok": True, "result": {"expected_preparation_fingerprint": "a" * 64}},
+               {"ok": True, "result": {"job_id": terminal["job_id"]}},
+               {"ok": True, "result": {"job_id": terminal["job_id"], "terminal": False, "state": "RUNNING"}},
+               {"ok": True, "result": terminal}]
+    if scenario == "preview_refused":
+        replies = [{"ok": False, "error": {"code": "PERMISSION_DENIED", "message": "Owned denial"}}]
+        after = copy.deepcopy(before)
+    elif scenario == "start_refused":
+        replies[1:] = [{"ok": False, "error": {"code": "TIMEOUT", "message": "Owned bounded START timeout"}}]
+        after = copy.deepcopy(before)
+    elif scenario == "wrong_values":
+        after["selected_values"][".uv_select_face"] = [False]
+    clients, controls = [], []
+    class Client:
+        def __init__(self, port, transcript):
+            self.transcript, self.closed = transcript, False
+            assert port == 1234
+            clients.append(self)
+        def call(self, method, *, ok=True, **parameters):
+            assert ok is None
+            response = copy.deepcopy(replies.pop(0))
+            request = {"id": "owned_" + str(len(self.transcript)), "method": method,
+                       "params": parameters, "timeout_ms": 60000, "protocol_version": "1.0"}
+            response["id"] = request["id"]
+            self.transcript.append({"request": request, "response": response})
+            return response
+        def close(self):
+            self.closed = True
+    monkeypatch.setattr(script, "Client", Client)
+    monkeypatch.setattr(script, "control_hook_state", lambda: [None] * 4)
+    control = object.__new__(script.FirstJobControl)
+    control.control_data = {"hooks": {}, "requests": [], "timings": [], "terminal": None}
+    control.targets = {"main": {"object_name": "B2 owner", "mesh_name": "B2 mesh", "oracle_values": oracle}}
+    control.domain, control.port, control.done, control.failure = NS(contract=contract), 1234, threading.Event(), None
+    def owned_control(action, **parameters):
+        assert action == "control_snapshot" and parameters["stage"] in {"before", "after"}
+        controls.append(parameters["stage"])
+        return {"snapshot": before if parameters["stage"] == "before" else after,
+                "hooks": [None] * 4, "settled": {"job_active": False, "is_executing": False,
+                    "executing_mutators": 0, "executor_frame_present": False, "main_thread": True}}
+    control.control = owned_control
+    control.scenario()
+    assert control.failure is None and control.done.is_set()
+    assert controls == ["before", "after"] and clients[0].closed and replies == []
+    data = control.control_data
+    assert data["hooks"] == {key: [None] * 4 for key in ("worker_before", "main_before", "main_after", "worker_after")}
+    assert data["product_success"] is (scenario == "success")
+    assert data["outcome"] == {"preview_refused": "PREVIEW_REFUSED", "start_refused": "START_REFUSED"}.get(scenario, "JOB_TERMINAL")
+    assert len(data["timings"]) == len(data["requests"])
+    for timing, exchange in zip(data["timings"], data["requests"], strict=True):
+        assert timing["request_id"] == exchange["request"]["id"]
+        assert timing["received_at"] >= timing["sent_at"] and timing["cpu_seconds"] >= 0
+        assert exchange["request"]["timeout_ms"] == 60000
+    assert data["requests"][0]["request"]["method"] == contract.PREVIEW
+    if scenario != "preview_refused":
+        started = data["requests"][1]["request"]
+        assert started["method"] == contract.START
+        assert started["params"] == {"object_name": "B2 owner", "mesh_name": "B2 mesh", "attribute_names": list(script.SELECTED),
+            "expected_preparation_fingerprint": "a" * 64, "confirm_materialize_storage": True,
+            "confirm_retained_partial_preparation": True, "time_limit_seconds": 60}
+    assert not {"native_trace", "native_access_counts", "provider_count", "checkpoint_markers"} & set(data)
+    assert all(value is False for value in script.CONTROL_FLAGS.values())
+
+
+def test_mesh_storage_untraced_missing_terminal_never_reads_after_snapshot(addon_package, monkeypatch):
+    script = importlib.import_module("scripts.blender_mesh_storage_job_smoke")
+    contract = importlib.import_module(f"{addon_package}.mesh_storage_contract")
+    control = object.__new__(script.FirstJobControl)
+    control.control_data = {"hooks": {}, "requests": [], "timings": [], "terminal": None}
+    control.targets = {"main": {"object_name": "B2 owner", "mesh_name": "B2 mesh", "oracle_values": {}}}
+    control.domain, control.port, control.done, control.failure = NS(contract=contract), 1234, threading.Event(), None
+    calls, responses = [], [{"ok": True, "result": {"expected_preparation_fingerprint": "a" * 64}},
+                            {"ok": True, "result": {"job_id": "job_" + "1" * 32}}]
+    class Client:
+        def __init__(self, *_args):
+            pass
+        def close(self):
+            pass
+    monkeypatch.setattr(script, "Client", Client)
+    monkeypatch.setattr(script, "control_hook_state", lambda: [None] * 4)
+    control.control = lambda action, **params: calls.append(params["stage"]) or {"snapshot": {}, "hooks": [None] * 4}
+    control.timed = lambda *_args, **_kwargs: responses.pop(0)
+    ticks = iter((0., 61.))
+    monkeypatch.setattr(script.time, "monotonic", lambda: next(ticks))
+    control.scenario()
+    assert control.done.is_set() and "original 60s poll bound" in control.failure
+    assert calls == ["before"] and control.control_data["terminal"] is None

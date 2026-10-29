@@ -46,6 +46,15 @@ BUILD = b"d13f752e3b9c"
 HELPER_SHA256 = "a22034b857cc661b24ff611c4dce72a8b0c503e384b5c56f0141aa0abd915d99"
 MAX_REPORT = 8 * 1024 * 1024
 SELECTED = (".uv_select_face", "UVSingle")
+CONTROL_CASE = "mesh_storage_first_job_control"
+CONTROL_PROFILE = "MESH_STORAGE_FIRST_JOB_UNTRACED_CONTROL_V1"
+CONTROL_MARKER = "BLENDER_MESH_STORAGE_FIRST_JOB_CONTROL_DIAGNOSTIC "
+CONTROL_REPORT = "mesh-storage-first-job-control.json"
+CONTROL_FLAGS = dict.fromkeys(("source_frame_observer_installed", "native_access_counter_observed",
+    "checkpoint_boundary_observed", "complete_five_phase_qualified", "preservation_qualified",
+    "cancel_disconnect_qualified", "recovery_qualified", "durable_backup_qualified",
+    "full_artist_workflow_qualified", "public_tool_qualified", "installed_qualified", "release_acceptance",
+    "windows_qualified"), False)
 SOURCES = ("scripts/blender_mesh_storage_job_smoke.py", "scripts/run_blender_checks.py",
            "scripts/blender_artist_sidebar_smoke.py",
            "scripts/native_resources.py")
@@ -860,7 +869,7 @@ class OwnedMeshObserverHooks:
 
 
 class Fixture:
-    def __init__(self, bpy, options, token, sources, display):
+    def __init__(self, bpy, options, token, sources, display, *, observe=True):
         self.bpy, self.options, self.token, self.sources, self.display = bpy, options, token, sources, display
         self.started, self.phase = time.monotonic(), options.bridge_phase
         self.controls, self.done = queue.Queue(), threading.Event()
@@ -868,6 +877,8 @@ class Fixture:
         self.delivery_hold, self.delivery_entered, self.delivery_release = False, threading.Event(), threading.Event()
         self.delivery_expired, self.port, self.fault = False, None, None
         self.observer, self.runtime, self.prefs, self.hooks = None, None, None, None
+        assert type(observe) is bool
+        self.observe = observe
 
     def fail(self):
         from scripts.blender_artist_sidebar_smoke import owned_process_exit
@@ -985,9 +996,10 @@ class Fixture:
                                 {"fixture_injected_after_native_return": True}))
             self.profile_callback = self.observer.profile
             call_line, returned_line = materialize_trace_lines(self.primitive)
-            self.hooks = OwnedMeshObserverHooks(self.observer.codes, self.profile_callback,
-                self.network_profile, self.ack_code, call_line, returned_line, self.fault)
-            self.hooks.install()
+            if self.observe:
+                self.hooks = OwnedMeshObserverHooks(self.observer.codes, self.profile_callback,
+                    self.network_profile, self.ack_code, call_line, returned_line, self.fault)
+                self.hooks.install()
             probe = socket.socket()
             probe.bind(("127.0.0.1", 0))
             self.port = probe.getsockname()[1]
@@ -1381,16 +1393,188 @@ class Fixture:
         return None
 
 
+def control_hook_state():
+    state = [getter() for getter in (sys.getprofile, sys.gettrace, threading.getprofile, threading.gettrace)]
+    assert all(value is None for value in state), "Untraced control requires all four hooks absent"
+    return state
+
+
+def control_result_facts(before, after, oracle, terminal, outcome):
+    selected = after["selected_values"] == oracle
+    return {"selected_values_match": selected,
+        "protected_sample_equal": before["protected"] == after["protected"] and before["uv_roles"] == after["uv_roles"],
+        "identities_sample_equal": all(before[key] == after[key] for key in ("object_identity", "mesh_identity")),
+        "product_success": (outcome == "JOB_TERMINAL" and terminal is not None
+            and terminal["terminal"] is True and terminal["state"] == "SUCCEEDED" and selected
+            and all(row[3] == "ARRAY" for row in after["selected_storage"]))}
+
+
+class FirstJobControl(Fixture):
+    """One unobserved real job sample; never five-phase acceptance evidence."""
+    def __init__(self, bpy, options, token, sources, display):
+        assert options.bridge_phase == "success" and tuple(bpy.app.version) == (5, 2, 2)
+        assert bpy.app.build_hash == BUILD
+        control_hook_state()
+        super().__init__(bpy, options, token, sources, display, observe=False)
+        self.control_build = bpy.app.build_hash.decode("ascii")
+        self.control_version = bpy.app.version_string
+        self.control_data = {"hooks": {}, "requests": [], "timings": [], "terminal": None}
+
+    def settled(self):
+        from blender_codex_bridge.executor import MainThreadExecutor
+        codes = {id(fn.__code__): fn.__code__ for fn in (MainThreadExecutor.execute_request,
+            MainThreadExecutor._invoke_owned, MainThreadExecutor._drain_timer)}
+        frame, depth, present = sys._getframe(), 0, False
+        try:
+            while frame is not None:
+                assert depth < 64, "Unsettled control stack depth"
+                code = frame.f_code
+                if codes.get(id(code)) is code:
+                    present = True
+                frame, depth = frame.f_back, depth + 1
+        finally:
+            frame = None
+        main_thread_id = self.runtime.executor._main_thread_id
+        assert type(main_thread_id) is int, "Control requires its actual main thread identity"
+        result = {"job_active": self.runtime.jobs.active is not None,
+            "is_executing": self.runtime.state.is_executing,
+            "executing_mutators": self.runtime.registry.executing_mutators,
+            "executor_frame_present": present,
+            "main_thread": threading.get_ident() == main_thread_id}
+        assert (result["job_active"] is False and result["is_executing"] is False
+                and type(result["executing_mutators"]) is int and result["executing_mutators"] == 0
+                and result["executor_frame_present"] is False and result["main_thread"] is True), \
+            "Control snapshot requires a settled Runtime after its executor turn returned"
+        return result
+
+    def apply(self, action, parameters):
+        assert action == "control_snapshot" and parameters["stage"] in {"before", "after"}
+        # These checks are pure Python and must all precede any RNA access.
+        settled, hooks = self.settled(), control_hook_state()
+        return {"snapshot": snapshot(self.bpy, self.targets["main"]), "hooks": hooks, "settled": settled}
+
+    def timed(self, client, stage, method, **parameters):
+        started, cpu = time.monotonic(), time.process_time()
+        response = client.call(method, ok=None, **parameters)
+        self.control_data["timings"].append({"stage": stage,
+            "request_id": self.control_data["requests"][-1]["request"]["id"],
+            "sent_at": started, "received_at": time.monotonic(), "cpu_seconds": time.process_time() - cpu})
+        assert type(response["ok"]) is bool
+        if not response["ok"]:
+            error = response["error"]
+            assert type(error) is dict and type(error.get("code")) is str and error["code"]
+            assert type(error.get("message")) is str and 0 < len(error["message"]) <= 4096
+        return response
+
+    def scenario(self):
+        client = None
+        try:
+            data = self.control_data
+            data["hooks"]["worker_before"] = control_hook_state()
+            before = self.control("control_snapshot", stage="before")
+            data["before"], data["hooks"]["main_before"] = before["snapshot"], before["hooks"]
+            client = Client(self.port, data["requests"])
+            target = self.targets["main"]
+            parameters = {"object_name": target["object_name"], "mesh_name": target["mesh_name"],
+                          "attribute_names": list(SELECTED)}
+            preview = self.timed(client, "preview", self.domain.contract.PREVIEW, **parameters)
+            data["outcome"] = "PREVIEW_REFUSED"
+            if preview["ok"]:
+                accepted = self.timed(client, "start", self.domain.contract.START, **parameters,
+                    expected_preparation_fingerprint=preview["result"]["expected_preparation_fingerprint"],
+                    confirm_materialize_storage=True, confirm_retained_partial_preparation=True,
+                    time_limit_seconds=60)
+                data["outcome"] = "START_REFUSED"
+                if accepted["ok"]:
+                    identifier = accepted["result"]["job_id"]
+                    deadline = time.monotonic() + 60
+                    while time.monotonic() < deadline:
+                        inspected = self.timed(client, "inspect", "jobs.inspect", job_id=identifier)
+                        assert inspected["ok"], "Control lost its accepted job terminal response"
+                        if inspected["result"]["terminal"]:
+                            data["terminal"] = inspected["result"]
+                            break
+                        time.sleep(.01)
+                    assert data["terminal"] is not None, "Accepted control job did not settle in its original 60s poll bound"
+                    data["outcome"] = "JOB_TERMINAL"
+            after = self.control("control_snapshot", stage="after")
+            data["after"], data["settled"] = after["snapshot"], after["settled"]
+            data["hooks"]["main_after"] = after["hooks"]
+            data["hooks"]["worker_after"] = control_hook_state()
+            data["setup_oracle_values"] = target["oracle_values"]
+            data.update(control_result_facts(data["before"], data["after"],
+                                            data["setup_oracle_values"], data["terminal"], data["outcome"]))
+        except Exception:
+            self.failure = traceback.format_exc()
+        finally:
+            if client is not None:
+                client.close()
+            self.done.set()
+
+    def fail(self):
+        from scripts.blender_artist_sidebar_smoke import owned_process_exit
+        # No observer, provider, Runtime or RNA inspection forms diagnostics.
+        raw = {"schema": CONTROL_PROFILE, "completed": False, "diagnostic_only": True,
+            "phase": self.phase, "process_id": os.getpid(), "process_instance": self.token,
+            "failure": self.failure, "partial": self.control_data, "flags": dict(CONTROL_FLAGS)}
+        domain_new(self.options.bridge_report.with_suffix(".failure.json"), canonical(raw))
+        print(self.failure, file=sys.stderr, flush=True)
+        owned_process_exit(1)
+
+    def supervise(self):
+        from scripts.blender_artist_sidebar_smoke import owned_process_exit
+        try:
+            while not self.controls.empty():
+                action, parameters, event, result = self.controls.get_nowait()
+                try:
+                    result.extend((True, self.apply(action, parameters)))
+                except Exception:
+                    result.extend((False, traceback.format_exc()))
+                finally:
+                    event.set()
+            assert time.monotonic() - self.started <= 300, "Original bounded native phase expired"
+            if not self.done.is_set():
+                return .005
+            assert self.failure is None, self.failure
+            assert self.hooks is None and self.observe is False
+            control_hook_state()
+            self.settled()
+            assert source_fingerprints() == self.sources
+            encoded = canonical(self.sources)
+            full = {"schema": CONTROL_PROFILE, "completed": True, "diagnostic_only": True, "phase": self.phase,
+                "process_id": os.getpid(), "process_instance": self.token, "runtime_nonce": self.nonce,
+                "runtime_identity": self.runtime_identity, "source_build": self.control_build,
+                "blender_version": self.control_version, "binary_sha256": self.binary_sha256,
+                "helper_sha256": HELPER_SHA256, "source_fingerprints": self.sources,
+                "source_snapshot_sha256": hashlib.sha256(encoded).hexdigest(), "private_display": self.display,
+                "transport": {"host": "127.0.0.1", "socket_json": True, "runtime_timer_queue": True,
+                              "direct_dispatch": False, "manual_scheduler_drain": False},
+                "flags": dict(CONTROL_FLAGS), **self.control_data, "seconds": time.monotonic() - self.started}
+            binding = domain_new(self.options.bridge_report, canonical(full))
+            compact = {key: full[key] for key in ("schema", "completed", "diagnostic_only", "process_id",
+                "process_instance", "source_build", "blender_version", "binary_sha256",
+                "source_snapshot_sha256", "product_success")}
+            compact["full_receipt"] = binding
+            print(CONTROL_MARKER + canonical(compact).decode("ascii"), flush=True)
+            owned_process_exit(0)
+        except Exception:
+            self.failure = traceback.format_exc()
+            self.fail()
+        return None
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bridge-phase", choices=PHASES, required=True)
     parser.add_argument("--bridge-bundle", type=Path, required=True)
     parser.add_argument("--bridge-report", type=Path, required=True)
+    parser.add_argument("--bridge-untraced-control", action="store_true")
     arguments = sys.argv[sys.argv.index("--") + 1:] if argv is None and "--" in sys.argv else argv
     options = parser.parse_args(arguments)
     assert sys.platform == "linux" and "--factory-startup" in sys.argv and "--disable-autoexec" in sys.argv
     parent, report = options.bridge_report.parent, options.bridge_report
-    assert report.is_absolute() and report.name == REPORT and not report.exists() and not report.is_symlink()
+    expected_report = CONTROL_REPORT if options.bridge_untraced_control else REPORT
+    assert report.is_absolute() and report.name == expected_report and not report.exists() and not report.is_symlink()
     assert parent.resolve(strict=True) == parent and stat.S_IMODE(parent.stat().st_mode) == 0o700
     assert parent.stat().st_uid == os.getuid()
     assert all(os.environ.get(key) == str(parent) for key in ("TEMP", "TMP", "TMPDIR"))
@@ -1415,7 +1599,8 @@ def main(argv=None):
     assert bpy.ops.wm.read_factory_settings(use_empty=True) == {"FINISHED"}
     sources = source_fingerprints()
     assert sources["addon/blender_codex_bridge/mesh_storage_prepare.py"] == HELPER_SHA256
-    fixture = Fixture(bpy, options, token, sources, display)
+    fixture_type = FirstJobControl if options.bridge_untraced_control else Fixture
+    fixture = fixture_type(bpy, options, token, sources, display)
     bpy.app.timers.register(fixture.setup, first_interval=.05)
 
 
