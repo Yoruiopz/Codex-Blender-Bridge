@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import hashlib
 import importlib
 import inspect
 import json
@@ -21,6 +22,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 HELPERS = (
     "scripts.blender_current_pixels_lifecycle_smoke",
+    "scripts.blender_mesh_storage_job_smoke",
     "scripts.blender_glb_stage_runtime_smoke",
     "scripts.blender_glb_stage_smoke",
     "scripts.blender_current_pixels_paired_recovery_smoke",
@@ -122,6 +124,7 @@ def fixture_imports(addon_package, monkeypatch):
 
 @pytest.mark.parametrize("name,helper", [
     ("scripts.blender_current_pixels_lifecycle_smoke", "main"),
+    ("scripts.blender_mesh_storage_job_smoke", "main"),
     ("scripts.blender_glb_stage_smoke", "main"),
     ("scripts.blender_glb_stage_runtime_smoke", "main"),
     ("scripts.blender_current_pixels_paired_recovery_smoke", "main"),
@@ -3698,3 +3701,312 @@ if __name__ == "__main__":
     report = json.loads(result.stdout)
     assert report["outcomes_identical"] is True and report["histories"] == 2 and report["nested_probes"] == 6
     assert report["worker_lifecycle"] == {"worker": "thread-lifetime"} and report["hooks_restored"] is True
+
+
+def test_mesh_storage_fault_trace_preserves_independent_profile_after_injected_failure():
+    script = importlib.import_module("scripts.blender_mesh_storage_job_smoke")
+    observed = []
+
+    def native_return_then_marker():
+        value = sum((1, 2))
+        return value
+
+    def after_failure():
+        return True
+
+    def profile(frame, event, argument):
+        if frame.f_code is native_return_then_marker.__code__ and event == "c_return":
+            observed.append(("native_return", argument.__name__))
+        elif frame.f_code is after_failure.__code__ and event == "call":
+            observed.append(("after_failure", None))
+
+    failure = RuntimeError("Owned post-return injection")
+    injector = script.FaultInjector(native_return_then_marker.__code__,
+        native_return_then_marker.__code__.co_firstlineno + 2,
+        NS(counts={"materialize_returns": 2}), failure)
+    previous_trace, previous_profile = sys.gettrace(), sys.getprofile()
+    try:
+        sys.setprofile(profile)
+        sys.settrace(injector.trace)
+        with pytest.raises(RuntimeError, match="Owned post-return injection"):
+            native_return_then_marker()
+        assert injector.fired and sys.getprofile() is profile
+        assert after_failure()
+    finally:
+        sys.settrace(previous_trace)
+        sys.setprofile(previous_profile)
+    assert observed == [("native_return", "sum"), ("after_failure", None)]
+
+
+
+def test_mesh_storage_independent_observer_refuses_SINGLE_before_data_getter():
+    script = importlib.import_module("scripts.blender_mesh_storage_job_smoke")
+    entered = []
+
+    class Attribute:
+        storage_type, data_type = "SINGLE", "FLOAT2"
+
+        @property
+        def data(self):
+            entered.append(True)
+            raise AssertionError("Independent fixture observer materialized the original")
+
+    with pytest.raises(AssertionError, match="cannot materialize SINGLE"):
+        script.attribute_values(Attribute(), 3)
+    assert entered == []
+
+
+
+def test_mesh_storage_ARRAY_observer_retains_all_unselected_headers_without_SINGLE_data_getter():
+    script = importlib.import_module("scripts.blender_mesh_storage_job_smoke")
+    entered = []
+
+    class Attribute:
+        def __init__(self, name, domain, kind, storage):
+            self.name, self.domain, self.data_type, self.storage_type = name, domain, kind, storage
+
+        @property
+        def data(self):
+            entered.append(self.name)
+            assert self.storage_type == "ARRAY", "A SINGLE getter was entered"
+            return [NS(vector=(float(index), -0., .5)) for index in range(3)]
+
+    attributes = [Attribute("position", "POINT", "FLOAT_VECTOR", "ARRAY"),
+                  Attribute(".select_edge", "EDGE", "BOOLEAN", "SINGLE"),
+                  Attribute(".uv_select_face", "FACE", "BOOLEAN", "SINGLE"),
+                  Attribute("UVSingle", "CORNER", "FLOAT2", "SINGLE")]
+    mesh = NS(vertices=range(3), edges=range(3), polygons=range(1), loops=range(3), attributes=attributes)
+    headers = script.unselected_attribute_headers(mesh)
+    assert headers == [[".select_edge", "EDGE", "BOOLEAN", "SINGLE", 3],
+                       ["position", "POINT", "FLOAT_VECTOR", "ARRAY", 3]]
+    assert entered == []
+    payloads = script.original_array_values(mesh)
+    assert payloads == [["position", "POINT", "FLOAT_VECTOR",
+                         [[script.struct.pack("<f", value).hex() for value in (float(index), -0., .5)]
+                          for index in range(3)]]]
+    assert entered == ["position"]
+    assert script.unselected_attribute_headers(mesh) == headers
+    attributes[1].storage_type = "ARRAY"
+    assert script.unselected_attribute_headers(mesh) != headers
+    assert entered == ["position"]
+    assert script.LIMITATIONS["unselected_SINGLE_logical_values"] is False
+
+
+
+@pytest.mark.parametrize("storage", ["UNKNOWN", "", None])
+def test_mesh_storage_unselected_observer_refuses_unknown_storage_before_data_getter(storage):
+    script = importlib.import_module("scripts.blender_mesh_storage_job_smoke")
+    entered = []
+
+    class Attribute:
+        name, domain, data_type = ".select_edge", "EDGE", "BOOLEAN"
+        storage_type = storage
+
+        @property
+        def data(self):
+            entered.append(True)
+            raise AssertionError("Unknown storage getter entered")
+
+    mesh = NS(vertices=range(3), edges=range(3), polygons=range(1), loops=range(3), attributes=[Attribute()])
+    for observer in (script.unselected_attribute_headers, script.original_array_values):
+        with pytest.raises(AssertionError):
+            observer(mesh)
+    assert entered == []
+
+
+
+@pytest.mark.parametrize("kind,field,values,expected", [
+    ("INT32_2D", "value", [(0, 1), (1, 2), (2, 0)], [[0, 1], [1, 2], [2, 0]]),
+    ("FLOAT2", "vector", [(.25, -.5)] * 3, [["0000803e", "000000bf"]] * 3),
+    ("FLOAT_VECTOR", "vector", [(0., -0., 1.)] * 3, [["00000000", "00000080", "0000803f"]] * 3),
+    ("INT", "value", [-(2**31), 0, 2**31 - 1], [-(2**31), 0, 2**31 - 1]),
+    ("BOOLEAN", "value", [False, True, False], [False, True, False]),
+])
+def test_mesh_storage_original_ARRAY_observer_matches_native_declared_fields(kind, field, values, expected):
+    """Layouts come from the retained exact-build native class census."""
+    script = importlib.import_module("scripts.blender_mesh_storage_job_smoke")
+    entered = []
+
+    class Leaf:
+        def __init__(self, value):
+            self.payload = value
+
+        def __getattr__(self, name):
+            entered.append(name)
+            assert name == field, "A different native leaf field was read"
+            return self.payload
+
+    attribute = NS(storage_type="ARRAY", data_type=kind, data=[Leaf(value) for value in values])
+    assert script.attribute_values(attribute, len(values)) == expected
+    assert entered == [field] * len(values)
+
+
+
+@pytest.mark.parametrize("fault", ["wrong_field", "wrong_width", "bool_component", "out_of_range"])
+def test_mesh_storage_INT32_2D_observer_refuses_unqualified_shape_without_vector_fallback(fault):
+    script = importlib.import_module("scripts.blender_mesh_storage_job_smoke")
+    entered = []
+
+    class Leaf:
+        @property
+        def value(self):
+            if fault == "wrong_field":
+                raise AttributeError("Native Int2 value field is absent")
+            return {"wrong_width": (0, 1, 2), "bool_component": (False, 1),
+                    "out_of_range": (0, 2**31)}[fault]
+
+        @property
+        def vector(self):
+            entered.append("wrong vector fallback")
+            return (0, 1)
+
+    attribute = NS(storage_type="ARRAY", data_type="INT32_2D", data=[Leaf()])
+    with pytest.raises(AttributeError if fault == "wrong_field" else AssertionError):
+        script.attribute_values(attribute, 1)
+    assert entered == []
+
+
+
+def test_mesh_storage_trace_distinguishes_caller_intent_from_authoritative_stop():
+    script = importlib.import_module("scripts.blender_mesh_storage_job_smoke")
+    observer = object.__new__(script.Observer)
+    observer.runtime = NS(jobs=NS(active=NS(job_id="job_" + "a" * 32)))
+    observer.case, observer.turn, observer.stopped = "cancel_after_first", 1, False
+    observer.events, observer.stops = [], []
+    observer.counts = dict.fromkeys(("native_entries", "native_returns", "provider_entries", "provider_returns",
+        "prepare_entries", "prepare_returns", "materialize_entries", "materialize_returns",
+        "after_accepted_stop_native_entries", "after_accepted_stop_provider_entries"), 0)
+    field, other = object(), object()
+    observer.codes = dict.fromkeys(("rpc", "turn", "prepare", "catalog", "provider", "cancel", "finish"), other)
+    observer.codes["field"] = field
+    observer.turn_depth, observer.prepare_depth, observer.rpc_stack = 1, 0, []
+    frame = NS(f_code=field)
+    observer.emit("stop_intent", boundary="job_stop")
+    observer.profile(frame, "call", None)
+    observer.profile(frame, "return", None)
+    assert not observer.stopped and observer.counts["after_accepted_stop_native_entries"] == 0
+    observer.accept_stop("CANCEL_ACCEPTED_BY_MAIN_THREAD", observer.runtime.jobs.active)
+    observer.profile(frame, "call", None)
+    assert observer.counts["after_accepted_stop_native_entries"] == 1
+    assert observer.stops[0]["native_at_accept"] == 1
+    assert [event["kind"] for event in observer.events] == ["stop_intent", "stop_accepted"]
+
+
+
+@pytest.mark.parametrize("fault", [None, "copy_read", "schema", "original_metadata", "ID_users"])
+def test_mesh_storage_owned_copy_oracle_materializes_copy_only_and_restores_all_ID_users(fault):
+    script = importlib.import_module("scripts.blender_mesh_storage_job_smoke")
+    state = {"epoch": 0, "copies": 0, "removed": 0, "reads": [], "original_storage": "SINGLE", "users": 1}
+    layouts = {"UVSingle": ("CORNER", "FLOAT2", [[-0., .25], [-0., .25], [-0., .25]]),
+               ".uv_select_face": ("FACE", "BOOLEAN", [False]), "position": ("POINT", "FLOAT_VECTOR", [[0., 0., 0.]] * 3)}
+    class Attribute:
+        def __init__(self, name, owned_copy=False):
+            self.name, self.owned_copy, self.epoch = name, owned_copy, state["epoch"]
+            self.domain, self.data_type, self.values = layouts[name]
+            if fault == "schema" and owned_copy:
+                self.domain = "POINT"
+        @property
+        def storage_type(self):
+            if self.data_type not in {"BOOLEAN", "FLOAT2"}:
+                return "ARRAY"
+            return "ARRAY" if self.owned_copy else state["original_storage"]
+        def as_pointer(self):
+            return 100 + list(layouts).index(self.name)
+        @property
+        def data(self):
+            assert self.owned_copy, "Oracle materialized an original SINGLE attribute"
+            assert self.epoch == state["epoch"], "COPY attribute survived another allocating getter"
+            state["epoch"] += 1
+            state["reads"].append(self.name)
+            if fault == "copy_read":
+                raise RuntimeError("COPY-only read failed")
+            if fault == "original_metadata":
+                state["original_storage"] = "ARRAY"
+            return [NS(vector=value) if self.data_type == "FLOAT2" else NS(value=value) for value in self.values]
+    class Attributes:
+        def __init__(self, copy=False):
+            self.copy = copy
+        def __iter__(self):
+            return iter(Attribute(name, self.copy) for name in layouts)
+        def get(self, name):
+            return Attribute(name, self.copy) if name in layouts else None
+    class Mesh:
+        name, session_uid, use_fake_user = "Owned original", 1, False
+        vertices, edges, polygons, loops = [None] * 3, [None] * 3, [None], [None] * 3
+        def __init__(self, copy=False):
+            self.owned_copy, self.attributes = copy, Attributes(copy)
+            self.uv_layers = [NS(name="UVSingle")]
+        @property
+        def users(self):
+            return state["users"]
+        def as_pointer(self):
+            return 2 if self.owned_copy else 1
+        def copy(self):
+            state["copies"] += 1
+            result = Mesh(True)
+            meshes.append(result)
+            state["users"] += 1
+            return result
+    class Meshes(list):
+        def remove(self, mesh):
+            assert mesh.owned_copy
+            super().remove(mesh)
+            state["removed"] += 1
+            state["users"] -= 0 if fault == "ID_users" else 1
+    mesh = Mesh()
+    meshes = Meshes([mesh])
+    data = NS(meshes=meshes, bl_rna=NS(properties=[NS(type="COLLECTION", identifier="meshes")]))
+    if fault:
+        with pytest.raises(RuntimeError if fault == "copy_read" else AssertionError):
+            script.graph_owned_copy_oracle(data, mesh)
+    else:
+        proof = script.graph_owned_copy_oracle(data, mesh)
+        assert proof["setup_logical_values"]["UVSingle"] == [["00000080", "0000803e"]] * 3
+        assert proof["setup_logical_values"][".uv_select_face"] == [False]
+        assert proof["logical_value_count"] == 4 and proof["original_metadata_unchanged"] is True
+        assert proof["postboundary_independent_SINGLE_values_observed"] is False
+    assert meshes == [mesh] and state["copies"] == state["removed"] == 1
+    assert state["reads"] == ([] if fault == "schema" else [".uv_select_face"] if fault in {"copy_read", "original_metadata"} else [".uv_select_face", "UVSingle"])
+
+
+
+@pytest.mark.parametrize("kind", ["fifo", "symlink", "raced_fifo"])
+def test_mesh_storage_domain_artifact_open_cannot_follow_or_block_nonregular_paths(tmp_path, monkeypatch, kind):
+    script = importlib.import_module("scripts.blender_mesh_storage_job_smoke")
+    path = tmp_path / "handoff"
+    if kind == "fifo":
+        os.mkfifo(path)
+    elif kind == "symlink":
+        target = tmp_path / "target"
+        target.write_bytes(b"private fixture bytes")
+        path.symlink_to(target)
+    else:
+        path.write_bytes(b"before race")
+        original = script.os.open
+
+        def replace(name, flags, *args, **kwargs):
+            if Path(name).name == path.name:
+                assert flags & os.O_NOFOLLOW and flags & os.O_NONBLOCK
+                path.unlink()
+                os.mkfifo(path)
+            return original(name, flags, *args, **kwargs)
+
+        monkeypatch.setattr(script.os, "open", replace)
+    monkeypatch.setattr(script.os, "read", lambda *_args: pytest.fail("No read before regular-file qualification"))
+    with pytest.raises((OSError, AssertionError)):
+        script.domain_file(path)
+
+
+
+def test_mesh_storage_domain_durable_create_reopens_full_bytes_and_refuses_overwrite_or_bad_hash(tmp_path):
+    script = importlib.import_module("scripts.blender_mesh_storage_job_smoke")
+    path, payload = tmp_path / "manifest.json", b'{"owned":"complete"}'
+    binding = script.domain_new(path, payload)
+    assert binding == {"path": str(path), "bytes": len(payload), "sha256": hashlib.sha256(payload).hexdigest()}
+    assert script.domain_file(path, expected=binding, capture=True)[1] == payload
+    with pytest.raises(FileExistsError):
+        script.domain_new(path, payload)
+    with pytest.raises(AssertionError):
+        script.domain_file(path, expected={**binding, "sha256": "0" * 64})
+    with pytest.raises(AssertionError):
+        script.domain_file(path, maximum=len(payload) - 1)

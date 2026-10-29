@@ -2574,3 +2574,503 @@ def test_glb_runtime_launch_storage_and_json_faults_fail_closed(runner, monkeypa
     glb_runtime_launch(runner, monkeypatch, binary, marker_fault=fault)
     row = runner.run_case(binary, "glb_stage_runtime", output, 10)
     assert row["status"] == "failed" and row["retained_evidence_validation"]["passed"] is False
+
+
+def mesh_storage_runner_root(runner, monkeypatch, tmp_path):
+    """Pure receipt/launch model; no Blender or native storage is allocated."""
+    source, output = tmp_path / "source", tmp_path / "output"
+    output.mkdir()
+    names = ("scripts/blender_mesh_storage_job_smoke.py", "scripts/run_blender_checks.py",
+             "scripts/blender_current_pixels_lifecycle_smoke.py", "scripts/blender_artist_sidebar_smoke.py",
+             "scripts/native_resources.py", "addon/blender_codex_bridge/mesh_storage_source.py",
+             "addon/blender_codex_bridge/scene_jobs.py", "addon/blender_codex_bridge/tools/mesh_storage.py")
+    for name in names:
+        path = source / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# owned storage job composition model\n")
+    helper = "addon/blender_codex_bridge/mesh_storage_prepare.py"
+    (source / helper).write_bytes((ROOT / helper).read_bytes())
+    binary = tmp_path / "blender binary"
+    binary.write_bytes(b"MODELED EXECUTABLE, NEVER LAUNCHED")
+    digest = runner.hashlib.sha256(binary.read_bytes()).hexdigest()
+    monkeypatch.setattr(runner, "ROOT", source)
+    monkeypatch.setattr(runner, "MESH_STORAGE_EXECUTABLE_SHA256", digest)
+    monkeypatch.setattr(runner, "_domain_display", lambda: {"path": "/owned/private-display.json", "bytes": 42, "sha256": "d" * 64})
+    return output, binary
+
+
+def mesh_storage_snapshot_model(runner, *, prepared=True):
+    image = ["Texture", 44, 16384]
+    material = ["Material", 45, 20480]
+    zero = runner.struct.pack("<f", 0.).hex()
+    values = {".uv_select_face": [True], "UVSingle": [[runner.struct.pack("<f", .25).hex(), runner.struct.pack("<f", -.5).hex()]] * 3}
+    return {"object_identity": ["Target", 42, 8192], "mesh_identity": ["Mesh", 43, 12288],
+        "uv_roles": [-1, [["UVSingle", True, False]]],
+        "selected_storage": [[".uv_select_face", "FACE", "BOOLEAN", "ARRAY" if prepared else "SINGLE", 1],
+                             ["UVSingle", "CORNER", "FLOAT2", "ARRAY" if prepared else "SINGLE", 3]],
+        "selected_values": values if prepared else {},
+        "protected": {"Main_ids": [["objects", [["Target", 8192, 42, 1, False]]],
+                                   ["meshes", [["Mesh", 12288, 43, 1, False]]]],
+            "image": {"identity": image, "pixels_float32_le": runner.struct.pack("<16f", *([.25] * 16)).hex(),
+                      "packed_sha256": "a" * 64, "packed_bytes": 72, "color_space": "Non-Color", "alpha_mode": "STRAIGHT",
+                      "is_dirty": True, "has_data": True},
+            "material_bindings": [[material, ["MaterialTree", 46, 24576], "Image Texture", 28672, image, [material]]],
+            "unselected_attribute_headers": [[".select_edge", "EDGE", "BOOLEAN", "SINGLE", 3],
+                                               ["position", "POINT", "FLOAT_VECTOR", "ARRAY", 3]],
+            "original_ARRAY_values": [["position", "POINT", "FLOAT_VECTOR", [[zero] * 3 for _ in range(3)]]]}}
+
+
+def mesh_storage_journal_model(runner, oracle):
+    rows = []
+    for name in (".uv_select_face", "UVSingle"):
+        row = dict.fromkeys(("data_lookup_entered", "data_lookup_returned", "materialize_entered", "materialize_returned",
+                             "after_storage_observed", "verified"), True)
+        row.update(name=name, helper_attached=True, baseline_conflict=False, action="MATERIALIZE_SINGLE", entry_kind="FOREACH_GET",
+                   before_storage="SINGLE", after_storage="ARRAY", readback_entries=2, readback_returns=2,
+                   logical_values_sha256=runner.hashlib.sha256(json.dumps(oracle[name], sort_keys=True, ensure_ascii=True,
+                       allow_nan=False, separators=(",", ":")).encode()).hexdigest(),
+                   retained_physical_transition="OBSERVED_SINGLE_TO_ARRAY")
+        rows.append(row)
+    return {"schema": "mesh_storage_retained_effects_v1", "rows": rows, "sealed": True,
+        "materialization_entered": True, "native_lookup_entered": True, "physical_cache_passivity_claimed": False,
+        "verification_required": True, "inverse_attempted": False, "requires_fresh_image_preview": True,
+        "independently_measured_SINGLE_pre_values": False, "project_saved": False, "durable_backup": False}
+
+
+def mesh_storage_reply(request, result=None, *, error=None):
+    return {"id": request["id"], "ok": error is None, "protocol_version": "1.0", "timestamp": "2026-10-29T19:00:00Z",
+            "result" if error is None else "error": result if error is None else error}
+
+
+def mesh_storage_full_model(runner, command, environment, pid):
+    phase = command[command.index("--bridge-phase") + 1]
+    report = Path(command[command.index("--bridge-report") + 1])
+    sources = runner._mesh_storage_sources()
+    before, after = mesh_storage_snapshot_model(runner, prepared=False), mesh_storage_snapshot_model(runner)
+    oracle = json.loads(json.dumps(after["selected_values"]))
+    journal = mesh_storage_journal_model(runner, oracle)
+    job_id = "job_" + "1" * 32
+    terminal = {"job_id": job_id, "kind": "mesh.attribute_storage_preparation", "state": "SUCCEEDED", "terminal": True,
+                "storage_effects": journal, "terminal_history_evicted": False}
+    requests = []
+    parameters = {"object_name": "Target", "mesh_name": "Mesh", "attribute_names": [".uv_select_face", "UVSingle"]}
+    for method, params, result in (("mesh.attribute_storage_prepare_preview", parameters,
+                                   {"expected_preparation_fingerprint": "c" * 64}),
+                                  ("mesh.attribute_storage_prepare_job_start", {**parameters,
+                                   "expected_preparation_fingerprint": "c" * 64, "confirm_materialize_storage": True,
+                                   "confirm_retained_partial_preparation": True},
+                                   {"accepted": True, "job_id": job_id, "kind": "mesh.attribute_storage_preparation"}),
+                                   ("jobs.inspect", {"job_id": job_id}, terminal)):
+        request = {"id": f"request-{len(requests)}", "method": method, "params": params, "protocol_version": "1.0", "timeout_ms": 60000}
+        requests.append({"request": request, "response": mesh_storage_reply(request, result)})
+    stop = dict.fromkeys(("provider_before", "provider_after", "native_before", "native_after"), 0)
+    positive = {"requests": requests, "assertions": dict.fromkeys(runner.MESH_STORAGE_CASE_ASSERTIONS, True),
+        "evidence": {"before": before, "after": after, "oracle_values": oracle, "terminal": terminal, "journal": journal,
+                     "stop_counts": stop, "history": [], "recovery": []}}
+    request = {"id": "undo-1", "method": "checkpoint.undo_last", "params": {"confirm_global_undo": True}, "protocol_version": "1.0"}
+    response = mesh_storage_reply(request, error={"code": "NOT_IMPLEMENTED", "message": "Measured recovery gap"})
+    measurement = {"kind": "authorized_native_undo_measurement", "request_id": request["id"], "response": response,
+                   "before": after, "after": after, "safety_qualified": False}
+    recovery = {"requests": [{"request": request, "response": response}],
+        "assertions": {"complete": True, "actual_undo_response_retained": True, "before_after_measured": True, "restore_safety_qualified": False},
+        "evidence": {"before": after, "after": after, "oracle_values": oracle, "terminal": None, "journal": None,
+                     "stop_counts": stop, "history": [], "recovery": [measurement]}}
+    events = []
+    for turn, attribute in enumerate((".uv_select_face", "UVSingle"), 1):
+        for kind, boundary, selected in (("turn_enter", "scene_turn", None), ("prepare_enter", "helper_prepare", attribute),
+            ("materialize_enter", "helper_prepare_C_foreach", attribute), ("materialize_return", "helper_prepare_C_foreach", attribute),
+            ("prepare_return", "helper_prepare", attribute), ("turn_return", "scene_turn", None)):
+            events.append({"sequence": len(events) + 1, "case": "two_rows", "kind": kind, "monotonic": 1. + len(events) / 100,
+                           "job_id": job_id, "native_count": turn, "provider_count": turn, "turn": turn,
+                           "attribute": selected, "boundary": boundary})
+    counts = dict(native_entries=2, native_returns=2, provider_entries=2, provider_returns=2,
+        prepare_entries=2, prepare_returns=2, materialize_entries=2, materialize_returns=2,
+        after_accepted_stop_native_entries=0, after_accepted_stop_provider_entries=0)
+    trace = {"scope": "BRIDGE_B2_ACTIVE_DOMAIN_ONLY", "covered_boundaries": ["helper_access_field", "graph_catalog", "helper_prepare_C_foreach"],
+        "counts": counts, "events": events, "stops": [],
+        "native_C_intervals": [{"case": "two_rows", "attribute": name, "seconds": .001, "returned": True}
+                               for name in (".uv_select_face", "UVSingle")],
+        "status_RPC_authorization_excluded": True, "all_hidden_Blender_native_calls_claimed": False,
+        "wrapper_exit_counts_include_exception": True, "prepare_exit_counts_include_exception": True}
+    identity = {"process_instance": environment["BRIDGE_TEST_PROCESS_TOKEN"], "runtime_id": 32768, "registry_id": 36864, "queue_id": 40960}
+    def canonical(value):
+        return json.dumps(value, sort_keys=True, ensure_ascii=True, allow_nan=False, separators=(",", ":")).encode()
+    full = {"schema": "MESH_STORAGE_OWNED_JOB_NATIVE_V1", "completed": True, "phase": phase, "process_id": pid,
+        "process_instance": identity["process_instance"], "runtime_nonce": runner.hashlib.sha256(canonical(identity)).hexdigest()[:32],
+        "source_build": "d13f752e3b9c", "blender_version": "5.2.2", "runtime_identity": identity,
+        "source_fingerprints": sources, "source_snapshot_sha256": runner.hashlib.sha256(canonical(sources)).hexdigest(),
+        "binary_sha256": runner.MESH_STORAGE_EXECUTABLE_SHA256, "private_display": runner._domain_display(),
+        "helper_sha256": runner.MESH_STORAGE_HELPER_SHA256,
+        "transport": {"host": "127.0.0.1", "socket_json": True, "runtime_timer_queue": True, "direct_dispatch": False, "manual_scheduler_drain": False},
+        "resources": {"available_memory_bytes": 2 * 1024**3}, "hardware": {"platform": "modeled Linux; not native evidence"},
+        "seconds": 1., "assertions": dict.fromkeys(runner.MESH_STORAGE_ASSERTIONS, True),
+        "cases": {"two_rows": positive, "recovery": recovery}, "native_trace": trace, "limitations": dict(runner.MESH_STORAGE_LIMITS)}
+    return report, mesh_storage_other_phase_model(runner, full, phase) if phase != "success" else full
+
+
+def mesh_storage_write_receipt(runner, report, full):
+    raw = json.dumps(full, sort_keys=True, allow_nan=False, separators=(",", ":")).encode()
+    report.write_bytes(raw)
+    keys = {"schema", "completed", "phase", "process_id", "process_instance", "runtime_nonce", "source_build",
+            "blender_version", "source_snapshot_sha256", "binary_sha256"}
+    compact = {key: full[key] for key in keys}
+    compact["full_receipt"] = {"path": str(report), "bytes": len(raw), "sha256": runner.hashlib.sha256(raw).hexdigest()}
+    return compact
+
+
+@pytest.mark.parametrize("version", ["5.2.2", "5.2.2 LTS"])
+def test_mesh_storage_positive_receipt_requires_full_native_prefix_and_real_pid(runner, monkeypatch, tmp_path, version):
+    output, binary = mesh_storage_runner_root(runner, monkeypatch, tmp_path)
+    bundle = output / "bundle"
+    bundle.mkdir()
+    class Process:
+        pid = 77
+        def __init__(self, command, **kwargs):
+            assert "--background" not in command and "--disable-autoexec" in command
+            assert kwargs["cwd"].is_relative_to(output) and kwargs["start_new_session"]
+            assert kwargs["env"]["BRIDGE_TEST_PRIVATE_UI_MANIFEST"] == "owned-selector"
+            report, full = mesh_storage_full_model(runner, command, kwargs["env"], self.pid)
+            full["blender_version"] = version
+            compact = mesh_storage_write_receipt(runner, report, full)
+            kwargs["stdout"].write((runner.MESH_STORAGE_MARKER + json.dumps(compact)).encode())
+        def wait(self, timeout):
+            assert timeout == 300
+            return 0
+    monkeypatch.setenv("BRIDGE_TEST_PRIVATE_UI_MANIFEST", "owned-selector")
+    monkeypatch.setattr(runner.subprocess, "Popen", Process)
+    sources = runner._mesh_storage_sources()
+    _raw, binary_binding = runner._domain_regular(binary, binary.parent, 1024**3)
+    result = runner._run_process(binary, runner.MESH_STORAGE_CASE, output, 1200, phase="success", bundle=bundle,
+        phase_marker=runner.MESH_STORAGE_MARKER, domain_binary=binary_binding, domain_sources=sources, domain_display=runner._domain_display())
+    assert result["status"] == "passed" and result["os_process_id"] == 77
+    assert result["qualification_scope"] == runner.MESH_STORAGE_LIMITS
+
+
+@pytest.mark.parametrize("fault", ("missing_case", "wrong_phase", "incomplete", "wrong_pid", "boolean_pid", "wrong_nonce",
+    "wrong_source", "changed_source", "wrong_binary", "wrong_helper", "wrong_version", "next_patch", "version_type", "wrong_build",
+    "hostname", "direct_dispatch", "manual_scheduler",
+    "claim_windows", "missing_assertion", "false_assertion", "extra_field", "wrong_scope", "missing_exit_flag",
+    "dropped_event", "wrong_counter", "late_native", "missing_interval", "failed_interval", "two_rows_one_turn",
+    "image_pixel_drift", "image_color_drift", "packed_drift", "object_drift", "mesh_drift", "uv_clone_drift",
+    "wrong_uv_roles", "nan_pixels", "dropped_array", "dropped_journal_row", "wrong_row_hash", "return_without_entry",
+    "unverified_row", "fake_owner", "terminal_owner", "no_undo_confirm", "unsafe_undo_claim", "timeout", "exit",
+    "dropped_ARRAY_header", "dropped_SINGLE_header", "extra_ARRAY_header", "wrong_header_type", "wrong_header_count",
+    "duplicate_header", "unknown_header_storage", "SINGLE_payload", "claim_SINGLE_logical"))
+def test_mesh_storage_refuses_forged_receipt_or_incomplete_native_prefix(runner, monkeypatch, tmp_path, fault):
+    output, binary = mesh_storage_runner_root(runner, monkeypatch, tmp_path)
+    bundle = output / "bundle"
+    bundle.mkdir()
+    class Process:
+        pid = 77
+        def __init__(self, command, **kwargs):
+            report, full = mesh_storage_full_model(runner, command, kwargs["env"], self.pid)
+            positive = full["cases"]["two_rows"]["evidence"]
+            trace = full["native_trace"]
+            if fault == "missing_case":
+                full["cases"].pop("recovery")
+            elif fault == "wrong_phase":
+                full["phase"] = "cancel"
+            elif fault == "incomplete":
+                full["completed"] = False
+            elif fault == "wrong_pid":
+                full["process_id"] += 1
+            elif fault == "boolean_pid":
+                full["process_id"] = True
+            elif fault == "wrong_nonce":
+                full["runtime_nonce"] = "0" * 32
+            elif fault == "wrong_source":
+                full["source_fingerprints"]["addon/blender_codex_bridge/scene_jobs.py"] = "0" * 64
+            elif fault == "changed_source":
+                (runner.ROOT / "addon/blender_codex_bridge/scene_jobs.py").write_text("# late source change\n")
+            elif fault == "wrong_binary":
+                full["binary_sha256"] = "0" * 64
+            elif fault == "wrong_helper":
+                full["helper_sha256"] = "0" * 64
+            elif fault == "wrong_version":
+                full["blender_version"] = "5.2.2 Alpha"
+            elif fault == "next_patch":
+                full["blender_version"] = "5.2.3 LTS"
+            elif fault == "version_type":
+                full["blender_version"] = [5, 2, 2]
+            elif fault == "wrong_build":
+                full["source_build"] = "62c1db4208e8"
+            elif fault == "hostname":
+                full["transport"]["host"] = "localhost"
+            elif fault in {"direct_dispatch", "manual_scheduler"}:
+                full["transport"]["direct_dispatch" if fault == "direct_dispatch" else "manual_scheduler_drain"] = True
+            elif fault == "claim_windows":
+                full["limitations"]["windows"] = True
+            elif fault == "missing_assertion":
+                full["assertions"].pop("selected_active_mesh")
+            elif fault == "false_assertion":
+                full["assertions"]["selected_active_mesh"] = False
+            elif fault == "extra_field":
+                full["hidden_claim"] = True
+            elif fault == "wrong_scope":
+                trace["scope"] = "ALL_BLENDER_NATIVE_CALLS"
+            elif fault == "missing_exit_flag":
+                trace.pop("prepare_exit_counts_include_exception")
+            elif fault == "dropped_event":
+                trace["events"].pop(3)
+            elif fault == "wrong_counter":
+                trace["counts"]["native_entries"] = trace["counts"]["native_returns"] = 99
+            elif fault == "late_native":
+                trace["counts"]["after_accepted_stop_native_entries"] = 1
+            elif fault == "missing_interval":
+                trace["native_C_intervals"].pop()
+            elif fault == "failed_interval":
+                trace["native_C_intervals"][0]["returned"] = False
+            elif fault == "two_rows_one_turn":
+                for event in trace["events"][6:]:
+                    event["turn"] = 1
+            elif fault == "image_pixel_drift":
+                positive["after"]["protected"]["image"]["pixels_float32_le"] = runner.struct.pack("<16f", *([.5] * 16)).hex()
+            elif fault == "image_color_drift":
+                positive["after"]["protected"]["image"]["color_space"] = "sRGB"
+            elif fault == "packed_drift":
+                positive["after"]["protected"]["image"]["packed_sha256"] = "f" * 64
+            elif fault in {"object_drift", "mesh_drift"}:
+                positive["after"]["object_identity" if fault == "object_drift" else "mesh_identity"][2] += 1
+            elif fault == "uv_clone_drift":
+                positive["after"]["uv_roles"][1][0][2] = True
+            elif fault == "wrong_uv_roles":
+                for stage in ("before", "after"):
+                    positive[stage]["uv_roles"] = [2, [["UVSingle", True, False]]]
+            elif fault == "nan_pixels":
+                positive["after"]["protected"]["image"]["pixels_float32_le"] = runner.struct.pack("<16f", float("nan"), *([.25] * 15)).hex()
+            elif fault == "dropped_array":
+                positive["after"]["protected"]["original_ARRAY_values"] = []
+            elif fault == "dropped_ARRAY_header":
+                positive["after"]["protected"]["unselected_attribute_headers"].pop()
+            elif fault == "dropped_SINGLE_header":
+                positive["after"]["protected"]["unselected_attribute_headers"].pop(0)
+            elif fault == "extra_ARRAY_header":
+                positive["after"]["protected"]["unselected_attribute_headers"].append(["Extra", "EDGE", "INT", "ARRAY", 3])
+            elif fault == "wrong_header_type":
+                positive["after"]["protected"]["unselected_attribute_headers"][1][2] = "INT32_2D"
+            elif fault == "wrong_header_count":
+                positive["after"]["protected"]["unselected_attribute_headers"][1][4] = 2
+            elif fault == "duplicate_header":
+                headers = positive["after"]["protected"]["unselected_attribute_headers"]
+                headers.append(list(headers[0]))
+            elif fault == "unknown_header_storage":
+                positive["after"]["protected"]["unselected_attribute_headers"][0][3] = "OTHER"
+            elif fault == "SINGLE_payload":
+                positive["after"]["protected"]["original_ARRAY_values"].append([".select_edge", "EDGE", "BOOLEAN", [False] * 3])
+            elif fault == "claim_SINGLE_logical":
+                full["limitations"]["unselected_SINGLE_logical_values"] = True
+            elif fault == "dropped_journal_row":
+                positive["journal"]["rows"].pop()
+            elif fault == "wrong_row_hash":
+                positive["journal"]["rows"][0]["logical_values_sha256"] = "f" * 64
+            elif fault == "return_without_entry":
+                positive["journal"]["rows"][0]["materialize_entered"] = False
+            elif fault == "unverified_row":
+                positive["journal"]["rows"][0]["verified"] = False
+            elif fault == "fake_owner":
+                full["cases"]["two_rows"]["requests"][1]["response"]["result"]["job_id"] = "job_" + "2" * 32
+            elif fault == "terminal_owner":
+                positive["terminal"]["job_id"] = "job_" + "2" * 32
+            elif fault == "no_undo_confirm":
+                full["cases"]["recovery"]["requests"][0]["request"]["params"]["confirm_global_undo"] = False
+            elif fault == "unsafe_undo_claim":
+                full["cases"]["recovery"]["evidence"]["recovery"][0]["safety_qualified"] = True
+            compact = mesh_storage_write_receipt(runner, report, full)
+            kwargs["stdout"].write((runner.MESH_STORAGE_MARKER + json.dumps(compact)).encode())
+        def wait(self, timeout):
+            if fault == "timeout":
+                raise subprocess.TimeoutExpired("owned Blender model", timeout)
+            return 1 if fault == "exit" else 0
+    monkeypatch.setattr(runner.subprocess, "Popen", Process)
+    monkeypatch.setattr(runner.os, "killpg", lambda *_args: None)
+    sources = runner._mesh_storage_sources()
+    _raw, binary_binding = runner._domain_regular(binary, binary.parent, 1024**3)
+    result = runner._run_process(binary, runner.MESH_STORAGE_CASE, output, 300, phase="success", bundle=bundle,
+        phase_marker=runner.MESH_STORAGE_MARKER, domain_binary=binary_binding, domain_sources=sources, domain_display=runner._domain_display())
+    assert result["status"] == ("timeout" if fault == "timeout" else "failed")
+
+
+def test_mesh_storage_unqualified_binary_refuses_before_process_launch(runner, monkeypatch, tmp_path):
+    output, binary = mesh_storage_runner_root(runner, monkeypatch, tmp_path)
+    monkeypatch.setattr(runner, "MESH_STORAGE_EXECUTABLE_SHA256", "bafec183e960819c76fe213c000cdb2284c53a87ef6791812f8728b51f07145b")
+    monkeypatch.setattr(runner.subprocess, "Popen", lambda *_a, **_k: pytest.fail("Unsupported candidate launched"))
+    result = runner.run_case(binary, runner.MESH_STORAGE_CASE, output, 300)
+    assert result["status"] == "failed" and result["unsupported_binary"] is True and result["phases"] == []
+    assert not result["fresh_process_verified"] and result["qualification_scope"]["blender_4_5"] is False
+
+
+def mesh_storage_other_phase_model(runner, full, phase):
+    """Compose independent stopped/history receipt examples, without a native run."""
+    template = json.loads(json.dumps(full["cases"]["two_rows"]))
+    oracle = template["evidence"]["oracle_values"]
+    full["cases"] = {}
+    trace = full["native_trace"]
+    trace["events"], trace["stops"], trace["native_C_intervals"] = [], [], []
+    trace["counts"] = dict.fromkeys(trace["counts"], 0)
+    serial, turn = 0, 0
+
+    def emit(case, job_id, kind, boundary, attribute=None):
+        row = {"sequence": len(trace["events"]) + 1, "case": case, "kind": kind, "monotonic": 1. + len(trace["events"]) / 100,
+            "job_id": job_id, "native_count": trace["counts"]["native_entries"],
+            "provider_count": trace["counts"]["provider_entries"], "turn": turn, "attribute": attribute, "boundary": boundary}
+        trace["events"].append(row)
+        return row
+
+    def case(case_name, *, state=None, completed=0, noop=False, prepared_before=False, error="NOT_IMPLEMENTED"):
+        nonlocal serial, turn
+        serial += 1
+        row = json.loads(json.dumps(template))
+        evidence = row["evidence"]
+        before = mesh_storage_snapshot_model(runner, prepared=prepared_before)
+        after = json.loads(json.dumps(before))
+        journal = mesh_storage_journal_model(runner, oracle)
+        job_id = "job_" + f"{serial:032x}"
+        for index, item in enumerate(journal["rows"]):
+            if index >= completed:
+                journal["rows"][index] = {"name": item["name"], "helper_attached": False}
+                continue
+            if noop:
+                for flag in ("data_lookup_entered", "data_lookup_returned", "materialize_entered", "materialize_returned"):
+                    item[flag] = False
+                item.update(action="NOOP_ALREADY_ARRAY", entry_kind="NOOP_ALREADY_ARRAY", before_storage="ARRAY",
+                    readback_entries=0, readback_returns=0, logical_values_sha256=None, retained_physical_transition="NOOP_ALREADY_ARRAY")
+            else:
+                after["selected_storage"][index][3] = "ARRAY"
+                after["selected_values"][item["name"]] = oracle[item["name"]]
+        journal["materialization_entered"] = journal["native_lookup_entered"] = bool(completed and not noop)
+        evidence.update(before=before, after=after, oracle_values=oracle,
+            terminal=None, journal=None, history=[], recovery=[],
+            stop_counts=dict.fromkeys(("provider_before", "provider_after", "native_before", "native_after"), 0))
+        if state is None:
+            request = {"id": f"denied-{serial}", "method": "mesh.attribute_storage_prepare_preview", "params": {}, "protocol_version": "1.0"}
+            context = {"protected_scope_violation": True} if case_name == "protected_scope_denial" else {}
+            row["requests"] = [{"request": request, "response": mesh_storage_reply(request, error={"code": error, "context": context})}]
+            return row
+        terminal = {"job_id": job_id, "kind": "mesh.attribute_storage_preparation", "state": state, "terminal": True,
+                    "storage_effects": journal, "terminal_history_evicted": False}
+        if case_name == "failure_after_second_native":
+            journal["rows"][1].update(materialize_returned=False, verified=False, after_storage_observed=False,
+                after_storage=None, logical_values_sha256=None, readback_entries=0, readback_returns=0,
+                retained_physical_transition="ENTERED_OUTCOME_UNKNOWN")
+        row["requests"] = []
+        params = {"object_name": "Target", "mesh_name": "Mesh", "attribute_names": [".uv_select_face", "UVSingle"]}
+        for method, arguments, result in (("mesh.attribute_storage_prepare_preview", params, {"expected_preparation_fingerprint": "c" * 64}),
+            ("mesh.attribute_storage_prepare_job_start", {**params, "expected_preparation_fingerprint": "c" * 64,
+             "confirm_materialize_storage": True, "confirm_retained_partial_preparation": True},
+             {"accepted": True, "job_id": job_id, "kind": "mesh.attribute_storage_preparation"}),
+            ("jobs.inspect", {"job_id": job_id}, terminal)):
+            request = {"id": f"case-{serial}-{len(row['requests'])}", "method": method, "params": arguments,
+                       "protocol_version": "1.0", "timeout_ms": 60000}
+            row["requests"].append({"request": request, "response": mesh_storage_reply(request, result)})
+        evidence.update(terminal=terminal, journal=journal)
+        for index in range(max(1, completed)):
+            turn += 1
+            trace["counts"]["provider_entries"] += 1
+            trace["counts"]["provider_returns"] += 1
+            emit(case_name, job_id, "turn_enter", "scene_turn")
+            if index < completed:
+                attribute = (".uv_select_face", "UVSingle")[index]
+                trace["counts"]["prepare_entries"] += 1
+                emit(case_name, job_id, "prepare_enter", "helper_prepare", attribute)
+                if not noop:
+                    trace["counts"]["native_entries"] += 1
+                    trace["counts"]["materialize_entries"] += 1
+                    emit(case_name, job_id, "materialize_enter", "helper_prepare_C_foreach", attribute)
+                    trace["counts"]["native_returns"] += 1
+                    trace["counts"]["materialize_returns"] += 1
+                    emit(case_name, job_id, "materialize_return", "helper_prepare_C_foreach", attribute)
+                    trace["native_C_intervals"].append({"case": case_name, "attribute": attribute, "seconds": .001, "returned": True})
+                trace["counts"]["prepare_returns"] += 1
+                emit(case_name, job_id, "prepare_return", "helper_prepare", attribute)
+            emit(case_name, job_id, "turn_return", "scene_turn")
+        if state != "SUCCEEDED":
+            event = emit(case_name, job_id, "stop_accepted", "job_stop")
+            trace["stops"].append({"case": case_name, "job_id": job_id, "accepted_sequence": event["sequence"],
+                "native_at_accept": event["native_count"], "provider_at_accept": event["provider_count"], "kind": "MODELED_MAIN_THREAD_ACCEPTANCE"})
+            evidence["stop_counts"] = {"native_before": event["native_count"], "native_after": event["native_count"],
+                "provider_before": event["provider_count"], "provider_after": event["provider_count"]}
+        return row
+
+    if phase == "cancel":
+        full["cases"] = {"cancel_after_first": case("cancel_after_first", state="CANCELLED", completed=1)}
+    elif phase == "native_failure":
+        full["cases"] = {"failure_after_second_native": case("failure_after_second_native", state="FAILED", completed=2)}
+    elif phase == "adversarial":
+        for name in ("permission_denial", "invalid_context", "stale_preview", "protected_scope_denial"):
+            full["cases"][name] = case(name, error={"permission_denial": "PERMISSION_DENIED", "protected_scope_denial": "INVALID_ARGUMENT"}.get(name, "NOT_IMPLEMENTED"))
+        for name in ("undelivered", "pause_revoke", "disconnect"):
+            full["cases"][name] = case(name, state="FAILED" if name == "pause_revoke" else "CANCELLED", completed=1 if name == "disconnect" else 0)
+    elif phase == "history_eviction":
+        seed = case("seed_cancel", state="CANCELLED", completed=1, noop=True, prepared_before=True)
+        seed["evidence"]["history_setup_explicit_ARRAY"] = True
+        rows = [case("history_eviction", state="SUCCEEDED", completed=2, noop=True, prepared_before=True) for _ in range(33)]
+        retained = json.loads(json.dumps(seed["evidence"]["terminal"]))
+        retained["terminal_history_evicted"] = True
+        history = json.loads(json.dumps(seed))
+        history["requests"] = [exchange for row in rows for exchange in row["requests"]]
+        request = {"id": "retained-seed-inspect", "method": "jobs.inspect", "params": {"job_id": retained["job_id"]}, "protocol_version": "1.0"}
+        history["requests"].append({"request": request, "response": mesh_storage_reply(request, retained)})
+        history["evidence"].update(terminal=retained, journal=retained["storage_effects"],
+            history=[{"job_evidence": {"job_id": retained["job_id"], "storage_effects": retained["storage_effects"]}}],
+            recovery=[{"summary": retained}], stop_counts=dict.fromkeys(("provider_before", "provider_after", "native_before", "native_after"), 0))
+        full["cases"] = {"seed_cancel": seed, "history_eviction": history}
+    else:
+        raise AssertionError("Unexpected composition-model phase")
+    return full
+
+
+@pytest.mark.parametrize("failure", (None, "cancel_exit", "native_failure_timeout", "reused_pid", "reused_nonce"))
+def test_mesh_storage_five_fresh_factory_phases_stop_at_first_failure(runner, monkeypatch, tmp_path, failure):
+    output, binary = mesh_storage_runner_root(runner, monkeypatch, tmp_path)
+    phases = []
+    class Process:
+        def __init__(self, command, **kwargs):
+            self.phase = command[command.index("--bridge-phase") + 1]
+            self.pid = 77 if failure == "reused_pid" else 77 + len(phases)
+            phases.append(self.phase)
+            assert "--factory-startup" in command and "--disable-autoexec" in command and "--background" not in command
+            assert kwargs["env"]["BLENDER_USER_CONFIG"].endswith("worker-profile-blender_user_config")
+            assert "PYTHONPATH" not in kwargs["env"] and kwargs["cwd"].is_relative_to(output)
+            report, full = mesh_storage_full_model(runner, command, kwargs["env"], self.pid)
+            if failure == "reused_nonce" and self.phase == "cancel":
+                full["runtime_nonce"] = "f" * 32  # Independent identity digest refuses this lie.
+            compact = mesh_storage_write_receipt(runner, report, full)
+            kwargs["stdout"].write((runner.MESH_STORAGE_MARKER + json.dumps(compact)).encode())
+        def wait(self, timeout):
+            if timeout == 10:
+                return -9
+            assert timeout == 300
+            if failure == "native_failure_timeout" and self.phase == "native_failure":
+                raise subprocess.TimeoutExpired("owned process model", timeout)
+            return 1 if failure == "cancel_exit" and self.phase == "cancel" else 0
+    monkeypatch.setattr(runner.subprocess, "Popen", Process)
+    monkeypatch.setattr(runner.os, "killpg", lambda *_args: None)
+    result = runner.run_case(binary, runner.MESH_STORAGE_CASE, output, 1200)
+    if failure is None:
+        assert result["status"] == "passed" and result["fresh_process_verified"], result
+        assert phases == list(runner.MESH_STORAGE_PHASES)
+        assert len({row["os_process_id"] for row in result["phases"]}) == 5
+        assert len({row["process_instance"] for row in result["phases"]}) == 5
+        assert len({row["command"][row["command"].index("--bridge-bundle") + 1] for row in result["phases"]}) == 5
+    else:
+        assert result["status"] in {"failed", "timeout"} and not result["fresh_process_verified"]
+        expected = ["success", "cancel", "native_failure"] if failure == "native_failure_timeout" else ["success", "cancel"]
+        assert phases == expected
+
+
+def test_mesh_storage_qualifier_accepts_actual_product_contract_methods(runner, monkeypatch, tmp_path, addon_package):
+    import importlib
+    contract = importlib.import_module(addon_package + ".mesh_storage_contract")
+    output, binary = mesh_storage_runner_root(runner, monkeypatch, tmp_path)
+    report = output / "mesh-storage-job.json"
+    command = [str(binary), "--bridge-phase", "success", "--bridge-report", str(report)]
+    _report, full = mesh_storage_full_model(runner, command, {"BRIDGE_TEST_PROCESS_TOKEN": "a" * 32}, 77)
+    exchanges = full["cases"]["two_rows"]["requests"]
+    # The producer uses these product constants rather than runner literals.
+    # Feed the actual contract into the validator to detect independent drift.
+    exchanges[0]["request"]["method"] = contract.PREVIEW
+    exchanges[1]["request"]["method"] = contract.START
+    parsed = runner._mesh_storage_requests(exchanges)
+    assert parsed is not None and set(parsed[0]) == set(parsed[1]) == {"job_" + "1" * 32}
+    exchanges[1]["request"]["method"] = "mesh.attribute_storage_prepare_start"
+    assert runner._mesh_storage_requests(exchanges) is None
