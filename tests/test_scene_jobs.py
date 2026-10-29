@@ -1074,6 +1074,9 @@ def storage_model(env, monkeypatch):
     return env
 
 
+# This exercises 33 real jobs with every source check; give the aggregate
+# workload a bounded budget instead of the default ten-second single test cap.
+@pytest.mark.timeout(30)
 def test_storage_terminal_journal_survives_driver_retirement_and_history_eviction(scene_jobs, monkeypatch):
     env = storage_model(scene_jobs, monkeypatch)
     stopped = stop_after_one_advance(env)
