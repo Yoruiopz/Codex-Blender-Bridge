@@ -622,9 +622,20 @@ class ProtectedMeshObserver:
                 or any(vars(cls).get(name) is not raw or function.__code__ is not code
                        for cls, name, raw, function, code in _CLASS_METHOD_ORIGINS)
                 or LAYOUTS is not _LAYOUTS_ORIGIN or COUNTS is not _COUNTS_ORIGIN
-                or DOMAINS is not _DOMAINS_ORIGIN or CORE_ATTRIBUTES is not _CORE_ORIGIN
-                or any(tuple(asdict(layout).items()) != facts for layout, facts in _LAYOUT_FACTS)):
+                or DOMAINS is not _DOMAINS_ORIGIN or CORE_ATTRIBUTES is not _CORE_ORIGIN):
             raise _SOURCE_CHANGED_FAILURE
+        # The class/slot and method checks above precede these direct reads.
+        # Compare every frozen layout field without dataclasses.asdict, whose
+        # recursive deepcopy could enter a foreign value before rejecting it.
+        for layout, facts in _LAYOUT_FACTS:
+            if type(layout) is not _Layout:
+                raise _SOURCE_CHANGED_FAILURE
+            values = (layout.attribute_class, layout.value_class, layout.field, layout.kind,
+                      layout.width, layout.minimum, layout.maximum)
+            if (any(type(value) is not str for value in values[:4])
+                    or any(type(value) is not int for value in values[4:])
+                    or values != facts):
+                raise _SOURCE_CHANGED_FAILURE
         gate = self.binding._runtime_gate
         if gate is not None:
             from .glb_stage_jobs import RuntimeNativeGate
@@ -702,7 +713,7 @@ def capture_object_groups(binding, obj, mesh_projection):
 
 _SOURCE_CHANGED_FAILURE = refused("PROTECTED_MESH_OBSERVER_SOURCE_CHANGED")
 _LAYOUTS_ORIGIN, _COUNTS_ORIGIN, _DOMAINS_ORIGIN, _CORE_ORIGIN = LAYOUTS, COUNTS, DOMAINS, CORE_ATTRIBUTES
-_LAYOUT_FACTS = tuple((layout, tuple(asdict(layout).items())) for layout in LAYOUTS.values())
+_LAYOUT_FACTS = tuple((layout, tuple(asdict(layout).values())) for layout in LAYOUTS.values())
 _FUNCTION_ORIGINS = tuple((name, function, function.__code__) for name, function in tuple(globals().items())
                           if type(function) is FunctionType and function.__module__ == __name__)
 _SOURCE_CLASSES = (_Layout, AttributeHeader, _Access, _Journal, ProtectedMeshObserver)

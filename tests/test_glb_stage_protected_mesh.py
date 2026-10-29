@@ -295,3 +295,127 @@ def test_float_components_keep_signed_zero_and_no_tolerance(module):
     assert module._float_bits(-0.) == "00000080"
     assert module._float_bits(0.) == "00000000"
     assert module._float_bits(1.) == "0000803f"
+
+
+def observer_without_native_work(module):
+    """A real binding identity with no native gate; never native acceptance."""
+    binding = object.__new__(module.NativeBinding)
+    binding._runtime_gate = None
+    return module.ProtectedMeshObserver(binding)
+
+
+@pytest.mark.parametrize("layout_name", ["FLOAT", "FLOAT_VECTOR", "FLOAT2", "INT", "INT32_2D", "INT16_2D", "BOOLEAN"])
+@pytest.mark.parametrize("field", ["attribute_class", "value_class", "field", "kind", "width", "minimum", "maximum"])
+def test_every_layout_field_is_rechecked_on_existing_observer(module, layout_name, field):
+    observer = observer_without_native_work(module)
+    layout = module.LAYOUTS[layout_name]
+    original = object.__getattribute__(layout, field)
+    changed = original + " changed" if type(original) is str else original + 1
+    try:
+        object.__setattr__(layout, field, changed)
+        with pytest.raises(module.BridgeError) as failure:
+            observer._check()
+        assert failure.value.context["reason"] == "PROTECTED_MESH_OBSERVER_SOURCE_CHANGED"
+    finally:
+        object.__setattr__(layout, field, original)
+    observer._check()
+
+
+@pytest.mark.parametrize("field", ["attribute_class", "value_class", "field", "kind", "width", "minimum", "maximum"])
+@pytest.mark.parametrize("subclass", [False, True])
+def test_layout_values_refuse_foreign_protocols_before_copy_or_comparison(module, field, subclass):
+    observer = observer_without_native_work(module)
+    layout = module.LAYOUTS["FLOAT"]
+    original = object.__getattribute__(layout, field)
+    calls = []
+    class Foreign:
+        def __deepcopy__(self, _memo):
+            calls.append("deepcopy")
+            raise AssertionError("Foreign layout copied")
+        def __eq__(self, _other):
+            calls.append("eq")
+            raise AssertionError("Foreign layout compared")
+    class ForeignString(str, Foreign):
+        __eq__ = Foreign.__eq__
+        __deepcopy__ = Foreign.__deepcopy__
+    class ForeignInteger(int, Foreign):
+        __eq__ = Foreign.__eq__
+        __deepcopy__ = Foreign.__deepcopy__
+    value = (ForeignString(original) if type(original) is str else ForeignInteger(original)) if subclass else Foreign()
+    try:
+        object.__setattr__(layout, field, value)
+        with pytest.raises(module.BridgeError) as failure:
+            observer._check()
+        assert failure.value.context["reason"] == "PROTECTED_MESH_OBSERVER_SOURCE_CHANGED"
+        assert calls == []
+    finally:
+        object.__setattr__(layout, field, original)
+
+
+@pytest.mark.parametrize("field", ["width", "minimum", "maximum"])
+def test_layout_numeric_fields_do_not_accept_booleans(module, field):
+    observer = observer_without_native_work(module)
+    layout = module.LAYOUTS["FLOAT"]
+    original = object.__getattribute__(layout, field)
+    try:
+        object.__setattr__(layout, field, False)
+        with pytest.raises(module.BridgeError):
+            observer._check()
+    finally:
+        object.__setattr__(layout, field, original)
+
+
+@pytest.mark.parametrize("field", ["attribute_class", "value_class", "field", "kind", "width", "minimum", "maximum"])
+def test_layout_descriptor_replacement_refuses_before_getter(module, monkeypatch, field):
+    observer = observer_without_native_work(module)
+    calls = []
+    def forbidden(_self):
+        calls.append("getter")
+        raise AssertionError("Replacement layout descriptor invoked")
+    monkeypatch.setattr(module._Layout, field, property(forbidden))
+    with pytest.raises(module.BridgeError):
+        observer._check()
+    assert calls == []
+
+
+def test_layout_attribute_dispatch_replacement_refuses_before_callback(module, monkeypatch):
+    observer = observer_without_native_work(module)
+    calls = []
+    def forbidden(_self, _name):
+        calls.append("getattribute")
+        raise AssertionError("Replacement layout dispatch invoked")
+    monkeypatch.setattr(module._Layout, "__getattribute__", forbidden)
+    with pytest.raises(module.BridgeError):
+        observer._check()
+    assert calls == []
+
+
+def test_layout_verification_no_longer_invokes_runtime_dataclass_copy(module, monkeypatch):
+    observer = observer_without_native_work(module)
+    monkeypatch.setattr(module, "asdict", lambda *_args: pytest.fail("Runtime dataclass copy invoked"))
+    observer._check()
+    observer._check()
+
+
+def test_unchanged_layout_checks_preserve_each_native_gate_boundary(module, addon_package):
+    observer = observer_without_native_work(module)
+    gates = importlib.import_module(addon_package + ".glb_stage_jobs")
+    gate = object.__new__(gates.RuntimeNativeGate)
+    calls = []
+    gate.service = NS(check_context=lambda *args: calls.append(args))
+    gate.context, gate.connection, gate.generation, gate.revoked = object(), object(), 4, False
+    observer.binding._runtime_gate = gate
+    for index in range(3):
+        observer._check()
+        assert len(calls) == index + 1
+    assert all(args == (gate.context, gate.connection, gate.generation) for args in calls)
+
+
+def test_layout_guard_projection_covers_complete_declared_dataclass_schema(module):
+    from dataclasses import asdict, fields
+    assert tuple(field.name for field in fields(module._Layout)) == (
+        "attribute_class", "value_class", "field", "kind", "width", "minimum", "maximum")
+    assert len(module._LAYOUT_FACTS) == len(module.LAYOUTS) == 7
+    assert {id(layout) for layout, _facts in module._LAYOUT_FACTS} == {id(layout) for layout in module.LAYOUTS.values()}
+    for layout, facts in module._LAYOUT_FACTS:
+        assert facts == tuple(asdict(layout).values())
