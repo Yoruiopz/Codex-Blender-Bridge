@@ -51,6 +51,15 @@ def rna(name, props=(), pointer=100):
     return NS(identifier=name, base=None, properties=list(props), functions=[], as_pointer=lambda: pointer)
 
 
+def replace_model_pin(graph, monkeypatch, name, build, supplied):
+    """Synthetic metadata updates replace complete immutable table bindings."""
+    def frozen(value):
+        return tuple((key, frozen(item)) for key, item in value.items()) if type(value) is dict else value
+    table = dict(getattr(graph, name))
+    table[build] = frozen(supplied)
+    monkeypatch.setattr(graph, name, tuple(table.items()))
+
+
 def install_model_catalogs(graph, monkeypatch, bpy):
     """Explicit synthetic constructor/static/fixed/full metadata assumptions.
 
@@ -70,9 +79,9 @@ def install_model_catalogs(graph, monkeypatch, bpy):
         for prop in row["properties"]:
             prop["fixed_type"] = None
         static[kind] = hashlib.sha256(graph._canonical(row)).hexdigest()
-    monkeypatch.setitem(graph._CATALOG_HASHES, bpy.app.build_hash, full)
-    monkeypatch.setitem(graph._STATIC_CATALOG_HASHES, bpy.app.build_hash, static)
-    monkeypatch.setitem(graph._FIXED_TARGETS, bpy.app.build_hash, targets)
+    replace_model_pin(graph, monkeypatch, "_CATALOG_HASHES", bpy.app.build_hash, full)
+    replace_model_pin(graph, monkeypatch, "_STATIC_CATALOG_HASHES", bpy.app.build_hash, static)
+    replace_model_pin(graph, monkeypatch, "_FIXED_TARGETS", bpy.app.build_hash, targets)
     placeholders = {}
 
     def modeled_native_constructor_policy(owner_bpy, name, resolved=None):
@@ -96,7 +105,7 @@ def test_complete_ordered_census_preserves_shapes_without_default_or_data_getter
     types = NS(Image=owner)
     result = graph.catalog_census(types, b"62c1db4208e8")
     assert result["schema"] == "current_pixels_complete_class_census_v1"
-    assert len(result["classes"]) == len(graph.CENSUS_TYPES) == 57
+    assert len(result["classes"]) == len(graph.CENSUS_TYPES) == 59
     row = result["classes"]["Image"]
     assert [prop["identifier"] for prop in row["properties"]] == ["name", "has_data", "size", "colorspace_settings", "source", "views"]
     assert row["properties"][2]["array_length"] == 2
@@ -128,7 +137,7 @@ def test_exact_followon_mapping_classes_are_metadata_only_and_do_not_construct_i
     result = graph.catalog_census(NS(**classes), b"d13f752e3b9c")
     added = {"TexMapping", "ColorMapping", "ColorRamp", "ColorRampElement", "ColorRampElements"}
     assert {name for name, row in result["classes"].items() if row["present"]} == added
-    assert len(set(graph.CENSUS_TYPES)) == 57
+    assert len(set(graph.CENSUS_TYPES)) == 59
     assert not {"ShaderNodeValToRGB", "CurveMapping", "ShaderNodeGroup"} & set(graph.CENSUS_TYPES)
     color = result["classes"]["ColorMapping"]["properties"][0]
     elements = result["classes"]["ColorRamp"]["properties"][0]
@@ -313,7 +322,7 @@ def test_missing_catalog_pin_cannot_be_self_qualified_by_a_census(graph, identit
     model = identity_model
     observed = graph.catalog_census(model.bpy.types, model.bpy.app.build_hash)
     assert observed["classes"]["Image"]["present"]
-    monkeypatch.setitem(graph._CATALOG_HASHES, model.bpy.app.build_hash, {})
+    replace_model_pin(graph, monkeypatch, "_CATALOG_HASHES", model.bpy.app.build_hash, {})
     with pytest.raises(graph.BridgeError, match="qualified finite profile"):
         graph.identity_witness(model.bpy, "Original", "Snapshot", ["Material"])
     assert model.calls == []
@@ -397,6 +406,7 @@ def make_capture_model(graph, monkeypatch, addon_package, *, build=b"62c1db4208e
         is_editable = True
         users = 1
         use_fake_user = False
+        is_embedded_data = False
 
         def __init__(self, **values):
             self.pointer = pointer_base + len(all_owners)
@@ -421,6 +431,22 @@ def make_capture_model(graph, monkeypatch, addon_package, *, build=b"62c1db4208e
             self._custom[key] = value
 
         def user_of_id(self, target):
+            if self.bl_rna.identifier == "Scene":
+                master = self.collection
+                count = int(master is target)
+                count += sum(owner is target for owner in master.children)
+                count += sum(owner is target for owner in master.objects)
+                for layer in self.view_layers:
+                    pending = [layer.layer_collection]
+                    while pending:
+                        item = pending.pop()
+                        count += int(item.collection is target)
+                        pending.extend(item.children)
+                    count += sum(owner is target for owner in layer.objects)
+                return count + self._custom.get("_synthetic_extra_count", {}).get(target, 0)
+            if self.bl_rna.identifier == "Collection":
+                return (sum(owner is target for owner in self.objects) + sum(owner is target for owner in self.children)
+                        + self._custom.get("_synthetic_extra_count", {}).get(target, 0))
             return int(self in reverse.get(target, ()))
 
     def define(name, fields=(), **attributes):
@@ -478,6 +504,11 @@ def make_capture_model(graph, monkeypatch, addon_package, *, build=b"62c1db4208e
     Object = define("Object", [*primitive_fields(name="Object", location=(0., 0., 0.), rotation_euler=(0., 0., 0.),
                                                 scale=(1., 1., 1.), hide_viewport=False, hide_render=False),
                                field("matrix_parent_inverse", "FLOAT", 16)])
+    LayerCollection = define("LayerCollection", [
+        Property("collection", "POINTER", fixed_type=Collection.bl_rna), Property("children", "COLLECTION")])
+    LayerCollection.bl_rna.properties[1]._fixed_type = LayerCollection.bl_rna
+    ViewLayer = define("ViewLayer", [Property("layer_collection", "POINTER", fixed_type=LayerCollection.bl_rna),
+                                    Property("objects", "COLLECTION", fixed_type=Object.bl_rna)])
     Mesh = define("Mesh", primitive_fields(name="Mesh", use_auto_texspace=True))
     Slot = define("MaterialSlot", [field("link", "ENUM")])
     Vertex = define("MeshVertex")
@@ -572,7 +603,8 @@ def make_capture_model(graph, monkeypatch, addon_package, *, build=b"62c1db4208e
                                              parent=None, id_data=tree, bl_idname="ShaderNodeOutputMaterial")
 
     def socket(kind, name, node, default=None):
-        value = getattr(types, kind)(name=name, identifier=name, bl_idname=kind, node=node, hide=False, enabled=True, is_linked=False)
+        value = getattr(types, kind)(name=name, identifier=name, bl_idname=kind, node=node, id_data=tree,
+                                     hide=False, enabled=True, is_linked=False)
         if kind != "NodeSocketShader":
             value.default_value = native_value(default)
         return value
@@ -633,15 +665,22 @@ def make_capture_model(graph, monkeypatch, addon_package, *, build=b"62c1db4208e
         def get(self, name):
             return next((owner for owner in self if owner.name == name), None)
 
-    collection = Collection(name="Collection", children=NamedOwners(), objects=NamedOwners([obj]), instance_offset=(0., 0., 0.))
-    scene = Scene(name="Scene", objects=[obj], collection=collection)
+    collection = Collection(name="Collection", children=NamedOwners(), objects=NamedOwners([obj]),
+                            instance_offset=(0., 0., 0.), is_embedded_data=True)
+    bases = NamedOwners([obj])
+    bases.active = obj
+    layer = ViewLayer(layer_collection=LayerCollection(collection=collection, children=[]), objects=bases)
+    scene = Scene(name="Scene", objects=[obj], collection=collection, view_layers=[layer], frame_current=1, frame_subframe=0.)
     obj.users_collection, obj.users_scene = (collection,), (scene,)
     reverse.update({original: {helper, material, tree}, helper: set(), material: {mesh}, tree: {material},
-                    mesh: {obj}, obj: {collection, scene}, collection: {scene}, scene: set()})
+                    mesh: {obj}, obj: {scene}, collection: set(), scene: set()})
     bpy = NS(types=types, app=NS(build_hash=build, version=graph.BUILDS[build]),
              data=NS(images={original.name: original, helper.name: helper}, materials={material.name: material},
-                     objects={obj.name: obj}, meshes={mesh.name: mesh}, collections={collection.name: collection}, scenes={scene.name: scene}),
-             context=NS(mode="OBJECT", scene=scene, window=NS(scene=scene), view_layer=NS(objects=NS(active=obj))))
+                     objects={obj.name: obj}, meshes={mesh.name: mesh}, collections={}, scenes={scene.name: scene},
+                     as_pointer=lambda: 123456),
+             context=NS(mode="OBJECT", scene=scene, view_layer=layer,
+                        window=NS(scene=scene, as_pointer=lambda: 123457,
+                                  workspace=NS(as_pointer=lambda: 123458), screen=NS(as_pointer=lambda: 123459))))
     bpy.data.user_map = lambda *, subset: {owner: set(reverse.get(owner, ())) for owner in subset}
     for owner in (original, helper, material, tree, mesh, obj, collection, scene):
         owner.id_data = owner
@@ -667,7 +706,7 @@ def make_capture_model(graph, monkeypatch, addon_package, *, build=b"62c1db4208e
             available_memory_bytes=512 * 1024**2, available_disk_bytes=64 * 1024**2, **kwargs)
 
     return NS(bpy=bpy, types=types, original=original, helper=helper, material=material, tree=tree,
-              texture=texture, principled=principled, output=output, mesh=mesh, obj=obj, collection=collection, scene=scene,
+              texture=texture, principled=principled, output=output, mesh=mesh, obj=obj, collection=collection, scene=scene, layer=layer,
               uv=uv, pin=pin, selections=selections, attributes=attrs, reverse=reverse, all_owners=all_owners,
               old=old, edited=edited, old_values=old_values, current_values=current_values, counters=counters,
               live=live, storage=storage, codec=codec, attribute=attribute, steps=steps, capture=capture, check=check)
@@ -912,10 +951,11 @@ def test_reverse_collection_scene_closure_refuses_foreign_or_rebound_ownership_b
         model.reverse[model.collection].add(outside)
     else:
         foreign_child = model.types.Collection(name=model.collection.name, children=[], objects=[])
-        master = model.types.Collection(name="Master", children=type(model.collection.children)([foreign_child]), objects=[])
+        master = model.types.Collection(name="Master", children=type(model.collection.children)([foreign_child]),
+                                        objects=type(model.collection.objects)(), is_embedded_data=True)
         model.scene.collection = master
-        model.reverse[master] = {model.scene}
-        model.reverse[model.collection] = {master}
+        model.reverse[master] = set()
+        model.reverse[model.collection] = {model.scene}
     with pytest.raises(graph.BridgeError):
         model.capture()
     assert model.counters["pixels"] == model.counters["packed"] == 0
@@ -924,11 +964,15 @@ def test_reverse_collection_scene_closure_refuses_foreign_or_rebound_ownership_b
 def test_direct_current_scene_child_collection_is_a_complete_supported_owner(capture_model):
     model = capture_model
     master = model.types.Collection(name="Master", children=type(model.collection.children)([model.collection]),
-                                    objects=type(model.collection.objects)())
+                                    objects=type(model.collection.objects)(), is_embedded_data=True)
+    model.collection.is_embedded_data = False
     model.scene.collection = master
-    model.bpy.data.collections[master.name] = master
-    model.reverse[master] = {model.scene}
-    model.reverse[model.collection] = {master}
+    model.bpy.data.collections[model.collection.name] = model.collection
+    model.reverse[master] = set()
+    model.reverse[model.collection] = {model.scene}
+    model.reverse[model.obj].add(model.collection)
+    child = model.types.LayerCollection(collection=model.collection, children=[])
+    model.layer.layer_collection = model.types.LayerCollection(collection=master, children=[child])
     result = model.capture()
     assert result.objects == (model.obj,)
     assert result.summary()["complete_pixels_verified"]
@@ -1494,3 +1538,329 @@ def test_actual_native_marker_qualifier_refuses_python_shapes_without_getters_or
     with pytest.raises(graph.BridgeError):
         graph._deferred_type(bpy)
     assert calls == []
+
+
+def test_user_keys_method_requires_exact_native_descriptor_without_shadow(graph):
+    bpy = NS(types=NS(bpy_struct=dict))
+    assert graph._keys_method(bpy, dict) is dict.__dict__["keys"]
+    calls = []
+
+    class Shadow(dict):
+        def keys(self):
+            calls.append("keys")
+            raise TypeError("Synthetic callback failure must never be mistaken for no USER support")
+
+    with pytest.raises(graph.BridgeError) as failure:
+        graph._keys_method(bpy, Shadow)
+    assert failure.value.context["reason"] == "NATIVE_CUSTOM_KEYS_METHOD_CHANGED"
+    assert calls == []
+
+
+def test_embedded_master_reverse_map_is_empty_and_direct_object_has_scene_owner_only(capture_model):
+    model = capture_model
+    assert model.collection.is_embedded_data is True
+    assert model.reverse[model.collection] == set() and model.reverse[model.obj] == {model.scene}
+    assert model.scene.user_of_id(model.collection) == 2
+    assert model.scene.user_of_id(model.obj) == 2
+    assert model.capture().objects == (model.obj,)
+
+
+@pytest.mark.parametrize("owner", ["scene", "obj", "material"])
+def test_any_embedded_master_external_reverse_alias_refuses_before_payload(graph, capture_model, owner):
+    model = capture_model
+    model.reverse[model.collection].add(getattr(model, owner))
+    with pytest.raises(graph.BridgeError) as failure:
+        model.capture()
+    assert failure.value.context["reason"] == "EMBEDDED_MASTER_EXTERNAL_CONSUMER"
+    assert model.counters["pixels"] == model.counters["packed"] == 0
+
+
+@pytest.mark.parametrize("case", ["root_extra", "object_extra", "missing_base_extra", "not_embedded"])
+def test_source_role_sum_rejects_extra_or_compensating_reference_counts(graph, capture_model, case):
+    model = capture_model
+    if case == "not_embedded":
+        model.collection.is_embedded_data = False
+    else:
+        target = model.collection if case == "root_extra" else model.obj
+        model.scene._custom["_synthetic_extra_count"] = {target: 1}
+        if case == "missing_base_extra":
+            model.layer.objects.clear()
+    with pytest.raises(graph.BridgeError):
+        model.capture()
+    assert model.counters["pixels"] == model.counters["packed"] == 0
+
+
+@pytest.mark.parametrize("query", ["user_map", "user_of_id", "layer_children"])
+def test_native_reference_query_visible_context_drift_is_not_rebased(graph, capture_model, query):
+    model = capture_model
+    if query == "user_map":
+        original = model.bpy.data.user_map
+        def changed(**kwargs):
+            result = original(**kwargs)
+            model.scene.frame_current += 1
+            return result
+        model.bpy.data.user_map = changed
+    elif query == "user_of_id":
+        original = model.scene.user_of_id
+        def changed(target):
+            result = original(target)
+            model.scene.frame_current += 1
+            return result
+        model.scene.user_of_id = changed
+    else:
+        class ChangedChildren:
+            def __iter__(self):
+                model.scene.frame_current += 1
+                return iter(())
+        model.layer.layer_collection.children = ChangedChildren()
+    with pytest.raises(graph.BridgeError) as failure:
+        model.capture()
+    assert failure.value.context["reason"] == "NATIVE_REFERENCE_QUERY_CONTEXT_CHANGED"
+    assert model.counters["pixels"] == model.counters["packed"] == 0
+
+
+@pytest.mark.parametrize("name,depth,expected", [
+    ("_CATALOG_HASHES", 2, "475f741ad6e7bded5de9050cbea011686fa27f8736b4c7edb972e20513df9297"),
+    ("_STATIC_CATALOG_HASHES", 2, "082b4f8a4a48b0b6b15a2bc02bf09db0316bda1a15796a66e53dc39c61b0d983"),
+    ("_FIXED_TARGETS", 3, "24c1b4eae75820b263b277b151da8e42173ef0a20b99997d4420af2bd7cc9ad0"),
+    ("_RUNTIME_MARKER_ROWS", 1, "556d58b4040e3f184ef697d596aeca947796d458db3dbf26c28059f19d8fc572"),
+])
+def test_immutable_pin_tables_preserve_complete_prechange_contents(graph, name, depth, expected):
+    """Digests are independent snapshots of every original map key and value."""
+    def detached(table, levels):
+        if levels == 0:
+            return table
+        assert type(table) is tuple
+        def key(value):
+            return ["bytes", value.hex()] if type(value) is bytes else (
+                ["tuple", list(value)] if type(value) is tuple else ["str", value])
+        return sorted([[key(k), detached(v, levels - 1)] for k, v in table],
+                      key=lambda row: json.dumps(row[0]))
+    payload = json.dumps(detached(getattr(graph, name), depth), ensure_ascii=True, separators=(",", ":")).encode()
+    assert hashlib.sha256(payload).hexdigest() == expected
+
+
+@pytest.mark.parametrize("fault", ["container", "key", "entry", "entry_key", "value", "marker_part", "nested_entry"])
+def test_pin_lookup_refuses_foreign_dispatch_before_callbacks(graph, fault):
+    calls = []
+    class ForeignTuple(tuple):
+        def __len__(self):
+            calls.append("length")
+            pytest.fail("Foreign tuple length was called")
+        def __iter__(self):
+            calls.append("iteration")
+            pytest.fail("Foreign tuple iteration was called")
+        def __eq__(self, _other):
+            calls.append("equality")
+            pytest.fail("Foreign tuple equality was called")
+    class ForeignString(str):
+        def __len__(self):
+            calls.append("length")
+            pytest.fail("Foreign string length was called")
+        def __eq__(self, _other):
+            calls.append("equality")
+            pytest.fail("Foreign string equality was called")
+        def __hash__(self):
+            calls.append("hash")
+            pytest.fail("Foreign string hash was called")
+    table, key = (("known", "value"),), "known"
+    if fault == "container":
+        table = ForeignTuple(table)
+    elif fault == "key":
+        key = ForeignString("known")
+    elif fault == "entry":
+        table = (ForeignTuple(("known", "value")),)
+    elif fault == "entry_key":
+        table = ((ForeignString("known"), "value"),)
+    elif fault == "value":
+        table = (("known", ForeignString("value")),)
+    elif fault == "marker_part":
+        key = ("Scene", "cycles")
+        table = ((key, (ForeignString("POINTER"), True, True, False, None, None)),)
+    else:
+        table = (("known", (ForeignTuple(("field", "value")),)),)
+    with pytest.raises(graph.BridgeError):
+        value = graph._pin_get(table, key, None, "rows" if fault == "nested_entry" else "text")
+        if fault == "nested_entry":
+            graph._pin_get(value, "field")
+    assert calls == []
+
+
+@pytest.mark.parametrize("table,key", [
+    ((("same", "one"), ("same", "two")), "same"),
+    ((("triple", "one", "extra"),), "triple"),
+    (((False, "wrong key type"),), "absent"),
+    (((("Scene", "cycles"), ("POINTER",)),), ("Scene", "cycles")),
+    (tuple((str(index), "value") for index in range(4097)), "absent"),
+])
+def test_pin_lookup_rejects_duplicate_malformed_or_overbudget_rows(graph, table, key):
+    with pytest.raises(graph.BridgeError):
+        graph._pin_get(table, key)
+
+
+def test_pin_lookup_keeps_missing_and_exact_typed_key_semantics(graph):
+    table = ((b"build", (("kind", (("field", "Target"),)),)), ("build", "literal"))
+    assert graph._pin_get(table, "build") == "literal"
+    assert graph._pin_get(graph._pin_get(graph._pin_get(table, b"build", None, "rows"), "kind", None, "rows"), "field") == "Target"
+    assert graph._pin_get(table, "missing") is None
+    assert graph._pin_get((), "missing", ()) == ()
+    with pytest.raises(graph.BridgeError):
+        graph._pin_get(table, "missing", {})
+
+
+@pytest.mark.parametrize("kind,value", [("text", (("field", "Target"),)), ("rows", "Target"),
+                                        ("marker", ("POINTER", object(), True, False, None, None))])
+def test_pin_lookup_refuses_wrong_terminal_type_before_native_key_use(graph, kind, value):
+    with pytest.raises(graph.BridgeError):
+        graph._pin_get((("kind", value),), "kind", None, kind)
+
+
+@pytest.mark.parametrize("fault", ["container", "entry", "key", "value", "marker"])
+def test_pin_lookup_does_not_dispatch_malicious_metaclasses(graph, fault):
+    calls = []
+    class Meta(type):
+        def __hash__(cls):
+            calls.append("metaclass_hash")
+            raise AssertionError("Foreign class was hashed")
+        def __eq__(cls, _other):
+            calls.append("metaclass_equality")
+            raise AssertionError("Foreign class was compared")
+    class Tuple(tuple, metaclass=Meta):
+        def __iter__(self):
+            calls.append("iteration")
+            raise AssertionError("Foreign tuple was iterated")
+        def __len__(self):
+            calls.append("length")
+            raise AssertionError("Foreign tuple length was read")
+        def __repr__(self):
+            calls.append("repr")
+            raise AssertionError("Foreign tuple was formatted")
+    class Text(str, metaclass=Meta):
+        def __repr__(self):
+            calls.append("repr")
+            raise AssertionError("Foreign text was formatted")
+    table, key = (("known", "value"),), "known"
+    if fault == "container":
+        table = Tuple(table)
+    elif fault == "entry":
+        table = (Tuple(("known", "value")),)
+    elif fault == "key":
+        table = ((Text("known"), "value"),)
+    elif fault == "value":
+        table = (("known", Text("value")),)
+    else:
+        key = ("Scene", "cycles")
+        table = ((key, (Text("POINTER"), True, True, False, None, None)),)
+    with pytest.raises(graph.BridgeError):
+        graph._pin_get(table, key)
+    assert calls == []
+
+
+@pytest.mark.parametrize("name", ["UVMap", ".pn.UVMap"])
+def test_b2_inventory_describes_single_without_relaxing_original_graph_reader(graph, monkeypatch, addon_package, name):
+    """Metadata inspection is separate from the old observer's ARRAY gate."""
+    model = make_capture_model(graph, monkeypatch, addon_package, build=b"d13f752e3b9c")
+    target = next(attribute for attribute in model.attributes if attribute.name == name)
+    target.storage_type = "SINGLE"
+    reader = graph._Reader(model.bpy, model.check)
+    counts = {key: len(getattr(model.mesh, key)) for key in ("vertices", "edges", "loops", "polygons")}
+    headers, uv, auxiliary, physical = graph._attribute_inventory(reader, model.mesh, counts, ("UVMap",))
+    assert (name, target.domain, target.data_type) in headers and name in uv
+    assert (name, target.domain, target.data_type, "SINGLE", len(target._data)) in physical
+    assert all(type(row) is tuple and type(row[1]) is bool for row in auxiliary)
+    assert model.counters["attribute_data"] == model.counters["pixels"] == model.counters["packed"] == 0
+
+    class NoGeometryIteration:
+        def __len__(self):
+            return counts["vertices"]
+        def __iter__(self):
+            pytest.fail("Old graph iterated geometry before refusing SINGLE")
+
+    model.mesh.vertices = NoGeometryIteration()
+    with pytest.raises(graph.BridgeError) as failure:
+        model.capture()
+    assert failure.value.context["reason"] == "ATTRIBUTE_SINGLE_OR_UNKNOWN_STORAGE"
+    assert model.counters["attribute_data"] == model.counters["pixels"] == model.counters["packed"] == 0
+
+
+def test_legacy_keys_keep_two_argument_semantics_and_new_sdna_policy_is_separate(graph):
+    calls = []
+    class Owner:
+        def keys(self):
+            calls.append("legacy")
+            return ["known"]
+    owner = Owner()
+    assert graph._keys(owner, {"known"}) == ("known",)
+    assert calls == ["legacy"]
+    reader = NS(build=b"d13f752e3b9c", catalog=lambda *_args: ())
+    assert graph._keys(reader, owner, "NodeSocketFloat", set()) == ()
+    assert calls == ["legacy"]
+    with pytest.raises(graph.BridgeError):
+        graph._keys(reader, owner, "NodeSocketFloat", {"known"})
+    assert calls == ["legacy"]
+
+
+def native_wrapper_alias(owner):
+    """Separate Python wrapper with the same synthetic native ID/address."""
+    alias = object.__new__(type(owner))
+    alias.__dict__.update(vars(owner))
+    assert alias is not owner and alias.as_pointer() == owner.as_pointer()
+    return alias
+
+
+def test_qualified_socket_mode_uses_native_owner_identity_without_changing_legacy_shape(
+    graph, monkeypatch, addon_package,
+):
+    model = make_capture_model(graph, monkeypatch, addon_package, build=b"d13f752e3b9c")
+    reader = graph._Reader(model.bpy, model.check)
+    socket = model.texture.outputs[0]
+    expected = graph._socket(reader, graph._Stream(), socket, model.texture)
+    socket.node = native_wrapper_alias(model.texture)
+    socket.id_data = native_wrapper_alias(model.tree)
+    retained = [model.tree, model.texture, socket]
+    original = graph._node_identity(reader, model.texture, model.tree, retained)
+    # 5.2 sockets have no USER storage; even a model keys callback must not run.
+    def forbidden(_owner):
+        pytest.fail("Qualified5.2 socket attempted a USER-IDProperty query")
+    monkeypatch.setattr(type(socket), "keys", forbidden)
+    observed = graph._socket(reader, graph._Stream(), socket, model.texture, model.tree, retained)
+    assert observed == expected
+    assert graph._node_identity(reader, socket.node, model.tree, retained) == original
+    with pytest.raises(graph.BridgeError) as failure:
+        graph._socket(reader, graph._Stream(), socket, model.texture)
+    assert failure.value.context["reason"] == "SOCKET_OWNER_CHANGED"
+
+
+def test_qualified_leaf_owner_refusal_precedes_socket_payload_getter(graph, monkeypatch, addon_package):
+    model = make_capture_model(graph, monkeypatch, addon_package, build=b"d13f752e3b9c")
+    reader = graph._Reader(model.bpy, model.check)
+    socket = model.texture.outputs[0]
+    foreign_tree = native_wrapper_alias(model.tree)
+    foreign_tree.pointer += 1
+    socket.id_data = foreign_tree
+    calls = []
+    def forbidden(_owner):
+        calls.append("default")
+        raise AssertionError("Foreign-owned socket payload was read")
+    monkeypatch.setattr(type(socket), "default_value", property(forbidden), raising=False)
+    with pytest.raises(graph.BridgeError) as failure:
+        graph._socket(reader, graph._Stream(), socket, model.texture, model.tree, [model.tree])
+    assert failure.value.context["reason"] == "RNA_NATIVE_OWNER_CHANGED"
+    assert calls == []
+
+
+def test_qualified_mapping_mode_retains_complete_old_fields_with_equivalent_owner_wrappers(
+    graph, monkeypatch, addon_package,
+):
+    model = make_capture_model(graph, monkeypatch, addon_package, build=b"d13f752e3b9c")
+    reader = graph._Reader(model.bpy, model.check)
+    expected = graph._mapping(reader, graph._Stream(), model.texture, model.tree)
+    mapping = model.texture.color_mapping
+    for nested in (model.texture.texture_mapping, mapping, mapping.color_ramp, *mapping.color_ramp.elements):
+        nested.id_data = native_wrapper_alias(model.tree)
+    actual = graph._mapping(reader, graph._Stream(), model.texture, model.tree, [model.tree, model.texture])
+    assert actual == expected
+    assert actual["color_mapping"]["color_ramp"]["elements"][1]["color"] == graph._vector((1., 1., 1., 1.), 4)
+    with pytest.raises(graph.BridgeError) as failure:
+        graph._mapping(reader, graph._Stream(), model.texture, model.tree)
+    assert failure.value.context["reason"] == "MAPPING_NATIVE_OWNER_CHANGED"
