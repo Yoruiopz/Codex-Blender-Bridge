@@ -326,6 +326,156 @@ def test_b2_role_native_boundary_stops_before_any_later_native_access(
         assert caught.value.code == "TIMEOUT"
 
 
+@pytest.mark.parametrize("field", ["identifier", "type"])
+@pytest.mark.parametrize("when", ["before", "native_return"])
+@pytest.mark.parametrize("shadow", ["property", "callable", "descriptor"])
+def test_b2_static_metadata_shadows_refuse_without_dispatch(checkpoint_case, monkeypatch, field, when, shadow):
+    c = checkpoint_case
+    role, _ = c.capture()
+    calls = []
+    class StaticMetadata(NS):
+        pass
+    metadata = StaticMetadata(**vars(prop("static_field")))
+    c.active.bl_rna.properties.append(metadata)
+    def foreign(*_args):
+        calls.append("foreign metadata")
+        return "FLOAT"
+    class Descriptor:
+        def __get__(self, *_args):
+            return foreign()
+    replacement = {"property": property(foreign), "callable": foreign, "descriptor": Descriptor()}[shadow]
+    def install():
+        monkeypatch.setattr(StaticMetadata, field, replacement, raising=False)
+    if when == "before":
+        install()
+    else:
+        def hook(owner, name, value):
+            if owner is metadata and name == "is_runtime":
+                install()
+            return value
+        c.native_hook = hook
+    c.native_events.clear()
+    with pytest.raises(c.source.contract.BridgeError) as caught:
+        role.access.descriptors(c.active)
+    assert caught.value.context["reason"] == "NATIVE_FIELD_PYTHON_SHADOW:" + field
+    assert calls == []
+    reads = [event[2] for event in c.native_events if event[0] == "get" and event[1] == id(metadata)]
+    assert reads == ([] if when == "before" else ["is_runtime"])
+    assert c.native_after_stop == []
+
+
+def test_b2_static_catalog_audit_reads_only_runtime_flags_and_returns_original_items(checkpoint_case):
+    c = checkpoint_case
+    role, _ = c.capture()
+    properties = tuple(c.active.bl_rna.properties)
+    assert properties and all(item.is_runtime is False for item in properties)
+    c.native_events.clear()
+    result = role.access.descriptors(c.active)
+    assert len(result) == len(properties)
+    assert all(current is original for current, original in zip(result, properties, strict=True))
+    for metadata in properties:
+        reads = [event[2] for event in c.native_events if event[0] == "get" and event[1] == id(metadata)]
+        assert reads == ["is_runtime"]
+
+
+@pytest.mark.parametrize("kind", ["falsey_foreign", "truthy_foreign", "zero", "one", "none"])
+def test_b2_runtime_flag_requires_exact_native_bool_without_foreign_dispatch(checkpoint_case, kind):
+    c = checkpoint_case
+    role, _ = c.capture()
+    calls = []
+    class Foreign:
+        def __bool__(self):
+            calls.append("bool")
+            return kind == "truthy_foreign"
+        def __repr__(self):
+            calls.append("repr")
+            return "foreign"
+        def __str__(self):
+            calls.append("str")
+            return "foreign"
+    flag = {"zero": 0, "one": 1, "none": None}.get(kind, Foreign())
+    metadata = prop("unreviewed", is_runtime=flag)
+    c.active.bl_rna.properties.append(metadata)
+    c.native_events.clear()
+    with pytest.raises(c.source.contract.BridgeError) as caught:
+        role.access.descriptors(c.active)
+    assert caught.value.context["reason"] == "STORAGE_CHECKPOINT_RUNTIME_DESCRIPTOR_CHANGED"
+    facts = caught.value.context["checkpoint_descriptor"]
+    assert facts["owner_identifier"] == "Object"
+    if kind.endswith("foreign"):
+        assert "is_runtime" not in facts
+    else:
+        assert facts["is_runtime"] is flag
+    assert calls == []
+    assert [event[2] for event in c.native_events if event[0] == "get" and event[1] == id(metadata)] == ["is_runtime"]
+
+
+@pytest.mark.parametrize("fault", ["stop", "source", "access_binding", "origin", "memory"])
+def test_b2_runtime_flag_failure_keeps_primary_and_prevents_next_native_read(checkpoint_case, monkeypatch, fault):
+    c = checkpoint_case
+    held_seal = [None]
+    primary = c.source.contract.BridgeError("TIMEOUT", "Original runtime flag stop")
+    def check():
+        if held_seal[0] is not None:
+            c.source.verify_seal(held_seal[0])
+        if c.live["stopped"]:
+            raise primary
+    c.gate.pure = check
+    role, _ = c.capture()
+    held_seal[0] = c.source.SourceSeal.capture()
+    metadata = prop("last_static")
+    c.active.bl_rna.properties.append(metadata)
+    memory = MemoryError("runtime flag allocation")
+    calls = []
+    def hook(owner, name, value):
+        if owner is metadata and name == "is_runtime":
+            if fault == "stop":
+                c.live["stopped"] = True
+            elif fault == "source":
+                monkeypatch.setitem(c.source.checkpoint_proof.RUNTIME["Scene"], "cycles", "STRING")
+            elif fault == "access_binding":
+                role.access.getter = lambda *_: calls.append("foreign")
+            elif fault == "origin":
+                role.access._origin = ()
+            else:
+                raise memory
+        return value
+    c.native_hook = hook
+    c.native_events.clear()
+    with pytest.raises((c.source.contract.BridgeError, MemoryError)) as caught:
+        role.access.descriptors(c.active)
+    reads = [event[2] for event in c.native_events if event[0] == "get" and event[1] == id(metadata)]
+    assert reads == ["is_runtime"]
+    assert c.native_events[-1] == ("get", id(metadata), "is_runtime")
+    assert calls == [] and c.native_after_stop == []
+    if fault == "stop":
+        assert caught.value is primary
+    elif fault == "memory":
+        assert caught.value is memory
+    else:
+        expected = "STORAGE_SOURCE_CHANGED" if fault == "source" else "STORAGE_CHECKPOINT_ROLE_ACCESS_CHANGED"
+        assert caught.value.context["reason"] == expected
+
+
+@pytest.mark.parametrize("change", ["replace", "code"])
+def test_b2_runtime_first_screen_is_pinned_before_next_native_inspection(checkpoint_case, monkeypatch, change):
+    c = checkpoint_case
+    _role, _ = c.capture()
+    seal = c.source.SourceSeal.capture()
+    cls = c.source._CheckpointRoleAccess
+    calls = []
+    if change == "replace":
+        monkeypatch.setattr(cls, "screen_static_metadata", lambda *_: calls.append("foreign"))
+    else:
+        fn = cls.screen_static_metadata
+        monkeypatch.setattr(fn, "__code__", fn.__code__.replace(co_name="foreign"))
+    c.native_events.clear()
+    with pytest.raises(c.source.contract.BridgeError) as caught:
+        c.source.verify_seal(seal)
+    assert caught.value.context["reason"] == "STORAGE_SOURCE_CHANGED"
+    assert calls == [] and c.native_events == []
+
+
 @pytest.mark.parametrize("kind", ["Scene", "Object"])
 def test_b2_runtime_marker_declaration_is_screened_without_reading_its_payload(checkpoint_case, monkeypatch, kind):
     c = checkpoint_case
@@ -387,7 +537,7 @@ def test_b2_runtime_descriptor_failure_reports_only_original_read_prefix(checkpo
     facts = error.context["checkpoint_descriptor"]
     assert facts["owner_identifier"] == "Object" and facts["property"] == name
     assert facts["observed_kind"] == metadata.type and facts["is_runtime"] is True
-    expected_reads = ["identifier", "type", "is_runtime"]
+    expected_reads = ["is_runtime", "identifier", "type"]
     if change not in {"unknown", "kind"}:
         expected_reads.append("is_readonly")
         assert facts["readonly"] is metadata.is_readonly
@@ -435,7 +585,7 @@ def test_b2_descriptor_diagnostic_never_replaces_primary_native_failure(checkpoi
     assert caught.value is primary
     assert "checkpoint_descriptor" not in primary.context
     reads = [event[2] for event in c.native_events if event[0] == "get" and event[1] == id(metadata)]
-    assert reads == ["identifier", "type", "is_runtime", "is_readonly"]
+    assert reads == ["is_runtime", "identifier", "type", "is_readonly"]
     assert c.native_after_stop == []
 
 

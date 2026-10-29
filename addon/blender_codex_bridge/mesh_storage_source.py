@@ -713,6 +713,26 @@ class _CheckpointRoleAccess:
                 ("pointer", format(self.key(owner), "x")),
                 ("session_uid", str(graph._int(self.raw(owner, "session_uid"), 2**64 - 1, minimum=1))))
 
+    def screen_static_metadata(self, owner):
+        """Keep raw()'s unused-field refusals without reading their C values.
+
+        Every actual is_runtime read still uses raw()/call() and their original
+        before/after controls. Screen both sides so a native-return callback
+        cannot install an identifier/type shadow before the next inspection.
+        This retains no metadata, class proof or owner value between reads.
+        """
+        origin = self._origin
+        if self._origin is not origin or any(object.__getattribute__(self, name) is not value for name, value in origin):
+            raise contract.refused("STORAGE_CHECKPOINT_ROLE_ACCESS_CHANGED")
+        cls = type(owner)
+        graph._unshadowed(cls, ("identifier", "type"))
+        if (graph._class_find(cls, "__getattribute__") is not self.getter
+                or graph._class_find(cls, "__getattr__") is not None
+                or graph._class_find(cls, "as_pointer") is not self.pointer):
+            raise contract.refused("STORAGE_CHECKPOINT_NATIVE_ORIGIN_CHANGED")
+        if self._origin is not origin or any(object.__getattribute__(self, name) is not value for name, value in origin):
+            raise contract.refused("STORAGE_CHECKPOINT_ROLE_ACCESS_CHANGED")
+
     def descriptors(self, owner):
         rna = self.raw(owner, "bl_rna")
         identifier = self.raw(rna, "identifier")
@@ -726,9 +746,13 @@ class _CheckpointRoleAccess:
         properties = self.bounded(self.raw(rna, "properties"), 512, "RNA descriptors")
         allowed = checkpoint_proof.RUNTIME.get(identifier, {})
         for prop in properties:
-            name, kind = self.raw(prop, "identifier"), self.raw(prop, "type")
+            self.screen_static_metadata(prop)
             runtime = self.raw(prop, "is_runtime")
+            self.screen_static_metadata(prop)
+            if type(runtime) is not bool:
+                raise _checkpoint_descriptor_error({"owner_identifier": identifier, "is_runtime": runtime})
             if runtime:
+                name, kind = self.raw(prop, "identifier"), self.raw(prop, "type")
                 expected = allowed.get(name)
                 facts = {"owner_identifier": identifier, "property": name, "observed_kind": kind,
                          "expected_kind": expected, "is_runtime": runtime}
