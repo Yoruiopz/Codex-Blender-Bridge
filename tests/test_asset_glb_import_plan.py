@@ -125,7 +125,7 @@ def test_admitted_unsigned_indices_and_interleaved_attributes_are_decoded(module
     assert primitive.triangles == ((0, 1, 2),)
     assert primitive.normals == ((0., -1., 0.),) * 3
     assert primitive.texcoords == ((0., 1.), (1., .75), (0., 0.))
-    assert plan.required_accepted_losses[-1] == module.UV_LOSS
+    assert plan.required_accepted_losses == (*module.CORE_LOSSES, module.UV_LOSS, module.NORMAL_LOSS)
     # X cross Z is -Y: the basis has determinant +1 and preserves triangle winding.
     first, second, third = primitive.positions
     u, v = [second[i] - first[i] for i in range(3)], [third[i] - first[i] for i in range(3)]
@@ -412,3 +412,156 @@ def test_authoritative_preflight_denial_cannot_be_bypassed_by_the_plan_decoder(m
     with pytest.raises(module.BridgeError) as raised:
         module.plan_glb(glb(manifest, binary))
     assert raised.value is error
+
+
+def conversion_asset(normal_mode="none", *, uv=False, mixed_uv=False, shared_instances=False):
+    """Literal stream presence combinations, independent of conversion helpers."""
+    manifest, binary = triangle(normals=normal_mode != "none", uv=uv)
+    first = manifest["meshes"][0]["primitives"][0]
+    if normal_mode == "mixed" or mixed_uv:
+        attributes = dict(first["attributes"])
+        if normal_mode == "mixed":
+            attributes.pop("NORMAL")
+        if mixed_uv:
+            attributes.pop("TEXCOORD_0")
+        manifest["meshes"][0]["primitives"].append({**first, "attributes": attributes})
+    elif normal_mode == "separate":
+        manifest["meshes"].append({"primitives": [{**first, "attributes": {"POSITION": first["attributes"]["POSITION"]}}]})
+        manifest["nodes"].append({"mesh": 1})
+        manifest["scenes"][0]["nodes"].append(1)
+    if shared_instances:
+        manifest["nodes"].append({"mesh": 0})
+        manifest["scenes"][0]["nodes"].append(len(manifest["nodes"]) - 1)
+    return manifest, binary
+
+
+@pytest.mark.parametrize("normal_mode,counts", [
+    ("none", (0, 0, 0, 0, 0)), ("authored", (1, 1, 3, 0, 0)),
+    ("mixed", (1, 1, 3, 1, 3)), ("separate", (1, 1, 3, 0, 0)),
+])
+@pytest.mark.parametrize("uv", [False, True])
+def test_normal_loss_order_and_exact_definition_corner_counts_are_sealed(module, normal_mode, counts, uv):
+    manifest, binary = conversion_asset(normal_mode, uv=uv, shared_instances=True)
+    plan = module.plan_glb(glb(manifest, binary))
+    conversion = plan.conversion_requirements
+    assert (conversion.custom_normal_meshes, conversion.authored_normal_primitives,
+            conversion.authored_normal_corners, conversion.geometric_auto_primitives,
+            conversion.geometric_auto_corners) == counts
+    assert conversion.missing_uv_zero_fill_corners == 0
+    expected = (*module.CORE_LOSSES, *((module.UV_LOSS,) if uv else ()),
+                *((module.NORMAL_LOSS,) if normal_mode != "none" else ()),
+                *((module.AUTO_NORMAL_LOSS,) if normal_mode == "mixed" else ()))
+    assert plan.required_accepted_losses == expected
+    assert json.loads(plan.canonical_bytes())["conversion_requirements"] == {
+        "custom_normal_meshes": counts[0], "authored_normal_primitives": counts[1],
+        "authored_normal_corners": counts[2], "geometric_auto_primitives": counts[3],
+        "geometric_auto_corners": counts[4], "missing_uv_zero_fill_corners": 0}
+    assert hashlib.sha256(plan.canonical_bytes()).hexdigest() == plan.normalized_sha256
+    summary = plan.summary()["normal_conversion"]
+    assert summary["count_scope"] == "MESH_DEFINITION_CORNER_WRITES_NOT_INSTANCES"
+    assert summary["authored_normal_corners"] == counts[2]
+    assert summary["geometric_auto_corners"] == counts[4]
+    assert summary["native_decoded_component_error_bound"] == 5e-4
+    assert summary["decoded_bound_policy"] == "OBSERVED_NATIVE_POSTCONDITION_NOT_CAS_TOLERANCE"
+    assert summary["input_normal_bits_preserved"] is False
+    assert summary["future_encoded_short_selection_sharp_edge_CAS"] == "EXACT"
+    assert plan.summary()["native_backend_qualified"] is False
+    module.require_loss_acceptance(plan, list(expected))
+
+
+def test_mixed_uv_zero_fill_is_counted_and_keeps_public_registration_gate_open(module):
+    manifest, binary = conversion_asset("mixed", uv=True, mixed_uv=True)
+    plan = module.plan_glb(glb(manifest, binary))
+    assert plan.conversion_requirements.missing_uv_zero_fill_corners == 3
+    assert plan.summary()["missing_uv_zero_fill_corners"] == 3
+    assert plan.summary()["mixed_uv_zero_fill_public_registration_gate"] == "OPEN"
+    assert plan.required_accepted_losses == (*module.CORE_LOSSES, module.UV_LOSS, module.NORMAL_LOSS, module.AUTO_NORMAL_LOSS)
+    # The new normal consent does not invent or silently authorize a missing-UV
+    # public policy; no Runtime or public registration is implemented here.
+    assert plan.summary()["native_permission_or_checkpoint_verified"] is False
+
+
+@pytest.mark.parametrize("normal_mode", ["authored", "mixed"])
+@pytest.mark.parametrize("uv", [False, True])
+@pytest.mark.parametrize("fault", ["old_list", "omit_normal", "omit_auto", "order", "duplicate", "integer", "tuple"])
+def test_normal_consent_requires_the_exact_source_specific_loss_list(module, normal_mode, uv, fault):
+    manifest, binary = conversion_asset(normal_mode, uv=uv)
+    plan = module.plan_glb(glb(manifest, binary))
+    values = list(plan.required_accepted_losses)
+    if fault == "old_list":
+        values = [*module.CORE_LOSSES, *((module.UV_LOSS,) if uv else ())]
+    elif fault == "omit_normal":
+        values.remove(module.NORMAL_LOSS)
+    elif fault == "omit_auto":
+        if normal_mode != "mixed":
+            values.append(module.AUTO_NORMAL_LOSS)
+        else:
+            values.remove(module.AUTO_NORMAL_LOSS)
+    elif fault == "order":
+        values[-1], values[-2] = values[-2], values[-1]
+    elif fault == "duplicate":
+        values.append(values[-1])
+    elif fault == "integer":
+        values[-1] = True
+    else:
+        values = tuple(values)
+    with pytest.raises(module.BridgeError):
+        module.require_loss_acceptance(plan, values)
+
+
+@pytest.mark.parametrize("field", ["custom_normal_meshes", "authored_normal_primitives", "authored_normal_corners",
+                                  "geometric_auto_primitives", "geometric_auto_corners", "missing_uv_zero_fill_corners"])
+@pytest.mark.parametrize("fault", ["value", "bool"])
+def test_conversion_metadata_forgery_cannot_be_blessed_by_rehashing(module, field, fault):
+    from dataclasses import replace
+
+    manifest, binary = conversion_asset("mixed", uv=True, mixed_uv=True)
+    plan = module.plan_glb(glb(manifest, binary))
+    original = getattr(plan.conversion_requirements, field)
+    conversion = replace(plan.conversion_requirements, **{field: original + 1 if fault == "value" else True})
+    changed = replace(plan, conversion_requirements=conversion)
+    changed = replace(changed, normalized_sha256=hashlib.sha256(changed.canonical_bytes()).hexdigest())
+    assert changed.normalized_sha256 != plan.normalized_sha256
+    for action in (lambda: changed.summary(), lambda: module.require_loss_acceptance(changed, list(changed.required_accepted_losses))):
+        with pytest.raises(module.BridgeError):
+            action()
+
+
+def test_legacy_preflight_losses_are_unchanged_when_structured_normals_need_consent(module):
+    preflight = importlib.import_module(module.__package__ + ".asset_glb_preflight")
+    manifest, binary = conversion_asset("mixed", uv=True)
+    source = glb(manifest, binary)
+    assert preflight.LOSSES == ["VERTEX_SPLITS", "AXIS_UNIT_CONVERSION", "PBR_MATERIAL_RECONSTRUCTION"]
+    assert preflight.preflight_glb(source)["required_accepted_losses"] == preflight.LOSSES
+    assert module.NORMAL_LOSS in module.plan_glb(source).required_accepted_losses
+
+
+def test_conversion_requirements_reject_foreign_streams_without_callbacks(module):
+    from dataclasses import replace
+
+    manifest, binary = conversion_asset("authored")
+    plan = module.plan_glb(glb(manifest, binary))
+    calls = []
+    class Foreign:
+        def __len__(self):
+            calls.append(True)
+            raise AssertionError("foreign length")
+        def __iter__(self):
+            calls.append(True)
+            raise AssertionError("foreign iterator")
+    primitive = plan.meshes[0].primitives[0]
+    mesh = replace(plan.meshes[0], primitives=(replace(primitive, normals=Foreign()),))
+    for values in ((Foreign(),), (mesh,), ()):
+        with pytest.raises(module.BridgeError):
+            module.conversion_requirements(values)
+    assert calls == []
+
+
+def test_conversion_requirement_records_are_frozen_and_complete(module):
+    manifest, binary = conversion_asset("mixed", uv=True)
+    plan = module.plan_glb(glb(manifest, binary))
+    with pytest.raises(FrozenInstanceError):
+        plan.conversion_requirements.authored_normal_corners = 99
+    assert set(json.loads(plan.canonical_bytes())["conversion_requirements"]) == {
+        "custom_normal_meshes", "authored_normal_primitives", "authored_normal_corners",
+        "geometric_auto_primitives", "geometric_auto_corners", "missing_uv_zero_fill_corners"}

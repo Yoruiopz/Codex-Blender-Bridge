@@ -52,6 +52,67 @@ wrapper identity is process-local evidence, not a persistent native identity
 guarantee. It invokes no production UV tool, checkpoint, recovery, capture or save.
 This prerequisite does not qualify guarded UV editing or any release gate.
 
+## Private GLB Runtime candidate qualification
+
+The opt-in `glb_stage_runtime` fixture is distinct from the bounded private
+`glb_stage_structure` constructor case and the quarantined legacy native-importer
+path. Its new source is **UNQUALIFIED** until a matching runner invocation and
+retained evidence pass on both selected official builds. Do not retry the old
+5.2 native-importer quarantine through this fixture or infer registered import
+acceptance from historical constructor markers.
+
+The Runtime fixture implements the revised logical authored-data contract:
+source-qualified bit-preserving ARRAY COW/unsharing/cache-tag and empty deform-layer
+read effects on both builds are explicit. Detached physical headers and fresh
+whole-inventory/name/schema/storage checks precede each data read and follow
+groups. 5.2 SINGLE refuses before geometry/data; legacy UV.data optional-storage
+creation is forbidden. Header/binding qualification may remain held; no source or
+model result proves actual Network17/native execution. Rich factory/protected
+meshes, UVs, rigs, images and hierarchy must remain present. Current Scene scale
+length 1 and a plain active Empty are explicit source-profile requirements.
+
+Root-authorized raw owned-fixture preparation follows a genuine SINGLE preview
+refusal and precedes a new fixture baseline. It never clears data, forces all
+layers or converts unknown/scalar FLOAT storage. Source-qualified BOOLEAN/FLOAT2
+and bit-preserving INT/FLOAT_VECTOR recipes retain before/after physical headers,
+complete postreadback and source-equivalence/literal-oracle evidence. An unreadable
+pre-SINGLE value stream has no empirical before digest. This is explicit raw
+fixture authoring under Edit Mesh semantics, not a public preparation API.
+
+Genuine Runtime lifetime groups unregister/stop the prior owned Runtime, retain
+its object, every raw/primitive ledger and all artist Main/partial IDs, then create
+and register a fresh canonical Runtime and persistent TCP connection. No record
+is evicted, cap raised or old stage adopted/resurrected. The fixture-only singleton
+boundary is explicit and is not a new production reset API.
+
+The post-link stop probe observes the actual native return/effect cell before the
+first pure post-return gate, then the worker closes the real owner TCP connection.
+A bounded, timestamped rendezvous waits only for socket-close completion and the
+canonical network-thread disconnected Event; it waits for no Main-thread RPC.
+The constructor-return probe also requires genuine reference escrow first. Missed
+boundaries fail. Neither probe manufactures cancellation, a C failure or mid-C
+preemption, and a linked partial result remains retained/unknown without unlink.
+
+The required fixture drives genuine loopback TCP Runtime requests and real timer
+continuations through the five candidate methods, canonical Scene jobs and
+permission/session/stop barriers. Direct handler calls, manual ticks, synthetic
+success rows and model-only receipts cannot substitute for that proof. The
+finite 17-scenario contract includes source-specific consent and preallocation
+refusals, success, lifetime/authority interruption, native return/effects,
+manual drift, exact publication and protected/context preservation. Complete
+bounded transcripts must bind source/helper/binary/process/token identities and
+retain negative outcomes and unknown effects. Job acceptance is not completion.
+
+Constructor checks retain independent literal numeric matrices and vertices,
+complete mesh/custom-normal/selection/UV/material inventory and exact native
+comparison semantics. Mathematical authored-world expectations do not qualify
+evaluated transforms. Native decoded normal error is an observed postcondition,
+not a CAS tolerance. Partial or unknown IDs remain retained for inspection;
+there is no post-stop cleanup, inverse or destructive recovery promise. The
+candidate profile refuses mixed UV presence pending an explicit zero-fill
+consent contract and reports unsupported image/material/skin/animation content
+before allocation. Broader GLB/FBX and full artist acceptance remain open.
+
 ## Fresh-process phases
 
 `image_reopen`, `image_portability_probe`, `task_plans` and `asset_delivery` launch a writer

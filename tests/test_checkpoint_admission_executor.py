@@ -950,3 +950,88 @@ def test_guarded_batch_finalization_owner_loss_never_enables_legacy_native_finis
     assert all(name not in {"finish_editor_session", "after_modification"} for name, _, _ in case.checkpoint_calls)
     assert len(case.handlers) == (0 if stage == "first_provider" else 1)
     assert_context_restored(case)
+
+
+def test_glb_executor_context_carries_runtime_owned_service_before_provider_entry(addon_package, monkeypatch):
+    runtime_module = importlib.import_module(f"{addon_package}.runtime")
+    lifecycle = importlib.import_module(f"{addon_package}.request_lifecycle")
+    owner = runtime_module.BridgeRuntime()
+    owner._registered = True
+    monkeypatch.setattr(runtime_module, "_RUNTIME", owner)
+    owner.registry.enable_toolset("asset_delivery")
+    context = owner.executor.context
+    context.request_lifecycle = lifecycle.RequestLifetime(connection=lifecycle.ConnectionLifetime())
+    context.glb_method = "asset.glb_stage_preview"
+    service = context.glb_stage
+    assert service is owner.glb_stage is owner._glb_stage_origin
+    owner.glb_stage = object()
+    with pytest.raises(runtime_module.BridgeError) as failure:
+        service.check_context(context, context.request_lifecycle.connection, service._generation)
+    assert failure.value.context["reason"] == "GLB_RUNTIME_SERVICE_OR_SESSION_CHANGED"
+    assert owner.executor.glb_stage is owner._glb_stage_origin
+    assert not service.store._records
+
+
+@pytest.mark.parametrize("route", ["request", "job_context_factory"])
+def test_glb_context_getter_origin_checked_before_foreign_callback(addon_package, monkeypatch, route):
+    runtime_module = importlib.import_module(f"{addon_package}.runtime")
+    protocol = importlib.import_module(f"{addon_package}.protocol")
+    owner = runtime_module.BridgeRuntime()
+    owner._registered = True
+    monkeypatch.setattr(runtime_module, "_RUNTIME", owner)
+    callbacks = []
+
+    def foreign_context(_executor):
+        callbacks.append("FOREIGN_CONTEXT_GETTER")
+        raise AssertionError("foreign context getter ran before source guard")
+
+    monkeypatch.setattr(type(owner.executor), "context", property(foreign_context))
+    with pytest.raises(runtime_module.BridgeError) as failure:
+        if route == "request":
+            owner.executor._invoke(protocol.Request(id="factory-origin-model", method="scene.inspect", params={}))
+        else:
+            owner.jobs.context_factory()
+    assert failure.value.context["reason"] == "GLB_CANONICAL_CONTEXT_FACTORY_CHANGED"
+    assert callbacks == []
+
+
+def test_glb_context_slot_shadow_rejected_before_context_constructor_callback(addon_package, monkeypatch):
+    runtime_module = importlib.import_module(f"{addon_package}.runtime")
+    registry_module = importlib.import_module(f"{addon_package}.tool_registry")
+    owner = runtime_module.BridgeRuntime()
+    owner._registered = True
+    monkeypatch.setattr(runtime_module, "_RUNTIME", owner)
+    callbacks = []
+
+    def foreign_slot(_context, _value):
+        callbacks.append("FOREIGN_CONTEXT_SLOT")
+        raise AssertionError("foreign context slot invoked")
+
+    monkeypatch.setattr(registry_module.ToolContext, "state", property(lambda _context: None, foreign_slot))
+    with pytest.raises(runtime_module.BridgeError):
+        owner.jobs.context_factory()
+    assert callbacks == []
+
+
+@pytest.mark.parametrize("method", ["asset.glb_stage_create_start", "asset.glb_stage_publish_start"])
+def test_glb_denied_start_grants_precede_native_marker_capture(addon_package, monkeypatch, method):
+    runtime_module = importlib.import_module(f"{addon_package}.runtime")
+    lifecycle = importlib.import_module(f"{addon_package}.request_lifecycle")
+    owner = runtime_module.BridgeRuntime()
+    owner._registered = True
+    monkeypatch.setattr(runtime_module, "_RUNTIME", owner)
+    owner.registry.enable_toolset("asset_delivery")
+    context = owner.executor.context
+    context.request_lifecycle = lifecycle.RequestLifetime(connection=lifecycle.ConnectionLifetime())
+    markers = []
+
+    def forbidden_marker():
+        markers.append("NATIVE_MARKER_CAPTURE")
+        pytest.fail("missing GLB grants reached native checkpoint markers")
+
+    monkeypatch.setattr(owner.checkpoints, "capture_job_markers", forbidden_marker)
+    spec, params = owner.registry.get(method), {}
+    with owner.registry.mutation_entry(spec, params, context), pytest.raises(runtime_module.BridgeError) as failure:
+        spec.checkpoint_admission_factory(context, params)
+    assert failure.value.code == runtime_module.ErrorCode.PERMISSION_DENIED.value
+    assert markers == [] and owner.jobs.active is None

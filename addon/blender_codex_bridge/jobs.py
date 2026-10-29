@@ -12,9 +12,10 @@ import uuid
 from collections import deque
 from dataclasses import dataclass, field
 from threading import Event
-from types import CodeType, FunctionType, GeneratorType, ModuleType
+from types import CodeType, FunctionType, GeneratorType, GetSetDescriptorType, ModuleType
 from typing import Any
 
+from . import glb_stage_runtime as _prepared_context_module
 from .errors import BridgeError, ErrorCode, invalid_argument
 from .job_controller import TERMINAL, CooperativeJobController
 from .permissions import Permission, PermissionManager
@@ -37,8 +38,11 @@ def _prepared_refused(reason: str) -> BridgeError:
 def _function_facts(function):
     if type(function) is not FunctionType:
         raise _prepared_refused("PREPARED_CALLBACK_UNSUPPORTED")
-    return (function, function.__code__, function.__globals__, function.__defaults__,
-            function.__kwdefaults__, tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()))
+    try:
+        closure = tuple((cell, cell.cell_contents) for cell in function.__closure__ or ())
+    except ValueError as cause:
+        raise _prepared_refused("PREPARED_CALLBACK_UNSUPPORTED") from cause
+    return (function, function.__code__, function.__globals__, function.__defaults__, function.__kwdefaults__, closure)
 
 
 def _function_matches(function, facts):
@@ -82,6 +86,117 @@ _PREPARED_RECORDER = inspect.getattr_static(BridgeState, "record_operation")
 _PREPARED_RECORDER_FACTS = _function_facts(_PREPARED_RECORDER)
 _PREPARED_CONTEXT_INIT = inspect.getattr_static(ToolContext, "__init__")
 _PREPARED_CONTEXT_INIT_FACTS = _function_facts(_PREPARED_CONTEXT_INIT)
+_PREPARED_CONTEXT_HELPER = _prepared_context_module.checked_executor_context
+_PREPARED_CONTEXT_EXECUTOR = _prepared_context_module._Executor
+_PREPARED_EXECUTOR_MODULE = sys.modules[_PREPARED_CONTEXT_EXECUTOR.__module__]
+_PREPARED_CONTEXT_SERVICE = _prepared_context_module.GLBStageService
+_PREPARED_MISSING = object()
+
+
+def _prepared_global_facts(function):
+    """Pin names before calling the helper, including newly shadowed builtins."""
+    names, pending = set(), [function.__code__]
+    while pending:
+        code = pending.pop()
+        names.update(code.co_names)
+        pending.extend(value for value in code.co_consts if type(value) is CodeType)
+    return function, _function_facts(function), tuple(
+        (name, function.__globals__.get(name, _PREPARED_MISSING)) for name in sorted(names))
+
+
+_PREPARED_CONTEXT_FUNCTIONS = tuple(_prepared_global_facts(function) for function in (
+    _PREPARED_CONTEXT_HELPER,
+    vars(_PREPARED_CONTEXT_SERVICE)["check_context_factory"],
+    _prepared_context_module._check_protected_dependencies,
+    _prepared_context_module.refused,
+))
+_PREPARED_CONTEXT_CLASSES = tuple((cls, cls.__mro__, tuple(vars(cls).items()), tuple(
+    _function_facts(function)
+    for value in vars(cls).values()
+    for function in ([value] if type(value) is FunctionType else
+                     [value.__func__] if type(value) in {staticmethod, classmethod} else
+                     [item for item in (value.fget, value.fset, value.fdel) if item is not None] if type(value) is property else [])))
+    for cls in (_PREPARED_CONTEXT_EXECUTOR, _PREPARED_CONTEXT_SERVICE, *_prepared_context_module._AUTHORITY_CLASSES))
+
+
+def _prepared_same_mro(actual, expected):
+    return len(actual) == len(expected) and all(left is right for left, right in zip(actual, expected, strict=True))
+
+
+def _prepared_helper_proof(runtime_module, executor_module):
+    """Pure source facts first; never resolve a Runtime or executor property."""
+    if (type(runtime_module) is not ModuleType or type(executor_module) is not ModuleType
+            or sys.modules.get(__package__+".runtime") is not runtime_module
+            or executor_module is not _PREPARED_EXECUTOR_MODULE
+            or sys.modules.get(__package__+".executor") is not _PREPARED_EXECUTOR_MODULE
+            or sys.modules.get(__package__+".glb_stage_runtime") is not _prepared_context_module
+            or type(_prepared_context_module) is not ModuleType
+            or vars(runtime_module).get("checked_executor_context") is not _PREPARED_CONTEXT_HELPER
+            or vars(_prepared_context_module).get("checked_executor_context") is not _PREPARED_CONTEXT_HELPER
+            or vars(executor_module).get("MainThreadExecutor") is not _PREPARED_CONTEXT_EXECUTOR):
+        raise _prepared_refused("PREPARED_CONTEXT_HELPER_CHANGED")
+    for function, facts, dependencies in _PREPARED_CONTEXT_FUNCTIONS:
+        if (not _function_matches(function, facts)
+                or any(function.__globals__.get(name, _PREPARED_MISSING) is not value for name, value in dependencies)):
+            raise _prepared_refused("PREPARED_CONTEXT_HELPER_CHANGED")
+    for cls, mro, namespace, functions in _PREPARED_CONTEXT_CLASSES:
+        current = vars(cls)
+        if (not _prepared_same_mro(cls.__mro__, mro) or len(current) != len(namespace)
+                or any(current.get(name, _PREPARED_MISSING) is not value for name, value in namespace)
+                or any(not _function_matches(facts[0], facts) for facts in functions)):
+            raise _prepared_refused("PREPARED_CONTEXT_HELPER_CHANGED")
+
+
+def _prepared_instance_namespace(value, cls, mro, fields):
+    """Reject inherited access hooks and field descriptors before data access."""
+    if (type(cls) is not type or type(value) is not cls or not _prepared_same_mro(cls.__mro__, mro)
+            or inspect.getattr_static(cls, "__getattribute__") is not object.__getattribute__
+            or inspect.getattr_static(cls, "__setattr__") is not object.__setattr__
+            or inspect.getattr_static(cls, "__getattr__", _PREPARED_MISSING) is not _PREPARED_MISSING
+            or any(inspect.getattr_static(cls, name, _PREPARED_MISSING) is not _PREPARED_MISSING for name in fields)):
+        raise _prepared_refused("PREPARED_CONTEXT_ACCESS_CHANGED")
+    descriptor = inspect.getattr_static(cls, "__dict__")
+    if type(descriptor) is not GetSetDescriptorType or not any(descriptor.__objclass__ is base for base in mro):
+        raise _prepared_refused("PREPARED_CONTEXT_ACCESS_CHANGED")
+    namespace = object.__getattribute__(value, "__dict__")
+    if type(namespace) is not dict or any(type(name) is not str for name in namespace):
+        raise _prepared_refused("PREPARED_CONTEXT_ACCESS_CHANGED")
+    return namespace
+
+
+def _prepared_runtime_parts(runtime_module, executor_module):
+    _prepared_helper_proof(runtime_module, executor_module)
+    runtime_type = vars(runtime_module).get("BridgeRuntime")
+    if type(runtime_type) is not type or runtime_type is not vars(runtime_module).get("_CANONICAL_RUNTIME_CLASS"):
+        raise _prepared_refused("PREPARED_RUNTIME_CHANGED")
+    constructor = inspect.getattr_static(runtime_type, "__init__")
+    if (type(constructor) is not FunctionType or constructor.__globals__ is not vars(runtime_module)
+            or constructor.__code__ is not vars(runtime_module).get("_RUNTIME_CONSTRUCTOR_CODE")):
+        raise _prepared_refused("PREPARED_RUNTIME_CHANGED")
+    runtime = vars(runtime_module).get("_RUNTIME")
+    owned = _prepared_instance_namespace(runtime, runtime_type, (runtime_type, object),
+        ("jobs", "executor", "state", "permissions", "registry", "checkpoints", "glb_stage"))
+    executor = owned.get("executor")
+    execution = _prepared_instance_namespace(executor, _PREPARED_CONTEXT_EXECUTOR, _PREPARED_CONTEXT_EXECUTOR.__mro__,
+        ("jobs", "state", "permissions", "registry", "checkpoints", "glb_stage", "evidence"))
+    manager = owned.get("jobs")
+    manager_type = vars(runtime_module).get("NativeSaveJobs")
+    geometry = sys.modules.get(__package__+".geometry_preview_jobs")
+    scene = sys.modules.get(__package__+".scene_jobs")
+    if type(geometry) is not ModuleType or type(scene) is not ModuleType or type(manager_type) is not type:
+        raise _prepared_refused("PREPARED_RUNTIME_CHANGED")
+    manager_mro = (manager_type, vars(geometry).get("GeometryPreviewJobs"), vars(scene).get("SceneJobs"), PaintJobs, CooperativeJobController, object)
+    if any(type(base) is not type for base in manager_mro):
+        raise _prepared_refused("PREPARED_RUNTIME_CHANGED")
+    _prepared_instance_namespace(manager, manager_type, manager_mro, ("context_factory", "history"))
+    service = owned.get("glb_stage")
+    service_data = _prepared_instance_namespace(service, _PREPARED_CONTEXT_SERVICE, _PREPARED_CONTEXT_SERVICE.__mro__,
+        ("runtime", "state", "registry", "checkpoints", "jobs", "_executor_origin"))
+    if (execution.get("glb_stage") is not service or service_data.get("runtime") is not runtime
+            or service_data.get("_executor_origin") is not executor
+            or "check_context_factory" in service_data):
+        raise _prepared_refused("PREPARED_CONTEXT_SERVICES_CHANGED")
+    return runtime, manager, executor
 
 
 class PreparedJobCallbacks:
@@ -166,8 +281,8 @@ class PreparedJobCallbacks:
                 or type(prepare) is not FunctionType or prepare.__globals__ is not vars(domain)
                 or driver_type.__module__ != domain.__name__):
             raise _prepared_refused("PREPARED_DOMAIN_CALLBACK_ORIGIN_REQUIRED")
-        runtime = vars(runtime_module).get("_RUNTIME")
-        if (type(runtime) is not runtime_module.BridgeRuntime or runtime.jobs is not context.jobs
+        runtime, manager, executor = _prepared_runtime_parts(runtime_module, executor_module)
+        if (type(runtime) is not runtime_module.BridgeRuntime or manager is not context.jobs
                 or type(runtime.jobs) is not runtime_module.NativeSaveJobs
                 or type(runtime.executor) is not executor_module.MainThreadExecutor
                 or type(context.state) is not BridgeState or type(context.permissions) is not PermissionManager
@@ -186,16 +301,17 @@ class PreparedJobCallbacks:
                         for name in ("__init__", "steps", "cleanup", "evidence", "recovery_evidence")}
         if not self.methods["steps"][0].__code__.co_flags & inspect.CO_GENERATOR:
             raise _prepared_refused("PREPARED_GENERATOR_REQUIRED")
-        self.runtime, self.executor = runtime, runtime.executor
+        self.runtime, self.executor = runtime, executor
         self.runtime_module, self.runtime_type = runtime_module, runtime_module.BridgeRuntime
         self.runtime_facts = _function_facts(inspect.getattr_static(self.runtime_type, "__init__"))
         self.executor_type = executor_module.MainThreadExecutor
         self.factory = self.manager.context_factory
         self.factory_facts = _function_facts(self.factory)
         codes = [item for item in self.runtime_facts[1].co_consts
-                 if type(item) is CodeType and item.co_freevars == ("self",) and item.co_names == ("executor", "context")]
+                 if type(item) is CodeType and item.co_freevars == ("self",) and item.co_names == ("checked_executor_context", "executor")]
         if (len(codes) != 1 or self.factory.__code__ is not codes[0]
                 or self.factory.__globals__ is not vars(runtime_module)
+                or self.factory.__defaults__ is not None or self.factory.__kwdefaults__ is not None
                 or len(self.factory.__closure__ or ()) != 1 or self.factory.__closure__[0].cell_contents is not runtime):
             raise _prepared_refused("PREPARED_FACTORY_ORIGIN_REQUIRED")
         context_property = inspect.getattr_static(self.executor_type, "context")
@@ -237,6 +353,10 @@ class PreparedJobCallbacks:
         return self
 
     def verify(self, *, context=None, job=None, callbacks=True, work=True):
+        executor_module = sys.modules.get(__package__+".executor")
+        if type(executor_module) is not ModuleType:
+            raise _prepared_refused("PREPARED_RUNTIME_CHANGED")
+        _prepared_runtime_parts(self.runtime_module, executor_module)
         context_property = inspect.getattr_static(self.executor_type, "context")
         if (type(self) is not PreparedJobCallbacks or self.runtime.jobs is not self.manager
                 or vars(self.runtime_module).get("_RUNTIME") is not self.runtime

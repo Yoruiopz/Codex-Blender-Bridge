@@ -22,6 +22,7 @@ from .geometry_node_groups import GeometryNodeGroupTools
 from .geometry_nodes import GeometryNodeTools
 from .geometry_preview import GeometryPreviewTools
 from .geometry_zone_lifecycle import GeometryZoneLifecycleTools
+from .glb_stage import GLBStageTools
 from .image_portability import ImagePortabilityTools
 from .image_recovery import ImageRecoveryTools
 from .image_recovery_jobs import ImageRecoveryJobTools
@@ -67,6 +68,7 @@ def iter_bindings(registry: ToolRegistry) -> Iterable[MCPToolBinding]:
         WeightBrushTools(registry),
         AssetDeliveryTools(registry),
         AssetImportTools(registry),
+        GLBStageTools(registry),
         NlaLifecycleTools(registry),
         CoreTools(registry),
         NativeSaveTools(registry),

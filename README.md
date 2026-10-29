@@ -22,6 +22,16 @@ add-on, MCP server and optional plugin artifacts for the published alpha route b
 A source version alone does not identify accepted bytes or measured qualification.
 See the separate [0.8.0 release evidence](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.8.0).
 
+This private development source also registers five **UNQUALIFIED**
+[structured GLB staging/publication candidates](docs/structured-glb-import.md).
+They are not part of accepted 0.8.0 artifacts. Their new-owned static subset still
+requires exact-source Runtime, native and installed acceptance; job acceptance is
+not completion, project saving or full textured/skinned/animated import delivery.
+The preservation target is logical authored data with declared bit-preserving
+ARRAY/COW/cache and empty deform-layer read effects. 5.2 SINGLE storage refuses
+pending separate authorized preparation; source models and raw fixture preparation
+do not qualify Runtime/native execution or a public preparation API.
+
 The previous [0.7.0 alpha](docs/releases/0.7.0.md), published October 25, 2026 at
 19:16:03 UTC from `8d07ad898ba92c5e94db57b1562fefef9c8e0e1c`, remains available.
 Its retained direct-weight/raw-point and selected-data preview evidence applies only
@@ -209,7 +219,7 @@ registry in CI. It does not describe the 108-tool 0.3.0 download.
 The local recovery UI also has an add-on-only action, not an extra MCP tool.
 
 <!-- BEGIN GENERATED MCP TOOLS -->
-Current registry: **270 MCP tools**.
+Current registry: **275 MCP tools**.
 
 <details>
 <summary>core — 38 tools</summary>
@@ -300,12 +310,17 @@ Current registry: **270 MCP tools**.
 </details>
 
 <details>
-<summary>asset_delivery — 4 tools</summary>
+<summary>asset_delivery — 9 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
 | `asset.export` | Export a current previewed asset to an approved unused GLB/FBX path. |
 | `asset.export_preview` | Preview exact static/skinned asset scope and GLB/FBX format limits. |
+| `asset.glb_stage_create_start` | Accept an exact GLB stage preview as a bounded Scene job; private candidate, not completed creation. |
+| `asset.glb_stage_inspect` | Inspect retained GLB stage facts and explicit unknown effects without cleanup authority. |
+| `asset.glb_stage_preview` | Preview new-ID GLB intent with declared logical-preservation read effects; private unqualified candidate. |
+| `asset.glb_stage_publish_preview` | Preview exact new-owned stage collection publication into one existing Scene; private candidate. |
+| `asset.glb_stage_publish_start` | Accept exact GLB stage publication as a bounded Scene job; private candidate, not completed delivery. |
 | `asset.import` | Import a current preview over frozen private source bytes into a new owned collection. |
 | `asset.import_preview` | Validate complete approved static GLB/FBX bytes and preview source/destination fingerprint. |
 

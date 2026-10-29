@@ -13,6 +13,7 @@ from .command_queue import CommandQueue
 from .constants import DEFAULT_HOST, DEFAULT_PORT, DEFAULT_REQUEST_TIMEOUT_SECONDS
 from .errors import BridgeError, ErrorCode
 from .executor import MainThreadExecutor
+from .glb_stage_runtime import GLBStageService, checked_executor_context
 from .native_save_policy import POLICY_VERSION, GrantStatement, NativeSaveGrant
 from .permissions import Permission, PermissionManager
 from .permissions import permission_snapshot as _base_permission_snapshot
@@ -145,11 +146,19 @@ def _before_external_undo_redo(_unused: Any) -> None:
     """Invalidate live handles on every native history move, including recovery."""
     if _RUNTIME is not None:
         _RUNTIME.native_save_policy.revoke()
-        get_task_plans(_RUNTIME.state).invalidate_handles()
+        was_paused = _RUNTIME.state.paused
+        # A failed cache invalidation must leave mutations paused. Restore the
+        # previous intent only after the entire history callback succeeds.
+        _RUNTIME.state.set_paused(True)
         _RUNTIME.jobs.cancel_all("native undo/redo")
+        service = getattr(_RUNTIME, "glb_stage", None)
+        if service is not None:
+            service.invalidate()
+        get_task_plans(_RUNTIME.state).invalidate_handles()
         if not _RUNTIME.checkpoints.recovery_in_progress:
             _RUNTIME.checkpoints.clear()
             clear_selection_references()
+        _RUNTIME.state.set_paused(was_paused)
 
 
 def _preferences() -> Any | None:
@@ -178,9 +187,11 @@ class BridgeRuntime:
         self.checkpoints = CheckpointManager()
         self.registry = ToolRegistry(enabled_toolsets=())
         register_all(self.registry)
-        self.jobs = NativeSaveJobs(lambda: self.executor.context,
+        self.jobs = NativeSaveJobs(lambda: checked_executor_context(self.executor),
                               lambda: getattr(_preferences(), "paint_job_budget_ms", 4),
                               native_save_policy=self.native_save_policy, registry=self.registry)
+        self.glb_stage = GLBStageService(self)
+        self._glb_stage_origin = self.glb_stage
         self.executor = MainThreadExecutor(
             command_queue=self.command_queue,
             registry=self.registry,
@@ -188,15 +199,20 @@ class BridgeRuntime:
             permissions=self.permissions,
             checkpoints=self.checkpoints,
             jobs=self.jobs,
+            glb_stage=self.glb_stage,
         )
+        self.glb_stage._executor_origin = self.executor
         self.server = LocalBridgeServer(submit=self.executor.submit, state=self.state)
         self._registered = False
 
     def register(self) -> None:
         if self._registered:
             return
+        # Invalidation can allocate. Revoke and stop existing/new writes first.
         self.native_save_policy.revoke()
+        self.state.set_paused(True)
         self.jobs.cancel_all("runtime registered")
+        self.glb_stage.invalidate()
         self.state.reset()
         clear_selection_references()
         self.registry.reset_enabled_toolsets()
@@ -211,6 +227,9 @@ class BridgeRuntime:
 
     def unregister(self) -> None:
         self.native_save_policy.revoke()
+        self.state.set_paused(True)
+        self.jobs.cancel_all("runtime unregistered")
+        self.glb_stage.invalidate()
         if bpy is not None:
             for handlers in (bpy.app.handlers.undo_pre, bpy.app.handlers.redo_pre):
                 if _before_external_undo_redo in handlers:
@@ -230,7 +249,9 @@ class BridgeRuntime:
         """Disconnect clients and discard all project-scoped transient state."""
 
         self.native_save_policy.revoke()
+        self.state.set_paused(True)
         self.jobs.cancel_all("project file replacement")
+        self.glb_stage.invalidate()
         self.server.stop()
         self.command_queue.cancel_all(
             BridgeError(ErrorCode.SERVER_ERROR, "Project file is being replaced in Blender.")
@@ -258,7 +279,9 @@ class BridgeRuntime:
 
     def stop_server(self) -> None:
         self.native_save_policy.revoke()
+        self.state.set_paused(True)
         self.jobs.cancel_all("bridge stopped")
+        self.glb_stage.invalidate()
         self.server.stop()
         clear_selection_references()
         self.command_queue.cancel_all(
@@ -269,6 +292,7 @@ class BridgeRuntime:
         self.native_save_policy.revoke()
         self.state.set_emergency_stopped(True)
         self.jobs.cancel_all("emergency stop")
+        self.glb_stage.invalidate()
         self.command_queue.cancel_all(
             BridgeError(ErrorCode.EMERGENCY_STOPPED, "Request canceled by Blender emergency stop.")
         )

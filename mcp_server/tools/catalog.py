@@ -51,6 +51,8 @@ from .geometry_preview import TOOL_DATA as GEOMETRY_PREVIEW_TOOL_DATA
 from .geometry_zone_lifecycle import DESTRUCTIVE_TOOL_NAMES as GEOMETRY_ZONE_DESTRUCTIVE_TOOL_NAMES
 from .geometry_zone_lifecycle import TOOL_DATA as GEOMETRY_ZONE_TOOL_DATA
 from .geometry_zone_lifecycle import load_definitions as _load_geometry_zone_definitions
+from .glb_stage import TOOL_DATA as GLB_STAGE_TOOL_DATA
+from .glb_stage import load_definitions as _load_glb_stage_definitions
 from .image_portability import TOOL_DATA as IMAGE_PORTABILITY_TOOL_DATA
 from .image_portability import load_definitions as _load_image_portability_definitions
 from .image_recovery import DESTRUCTIVE_TOOL_NAMES as IMAGE_RECOVERY_DESTRUCTIVE_TOOL_NAMES
@@ -127,12 +129,12 @@ ARTIST_TOOL_DATA = (*_BASE_ARTIST_TOOL_DATA, *((name, "weights", True, ("EDIT_ME
 def load_artist_definitions() -> tuple[ToolDefinition, ...]:
     return (*_load_base_artist_definitions(), *_load_weight_brush_definitions(), *_load_nla_definitions(), *_load_rigid_body_definitions())
 
-ASSET_DELIVERY_TOOL_DATA = (*BASE_ASSET_DELIVERY_TOOL_DATA, *ASSET_IMPORT_TOOL_DATA)
+ASSET_DELIVERY_TOOL_DATA = (*BASE_ASSET_DELIVERY_TOOL_DATA, *ASSET_IMPORT_TOOL_DATA, *GLB_STAGE_TOOL_DATA)
 ASSET_DELIVERY_TOOL_NAMES = tuple(item[0] for item in ASSET_DELIVERY_TOOL_DATA)
 
 
 def load_asset_delivery_definitions() -> tuple[ToolDefinition, ...]:
-    return (*_load_base_asset_delivery_definitions(), *_load_asset_import_definitions())
+    return (*_load_base_asset_delivery_definitions(), *_load_asset_import_definitions(), *_load_glb_stage_definitions())
 
 ANIMATION_TOOL_DATA = (*ANIMATION_TOOL_DATA, *((name, description, True, ("EDIT_ANIMATION",))
                                            for name, description in ANIMATION_CURVE_TOOL_DATA), *ANIMATION_CURVE_INSPECTION_TOOL_DATA, *ANIMATION_CURVE_SAMPLING_TOOL_DATA, *ACTION_LIFECYCLE_TOOL_DATA)

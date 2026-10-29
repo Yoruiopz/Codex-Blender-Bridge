@@ -574,6 +574,7 @@ def test_registry_counter_survives_plan_state_and_project_replacement(
                 native_save_policy=native_save_grant,
                 server=NS(stop=lambda: None), command_queue=NS(cancel_all=lambda _reason: None),
                 checkpoints=NS(clear=lambda: None), executor=NS(evidence=NS(clear=lambda: None)))
+            runtime.glb_stage = runtime_module.GLBStageService(runtime)
             runtime_module.BridgeRuntime.prepare_for_file_load(runtime)
             assert not native_save_grant.active()
         registry.reset_enabled_toolsets()

@@ -25,6 +25,16 @@ and stable 5.x, and installed-package scenarios A–F on both selected versions.
 ledger deliberately fails qualification; no historical smoke count or runner verdict
 can promote it to release-ready.
 
+Private development registers five [structured GLB staging/publication
+candidates](structured-glb-import.md), all **UNQUALIFIED** pending matching Runtime,
+native and installed evidence. New-owned static construction and mathematical
+world checks do not establish evaluated-world fidelity, broader asset import,
+protected publication, portable delivery or recovery. This increment changes no
+stable gate or full-artist scope; all 29 implementation items remain open. Logical preservation permits only
+source-qualified, declared bit-preserving ARRAY/COW/cache and empty deform-layer
+observation effects; 5.2 SINGLE preparation and actual native/installed acceptance
+remain separate explicit gates. Rich artist data must not be cleared or excluded.
+
 ## 1.0 product direction: a full 3D-artist workflow
 
 Production acceptance covers ordinary artist projects in official Blender,

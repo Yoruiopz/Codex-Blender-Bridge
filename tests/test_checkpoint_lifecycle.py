@@ -139,3 +139,31 @@ def test_runtime_hooks_register_once_and_unregister(addon_package, monkeypatch):
     instance.unregister()
     assert not instance.native_save_policy.active()
     assert handlers.load_pre == handlers.undo_pre == handlers.redo_pre == []
+
+
+def test_history_callback_fences_writes_before_cancellation_and_fallible_glb_invalidation(
+    addon_package, monkeypatch, native_save_grant
+):
+    runtime = importlib.import_module(f"{addon_package}.runtime")
+    events = []
+    manager = importlib.import_module(f"{addon_package}.checkpoints").CheckpointManager()
+    state = importlib.import_module(f"{addon_package}.state").BridgeState()
+
+    def cancel(reason):
+        assert not native_save_grant.policy.active() and state.paused
+        events.append(("cancel", reason))
+
+    def invalidate():
+        assert not native_save_grant.policy.active() and state.paused
+        assert events == [("cancel", "native undo/redo")]
+        events.append(("invalidate", "pure"))
+
+    monkeypatch.setattr(runtime, "_RUNTIME", NS(checkpoints=manager, state=state,
+        jobs=NS(cancel_all=cancel),
+        native_save_policy=native_save_grant.policy,
+        glb_stage=NS(invalidate=invalidate)))
+    assert state.paused is False
+    runtime._before_external_undo_redo(None)
+    assert events == [("cancel", "native undo/redo"), ("invalidate", "pure")]
+    assert state.paused is False and state.emergency_stopped is False
+    assert not native_save_grant.policy.active()

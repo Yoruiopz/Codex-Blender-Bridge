@@ -21,6 +21,8 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 HELPERS = (
     "scripts.blender_current_pixels_lifecycle_smoke",
+    "scripts.blender_glb_stage_runtime_smoke",
+    "scripts.blender_glb_stage_smoke",
     "scripts.blender_current_pixels_paired_recovery_smoke",
     "scripts.blender_native_save_smoke",
     "scripts.blender_geometry_preview_smoke",
@@ -120,6 +122,8 @@ def fixture_imports(addon_package, monkeypatch):
 
 @pytest.mark.parametrize("name,helper", [
     ("scripts.blender_current_pixels_lifecycle_smoke", "main"),
+    ("scripts.blender_glb_stage_smoke", "main"),
+    ("scripts.blender_glb_stage_runtime_smoke", "main"),
     ("scripts.blender_current_pixels_paired_recovery_smoke", "main"),
     ("scripts.blender_native_save_smoke", "main"),
     ("scripts.blender_geometry_preview_smoke", "main"),
@@ -2212,3 +2216,526 @@ def test_large_native_save_manual_restore_preserves_intervening_owned_edit(monke
     coordinate.x = .125
     assert controller.control("manual_restore", {}) == {"restored": True}
     assert coordinate.x == 0.
+def test_glb_fixture_import_has_no_native_or_product_imports(fixture_imports):
+    script = importlib.import_module("scripts.blender_glb_stage_smoke")
+    tree = ast.parse(Path(script.__file__).read_text())
+    imports = [node for node in tree.body if isinstance(node, (ast.Import, ast.ImportFrom))]
+    assert not any(isinstance(node, ast.ImportFrom) and (node.module or "").startswith(
+        ("bpy", "blender_codex_bridge", "scripts")) for node in imports)
+    assert not any(isinstance(node, ast.Import) and any(alias.name == "bpy" for alias in node.names)
+                   for node in imports)
+    assert fixture_imports.timers == [] and fixture_imports.events == []
+
+
+def test_glb_fixture_direct_main_rejects_unowned_launch_before_work(fixture_imports, monkeypatch):
+    script = importlib.import_module("scripts.blender_glb_stage_smoke")
+    monkeypatch.setattr(sys, "argv", ["blender", "--factory-startup"])
+    with pytest.raises(AssertionError, match="isolated private interactive runner"):
+        script.main()
+    assert fixture_imports.timers == [] and fixture_imports.events == []
+
+
+def test_glb_fixture_source_is_real_plan_with_shared_mesh_and_signed_zero(fixture_imports, addon_package):
+    import struct
+
+    script = importlib.import_module("scripts.blender_glb_stage_smoke")
+    planner = importlib.import_module(addon_package + ".asset_glb_import_plan")
+    plan = planner.plan_glb(script.source_glb())
+    assert len(plan.meshes) == 1 and len(plan.meshes[0].primitives) == 2
+    assert [node.mesh_index for node in plan.nodes] == [0, 0, None]
+    assert len(plan.materials) == 2 and all(m.alpha_mode == "OPAQUE" for m in plan.materials)
+    assert [p.material_index for p in plan.meshes[0].primitives] == [1, 0]
+    assert all(p.normals is None and p.texcoords is None for p in plan.meshes[0].primitives)
+    assert [struct.pack("<f", v).hex() for v in plan.meshes[0].primitives[0].positions[0]] == [
+        "00000080", "00000080", "00000000"]
+    assert fixture_imports.timers == [] and fixture_imports.events == []
+
+
+@pytest.mark.parametrize("method,elapsed", [("timer_short", .099), ("timer_long", .499)])
+def test_glb_fixture_refuses_a_deferred_observation_before_its_actual_deadline(
+    fixture_imports, monkeypatch, method, elapsed,
+):
+    script = importlib.import_module("scripts.blender_glb_stage_smoke")
+    fixture = script.Fixture.__new__(script.Fixture)
+    fixture.returned_at = 10.
+    failures, observations = [], []
+    fixture.finish = lambda status, failure: failures.append((status, failure))
+    fixture.observation = lambda *_args: observations.append(True)
+    monkeypatch.setattr(script.time, "monotonic", lambda: 10. + elapsed)
+    getattr(fixture, method)()
+    assert len(failures) == 1 and failures[0][0] == 1 and observations == []
+    assert fixture_imports.timers == [] and fixture_imports.events == []
+
+
+@pytest.mark.parametrize("fault", ["source_drift", "write", "read", "print"])
+def test_glb_fixture_finish_failure_retains_false_completion_and_exits_nonzero(
+    fixture_imports, monkeypatch, fault,
+):
+    import copy
+
+    script = importlib.import_module("scripts.blender_glb_stage_smoke")
+    helper = ModuleType("scripts.blender_artist_sidebar_smoke")
+
+    def exit_process(status):
+        raise SystemExit(status)
+
+    helper.owned_process_exit = exit_process
+    monkeypatch.setitem(sys.modules, helper.__name__, helper)
+    fixture = script.Fixture.__new__(script.Fixture)
+    fixture.started, fixture.root = 0., ROOT
+    fixture.data = {"source_sha256": {"fixture": "a" * 64}, "schema": script.SCHEMA,
+                    "profile": script.PROFILE, "completed": False, "version": [4, 5, 14],
+                    "blender_version": "4.5.14 LTS", "build_hash": "62c1db4208e8",
+                    "process_instance": "0" * 32, "process_id": 123,
+                    "binary": {"path": "/owned/model", "sha256": "b" * 64}}
+    writes = []
+
+    def flush():
+        writes.append(copy.deepcopy(fixture.data))
+        if fault == "write" and len(writes) == 1:
+            raise OSError("owned proof write failure")
+
+    def read():
+        if fault == "read":
+            raise OSError("owned proof read failure")
+        return b"synthetic finish-only proof; no native acceptance"
+
+    fixture.flush, fixture.path = flush, NS(read_bytes=read)
+    monkeypatch.setattr(script, "source_hashes", lambda _root:
+                        {} if fault == "source_drift" else fixture.data["source_sha256"])
+    if fault == "print":
+        def failed_print(*_args, **_kwargs):
+            raise OSError("owned marker write failure")
+        monkeypatch.setattr(script, "print", failed_print, raising=False)
+    with pytest.raises(SystemExit) as result:
+        fixture.finish(0)
+    assert result.value.code == 1
+    assert fixture.data["completed"] is False and "finish_failure" in fixture.data
+    assert writes[-1]["completed"] is False
+    assert fixture_imports.timers == [] and fixture_imports.events == []
+
+
+def test_glb_fixture_finish_does_not_overwrite_first_failure(fixture_imports, monkeypatch):
+    script = importlib.import_module("scripts.blender_glb_stage_smoke")
+    helper = ModuleType("scripts.blender_artist_sidebar_smoke")
+    helper.owned_process_exit = lambda status: (_ for _ in ()).throw(SystemExit(status))
+    monkeypatch.setitem(sys.modules, helper.__name__, helper)
+    fixture = script.Fixture.__new__(script.Fixture)
+    fixture.started, fixture.root = 0., ROOT
+    fixture.data = {"source_sha256": {"fixture": "a" * 64}}
+    fixture.flush = lambda: None
+    monkeypatch.setattr(script, "source_hashes", lambda _root: {})
+    with pytest.raises(SystemExit) as result:
+        fixture.finish(1, "first native failure")
+    assert result.value.code == 1 and fixture.data["failure"] == "first native failure"
+    assert "Source changed" in fixture.data["finish_failure"]
+    assert fixture_imports.timers == [] and fixture_imports.events == []
+
+
+def test_glb_fixture_records_bootstrap_refusal_before_rethrow(fixture_imports):
+    import copy
+
+    script = importlib.import_module("scripts.blender_glb_stage_smoke")
+    errors = importlib.import_module("blender_codex_bridge.errors")
+    fixture = script.Fixture.__new__(script.Fixture)
+    fixture.data = {"cases": []}
+    writes = []
+    fixture.flush = lambda: writes.append(copy.deepcopy(fixture.data))
+
+    def refused(_name, _result):
+        raise errors.BridgeError("NOT_IMPLEMENTED", "Actual binding refused",
+                                 {"reason": "NATIVE_USED_FIELD_MISMATCH"})
+
+    fixture.construct_case = refused  # Model only the outer report helper, never a native success.
+    with pytest.raises(errors.BridgeError):
+        fixture.run_case("success")
+    assert writes[0] == {"cases": [{"name": "success", "phase": "bootstrap"}]}
+    row = writes[-1]["cases"][0]
+    assert row["status"] == "FAILED" and row["phase"] == "bootstrap"
+    assert row["error"]["context"]["reason"] == "NATIVE_USED_FIELD_MISMATCH"
+    assert "first_failure" in row
+    assert fixture_imports.timers == [] and fixture_imports.events == []
+
+
+def test_glb_fixture_retains_complete_rows_before_independent_oracle_refusal(fixture_imports):
+    import copy
+
+    script = importlib.import_module("scripts.blender_glb_stage_smoke")
+    fixture = script.Fixture.__new__(script.Fixture)
+    result, writes = {"name": "success"}, []
+    rows = {"mesh:0": {"coordinates": [["00000080", "00000080", "00000000"]]}}
+    fixture.flush = lambda: writes.append(copy.deepcopy(result))
+
+    def refused(_rows):
+        raise AssertionError("first native conformance mismatch")
+
+    fixture.verify_success = refused
+    with pytest.raises(AssertionError, match="first native conformance mismatch"):
+        fixture.verify_rows(result, rows)
+    assert writes == [{"name": "success", "phase": "independent_verify", "owned_rows": rows}]
+    assert fixture_imports.timers == [] and fixture_imports.events == []
+
+
+@pytest.mark.parametrize("value", [False, True, 0, 1])
+def test_glb_fixture_independently_preserves_boolean_socket_type(fixture_imports, value):
+    from types import SimpleNamespace as NS
+
+    script = importlib.import_module("scripts.blender_glb_stage_smoke")
+    socket = NS(type="BOOLEAN", identifier="Thin Wall", default_value=value)
+    principled = NS(bl_idname="ShaderNodeBsdfPrincipled", name="Principled", location=[0., 0.],
+                    width=240., mute=False, inputs=[socket])
+    output = NS(bl_idname="ShaderNodeOutputMaterial", name="Output", location=[300., 0.],
+                width=140., mute=False, inputs=[], is_active_output=True, target="ALL")
+    link = NS(from_node=principled, from_socket=NS(identifier="BSDF"),
+              to_node=output, to_socket=NS(identifier="Surface"))
+    tree = NS(library=None, override_library=None, name="Shader Nodetree", session_uid=10,
+              as_pointer=lambda: 1000, users=1, use_fake_user=False,
+              bl_rna=NS(identifier="ShaderNodeTree"), nodes=[principled, output], links=[link])
+    if type(value) is bool:
+        row = script.tree_row(tree)
+        assert row["nodes"][0]["inputs"] == [{"identifier": "Thin Wall", "type": "BOOLEAN", "default": [value]}]
+    else:
+        with pytest.raises(AssertionError):
+            script.tree_row(tree)
+    assert fixture_imports.timers == [] and fixture_imports.events == []
+
+
+def test_glb_fixture_retains_the_actual_failed_deferred_snapshot(fixture_imports):
+    import copy
+
+    script = importlib.import_module("scripts.blender_glb_stage_smoke")
+    fixture = script.Fixture.__new__(script.Fixture)
+    fixture.data, writes = {"observations": []}, []
+    fixture.before_sentinel = {"coordinate": "00000000"}
+    fixture.sentinel = lambda: {"coordinate": "00000080"}
+    fixture.controllers = [(None, NS(environment=lambda _owned: {"frame": 1}), "stage")]
+    fixture.owned = lambda *_args: {"mesh": {"coordinates": ["00000000"]}}
+    fixture.frozen = {"sentinel": fixture.before_sentinel, "environment": {"frame": 1},
+                      "owned": [{"mesh": {"coordinates": ["00000000"]}}]}
+    fixture.flush = lambda: writes.append(copy.deepcopy(fixture.data))
+    with pytest.raises(AssertionError, match="Declared data/context changed"):
+        fixture.observation("timer_0_1", .1)
+    sample = writes[-1]["observations"][0]
+    assert sample["preserved"] is False and sample["phase"] == "timer_0_1"
+    assert sample["snapshot"]["sentinel"] == {"coordinate": "00000080"}
+    assert fixture_imports.timers == [] and fixture_imports.events == []
+
+
+def test_glb_structural_literal_asset_independently_decodes_required_domains(fixture_imports, addon_package):
+    script = importlib.import_module("scripts.blender_glb_stage_smoke")
+    planner = importlib.import_module(addon_package + ".asset_glb_import_plan")
+    plan = planner.plan_glb(script.structure_source_glb())
+    assert len(plan.meshes) == 1 and len(plan.materials) == 1 and len(plan.nodes) == 3
+    first, second = plan.meshes[0].primitives
+    assert first.material_index == second.material_index == 0
+    assert first.normals is not None and second.normals is None
+    assert first.texcoords is not None and second.texcoords is not None
+    assert [node.mesh_index for node in plan.nodes] == [None, 0, 0]
+    assert [node.parent_index for node in plan.nodes] == [None, 0, 0]
+    for index, node in enumerate(plan.nodes):
+        assert node.local_matrix == script.STRUCTURE_BASIS[index]
+        assert node.world_matrix == script.STRUCTURE_WORLDS[index]
+    assert fixture_imports.events == [] and fixture_imports.timers == []
+
+
+@pytest.mark.parametrize("method,elapsed", [("timer_short", .099), ("timer_middle", .299), ("timer_long", .499)])
+def test_glb_structure_requires_each_real_timer_deadline(fixture_imports, monkeypatch, method, elapsed):
+    script = importlib.import_module("scripts.blender_glb_stage_smoke")
+    fixture = script.StructureFixture.__new__(script.StructureFixture)
+    fixture.returned_at = 10.
+    failed, observed = [], []
+    fixture.finish = lambda *args: failed.append(args)
+    fixture.observation = lambda *args: observed.append(args)
+    monkeypatch.setattr(script.time, "monotonic", lambda: 10. + elapsed)
+    getattr(fixture, method)()
+    assert len(failed) == 1 and failed[0][0] == 1 and not observed
+    assert fixture_imports.events == [] and fixture_imports.timers == []
+
+
+def test_glb_structure_pure_oracle_rejects_status_only_fake_success(fixture_imports):
+    script = importlib.import_module("scripts.blender_glb_stage_smoke")
+    with pytest.raises((AssertionError, KeyError)):
+        script.validate_structure_transcript({"completed": True, "cases": [
+            {"name": "success", "status": "CONSTRUCTED"}]})
+    assert fixture_imports.events == [] and fixture_imports.timers == []
+
+
+def test_glb_structure_source_has_no_forbidden_context_or_importer_fallback(fixture_imports):
+    script = importlib.import_module("scripts.blender_glb_stage_smoke")
+    tree = ast.parse(Path(script.__file__).read_text())
+    assert not any(isinstance(node, ast.Attribute) and node.attr in {
+        "keyframe_insert", "ui_type", "gltf", "gltf2", "update_tag", "evaluated_depsgraph_get"}
+        for node in ast.walk(tree))
+    assert script.STRUCTURE_SCHEMA != script.SCHEMA and script.STRUCTURE_PROFILE != script.PROFILE
+    assert script.STRUCTURE_MARKER != script.MARKER
+    assert fixture_imports.events == [] and fixture_imports.timers == []
+
+
+def test_glb_structure_digest_refuses_fifo_symlink_and_replacement(tmp_path, fixture_imports, monkeypatch):
+    script = importlib.import_module("scripts.blender_glb_stage_smoke")
+    path = tmp_path / "ordinary"
+    with path.open("wb") as stream:
+        stream.write(b"source witness")
+    link = tmp_path / "symlink"
+    link.symlink_to(path)
+    with pytest.raises(AssertionError):
+        script.file_digest(link)
+    fifo = tmp_path / "pipe"
+    script.os.mkfifo(fifo)
+    with pytest.raises(AssertionError):
+        script.file_digest(fifo)
+    original = script.os.read
+    fired = []
+    def replaced(descriptor, count):
+        raw = original(descriptor, count)
+        if not fired:
+            fired.append(True)
+            other = tmp_path / "replacement"
+            with other.open("wb") as stream:
+                stream.write(b"same size data")
+            script.os.replace(other, path)
+        return raw
+    monkeypatch.setattr(script.os, "read", replaced)
+    with pytest.raises(AssertionError):
+        script.file_digest(path)
+
+
+@pytest.mark.parametrize("raw", [b"[]", b"true", b"1", b'"truthy"', b'{"x":1,"x":2}', b'{"x":NaN}', b'{"x":Infinity}'])
+def test_glb_runtime_strict_json_is_cold_and_rejects_nonobject_duplicate_nonfinite(fixture_imports, raw):
+    script = importlib.import_module("scripts.blender_glb_stage_runtime_smoke")
+    with pytest.raises((AssertionError, ValueError)):
+        script.decode(raw)
+    assert fixture_imports.events == [] and fixture_imports.timers == []
+
+
+def test_glb_runtime_json_depth_and_size_are_bounded(fixture_imports):
+    script = importlib.import_module("scripts.blender_glb_stage_runtime_smoke")
+    for raw in [b'{"x":'+b'['*49+b'0'+b']'*49+b'}', b'x'*(script.MAX_EVIDENCE+1)]:
+        with pytest.raises((AssertionError, ValueError)):
+            script.decode(raw)
+    assert fixture_imports.events == [] and fixture_imports.timers == []
+
+
+def test_glb_runtime_status_only_marker_cannot_qualify_a_transcript(fixture_imports):
+    script = importlib.import_module("scripts.blender_glb_stage_runtime_smoke")
+    with pytest.raises((AssertionError, KeyError)):
+        script.validate_runtime_transcript({"schema": script.SCHEMA, "profile": script.PROFILE, "completed": True,
+            "cases": [{"id": value, "status": "VERIFIED"} for value in script.SCENARIOS]})
+    assert len(script.SCENARIOS) == 17 and len(set(script.SCENARIOS)) == 17
+    assert fixture_imports.events == [] and fixture_imports.timers == []
+
+
+def test_glb_runtime_literal_asset_is_independent_and_keeps_uv_normal_auto_trs(fixture_imports, addon_package):
+    script = importlib.import_module("scripts.blender_glb_stage_runtime_smoke")
+    planner = importlib.import_module(addon_package+".asset_glb_import_plan")
+    plan = planner.plan_glb(script.literal_source())
+    assert len(plan.nodes) == 3 and len(plan.meshes) == 1 and len(plan.materials) == 1
+    assert list(plan.required_accepted_losses) == script.LOSSES
+    assert plan.summary()["normal_conversion"]["authored_normal_corners"] == 3
+    assert plan.summary()["normal_conversion"]["geometric_auto_corners"] == 3
+    assert fixture_imports.events == [] and fixture_imports.timers == []
+
+
+def test_glb_runtime_fixture_has_no_private_controller_or_manual_tick_fallback(fixture_imports):
+    script = importlib.import_module("scripts.blender_glb_stage_runtime_smoke")
+    tree = ast.parse(inspect.getsource(script))
+    calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)]
+    names = {node.func.attr for node in calls if isinstance(node.func, ast.Attribute)}
+    assert not {"tick", "advance", "perform", "keyframe_insert"} & names
+    assert "PrivateGLBController" not in inspect.getsource(script)
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            assert not any(isinstance(target, ast.Attribute) and target.attr in {"ui_type", "type"} for target in targets)
+    assert fixture_imports.events == [] and fixture_imports.timers == []
+
+
+def test_glb_runtime_tcp_abort_closes_real_owner_socket_and_reconnects():
+    """Ordinary loopback TCP behavior only; no modeled native acceptance."""
+    script = importlib.import_module("scripts.blender_glb_stage_runtime_smoke")
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(2)
+    listener.settimeout(2.)
+    client = script.TCPClient(listener.getsockname()[1], [])
+    first, address = listener.accept()
+    first.settimeout(2.)
+    old_instance = client.connection_instance
+    try:
+        assert address[0] == "127.0.0.1" and client.socket.fileno() >= 0
+        client.socket.sendall(b"owned socket")
+        assert first.recv(64) == b"owned socket"
+        client.abort()
+        assert client.socket.fileno() == -1 and first.recv(1) == b""
+        client.reconnect()
+        second, address = listener.accept()
+        try:
+            second.settimeout(2.)
+            assert address[0] == "127.0.0.1" and client.connection_instance != old_instance
+            client.socket.sendall(b"new owner")
+            assert second.recv(64) == b"new owner"
+        finally:
+            second.close()
+    finally:
+        client.close()
+        first.close()
+        listener.close()
+
+
+def test_glb_runtime_reacquires_fixture_wrappers_without_reading_pre_undo_rna(fixture_imports):
+    script = importlib.import_module("scripts.blender_glb_stage_runtime_smoke")
+    fixture = object.__new__(script.RuntimeFixture)
+    fixture.protected_names = {family: [family+" retained"] for family in ("objects", "meshes", "materials", "armatures", "actions", "scenes", "images", "cameras", "lights", "worlds", "collections")}
+    groups = {family: {names[0]: NS(fresh=True)} for family, names in fixture.protected_names.items()}
+    fields = {"destination": "scenes", "sentinel_mesh": "meshes", "sentinel_material": "materials", "sentinel": "objects",
+        "sentinel_shared": "objects", "rig": "armatures", "rig_object": "objects", "action": "actions", "populated_scene": "scenes",
+        "active_empty": "objects", "protected_image": "images", "other_collection": "collections"}
+    fixture.fixture_names = {field: family+" retained" for field, family in fields.items()}
+    for kind in ("scene_identity", "master_identity", "context"):
+        groups["scenes"]["Runtime Fixture "+kind] = NS(fresh=True)
+    for kind, family, suffix in (("collection", "collections", ""), ("mesh", "meshes", ".M0"), ("material", "materials", ".P0"), ("object", "objects", ".O0")):
+        groups[family]["Runtime Collision "+kind+suffix] = NS(fresh=True)
+    class InvalidRNA:
+        def __getattribute__(self, field):
+            pytest.fail("Read an RNA wrapper retained before undo/load: "+field)
+    fixture.protected_ids = InvalidRNA()
+    for field in fields:
+        setattr(fixture, field, InvalidRNA())
+    preferences = NS(fresh=True)
+    fixture.bpy = NS(data=NS(**groups), context=NS(preferences=NS(addons={"blender_codex_bridge": NS(preferences=preferences)})))
+    observed = []
+    fixture.fresh_observer = lambda: observed.append("new binding")
+    fixture.reacquire_after_invalidation()
+    assert observed == ["new binding"] and fixture.prefs is preferences
+    assert all(getattr(fixture, field) is groups[family][fixture.fixture_names[field]] for field, family in fields.items())
+    assert all(ref.fresh is True for refs in fixture.protected_ids.values() for ref in refs)
+    assert fixture_imports.events == [] and fixture_imports.timers == []
+
+
+def test_glb_runtime_logical_comparison_preserves_authored_bits_and_only_ignores_derived_matrices(fixture_imports):
+    import copy
+
+    script = importlib.import_module("scripts.blender_glb_stage_runtime_smoke")
+    value = {"protected": {"objects": [{"channels": {"location": ["00000000", "80000000", "3f800000"]},
+        "basis": ["3f800000"], "parent_inverse": ["3f800000"], "local": ["3f800000"], "world": ["3f800000"],
+        "pose_bones": [{"basis": ["3f800000"], "matrix": ["3f800000"]}]}]}, "owned": {}}
+    cached = copy.deepcopy(value)
+    cached["protected"]["objects"][0]["world"] = ["00000000"]
+    cached["protected"]["objects"][0]["pose_bones"][0]["matrix"] = ["00000000"]
+    assert script.logical_snapshot(cached) == script.logical_snapshot(value)
+    for field in ("channels", "basis", "parent_inverse"):
+        changed = copy.deepcopy(cached)
+        changed["protected"]["objects"][0][field] = []
+        assert script.logical_snapshot(changed) != script.logical_snapshot(value)
+    assert value["protected"]["objects"][0]["world"] == ["3f800000"]
+    assert fixture_imports.events == [] and fixture_imports.timers == []
+
+
+def test_glb_runtime_shared_json_roundtrip_is_exact_and_keeps_large_prefixes_bounded():
+    script = importlib.import_module("scripts.blender_glb_stage_runtime_smoke")
+    source = {"records": [{"prefix": [{"index": index, "component": ["00000000", "0000803f"],
+            "operation": "WRITE_NORMALS", "role": "mesh:0", "entry": "Mesh.normals_split_custom_set",
+            "entered": True, "returned": True, "post_return_stop_checked": True,
+            "started_monotonic": 1., "returned_monotonic": 1.001, "seconds": .001}
+                                  for index in range(count)], "response_id": str(count)} for count in range(64)],
+              "literal_ref_key": {"ref": "not a table reference"}, "negative_zero": -0.0}
+    packed = script.encode(script.pack_proof(source))
+    decoded = script.decode(packed)
+    assert decoded == source and script.encode(decoded) == script.encode(source)
+    assert len(packed) < len(script.encode(source))
+
+
+@pytest.mark.parametrize("fault", ["hash", "reference", "node_kind", "object_duplicate", "branch_budget", "nonfinite", "extra"])
+def test_glb_runtime_shared_json_never_trusts_hashes_refs_or_shapes(fault):
+    import hashlib
+
+    script = importlib.import_module("scripts.blender_glb_stage_runtime_smoke")
+    packed = script.pack_proof({"value": [1, 2]})
+    if fault == "hash":
+        packed["table"][next(iter(packed["table"]))]["extra"] = True
+    elif fault == "reference":
+        packed["root"] = {"ref": "0"*64}
+    elif fault == "extra":
+        packed["extra"] = True
+    else:
+        node = {"node_kind": {"kind": "UNKNOWN"},
+            "object_duplicate": {"kind": "object", "pairs": [["x", 1], ["x", 2]]},
+            "branch_budget": {"kind": "branch", "children": []},
+            "nonfinite": {"kind": "object", "pairs": [["x", float("nan")]]}}[fault]
+        if fault == "nonfinite":
+            with pytest.raises((AssertionError, ValueError)):
+                script.encode(script.pack_proof(node))
+            return
+        key = hashlib.sha256(json.dumps(node, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        packed["table"][key] = node
+        packed["root"] = {"ref": key}
+    with pytest.raises((AssertionError, ValueError, KeyError)):
+        script.unpack_proof(packed)
+
+
+def test_glb_runtime_bounded_file_refuses_fifo_symlink_and_descriptor_replacement(tmp_path, monkeypatch):
+    script = importlib.import_module("scripts.blender_glb_stage_runtime_smoke")
+    original = tmp_path / "report.json"
+    original.write_bytes(b'{"actual":true}')
+    symlink = tmp_path / "link.json"
+    symlink.symlink_to(original)
+    fifo = tmp_path / "pipe.json"
+    os.mkfifo(fifo)
+    for path in (symlink, fifo):
+        with pytest.raises(AssertionError):
+            script.bounded_file(path)
+    assert script.bounded_file(original) == b'{"actual":true}'
+    original_os = script.os
+    changed = False
+    def read(descriptor, count):
+        nonlocal changed
+        result = original_os.read(descriptor, count)
+        if not changed:
+            changed = True
+            replacement = tmp_path / "replacement.json"
+            replacement.write_bytes(b'{"actual":true}')
+            replacement.replace(original)
+        return result
+    proxy = NS(**{name: getattr(original_os, name) for name in ("open", "close", "fstat", "O_RDONLY", "O_NOFOLLOW", "O_NONBLOCK")}, read=read)
+    monkeypatch.setattr(script, "os", proxy)
+    with pytest.raises(AssertionError):
+        script.bounded_file(original)
+
+
+def test_glb_runtime_standalone_entry_resolves_owned_helper_without_repository_path_or_module_cache(tmp_path):
+    bootstrap = r"""
+import json
+import runpy
+import sys
+from pathlib import Path
+
+target = Path(sys.argv[1]).resolve(strict=True)
+root = target.parents[1]
+assert root not in {Path(item).resolve() for item in sys.path}
+assert not any(name == 'scripts' or name.startswith('scripts.') for name in sys.modules)
+assert 'bpy' not in sys.modules
+before_path = tuple(sys.path)
+runpy.run_path(str(target), run_name='_cold_glb_runtime_fixture')
+assert tuple(sys.path) == before_path
+assert not any(name == 'scripts' or name.startswith('scripts.') for name in sys.modules)
+assert 'bpy' not in sys.modules
+try:
+    runpy.run_path(str(target), run_name='__main__')
+except AssertionError as error:
+    assert str(error) == 'Use the isolated private interactive runner', str(error)
+else:
+    raise AssertionError('Unowned standalone invocation passed the canonical ownership check')
+helper = sys.modules['scripts.blender_glb_stage_smoke']
+assert Path(helper.__file__).resolve(strict=True) == root / 'scripts/blender_glb_stage_smoke.py'
+assert 'bpy' not in sys.modules
+assert not any(name == 'blender_codex_bridge' or name.startswith('blender_codex_bridge.')
+               for name in sys.modules)
+print(json.dumps({'canonical_helper_resolved': True, 'unowned_entry_refused': True,
+                  'bpy_unloaded': True, 'product_unloaded': True}))
+"""
+    result = subprocess.run([sys.executable, "-I", "-B", "-c", bootstrap,
+        str(ROOT / "scripts/blender_glb_stage_runtime_smoke.py")], cwd=tmp_path,
+        capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, (result.stdout[-4096:], result.stderr[-4096:])
+    assert json.loads(result.stdout) == {"canonical_helper_resolved": True, "unowned_entry_refused": True,
+        "bpy_unloaded": True, "product_unloaded": True}

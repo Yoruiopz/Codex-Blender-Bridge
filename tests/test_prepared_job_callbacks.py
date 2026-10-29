@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import importlib
 import sys
-from types import ModuleType
+from types import FunctionType, ModuleType
 from types import SimpleNamespace as NS
 
 import pytest
@@ -77,6 +77,8 @@ class CurrentPixelsDriver:
                 return flags["malformed"]
         return dict(self.recovery)
 '''
+
+_prepared_foreign_context_probe = None  # Rebound only in the attacked function's globals.
 
 
 @pytest.fixture
@@ -160,6 +162,151 @@ def trap(env):
         env.counts["foreign"] += 1
         raise AssertionError("Foreign callback invoked")
     return foreign
+
+
+def change_checked_context_origin(env, monkeypatch, kind):
+    """Each replacement has an observable callback if the guard dereferences it."""
+    module = env.jobs._prepared_context_module
+    runtime_module = sys.modules[type(env.runtime).__module__]
+    helper = env.jobs._PREPARED_CONTEXT_HELPER
+    foreign = trap(env)
+    if kind == "runtime_alias":
+        monkeypatch.setattr(runtime_module, "checked_executor_context", foreign)
+    elif kind in {"runtime_module_access", "executor_module_access"}:
+        class ForeignModule(ModuleType):
+            __getattribute__ = foreign
+        target = runtime_module if kind == "runtime_module_access" else env.jobs._PREPARED_EXECUTOR_MODULE
+        monkeypatch.setattr(target, "__class__", ForeignModule)
+    elif kind == "module_alias":
+        monkeypatch.setattr(module, "checked_executor_context", foreign)
+    elif kind == "helper_globals":
+        namespace = dict(helper.__globals__)
+        namespace["type"] = foreign
+        replacement = FunctionType(helper.__code__, namespace)
+        monkeypatch.setattr(runtime_module, "checked_executor_context", replacement)
+        monkeypatch.setattr(module, "checked_executor_context", replacement)
+    elif kind == "helper_closure":
+        def replacement(executor):
+            return foreign(executor)
+        monkeypatch.setattr(runtime_module, "checked_executor_context", replacement)
+        monkeypatch.setattr(module, "checked_executor_context", replacement)
+    elif kind in {"helper_code", "guard_code"}:
+        def replacement(*args):
+            return _prepared_foreign_context_probe(*args)
+        target = helper if kind == "helper_code" else vars(env.jobs._PREPARED_CONTEXT_SERVICE)["check_context_factory"]
+        monkeypatch.setitem(target.__globals__, "_prepared_foreign_context_probe", foreign)
+        monkeypatch.setattr(target, "__code__", replacement.__code__)
+    elif kind == "helper_defaults":
+        monkeypatch.setattr(helper, "__defaults__", (foreign,))
+    elif kind == "helper_kwdefaults":
+        monkeypatch.setattr(helper, "__kwdefaults__", {"hidden": foreign})
+    elif kind in {"type_shadow", "vars_shadow"}:
+        monkeypatch.setitem(vars(module), kind.split("_", 1)[0], foreign)
+    elif kind == "executor_alias":
+        monkeypatch.setattr(module, "_Executor", foreign)
+    elif kind == "service_alias":
+        monkeypatch.setattr(module, "GLBStageService", NS(check_context_factory=foreign))
+    elif kind == "guard_alias":
+        monkeypatch.setattr(module, "_PROTECTED_DEPENDENCY_GUARD_ORIGIN", foreign)
+    elif kind in {"geometry_alias", "scene_alias"}:
+        class ForeignClass:
+            __eq__ = foreign
+        suffix, name = ("geometry_preview_jobs", "GeometryPreviewJobs") if kind == "geometry_alias" else ("scene_jobs", "SceneJobs")
+        monkeypatch.setattr(sys.modules[env.jobs.__package__+"."+suffix], name, ForeignClass())
+    elif kind == "origin_iterable":
+        class ForeignOrigins:
+            __iter__ = foreign
+        monkeypatch.setattr(module, "_SERVICE_METHOD_ORIGINS", ForeignOrigins())
+    elif kind == "service_method":
+        monkeypatch.setattr(env.jobs._PREPARED_CONTEXT_SERVICE, "check_context_factory", foreign)
+    elif kind == "service_shadow":
+        monkeypatch.setattr(env.runtime.glb_stage, "check_context_factory", foreign)
+    elif kind == "executor_access":
+        monkeypatch.setattr(type(env.runtime.executor), "__getattribute__", foreign)
+    elif kind == "runtime_access":
+        monkeypatch.setattr(type(env.runtime), "__getattribute__", foreign)
+    elif kind == "manager_mro":
+        manager_type = type(env.manager)
+        class ForeignManagerBase(manager_type.__bases__[0]):
+            context_factory = property(foreign)
+        original = manager_type.__bases__
+        manager_type.__bases__ = (ForeignManagerBase,)
+        return lambda: setattr(manager_type, "__bases__", original)
+    elif kind == "executor_mro":
+        executor = env.runtime.executor
+        class ForeignExecutor(type(executor)):
+            glb_stage = property(foreign)
+        monkeypatch.setattr(executor, "__class__", ForeignExecutor)
+    elif kind == "runtime_mro":
+        runtime = env.runtime
+        class ForeignRuntime(type(runtime)):
+            jobs = property(foreign)
+        monkeypatch.setattr(runtime, "__class__", ForeignRuntime)
+    else:
+        assert kind == "service_mro"
+        service = env.runtime.glb_stage
+        class ForeignService(type(service)):
+            runtime = property(foreign)
+        monkeypatch.setattr(service, "__class__", ForeignService)
+
+
+@pytest.mark.parametrize("when", ["admission", "first_tick", "following_tick"])
+@pytest.mark.parametrize("kind", ["runtime_alias", "runtime_module_access", "executor_module_access", "module_alias", "helper_globals", "helper_closure", "helper_code",
+    "helper_defaults", "helper_kwdefaults", "type_shadow", "vars_shadow", "executor_alias", "service_alias", "guard_alias",
+    "origin_iterable", "guard_code", "geometry_alias", "scene_alias", "service_method", "service_shadow", "executor_access", "runtime_access",
+    "manager_mro", "executor_mro", "runtime_mro", "service_mro"])
+def test_checked_factory_helper_is_proven_before_foreign_access(prepared, monkeypatch, when, kind):
+    env = prepared
+    if when == "admission":
+        context = env.runtime.executor.context
+        origin = env.source.CurrentPixelsOrigin()
+    else:
+        start(env)
+        if when == "following_tick":
+            assert env.manager.tick() and env.counts["steps"] == 1
+    before = dict(env.counts)
+    restore = change_checked_context_origin(env, monkeypatch, kind)
+    try:
+        if when == "admission":
+            with pytest.raises(env.jobs.BridgeError):
+                env.jobs.PreparedJobCallbacks.capture(context, origin=origin)
+        else:
+            row = finish(env)
+            assert row["state"] == "FAILED" and row["error"]["context"]["verification_required"]
+        assert env.counts == before
+        assert env.counts["foreign"] == env.counts["writes"] == 0
+    finally:
+        if restore is not None:
+            restore()
+
+
+@pytest.mark.parametrize("kind", ["defaults", "kwdefaults", "empty_closure", "wrong_closure", "copied_globals"])
+def test_new_canonical_factory_still_refuses_unowned_literal_shapes_at_admission(prepared, monkeypatch, kind):
+    env = prepared
+    context = env.runtime.executor.context
+    factory = env.manager.context_factory
+    if kind == "defaults":
+        monkeypatch.setattr(factory, "__defaults__", (trap(env),))
+    elif kind == "kwdefaults":
+        monkeypatch.setattr(factory, "__kwdefaults__", {"hidden": trap(env)})
+    elif kind in {"empty_closure", "wrong_closure"}:
+        cell = factory.__closure__[0]
+        original = cell.cell_contents
+        if kind == "empty_closure":
+            del cell.cell_contents
+        else:
+            cell.cell_contents = NS(executor=NS(context=trap(env)))
+    else:
+        monkeypatch.setattr(env.manager, "context_factory", FunctionType(factory.__code__, dict(factory.__globals__),
+            closure=factory.__closure__))
+    before = dict(env.counts)
+    try:
+        with pytest.raises(env.jobs.BridgeError):
+            env.jobs.PreparedJobCallbacks.capture(context, origin=env.source.CurrentPixelsOrigin())
+    finally:
+        if kind in {"empty_closure", "wrong_closure"}:
+            cell.cell_contents = original
+    assert env.counts == before and env.counts["foreign"] == 0
 
 
 def test_actual_runtime_inheritance_delivery_native_checkpoint_and_captured_history(prepared):

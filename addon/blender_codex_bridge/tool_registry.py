@@ -138,6 +138,8 @@ class ToolContext:
     check_cancelled: Callable[[], None] | None = None
     evidence: Any = None
     jobs: Any = None
+    glb_stage: Any = None
+    glb_method: str = ""
     request_lifecycle: RequestLifetime | None = None
     request_id: str = ""
     # Set only by the scheduler: Events/deadline/toolset checks without calling

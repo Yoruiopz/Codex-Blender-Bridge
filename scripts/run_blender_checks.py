@@ -51,6 +51,9 @@ NATIVE_SAVE_LARGE_CASES = frozenset({"success_copy", "save_as", "save_current", 
 CASES = {
     "current_pixels_lifecycle_census": ("blender_current_pixels_lifecycle_smoke.py", "BLENDER_CURRENT_PIXELS_LIFECYCLE_CENSUS_OK "),
     "current_pixels_source_graph": ("blender_current_pixels_lifecycle_smoke.py", "BLENDER_CURRENT_PIXELS_SOURCE_GRAPH_OK "),
+    "glb_stage_constructor": ("blender_glb_stage_smoke.py", "BLENDER_GLB_STAGE_CONSTRUCTOR_OK "),
+    "glb_stage_structure": ("blender_glb_stage_smoke.py", "BLENDER_GLB_STAGE_STRUCTURE_OK "),
+    "glb_stage_runtime": ("blender_glb_stage_runtime_smoke.py", "BLENDER_GLB_STAGE_RUNTIME_OK "),
     "native_project_saving": ("blender_native_save_smoke.py", "BLENDER_NATIVE_PROJECT_SAVING_OK "),
     "native_project_saving_large": ("blender_native_save_smoke.py", "BLENDER_NATIVE_PROJECT_SAVING_LARGE_OK "),
     "geometry_preview": ("blender_geometry_preview_smoke.py", "BLENDER_GEOMETRY_PREVIEW_OK "),
@@ -263,6 +266,7 @@ OPT_IN_CASES.add("artist_target_sidebar")
 OPT_IN_CASES.add("artist_quaternion_storage")
 OPT_IN_CASES.add("artist_quaternion")
 OPT_IN_CASES.add("animation_intent")
+OPT_IN_CASES.update({"glb_stage_constructor", "glb_stage_structure", "glb_stage_runtime"})
 OPT_IN_CASES.add("uv_edit_storage")
 OPT_IN_CASES.add("uv_edit_boundary_probe")
 OPT_IN_CASES.add("large_surface_paint")
@@ -327,6 +331,204 @@ INTERACTIVE_CASES.add("executor_history_containment")
 INTERACTIVE_CASES.add("rigid_evaluation_jobs")
 INTERACTIVE_CASES.add("render_boundaries_interactive")
 INTERACTIVE_CASES.add("animation_intent")
+INTERACTIVE_CASES.update({"glb_stage_constructor", "glb_stage_structure", "glb_stage_runtime"})
+GLB_STAGE_CASES = frozenset({"glb_stage_constructor", "glb_stage_structure", "glb_stage_runtime"})
+
+GLB_STAGE_SOURCES = (
+    "scripts/blender_glb_stage_smoke.py",
+    "scripts/run_blender_checks.py",
+    "scripts/blender_artist_sidebar_smoke.py",
+    "addon/blender_codex_bridge/glb_stage_driver.py",
+    "addon/blender_codex_bridge/glb_stage_profile.py",
+    "addon/blender_codex_bridge/glb_stage_source.py",
+    "addon/blender_codex_bridge/glb_stage_state.py",
+    "addon/blender_codex_bridge/asset_glb_import_plan.py",
+    "addon/blender_codex_bridge/asset_glb_preflight.py",
+)
+GLB_STAGE_BUILDS = {(4, 5, 14): "62c1db4208e8", (5, 2, 2): "d13f752e3b9c"}
+GLB_STAGE_MAX_EVIDENCE = 8 * 1024**2
+
+
+def _glb_stage_file(path: Path, maximum: int, *, retain: bool = False) -> tuple[str, bytes]:
+    """Read a bounded ordinary file with no-follow and descriptor/path witnesses."""
+    before = path.lstat()
+    if not stat.S_ISREG(before.st_mode) or not 0 < before.st_size <= maximum:
+        raise ValueError("GLB_STAGE_FILE_SHAPE")
+
+    def identity(info):
+        return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns
+
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+    digest, count, chunks = hashlib.sha256(), 0, []
+    try:
+        if identity(os.fstat(descriptor)) != identity(before):
+            raise ValueError("GLB_STAGE_FILE_CHANGED")
+        while True:
+            raw = os.read(descriptor, min(65536, maximum + 1 - count))
+            if not raw:
+                break
+            count += len(raw)
+            if count > maximum:
+                raise ValueError("GLB_STAGE_FILE_BUDGET")
+            digest.update(raw)
+            if retain:
+                chunks.append(raw)
+        if (count != before.st_size or identity(os.fstat(descriptor)) != identity(before)
+                or identity(path.lstat()) != identity(before)):
+            raise ValueError("GLB_STAGE_FILE_CHANGED")
+    finally:
+        os.close(descriptor)
+    return digest.hexdigest(), b"".join(chunks)
+
+
+def _glb_stage_inputs(blender: Path, *, runtime: bool = False) -> dict:
+    sources = GLB_STAGE_SOURCES
+    if runtime:
+        from scripts.blender_glb_stage_runtime_smoke import SOURCES
+        sources = SOURCES
+    return {"source_sha256": {name: _glb_stage_file(ROOT / name, 512 * 1024)[0]
+                              for name in sources},
+            "binary": {"path": str(blender.resolve()),
+                       "sha256": _glb_stage_file(blender, 1024**3)[0]}}
+
+
+def _glb_stage_unique(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("GLB_STAGE_DUPLICATE_EVIDENCE_KEY")
+        result[key] = value
+    return result
+
+
+def _glb_stage_reject_constant(_value):
+    raise ValueError("GLB_STAGE_NONFINITE_EVIDENCE")
+
+
+def _glb_stage_validate(payload: dict | None, temporary: Path, process_instance: str,
+                        blender: Path, inputs: dict | None, *, structure: bool = False,
+                        process_id: int | None = None) -> dict:
+    """Bind one private constructor receipt to this launch and retained bytes."""
+    filename = "glb-stage-structure-evidence.json" if structure else "glb-stage-evidence.json"
+    result = {"passed": False, "path": str(temporary / filename)}
+    try:
+        if type(payload) is not dict or inputs is None:
+            raise ValueError("GLB_STAGE_MARKER_MISSING")
+        version = payload.get("version")
+        if (type(version) is not list or len(version) != 3
+                or any(type(value) is not int for value in version)
+                or tuple(version) not in GLB_STAGE_BUILDS
+                or payload.get("build_hash") != GLB_STAGE_BUILDS[tuple(version)]):
+            raise ValueError("GLB_STAGE_BUILD_MISMATCH")
+        version_text = ".".join(map(str, version))
+        allowed_text = (version_text, version_text + " LTS")
+        if (payload.get("schema") != ("glb_stage_structure_v1" if structure else "glb_stage_constructor_v1")
+                or payload.get("profile") != ("GLB_PRIVATE_STRUCTURE_V1" if structure else "GLB_PRIVATE_STAGE_V1")
+                or payload.get("completed") is not True
+                or payload.get("blender_version") not in allowed_text
+                or payload.get("process_instance") != process_instance
+                or type(payload.get("process_id")) is not int or payload["process_id"] <= 0):
+            raise ValueError("GLB_STAGE_LAUNCH_IDENTITY_MISMATCH")
+        if structure and (type(process_id) is not int or process_id <= 0 or payload["process_id"] != process_id):
+            raise ValueError("GLB_STRUCTURE_PROCESS_PID_MISMATCH")
+        if (payload.get("source_sha256") != inputs["source_sha256"]
+                or payload.get("binary") != inputs["binary"]):
+            raise ValueError("GLB_STAGE_SOURCE_OR_BINARY_MISMATCH")
+        if _glb_stage_inputs(blender) != inputs:
+            raise ValueError("GLB_STAGE_INPUT_CHANGED_DURING_RUN")
+        evidence_sha, raw = _glb_stage_file(temporary / filename,
+                                             GLB_STAGE_MAX_EVIDENCE, retain=True)
+        if payload.get("evidence_sha256") != evidence_sha:
+            raise ValueError("GLB_STAGE_EVIDENCE_DIGEST_MISMATCH")
+        proof = json.loads(raw, object_pairs_hook=_glb_stage_unique,
+                           parse_constant=_glb_stage_reject_constant)
+        identity_fields = ("schema", "profile", "completed", "blender_version", "version", "build_hash",
+                           "process_instance", "process_id", "source_sha256", "binary")
+        if (type(proof) is not dict
+                or any(type(proof.get(key)) is not type(payload[key]) or proof.get(key) != payload[key]
+                       for key in identity_fields)
+                or any(type(value) is not int for value in proof["version"])
+                or proof["completed"] is not True or type(proof["process_id"]) is not int):
+            raise ValueError("GLB_STAGE_RETAINED_IDENTITY_MISMATCH")
+        cases = proof.get("cases")
+        required_cases = {"success": "CONSTRUCTED", "cancel": "STOPPED", "owned_change": "STOPPED",
+                          "invalid_context": "REFUSED_BEFORE_ALLOCATION"}
+        if structure:
+            required_cases = {"success": "CONSTRUCTED", "cancel_after_uv": "STOPPED",
+                              "encoded_short_drift": "STOPPED", "invalid_context": "REFUSED_BEFORE_ALLOCATION"}
+            from scripts.blender_glb_stage_smoke import validate_structure_transcript
+            try:
+                validate_structure_transcript(proof)
+            except (AssertionError, ValueError, TypeError, KeyError, IndexError, OverflowError) as cause:
+                raise ValueError("GLB_STRUCTURE_TRANSCRIPT_INVALID") from cause
+        if (type(cases) is not list or len(cases) != 4
+                or any(type(row) is not dict or type(row.get("name")) is not str
+                       or type(row.get("status")) is not str for row in cases)
+                or {row["name"]: row["status"] for row in cases} != required_cases):
+            raise ValueError("GLB_STAGE_CASE_EVIDENCE_MISMATCH")
+        observations = proof.get("observations")
+        floors = {"immediate": 0., "timer_0_1": .1, "timer_0_5": .5}
+        if structure:
+            floors["timer_0_3"] = .3
+        if (type(observations) is not list or len(observations) != len(floors)
+                or any(type(row) is not dict or type(row.get("phase")) is not str for row in observations)
+                or {row["phase"] for row in observations} != set(floors)):
+            raise ValueError("GLB_STAGE_DEFERRED_OBSERVATIONS_MISSING")
+        elapsed = {}
+        for row in observations:
+            value = row.get("elapsed_seconds")
+            if (type(value) not in (float, int) or not math.isfinite(value)
+                    or value < floors[row["phase"]] or row.get("preserved") is not True):
+                raise ValueError("GLB_STAGE_DEFERRED_OBSERVATION_INVALID")
+            elapsed[row["phase"]] = value
+        if elapsed["immediate"] != 0. or elapsed["timer_0_5"] < elapsed["timer_0_1"]:
+            raise ValueError("GLB_STAGE_DEFERRED_OBSERVATION_ORDER")
+        result.update(passed=True, sha256=evidence_sha, bytes=len(raw))
+    except (OSError, ValueError, TypeError, KeyError, OverflowError, RecursionError) as cause:
+        result["reason"] = str(cause) if isinstance(cause, ValueError) else "GLB_STAGE_EVIDENCE_UNAVAILABLE"
+    return result
+
+
+def _glb_runtime_validate(payload, temporary, process_instance, blender, inputs, process_id):
+    result = {"passed": False, "path": str(temporary / "glb-stage-runtime-evidence.json")}
+    try:
+        from scripts.blender_glb_stage_runtime_smoke import (
+            PROFILE,
+            SCHEMA,
+            decode,
+            validate_runtime_transcript,
+        )
+        if type(payload) is not dict or inputs is None:
+            raise ValueError("GLB_RUNTIME_MARKER_OBJECT_REQUIRED")
+        version = payload.get("version")
+        if (type(version) is not list or any(type(v) is not int for v in version)
+                or tuple(version) not in GLB_STAGE_BUILDS
+                or payload.get("build_hash") != GLB_STAGE_BUILDS[tuple(version)]):
+            raise ValueError("GLB_RUNTIME_BUILD_MISMATCH")
+        text = ".".join(map(str, version))
+        if (payload.get("schema") != SCHEMA or payload.get("profile") != PROFILE
+                or payload.get("completed") is not True
+                or payload.get("blender_version") not in {text, text + " LTS"}
+                or payload.get("process_instance") != process_instance
+                or type(process_id) is not int or process_id <= 0
+                or type(payload.get("process_id")) is not int or payload["process_id"] != process_id
+                or payload.get("source_sha256") != inputs["source_sha256"]
+                or payload.get("binary") != inputs["binary"]):
+            raise ValueError("GLB_RUNTIME_LAUNCH_IDENTITY_MISMATCH")
+        if _glb_stage_inputs(blender, runtime=True) != inputs:
+            raise ValueError("GLB_RUNTIME_INPUT_CHANGED_DURING_RUN")
+        sha, raw = _glb_stage_file(temporary / "glb-stage-runtime-evidence.json", GLB_STAGE_MAX_EVIDENCE, retain=True)
+        if payload.get("evidence_sha256") != sha:
+            raise ValueError("GLB_RUNTIME_EVIDENCE_DIGEST_MISMATCH")
+        proof = decode(raw)
+        fields = ("schema", "profile", "completed", "blender_version", "version", "build_hash", "process_instance", "process_id", "source_sha256", "binary")
+        if any(type(proof.get(key)) is not type(payload[key]) or proof.get(key) != payload[key] for key in fields):
+            raise ValueError("GLB_RUNTIME_RETAINED_IDENTITY_MISMATCH")
+        validate_runtime_transcript(proof)
+        result.update(passed=True, sha256=sha, bytes=len(raw))
+    except (AssertionError, OSError, UnicodeError, ValueError, TypeError, KeyError, IndexError, OverflowError, RecursionError) as cause:
+        result["reason"] = str(cause) if isinstance(cause, ValueError) else "GLB_RUNTIME_TRANSCRIPT_INVALID"
+    return result
 
 
 def success_payload(output: str, marker: str) -> dict | None:
@@ -813,6 +1015,8 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
         interactive = phase == "writer"
     if interactive:
         command.remove("--background")
+    if case == "glb_stage_structure":
+        command.extend(["--", "--bridge-glb-structure"])
     label = case if phase is None else f"{case}-{phase}"
     if phase is not None:
         if bundle is None or phase_marker is None:
@@ -830,7 +1034,7 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
         command.extend(["--", "--bridge-populated-protection"])
     # Blender writes quit.blend on normal UI exit. Keep it outside the user's temp recovery.
     temporary = output / f"{label}-temp"
-    temporary.mkdir(mode=0o700 if case in CURRENT_PIXELS_READ_CASES or case == "native_project_saving_large" else 0o777)
+    temporary.mkdir(mode=0o700 if case in CURRENT_PIXELS_READ_CASES or case in GLB_STAGE_CASES or case == "native_project_saving_large" else 0o777)
     if case == "native_project_saving_large":
         command.extend(["--", "--bridge-large", "--bridge-report", str(temporary / "native-save-large-evidence.json")])
         timeout = min(timeout, 300)
@@ -851,7 +1055,7 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
         environment[key] = str(directory)
     launch_cwd = ROOT
     if (case in PORTABLE_BLEND_RESEARCH_PHASES or case in PAIRED_RECOVERY_PROFILES
-            or case in {"isolated_asset_preview_probe", "native_project_saving", "native_project_saving_large", *CURRENT_PIXELS_READ_CASES}):
+            or case in {"isolated_asset_preview_probe", "native_project_saving", "native_project_saving_large", *CURRENT_PIXELS_READ_CASES, *GLB_STAGE_CASES}):
         # Research-only operational profile. This is not an OS/network sandbox.
         # Do not inherit credential variables or arbitrary Python/Blender paths.
         environment = {key: os.environ[key] for key in (
@@ -908,6 +1112,27 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
             "full_H05_C03_qualified": False,
             "windows_testing_deferred": True,
         }
+    if case in GLB_STAGE_CASES - {"glb_stage_runtime"}:
+        result["qualification_scope"] = {
+            "profile": "GLB_PRIVATE_STRUCTURE_V1" if case == "glb_stage_structure" else "GLB_PRIVATE_STAGE_V1",
+            "private_constructor_only": True, "depsgraph_evaluated_world_qualified": False,
+            "canonical_cancel_guaranteed": False,
+            "artist_destination_preservation_qualified": False, "public_import_qualified": False,
+            "durable_recovery_verified": False, "transport_cancellation_disconnect_qualified": False,
+            "windows_testing_deferred": True,
+        }
+    if case == "glb_stage_runtime":
+        result["qualification_scope"] = {
+            "profile": "GLB_RUNTIME_STAGE_PUBLISH_V1", "genuine_runtime_tcp_required": True,
+            "complete_seventeen_scenarios_required": True, "public_import_qualified": False,
+            "retained_fresh_runtime_groups_required": True,
+            "actual_owner_postreturn_disconnect_required": True,
+            "protected_logical_profile_with_read_effects_required": True,
+            "owned_fixture_storage_preparation_is_not_product_api": True,
+            "physical_cache_passivity_qualified": False,
+            "depsgraph_evaluated_world_qualified": False, "durable_recovery_verified": False,
+            "broader_images_skin_animation_FBX_qualified": False, "windows_testing_deferred": True,
+        }
     if case == "geometry_preview_populated_protection":
         result["qualification_scope"] = {
             "selected_fields": ["mesh_geometry", "material_slots", "animation"],
@@ -930,13 +1155,28 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
         large_sources = _native_save_sources()
         binary_path = blender.resolve(strict=True)
         large_binary = {"path": str(binary_path), "sha256": _native_save_file(binary_path, 1024**3)[0]}
+    glb_inputs = None
     with log.open("wb") as stream:
         try:
+            if case in GLB_STAGE_CASES:
+                glb_inputs = _glb_stage_inputs(blender, runtime=case == "glb_stage_runtime")
             if interactive and sys.platform == "win32":
                 from scripts.windows_test_process import run_isolated
 
                 process = run_isolated(command, cwd=launch_cwd, stdout=stream,
                                        timeout=timeout, env=environment)
+            elif case in {"glb_stage_structure", "glb_stage_runtime"}:
+                # Capture the actual owned child PID; a positive marker PID alone
+                # cannot attest which process produced the structural receipt.
+                process = subprocess.Popen(command, cwd=launch_cwd, stdout=stream,
+                    stderr=subprocess.STDOUT, env=environment)
+                result["process_id"] = process.pid
+                try:
+                    process.wait(timeout=timeout)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=10)
+                    raise
             else:
                 process = subprocess.run(
                     command, cwd=launch_cwd, stdout=stream, stderr=subprocess.STDOUT,
@@ -948,17 +1188,37 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
             result["status"] = "timeout"
         except OSError as exc:
             result["launch_error"] = str(exc)
-    with log.open("rb") as stream:
-        stream.seek(max(0, log.stat().st_size - 65536))
-        log_text = stream.read().decode("utf-8", errors="replace")
-    if case == "native_project_saving_large":
-        candidates = [line[len(marker):] for line in log_text.splitlines() if line.startswith(marker)]
+        except ValueError as exc:
+            if case not in GLB_STAGE_CASES:
+                raise
+            result["input_validation_error"] = str(exc)
+    if case in {"glb_stage_structure", "glb_stage_runtime"}:
         payload = None
-        if len(candidates) == 1:
-            with suppress(ValueError, TypeError, RecursionError):
-                payload = _native_save_json(candidates[0].encode())
+        try:
+            _log_sha, raw_log = _glb_stage_file(log, 4 * 1024**2, retain=True)
+            marked = [line[len(marker):] for line in raw_log.decode("utf-8", errors="strict").splitlines()
+                      if line.startswith(marker)]
+            if len(marked) != 1:
+                raise ValueError("GLB_STRUCTURE_MARKER_CARDINALITY")
+            payload = json.loads(marked[0], object_pairs_hook=_glb_stage_unique,
+                                 parse_constant=_glb_stage_reject_constant)
+            if type(payload) is not dict:
+                raise ValueError("GLB_STRUCTURE_MARKER_OBJECT_REQUIRED")
+        except (OSError, UnicodeError, ValueError, RecursionError):
+            payload = None
+            result["marker_validation_error"] = "GLB_RUNTIME_MARKER_INVALID" if case == "glb_stage_runtime" else "GLB_STRUCTURE_MARKER_INVALID"
     else:
-        payload = success_payload(log_text, marker)
+        with log.open("rb") as stream:
+            stream.seek(max(0, log.stat().st_size - 65536))
+            log_text = stream.read().decode("utf-8", errors="replace")
+        if case == "native_project_saving_large":
+            candidates = [line[len(marker):] for line in log_text.splitlines() if line.startswith(marker)]
+            payload = None
+            if len(candidates) == 1:
+                with suppress(ValueError, TypeError, RecursionError):
+                    payload = _native_save_json(candidates[0].encode())
+        else:
+            payload = success_payload(log_text, marker)
     result["evidence"] = payload
     version = (
         next(
@@ -988,6 +1248,15 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
         phase_evidence = _graph_receipt_matches(payload, temporary, process_instance)
     if case == "native_project_saving_large":
         phase_evidence = _native_save_large_receipt_matches(payload, temporary, process_instance, large_sources, large_binary)
+    if case == "glb_stage_runtime":
+        validation = _glb_runtime_validate(payload, temporary, process_instance, blender, glb_inputs, result.get("process_id"))
+        result["retained_evidence_validation"] = validation
+        phase_evidence = validation["passed"]
+    elif case in GLB_STAGE_CASES:
+        validation = _glb_stage_validate(payload, temporary, process_instance, blender, glb_inputs,
+            structure=case == "glb_stage_structure", process_id=result.get("process_id"))
+        result["retained_evidence_validation"] = validation
+        phase_evidence = validation["passed"]
     if result["exit_code"] == 0 and payload is not None and version and phase_evidence:
         result["status"] = "passed"
     result["completed_at"] = datetime.now(timezone.utc).isoformat()

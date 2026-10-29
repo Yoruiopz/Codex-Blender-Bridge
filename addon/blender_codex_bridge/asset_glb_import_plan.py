@@ -30,6 +30,8 @@ MAX_SCALARS = 131_072
 MAX_LABEL_BYTES = 8192
 MAX_CANONICAL_BYTES = 4 * 1024 * 1024
 UV_LOSS = "UV_ORIGIN_CONVERSION"
+NORMAL_LOSS = "NORMAL_STORAGE_QUANTIZATION"
+AUTO_NORMAL_LOSS = "MISSING_NORMALS_USE_GEOMETRIC_AUTO"
 CORE_LOSSES = tuple(LOSSES)
 
 Vec2: TypeAlias = tuple[float, float]
@@ -81,6 +83,17 @@ class NodePlan:
 
 
 @dataclass(frozen=True, slots=True)
+class ConversionRequirements:
+    """Definition/corner-write counts, never native or permission evidence."""
+    custom_normal_meshes: int
+    authored_normal_primitives: int
+    authored_normal_corners: int
+    geometric_auto_primitives: int
+    geometric_auto_corners: int
+    missing_uv_zero_fill_corners: int
+
+
+@dataclass(frozen=True, slots=True)
 class GLBImportPlan:
     profile: str
     coordinate_unit: str
@@ -96,6 +109,7 @@ class GLBImportPlan:
     instance_vertex_count: int
     instance_triangle_count: int
     dependencies: tuple[str, ...]
+    conversion_requirements: ConversionRequirements
     required_accepted_losses: tuple[str, ...]
     normalized_sha256: str
 
@@ -112,6 +126,8 @@ class GLBImportPlan:
 
     def summary(self) -> dict:
         """Compact evidence only; not a public tool result or mutation authority."""
+        validate_conversion_requirements(self)
+        conversion = self.conversion_requirements
         return {
             "profile": self.profile,
             "coordinate_unit": self.coordinate_unit,
@@ -130,10 +146,93 @@ class GLBImportPlan:
             "axis_basis": "GLTF_Y_UP_TO_BLENDER_Z_UP: (x, y, z) -> (x, -z, y)",
             "axis_basis_determinant": 1,
             "uv_convention": "(u, v) -> Float32(u, 1-v)",
+            "normal_conversion": {
+                "count_scope": "MESH_DEFINITION_CORNER_WRITES_NOT_INSTANCES",
+                "custom_normal_meshes": conversion.custom_normal_meshes,
+                "authored_normal_primitives": conversion.authored_normal_primitives,
+                "authored_normal_corners": conversion.authored_normal_corners,
+                "geometric_auto_primitives": conversion.geometric_auto_primitives,
+                "geometric_auto_corners": conversion.geometric_auto_corners,
+                "native_decoded_component_error_bound": 5e-4,
+                "decoded_bound_policy": "OBSERVED_NATIVE_POSTCONDITION_NOT_CAS_TOLERANCE",
+                "input_normal_bits_preserved": False,
+                "future_encoded_short_selection_sharp_edge_CAS": "EXACT",
+            },
+            "missing_uv_zero_fill_corners": conversion.missing_uv_zero_fill_corners,
+            "mixed_uv_zero_fill_public_registration_gate": "OPEN" if conversion.missing_uv_zero_fill_corners else "NOT_APPLICABLE",
             "matrix_policy": "Float64 local/world similarity transforms; no native decomposition",
             "native_backend_qualified": False,
             "native_permission_or_checkpoint_verified": False,
         }
+
+
+def conversion_requirements(meshes: tuple[MeshPlan, ...]) -> tuple[ConversionRequirements, tuple[str, ...]]:
+    """Derive exact structured-only conversions from immutable decoded streams.
+
+    Missing normal corners count only when their mesh invokes the custom-normal
+    setter. A wholly absent NORMAL mesh uses no setter and adds no storage loss.
+    Mixed UV zero fill is measured but remains a separate public-registration
+    gate; the UV token is not a new authorization for that missing-input policy.
+    """
+    if type(meshes) is not tuple or not 1 <= len(meshes) <= MAX_MESHES:
+        raise invalid_argument("Conversion requirements need exact bounded mesh plans.")
+    custom_meshes = authored_primitives = authored_corners = auto_primitives = auto_corners = missing_uv = 0
+    has_uv = False
+    primitive_total = corner_total = vertex_total = 0
+    for mesh in meshes:
+        if type(mesh) is not MeshPlan or type(mesh.primitives) is not tuple or not 1 <= len(mesh.primitives) <= MAX_PRIMITIVES:
+            raise invalid_argument("Conversion requirements need exact bounded primitive plans.")
+        primitive_total += len(mesh.primitives)
+        for primitive in mesh.primitives:
+            if (type(primitive) is not PrimitivePlan or type(primitive.positions) is not tuple
+                    or not 1 <= len(primitive.positions) <= MAX_VERTICES
+                    or type(primitive.triangles) is not tuple or not 1 <= len(primitive.triangles) <= MAX_TRIANGLES
+                    or (primitive.normals is not None and (type(primitive.normals) is not tuple
+                        or len(primitive.normals) != len(primitive.positions)))
+                    or (primitive.texcoords is not None and (type(primitive.texcoords) is not tuple
+                        or len(primitive.texcoords) != len(primitive.positions)))):
+                raise invalid_argument("Conversion requirements need exact decoded stream shapes.")
+            vertex_total += len(primitive.positions)
+            corner_total += 3 * len(primitive.triangles)
+        normal_mesh = any(primitive.normals is not None for primitive in mesh.primitives)
+        uv_mesh = any(primitive.texcoords is not None for primitive in mesh.primitives)
+        custom_meshes += int(normal_mesh)
+        has_uv |= uv_mesh
+        for primitive in mesh.primitives:
+            corners = 3 * len(primitive.triangles)
+            if primitive.normals is not None:
+                authored_primitives += 1
+                authored_corners += corners
+            elif normal_mesh:
+                auto_primitives += 1
+                auto_corners += corners
+            if uv_mesh and primitive.texcoords is None:
+                missing_uv += corners
+    if (primitive_total > MAX_PRIMITIVES or vertex_total > MAX_VERTICES or corner_total > 3 * MAX_TRIANGLES
+            or authored_primitives + auto_primitives > MAX_PRIMITIVES
+            or authored_corners + auto_corners > 3 * MAX_TRIANGLES or missing_uv > 3 * MAX_TRIANGLES):
+        raise invalid_argument("Conversion requirements exceed the complete plan budget.")
+    conversion = ConversionRequirements(custom_meshes, authored_primitives, authored_corners,
+                                        auto_primitives, auto_corners, missing_uv)
+    losses = (*CORE_LOSSES, *((UV_LOSS,) if has_uv else ()),
+              *((NORMAL_LOSS,) if custom_meshes else ()), *((AUTO_NORMAL_LOSS,) if auto_corners else ()))
+    return conversion, losses
+
+
+def validate_conversion_requirements(plan: GLBImportPlan) -> None:
+    """A matching hash cannot bless forged counters or a weaker consent list."""
+    if type(plan) is not GLBImportPlan:
+        raise invalid_argument("Conversion requirements need an exact structured GLB plan.")
+    expected, losses = conversion_requirements(plan.meshes)
+    actual = plan.conversion_requirements
+    if (type(actual) is not ConversionRequirements
+            or any(type(value) is not int or value < 0 for value in (
+                actual.custom_normal_meshes, actual.authored_normal_primitives, actual.authored_normal_corners,
+                actual.geometric_auto_primitives, actual.geometric_auto_corners, actual.missing_uv_zero_fill_corners))
+            or actual != expected or type(plan.required_accepted_losses) is not tuple
+            or any(type(value) is not str for value in plan.required_accepted_losses)
+            or plan.required_accepted_losses != losses):
+        raise invalid_argument("Structured GLB conversion counts or exact ordered loss policy changed.")
 
 
 def _unsupported(message: str) -> None:
@@ -317,7 +416,7 @@ def plan_glb(payload: bytes, check: Callable[[], None] = lambda: None) -> GLBImp
     json_length = struct.unpack_from("<I", payload, 12)[0]
     manifest = json.loads(payload[20:20 + json_length], object_pairs_hook=_object)
     binary = payload[28 + json_length:]
-    default, has_uv = _profile(manifest, summary)
+    default, _has_uv = _profile(manifest, summary)
     labels = _labels(manifest)
     meshes = []
     for mesh_index, record in enumerate(manifest["meshes"]):
@@ -352,12 +451,13 @@ def plan_glb(payload: bytes, check: Callable[[], None] = lambda: None) -> GLBImp
             ))
         meshes.append(MeshPlan(mesh_index, _name(record), tuple(primitives)))
     roots = tuple(manifest["scenes"][0]["nodes"])
+    conversion, losses = conversion_requirements(tuple(meshes))
     plan = GLBImportPlan(
         PROFILE, "METERS", hashlib.sha256(payload).hexdigest(), len(payload),
         _nodes(manifest["nodes"], roots, check), roots, tuple(meshes),
         _materials(manifest.get("materials", []), default), labels,
         summary["vertices"], summary["triangles"], summary["instance_vertices"], summary["instance_triangles"],
-        (), (*CORE_LOSSES, *((UV_LOSS,) if has_uv else ())), "",
+        (), conversion, losses, "",
     )
     canonical = plan.canonical_bytes()
     check()
@@ -366,6 +466,7 @@ def plan_glb(payload: bytes, check: Callable[[], None] = lambda: None) -> GLBImp
 
 def require_loss_acceptance(plan: GLBImportPlan, accepted_losses: list[str]) -> None:
     """Validate the exact preview list; this grants no Blender permissions."""
+    validate_conversion_requirements(plan)
     if (type(accepted_losses) is not list or any(type(value) is not str for value in accepted_losses)
             or accepted_losses != list(plan.required_accepted_losses)):
         raise invalid_argument("accepted_losses must repeat the structured GLB plan list exactly.")

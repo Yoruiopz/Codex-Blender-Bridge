@@ -128,3 +128,26 @@ def test_non_json_tool_result_is_rejected() -> None:
         asyncio.run(registry.call("scene.invalid"))
 
     assert caught.value.code == "PROTOCOL_ERROR"
+
+
+def test_glb_candidates_use_canonical_scene_admission_and_exact_permissions(addon_package):
+    import importlib
+    runtime = importlib.import_module(addon_package + ".runtime").BridgeRuntime()
+    required = {
+        "asset.glb_stage_preview": {"INSPECT_SCENE", "ACCESS_EXTERNAL_FILES"},
+        "asset.glb_stage_create_start": {"INSPECT_SCENE", "ACCESS_EXTERNAL_FILES", "EDIT_SCENE", "TRANSFORM_OBJECTS", "EDIT_MESH", "EDIT_MATERIALS"},
+        "asset.glb_stage_inspect": {"INSPECT_SCENE"},
+        "asset.glb_stage_publish_preview": {"INSPECT_SCENE"},
+        "asset.glb_stage_publish_start": {"INSPECT_SCENE", "EDIT_SCENE", "TRANSFORM_OBJECTS", "EDIT_MESH", "EDIT_MATERIALS"},
+    }
+    assert "asset_delivery" not in runtime.registry.enabled_toolsets
+    for name, permissions in required.items():
+        spec = runtime.registry.get(name)
+        assert spec.toolset == "asset_delivery" and {p.value for p in spec.permissions} == permissions
+        assert "UNQUALIFIED" in spec.description
+        if name.endswith("_start"):
+            assert spec.modifies and spec.exclusive_mutation and spec.checkpoint_owns_finalization
+            assert not spec.batchable and not spec.automatic_checkpoint
+            assert spec.checkpoint_admission_factory is not None
+        else:
+            assert not spec.modifies

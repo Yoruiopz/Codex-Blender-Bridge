@@ -39,6 +39,17 @@ the finite save profile. All 29 items and fourteen gates stay **OPEN**. Meaningf
 tested prereleases are authorized, but elapsed time does not require publication,
 and stable 1.0 criteria remain unchanged.
 
+The private [structured GLB Runtime candidates](structured-glb-import.md) add
+new-owned staging and explicit Scene publication entry points in development
+source only. They remain **UNQUALIFIED** until matching Runtime, native and
+installed acceptance; the earlier private constructor evidence does not qualify
+registered import or delivery. Full textured/skinned/animated GLB, FBX, protected
+consumer preservation and recovery remain required. All 29 items and fourteen
+gates remain **OPEN**. Logical preservation permits only
+source-qualified, declared bit-preserving ARRAY/COW/cache and empty deform-layer
+observation effects; 5.2 SINGLE preparation and actual native/installed acceptance
+remain separate explicit gates. Rich artist data must not be cleared or excluded.
+
 ## Current foundations and unfinished work
 
 Repair, cuts/bridges/slides, base-surface projection, UV authoring/refinement,

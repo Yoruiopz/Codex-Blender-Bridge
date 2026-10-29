@@ -838,13 +838,15 @@ def local_runtime(addon_package, monkeypatch):
     runtime._native_save_policy_origin = runtime.native_save_policy
     runtime.permissions = module.PermissionManager(FunctionType(module._PERMISSION_PROVIDER_CODE, vars(module)))
     runtime.jobs = NS(active=None, cancel_all=lambda *_: None)
-    runtime.state = NS(reset=lambda: None, set_paused=lambda *_: None,
-                       set_emergency_stopped=lambda *_: None)
+    runtime.state = module.BridgeState()
     runtime.command_queue = NS(cancel_all=lambda *_: None)
     runtime.server = NS(stop=lambda: None, start=lambda *_, **__: ("127.0.0.1", 9876))
     runtime.executor = NS(start=lambda: None, stop=lambda: None, evidence=NS(clear=lambda: None))
     runtime.checkpoints = NS(clear=lambda: None, detach=lambda: None, recovery_in_progress=False)
     runtime.registry = NS(reset_enabled_toolsets=lambda: None)
+    runtime.glb_stage = module.GLBStageService(runtime)
+    runtime._glb_stage_origin = runtime.glb_stage
+    runtime.glb_stage._executor_origin = runtime.executor
     monkeypatch.setattr(module, "_RUNTIME", runtime)
     monkeypatch.setattr(module, "bpy", None)
     monkeypatch.setattr(module, "clear_selection_references", lambda: None)

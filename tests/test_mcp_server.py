@@ -147,3 +147,51 @@ def test_sdk_enforces_annotated_bounds_and_strict_types_before_forwarding():
                 "mask": {"image_name": "Mask", "channel": "A", "invert": True}})
             assert not result.is_error and calls[2][1]["mask"] == {"image_name": "Mask", "channel": "A", "invert": True}
     asyncio.run(scenario())
+
+
+def test_private_glb_runtime_candidates_are_discoverable_gated_and_typed() -> None:
+    from mcp_server.tools.glb_stage import TOOL_NAMES
+
+    class RecordingClient:
+        def __init__(self):
+            self.calls = []
+
+        async def request(self, method, params=None, **_kwargs):
+            self.calls.append((method, params))
+            return {"forwarded": True}
+
+        async def close(self):
+            pass
+
+    async def scenario() -> None:
+        remote = RecordingClient()
+        runtime = build_runtime(client=remote)  # type: ignore[arg-type]
+        async with Client(runtime.server) as client:
+            tools = {tool.name: tool for tool in (await client.list_tools()).tools}
+            assert set(TOOL_NAMES) <= set(tools)
+            assert "asset.glb_stage_create" not in tools
+            for name in TOOL_NAMES:
+                assert "UNQUALIFIED" in tools[name].description
+                assert tools[name].annotations.read_only_hint is (name not in {
+                    "asset.glb_stage_create_start", "asset.glb_stage_publish_start"})
+                assert tools[name].annotations.destructive_hint is False
+            stage = {"stage_id": "glb_stage_" + "a" * 32}
+            disabled = await client.call_tool("asset.glb_stage_inspect", stage)
+            assert disabled.is_error and "TOOLSET_DISABLED" in disabled.content[0].text
+            assert remote.calls == []
+            runtime.registry.enable("asset_delivery")
+            invalid = await client.call_tool("asset.glb_stage_publish_start", {
+                **stage, "publish_preview_id": "glb_publish_" + "b" * 32,
+                "expected_fingerprint": "c" * 64, "overwrite_policy": "REFUSE",
+                "time_limit_seconds": True})
+            assert invalid.is_error and remote.calls == []
+            valid = await client.call_tool("asset.glb_stage_publish_start", {
+                **stage, "publish_preview_id": "glb_publish_" + "b" * 32,
+                "expected_fingerprint": "c" * 64, "overwrite_policy": "REFUSE"})
+            assert not valid.is_error
+            assert remote.calls == [("asset.glb_stage_publish_start", {
+                **stage, "publish_preview_id": "glb_publish_" + "b" * 32,
+                "expected_fingerprint": "c" * 64, "overwrite_policy": "REFUSE",
+                "time_limit_seconds": 60})]
+
+    asyncio.run(scenario())

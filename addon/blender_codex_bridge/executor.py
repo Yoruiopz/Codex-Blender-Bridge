@@ -74,6 +74,7 @@ class MainThreadExecutor:
         interval: float = 0.05,
         maximum_per_tick: int = 4,
         jobs: Any = None,
+        glb_stage: Any = None,
     ) -> None:
         self.command_queue = command_queue
         self.registry = registry
@@ -82,6 +83,7 @@ class MainThreadExecutor:
         self.checkpoints = checkpoints
         self.evidence = SceneEvidenceStore()
         self.jobs = jobs
+        self.glb_stage = glb_stage
         self.interval = interval
         self.maximum_per_tick = maximum_per_tick
         self._running = False
@@ -98,6 +100,7 @@ class MainThreadExecutor:
             checkpoints=self.checkpoints,
             evidence=self.evidence,
             jobs=self.jobs,
+            glb_stage=self.glb_stage,
         )
 
     def start(self) -> None:
@@ -185,7 +188,11 @@ class MainThreadExecutor:
         self, request: Request, *, allow_recovery: bool = False,
         check_cancelled: Callable[[], None] | None = None,
     ) -> Any:
-        context = self.context
+        if self.glb_stage is not None:
+            from .glb_stage_runtime import checked_executor_context
+            context = checked_executor_context(self)
+        else:
+            context = self.context
         try:
             spec = self.registry.get(request.method)
         except BridgeError:
