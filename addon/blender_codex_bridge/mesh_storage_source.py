@@ -25,6 +25,10 @@ from .scene_job_reservations import TURN_METHOD
 from .task_plans import get_task_plans
 from .tool_registry import ToolContext, check_final_mutation
 
+# Keep CPython's standard cache binding stable before the first source seal.
+# This is not an authority table or an exemption from namespace identity checks.
+__warningregistry__ = {}
+
 BASE_MEMORY = 64 * 1024**2
 MAX_IMAGES = 8
 MAX_IMAGE_PIXELS = 16_777_216

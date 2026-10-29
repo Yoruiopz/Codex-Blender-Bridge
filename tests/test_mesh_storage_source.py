@@ -1,5 +1,6 @@
 """Source replacement and predicted-storage CAS; no native qualification claim."""
 import importlib
+import warnings
 from dataclasses import replace
 from types import ModuleType
 from types import SimpleNamespace as NS
@@ -55,6 +56,23 @@ def test_source_fingerprint_binds_code_even_when_function_identity_is_retained(s
     assert before != after
 
 
+@pytest.mark.parametrize("owner_name", ["graph", "source"])
+def test_standard_warning_cache_updates_keep_complete_source_seal_valid(source, owner_name):
+    owner = source.graph if owner_name == "graph" else source
+    registry = owner.__warningregistry__
+    assert type(registry) is dict
+    registry.clear()
+    seal = source.SourceSeal.capture()
+    with warnings.catch_warnings(record=True) as observed:
+        warnings.simplefilter("default", DeprecationWarning)
+        for _ in range(2):
+            warnings.warn_explicit("Owned standard warning-cache model", DeprecationWarning,
+                                   owner.__file__, 571, module=owner.__name__, registry=registry)
+            source.verify_seal(seal)
+    assert len(observed) == 1 and observed[0].category is DeprecationWarning
+    assert owner.__warningregistry__ is registry and type(registry["version"]) is int
+
+
 def test_forward_cas_permits_only_precomputed_selected_array_transition(source):
     p = source.primitive
     obj, mesh = object(), object()
@@ -95,6 +113,48 @@ def protected_gate(source, scene_jobs, monkeypatch, addon_package):  # noqa: F81
     return NS(env=env, artist=artist, animation=animation, errors=errors, context=context,
               store=store, protected=protected, untouched=untouched, bpy=bpy,
               gate=source.Gate(context, source.SourceSeal.capture(), source.contract.PREVIEW))
+
+
+@pytest.mark.parametrize("scene_job_manager", ("scene", "native_save"))
+@pytest.mark.parametrize("owner_name", ("graph", "source"))
+@pytest.mark.parametrize("change", ("replace", "delete", "foreign"))
+def test_warning_cache_binding_change_refuses_before_provider_or_native(
+    source, protected_gate, monkeypatch, scene_job_manager, owner_name, change,
+):
+    s, calls = protected_gate, []
+    owner = source.graph if owner_name == "graph" else source
+
+    class Foreign:
+        def __getattribute__(self, name):
+            calls.append("foreign attribute")
+            raise AssertionError("Foreign warning cache was inspected")
+        def __iter__(self):
+            calls.append("foreign iteration")
+            raise AssertionError("Foreign warning cache was iterated")
+        def __getitem__(self, key):
+            calls.append("foreign indexing")
+            raise AssertionError("Foreign warning cache was indexed")
+
+    def forbidden_provider():
+        calls.append("permission provider")
+        raise AssertionError("Provider ran before source refusal")
+
+    def native_reader():
+        calls.append("native reader")
+        raise AssertionError("Native read preceded source refusal")
+
+    if change == "delete":
+        monkeypatch.delattr(owner, "__warningregistry__")
+    else:
+        monkeypatch.setattr(owner, "__warningregistry__", {} if change == "replace" else Foreign())
+    s.env.provider_hook = forbidden_provider
+    before = s.env.provider_calls
+    with pytest.raises(source.contract.BridgeError) as failure:
+        s.gate.authorize()
+        native_reader()
+    assert failure.value.context["reason"] == "STORAGE_SOURCE_CHANGED"
+    assert s.env.provider_calls == before and calls == []
+    assert scene_job_manager in {"scene", "native_save"}
 
 
 def test_affected_scope_dependency_modules_are_held_before_providers(source, addon_package):

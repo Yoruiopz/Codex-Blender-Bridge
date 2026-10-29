@@ -36,6 +36,10 @@ from typing import Any
 from .current_pixels_contract import MAX_PAYLOAD_BYTES, PROFILE, validate_resource_facts
 from .errors import BridgeError, ErrorCode, invalid_argument
 
+# CPython owns this warning cache. Establish its binding before source seals;
+# ordinary deprecated RNA reads may populate it without adding module fields.
+__warningregistry__ = {}
+
 MAX_CANONICAL_BYTES = 16 * 1024 * 1024
 MAX_VERTICES, MAX_EDGES, MAX_POLYGONS, MAX_LOOPS = 32_768, 65_536, 32_768, 131_072
 MAX_UV_MAPS, MAX_SLOTS, MAX_NODES, MAX_LINKS, MAX_SOCKETS = 2, 16, 16, 16, 2048
