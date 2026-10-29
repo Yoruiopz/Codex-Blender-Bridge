@@ -1712,6 +1712,16 @@ class RuntimeFixture:
         # no fixture evidence and must not pay thread/path dispatch per getter.
         if event not in ("call", "return"):
             return
+        # Skip frames with no observation branch before thread/path dispatch.
+        # Handler/finalizer watches intentionally accept ANY Python function
+        # name in the typed GLB tool module, including future wrappers.
+        if (frame.f_code.co_name not in {
+                "submit", "_capture_mesh_return", "attach_job", "_invoke_owned", "enter",
+                "capture_job_markers", "_access", "check", "advance", "permission_snapshot",
+                "claim_pending", "begin_owned", "_stamp"}
+                and not (event == "call" and frame.f_code.co_filename.replace("\\", "/").endswith(
+                    "/blender_codex_bridge/tools/glb_stage.py"))):
+            return
         # Transport lifecycle objects are ordinary thread-safe Python events,
         # never bpy wrappers. The network-thread observer performs no bpy work.
         if event == "return" and frame.f_code.co_filename.replace("\\", "/").endswith("/blender_codex_bridge/server.py") and frame.f_code.co_name == "submit":

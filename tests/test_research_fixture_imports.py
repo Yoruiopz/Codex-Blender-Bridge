@@ -3122,3 +3122,65 @@ def test_glb_runtime_profile_releases_pending_gate_and_stack_when_cached_snapsho
     with pytest.raises(MemoryError):
         fixture.profile(request, "return", None)
     assert fixture.pending_request_gates == {} and fixture.current_requests == []
+
+
+@pytest.mark.parametrize("event", ["call", "return"])
+def test_glb_runtime_profile_skips_unobserved_python_frames_before_thread_dispatch(fixture_imports, monkeypatch, event):
+    script = importlib.import_module("scripts.blender_glb_stage_runtime_smoke")
+    fixture = object.__new__(script.RuntimeFixture)
+    frame = glb_runtime_profile_frame("current_pixels_source.py", "not_an_observed_function")
+    monkeypatch.setattr(script.threading, "current_thread", lambda: pytest.fail("Unobserved frame dispatched thread"))
+    assert fixture.profile(frame, event, None) is None
+
+
+@pytest.mark.parametrize("kind", ["handler", "finalizer"])
+@pytest.mark.parametrize("name", ["future_glb_wrapper", "<lambda>", "unknown_factory"])
+@pytest.mark.parametrize("backslashes", [False, True])
+def test_glb_runtime_profile_preserves_arbitrary_handler_and_finalizer_watch_names(
+    fixture_imports, monkeypatch, kind, name, backslashes,
+):
+    """Pure rejected nested-request model; this grants no native acceptance."""
+    script = importlib.import_module("scripts.blender_glb_stage_runtime_smoke")
+    fixture = glb_runtime_profile_model(script)
+    fixture.watch = {"kind": kind, "entered": False, "params": {}, "outer_request_id": "outer"}
+    fixture.nested_probes = []
+    requests = []
+    def execute(request):
+        requests.append(request)
+        return NS(to_dict=lambda: {"ok": False, "error": {"context": {"reason": "REENTRANT_MUTATION_BLOCKED"}}})
+    fixture.runtime = NS(executor=NS(execute_request=execute), jobs=NS(active=None))
+    monkeypatch.setattr(sys.modules["blender_codex_bridge.protocol"], "Request", lambda **values: NS(**values))
+    frame = glb_runtime_profile_frame("tools/glb_stage.py", name)
+    if backslashes:
+        frame.f_code.co_filename = frame.f_code.co_filename.replace("/", "\\")
+    fixture.profile(frame, "call", None)
+    assert fixture.watch["entered"] is True and len(requests) == len(fixture.nested_probes) == 1
+    assert requests[0].method == "asset.glb_stage_create_start"
+    assert fixture.nested_probes[0]["kind"] == kind
+    assert fixture.nested_probes[0]["boundary"] == ["/owned/blender_codex_bridge/tools/glb_stage.py", name]
+    assert fixture.nested_probes[0]["nested_native_entries"] == 0
+
+
+def test_glb_runtime_profile_name_filter_covers_every_named_observation_branch(fixture_imports):
+    script = importlib.import_module("scripts.blender_glb_stage_runtime_smoke")
+    tree = ast.parse(Path(script.__file__).read_text())
+    cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "RuntimeFixture")
+    profile = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == "profile")
+    guard = profile.body[1]
+    assert isinstance(guard, ast.If) and isinstance(guard.test, ast.BoolOp)
+    name_filter = guard.test.values[0]
+    assert isinstance(name_filter, ast.Compare) and isinstance(name_filter.ops[0], ast.NotIn)
+    allowed = {node.value for node in name_filter.comparators[0].elts}
+    observed = set()
+    for statement in profile.body[2:]:
+        for node in ast.walk(statement):
+            if not isinstance(node, ast.Compare) or not isinstance(node.left, ast.Attribute) or node.left.attr != "co_name":
+                continue
+            if isinstance(node.ops[0], ast.Eq):
+                assert isinstance(node.comparators[0], ast.Constant) and type(node.comparators[0].value) is str
+                observed.add(node.comparators[0].value)
+            else:
+                assert isinstance(node.ops[0], ast.In) and isinstance(node.comparators[0], (ast.Set, ast.Tuple))
+                assert all(isinstance(value, ast.Constant) and type(value.value) is str for value in node.comparators[0].elts)
+                observed.update(value.value for value in node.comparators[0].elts)
+    assert observed == allowed and len(allowed) == 13
