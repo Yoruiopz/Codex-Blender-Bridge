@@ -4153,3 +4153,401 @@ def test_mesh_storage_seal_diagnostic_ignores_unrelated_code_without_local_reads
         def __getattr__(self, name):
             pytest.fail("Unqualified frame was read")
     assert script.seal_failure_record(ForeignFrame(), (None, {}, frozenset(), None)) is None
+
+
+_B2_HYBRID_HOOK_PROBE = r'''
+from pathlib import Path
+from types import ModuleType, SimpleNamespace as NS
+import ast
+import builtins
+import importlib
+import json
+import sys
+import threading
+
+root = Path(sys.argv[1])
+sys.path.insert(0, str(root))
+package = ModuleType("blender_codex_bridge")
+package.__path__ = [str(root / "addon/blender_codex_bridge")]
+package.__package__ = package.__name__
+sys.modules[package.__name__] = package
+module = importlib.import_module("scripts.blender_mesh_storage_job_smoke")
+source = importlib.import_module("blender_codex_bridge.mesh_storage_source")
+domain = importlib.import_module("blender_codex_bridge.tools.mesh_storage")
+
+
+def provider():
+    return {"allowed": True}
+
+
+def field():
+    return 1
+
+
+def catalog():
+    return 2
+
+
+def rpc(request, body):
+    return body()
+
+
+def turn(body):
+    return body()
+
+
+def cancel():
+    return {"cancel_requested": True}
+
+
+def finish(job, state):
+    return None
+
+
+def acknowledge(work):
+    return work
+
+
+def failed_argument(kind):
+    if kind == "memory":
+        raise MemoryError("Owned modeled allocation pressure")
+    raise ValueError("Owned argument failure before C entry")
+
+
+def prepare(plan, bad=None):
+    cells = [{"name": plan.targets[0].name, "materialize_entered": False, "materialize_returned": False}]
+    index, data, foreach = 0, [], list.extend
+    field()
+    cells[index]["materialize_entered"] = True
+    foreach(data, failed_argument(bad) if bad in {"argument", "memory"} else None if bad == "C" else [1])
+    cells[index]["materialize_returned"] = True
+    catalog()
+    return cells
+
+
+tree = ast.parse(Path(__file__).read_text())
+prepare_ast = next(node for node in tree.body if type(node) is ast.FunctionDef and node.name == "prepare")
+call = next(node for node in ast.walk(prepare_ast) if type(node) is ast.Expr
+            and type(node.value) is ast.Call and type(node.value.func) is ast.Name and node.value.func.id == "foreach")
+call_line, returned_line = call.lineno, call.end_lineno + 1
+getters = (sys.getprofile, sys.gettrace, threading.getprofile, threading.gettrace)
+setters = (sys.setprofile, sys.settrace, threading.setprofile, threading.settrace)
+assert all(getter() is None for getter in getters)
+proxy = NS(__name__="foreach_get")
+
+
+def proxy_getattr(owner, name, default=None):
+    # Apply the same explicit stdlib-C NAME adaptation to the unchanged
+    # observer and to the narrow-window matcher. C events remain real.
+    value = builtins.getattr(owner, name, default)
+    return "foreach_get" if name == "__name__" and value == "extend" else value
+
+
+module.getattr = proxy_getattr
+
+
+def make_observer():
+    runtime = NS(permissions=NS(_source=provider), jobs=NS(active=None))
+    observer = module.Observer(runtime, domain, source.primitive)
+    observer.codes.update({"rpc": rpc.__code__, "turn": turn.__code__, "prepare": prepare.__code__,
+        "field": field.__code__, "catalog": catalog.__code__, "provider": provider.__code__,
+        "cancel": cancel.__code__, "finish": finish.__code__})
+    observer.begin("owned_hook_model")
+    runtime.jobs.active = NS(job_id="job-model", cancel_reason="owned stop")
+    original = observer.profile
+    def observe(frame, event, value):
+        # Real stdlib C events exercise hook transport. Only the argument NAME
+        # is adapted for the unchanged Blender-specific observer branch. This
+        # is a C-proxy model and is never Blender/native qualification evidence.
+        if (event in {"c_call", "c_return", "c_exception"} and frame.f_code is prepare.__code__
+                and getattr(value, "__name__", None) == "extend"):
+            value = proxy
+        original(frame, event, value)
+    return observer, observe
+
+
+def normalized(observer):
+    result = observer.summary()
+    for row in result["events"]:
+        row.pop("monotonic")
+    for row in result["native_C_intervals"]:
+        assert row["seconds"] >= 0
+        row.pop("seconds")
+    result["rpc_depth"] = len(observer.rpc_stack)
+    result["provider_depth"] = len(observer.provider_stack)
+    result["turn_depth"] = observer.turn_depth
+    result["prepare_depth"] = observer.prepare_depth
+    result["first_prepare_set"] = observer.first_prepare.is_set()
+    if observer.seal_failure is not None:
+        result["seal_failure"] = {key: observer.seal_failure[key] for key in ("schema", "section", "line")}
+    return result
+
+
+def run(mode, scenario):
+    observer, observe = make_observer()
+    failure = RuntimeError("Owned trace fault after second C return")
+    fault = module.FaultInjector(prepare.__code__, returned_line, observer, failure) if scenario == "fault" else None
+    worker_events = []
+    entered, release = threading.Event(), threading.Event()
+    def network(frame, event, value):
+        if event == "call" and frame.f_code is acknowledge.__code__:
+            worker_events.append(frame.f_locals["work"])
+            entered.set()
+            assert release.wait(2)
+    hooks, profile_writes = None, []
+    try:
+        if mode == "profile":
+            sys.setprofile(observe)
+            threading.setprofile(network)
+            if fault is not None:
+                sys.settrace(fault.trace)
+        else:
+            hooks = module.OwnedMeshObserverHooks(observer.codes, observe, network,
+                acknowledge.__code__, call_line, returned_line, fault)
+            original_profile_setter = hooks.setters[0]
+            def measured_profile_setter(value):
+                profile_writes.append((value is None, sys._getframe(1).f_code.co_name))
+                original_profile_setter(value)
+            hooks.setters = (measured_profile_setter, *hooks.setters[1:])
+            hooks.install()
+        worker = threading.Thread(target=lambda: acknowledge("real_worker_ack"))
+        worker.start()
+        assert entered.wait(2)
+        release.set()
+        worker.join(2)
+        assert not worker.is_alive()
+        request = NS(method="mesh.attribute_storage_prepare_job_start")
+        plans = (NS(targets=(NS(name="first"),)), NS(targets=(NS(name="second"),)))
+        def body():
+            provider()
+            field()
+            if scenario == "cancel":
+                cancel()
+                return
+            if scenario == "disconnect":
+                finish(observer.runtime.jobs.active, "CANCELED")
+                return
+            if scenario == "nested":
+                rpc(NS(method="jobs.status"), provider)
+            if scenario == "seal":
+                seal = source.SourceSeal.capture()
+                source._OWNED_OBSERVER_MODEL_DRIFT = None
+                try:
+                    source.verify_seal(seal)
+                finally:
+                    del source._OWNED_OBSERVER_MODEL_DRIFT
+                return
+            prepare(plans[0], scenario if scenario in {"C", "argument", "memory"} else None)
+            try:
+                prepare(plans[1])
+            finally:
+                if scenario == "finally":
+                    catalog()
+        try:
+            rpc(request, lambda: turn(body))
+        except (RuntimeError, ValueError, TypeError, MemoryError, source.contract.BridgeError) as error:
+            if scenario == "fault":
+                assert error is failure and fault.fired
+                assert sys.gettrace() is None and sys.getprofile() is observe
+            elif scenario not in {"C", "argument", "memory", "seal"}:
+                raise
+            finish(observer.runtime.jobs.active, "FAILED")
+        # Status authorization outside domain scope remains uncounted.
+        rpc(NS(method="jobs.status"), provider)
+        assert observer.rpc_stack == observer.provider_stack == []
+        assert observer.turn_depth == observer.prepare_depth == 0
+        if hooks is not None:
+            hooks.check()
+            expected_returns = 2 if scenario in {"success", "nested", "finally", "fault"} else 1 if scenario == "C" else 0
+            assert profile_writes.count((True, "_c_profile")) == expected_returns, profile_writes
+            # Healthy C returns close immediately in the original C callback,
+            # rather than relying on the defensive following-LINE cleanup.
+            if scenario in {"success", "nested", "finally", "fault", "C"}:
+                assert (True, "_local") not in profile_writes
+        result = normalized(observer)
+        result["network"] = worker_events
+        return result
+    finally:
+        if hooks is not None:
+            hooks.restore()
+        for setter in setters:
+            setter(None)
+        assert all(getter() is None for getter in getters)
+
+
+matched = {}
+for scenario in ("success", "nested", "finally", "C", "argument", "memory", "cancel", "disconnect", "fault", "seal"):
+    original, selective = run("profile", scenario), run("hybrid", scenario)
+    assert original == selective, (scenario, original, selective)
+    assert selective["counts"]["after_accepted_stop_native_entries"] == 0
+    assert selective["counts"]["after_accepted_stop_provider_entries"] == 0
+    matched[scenario] = selective["counts"]
+
+
+def callback_failures():
+    result = []
+    for kind in ("main", "worker", "C_name"):
+        observer, observe = make_observer()
+        entered = threading.Event()
+        def broken_observe(frame, event, value):
+            if kind == "main" and frame.f_code is field.__code__ and event == "call":
+                raise MemoryError("Owned main observer failure")
+            observe(frame, event, value)
+        def broken_worker(frame, event, value):
+            entered.set()
+            raise MemoryError("Owned worker observer failure")
+        hooks = module.OwnedMeshObserverHooks(observer.codes, broken_observe,
+            broken_worker, acknowledge.__code__, call_line, returned_line)
+        actual_getattr = module.__dict__.get("getattr", None)
+        def failing_name(owner, name, default=None):
+            if name == "__name__" and builtins.getattr(owner, name, None) == "extend":
+                raise MemoryError("Owned C observer name allocation failure")
+            return builtins.getattr(owner, name, default)
+        try:
+            hooks.install()
+            if kind == "main":
+                try:
+                    field()
+                except MemoryError:
+                    pass
+            elif kind == "worker":
+                errors = []
+                def work():
+                    try:
+                        acknowledge("fail_worker")
+                    except MemoryError:
+                        errors.append("caught")
+                    assert sys.gettrace() is None
+                worker = threading.Thread(target=work)
+                worker.start()
+                worker.join(2)
+                assert entered.is_set() and errors == ["caught"]
+                assert threading.gettrace() is hooks.worker
+            else:
+                module.getattr = failing_name
+                try:
+                    prepare(NS(targets=(NS(name="C_name"),)))
+                except MemoryError:
+                    pass
+            assert hooks.failed
+            try:
+                hooks.check()
+            except AssertionError:
+                result.append(kind)
+            else:
+                raise AssertionError("Lost observer callback accepted as healthy")
+        finally:
+            if actual_getattr is None:
+                module.__dict__.pop("getattr", None)
+            else:
+                module.getattr = actual_getattr
+            hooks.restore()
+            for setter in setters:
+                setter(None)
+            assert all(getter() is None for getter in getters)
+    return result
+
+
+def restoration_failures():
+    rejected = []
+    for index in range(4):
+        dummy = lambda *_args: None
+        setters[index](dummy)
+        try:
+            observer, observe = make_observer()
+            try:
+                module.OwnedMeshObserverHooks(observer.codes, observe, lambda *_args: None,
+                    acknowledge.__code__, call_line, returned_line)
+            except AssertionError:
+                assert getters[index]() is dummy
+                rejected.append(index)
+            else:
+                raise AssertionError("Preexisting observer hook was replaced")
+        finally:
+            setters[index](None)
+    observer, observe = make_observer()
+    hooks = module.OwnedMeshObserverHooks(observer.codes, observe, lambda *_args: None,
+        acknowledge.__code__, call_line, returned_line)
+    calls, fail_once = [], [True]
+    replacements = []
+    for index, setter in enumerate(hooks.setters):
+        def wrapped(value, index=index, setter=setter):
+            calls.append(index)
+            setter(value)
+            if index == 1 and fail_once[0]:
+                fail_once[0] = False
+                raise MemoryError("Owned partial observer installation")
+        replacements.append(wrapped)
+    hooks.setters = tuple(replacements)
+    try:
+        try:
+            hooks.install()
+        except MemoryError:
+            pass
+        else:
+            raise AssertionError("Partial installation unexpectedly passed")
+        assert calls[-4:] == [0, 1, 2, 3] and hooks.failed and not hooks.active
+    finally:
+        for setter in setters:
+            setter(None)
+        assert all(getter() is None for getter in getters)
+    observer, observe = make_observer()
+    hooks = module.OwnedMeshObserverHooks(observer.codes, observe, lambda *_args: None,
+        acknowledge.__code__, call_line, returned_line)
+    calls = []
+    hooks.install()
+    replacements = []
+    for index, setter in enumerate(hooks.setters):
+        def wrapped(value, index=index, setter=setter):
+            calls.append(index)
+            if index == 1:
+                raise MemoryError("Owned observer restoration failure")
+            setter(value)
+        replacements.append(wrapped)
+    hooks.setters = tuple(replacements)
+    try:
+        try:
+            hooks.restore()
+        except MemoryError:
+            pass
+        else:
+            raise AssertionError("Restoration failure unexpectedly passed")
+        assert calls == [0, 1, 2, 3] and hooks.failed and not hooks.active
+    finally:
+        for setter in setters:
+            setter(None)
+        assert all(getter() is None for getter in getters)
+    return {"preexisting_rejected": rejected, "partial_restore_order": calls,
+            "restore_failure_attempted_all": True}
+
+
+print(json.dumps({"model_only": True, "scenarios": matched, "callback_failures": callback_failures(),
+    "restoration": restoration_failures(), "all_hooks_restored": all(getter() is None for getter in getters)}))
+'''
+
+
+def test_mesh_storage_hybrid_actual_hooks_preserve_events_faults_and_cleanup(tmp_path):
+    path = tmp_path / "b2-hybrid-hooks.py"
+    path.write_text(_B2_HYBRID_HOOK_PROBE)
+    result = subprocess.run([sys.executable, "-B", str(path), str(ROOT)], cwd=tmp_path,
+                            capture_output=True, text=True, timeout=45)
+    assert result.returncode == 0, result.stdout + result.stderr
+    report = json.loads(result.stdout)
+    assert report["model_only"] and report["all_hooks_restored"]
+    assert set(report["scenarios"]) == {"success", "nested", "finally", "C", "argument", "memory",
+                                        "cancel", "disconnect", "fault", "seal"}
+    assert report["scenarios"]["success"]["materialize_entries"] == 2
+    assert report["scenarios"]["fault"]["materialize_returns"] == 2
+    assert report["callback_failures"] == ["main", "worker", "C_name"]
+    assert report["restoration"] == {"preexisting_rejected": [0, 1, 2, 3],
+                                      "partial_restore_order": [0, 1, 2, 3], "restore_failure_attempted_all": True}
+
+
+def test_mesh_storage_hybrid_binds_only_original_pinned_materialize_line():
+    script = importlib.import_module("scripts.blender_mesh_storage_job_smoke")
+    helper = ROOT / "addon/blender_codex_bridge/mesh_storage_prepare.py"
+    call, returned = script.materialize_trace_lines(NS(__file__=str(helper)))
+    lines = helper.read_text().splitlines()
+    assert 'foreach(data, "vector" if header.data_type == "FLOAT2" else "value", output)' in lines[call - 1]
+    assert lines[returned - 1].strip() == 'cells[index]["materialize_returned"] = True'
+    assert hashlib.sha256(helper.read_bytes()).hexdigest() == script.HELPER_SHA256

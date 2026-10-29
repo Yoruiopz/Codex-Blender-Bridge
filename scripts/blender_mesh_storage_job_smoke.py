@@ -706,6 +706,159 @@ class FaultInjector:
         return self.trace
 
 
+def materialize_trace_lines(primitive):
+    """Bind the sole nonempty materializing call in the pinned helper."""
+    path = Path(primitive.__file__)
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == HELPER_SHA256
+    tree = ast.parse(path.read_bytes())
+    prepare = [node for node in tree.body if type(node) is ast.FunctionDef and node.name == "prepare"]
+    assert len(prepare) == 1
+    matches = [node for node in ast.walk(prepare[0]) if type(node) is ast.Expr
+        and type(node.value) is ast.Call and type(node.value.func) is ast.Name
+        and node.value.func.id == "foreach" and len(node.value.args) == 3
+        and type(node.value.args[0]) is ast.Name and node.value.args[0].id == "data"
+        and type(node.value.args[2]) is ast.Name and node.value.args[2].id == "output"]
+    assert len(matches) == 1
+    call = matches[0]
+    lines = path.read_text().splitlines()
+    returned = call.end_lineno + 1
+    assert lines[returned - 1].strip() == 'cells[index]["materialize_returned"] = True'
+    return call.lineno, returned
+
+
+class OwnedMeshObserverHooks:
+    """TRACE for Python boundaries; original C profiling only at materialization.
+
+    An intentional trace fault clears tracing in CPython. Before that fault the
+    original independent profile takes over, preserving all unwind/stop facts.
+    This fixture adapter never changes the qualified helper or its guards.
+    """
+    def __init__(self, codes, observe, network, acknowledge_code, call_line, returned_line, fault=None):
+        self.codes = {id(code): code for code in codes.values()}
+        self.prepare = codes["prepare"]
+        self.observe, self.network, self.acknowledge = observe, network, acknowledge_code
+        self.call_line, self.returned_line, self.fault = call_line, returned_line, fault
+        self.getters = (sys.getprofile, sys.gettrace, threading.getprofile, threading.gettrace)
+        self.setters = (sys.setprofile, sys.settrace, threading.setprofile, threading.settrace)
+        self.baseline = tuple(getter() for getter in self.getters)
+        assert all(value is None for value in self.baseline), "Owned fixture requires unused observer hooks"
+        self.active, self.failed, self.fallback, self.window = False, False, False, None
+        # Retain bound-method identities for both CPython hooks and assertions.
+        self.called, self.local = self._called, self._local
+        self.c_profile, self.worker = self._c_profile, self._worker
+
+    def install(self):
+        assert all(getter() is value for getter, value in zip(self.getters, self.baseline, strict=True))
+        self.active = True
+        try:
+            self.setters[3](self.worker)
+            self.setters[1](self.called)
+        except BaseException:
+            self.failed = True
+            self.restore()
+            raise
+
+    def _called(self, frame, event, value):
+        if self.fallback or event != "call":
+            return None
+        code = frame.f_code
+        if self.codes.get(id(code)) is not code:
+            return None
+        frame.f_trace_lines = code is self.prepare
+        frame.f_trace_opcodes = False
+        try:
+            self.observe(frame, event, value)
+        except BaseException:
+            self.failed = True
+            raise
+        return self.local
+
+    def _local(self, frame, event, value):
+        if self.fallback:
+            return None
+        try:
+            if frame.f_code is self.prepare:
+                if event == "line":
+                    if self.window is frame and frame.f_lineno != self.call_line:
+                        # Also close a window whose arguments completed without
+                        # a recognized C callback; never leak it into guards.
+                        self.window = None
+                        self.setters[0](self.baseline[0])
+                    if frame.f_lineno == self.call_line:
+                        assert self.window is None and self.getters[0]() is self.baseline[0]
+                        self.window = frame
+                        self.setters[0](self.c_profile)
+                    fault = self.fault
+                    if (fault is not None and frame.f_lineno == self.returned_line
+                            and fault.observer.counts["materialize_returns"] == 2 and not fault.fired):
+                        assert self.window is None
+                        self.fallback = True
+                        self.setters[0](self.observe)
+                    if fault is not None:
+                        fault.trace(frame, event, value)
+                elif event in {"exception", "return"} and self.window is frame:
+                    # Argument evaluation can fail before the actual C call.
+                    self.window = None
+                    self.setters[0](self.baseline[0])
+            if not self.fallback and event == "return":
+                self.observe(frame, event, value)
+        except BaseException as error:
+            if not (self.fallback and self.fault is not None and self.fault.fired
+                    and error is self.fault.failure):
+                self.failed = True
+            raise
+        return None if self.fallback else self.local
+
+    def _c_profile(self, frame, event, value):
+        if (self.window is not frame or frame.f_code is not self.prepare
+                or event not in {"c_call", "c_return", "c_exception"}):
+            return
+        matching = False
+        try:
+            matching = getattr(value, "__name__", None) == "foreach_get"
+            self.observe(frame, event, value)
+        except BaseException:
+            self.failed = True
+            raise
+        finally:
+            if matching and event in {"c_return", "c_exception"}:
+                self.window = None
+                try:
+                    self.setters[0](self.baseline[0])
+                except BaseException:
+                    self.failed = True
+                    raise
+
+    def _worker(self, frame, event, value):
+        if event == "call" and frame.f_code is self.acknowledge:
+            try:
+                self.network(frame, event, value)
+            except BaseException:
+                self.failed = True
+                raise
+        return None
+
+    def check(self):
+        assert self.active and not self.failed and self.window is None
+        expected = (self.observe, None, self.baseline[2], self.worker) if self.fallback else (
+            self.baseline[0], self.called, self.baseline[2], self.worker)
+        assert all(getter() is value for getter, value in zip(self.getters, expected, strict=True)), \
+            "Owned observer hooks changed or the intentional trace fault was not observed"
+
+    def restore(self):
+        self.active, self.window = False, None
+        failure = None
+        for setter, value in zip(self.setters, self.baseline, strict=True):
+            try:
+                setter(value)
+            except BaseException as error:
+                if failure is None:
+                    failure = error
+        if failure is not None:
+            self.failed = True
+            raise failure
+
+
 class Fixture:
     def __init__(self, bpy, options, token, sources, display):
         self.bpy, self.options, self.token, self.sources, self.display = bpy, options, token, sources, display
@@ -714,13 +867,15 @@ class Fixture:
         self.failure, self.cases, self.targets = None, {}, {}
         self.delivery_hold, self.delivery_entered, self.delivery_release = False, threading.Event(), threading.Event()
         self.delivery_expired, self.port, self.fault = False, None, None
-        self.observer, self.runtime, self.prefs = None, None, None
+        self.observer, self.runtime, self.prefs, self.hooks = None, None, None, None
 
     def fail(self):
         from scripts.blender_artist_sidebar_smoke import owned_process_exit
-        sys.setprofile(None)
-        sys.settrace(None)
-        threading.setprofile(None)
+        if self.hooks is not None:
+            try:
+                self.hooks.restore()
+            except BaseException:
+                self.failure = (self.failure or "") + "\nOwned observer restoration failed."
         self.delivery_release.set()
         raw = {"schema": SCHEMA, "completed": False, "phase": self.phase,
             "process_instance": self.token, "process_id": os.getpid(), "failure": self.failure,
@@ -828,10 +983,11 @@ class Fixture:
                 self.fault = FaultInjector(self.primitive.prepare.__code__, returns[1], self.observer,
                     BridgeError("OPERATION_FAILED", "Owned fault after second real C return before journal marker.",
                                 {"fixture_injected_after_native_return": True}))
-                sys.settrace(self.fault.trace)
             self.profile_callback = self.observer.profile
-            sys.setprofile(self.profile_callback)
-            threading.setprofile(self.network_profile)
+            call_line, returned_line = materialize_trace_lines(self.primitive)
+            self.hooks = OwnedMeshObserverHooks(self.observer.codes, self.profile_callback,
+                self.network_profile, self.ack_code, call_line, returned_line, self.fault)
+            self.hooks.install()
             probe = socket.socket()
             probe.bind(("127.0.0.1", 0))
             self.port = probe.getsockname()[1]
@@ -1190,9 +1346,8 @@ class Fixture:
             assert not self.delivery_expired
             assert self.bpy.context.view_layer.objects.active.type == "MESH"
             assert not self.prefs.allow_execute_python and not self.prefs.allow_external_files and not self.prefs.allow_save_project
-            sys.setprofile(None)
-            sys.settrace(None)
-            threading.setprofile(None)
+            self.hooks.check()
+            self.hooks.restore()
             from scripts.native_resources import linux_available_memory, linux_process_memory
             proof = {"schema": SCHEMA, "completed": True, "phase": self.phase,
                 "process_instance": self.token, "process_id": os.getpid(), "runtime_nonce": self.nonce,
