@@ -6,7 +6,9 @@ the unchanged private display helper. No public or MCP registration is added.
 from __future__ import annotations
 
 import argparse
+import ast
 import contextlib
+import dis
 import hashlib
 import json
 import math
@@ -23,6 +25,7 @@ import time
 import traceback
 from array import array
 from pathlib import Path
+from types import CellType, CodeType, FrameType, FunctionType, MappingProxyType, ModuleType
 
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA = "MESH_STORAGE_OWNED_JOB_NATIVE_V1"
@@ -46,11 +49,172 @@ SELECTED = (".uv_select_face", "UVSingle")
 SOURCES = ("scripts/blender_mesh_storage_job_smoke.py", "scripts/run_blender_checks.py",
            "scripts/blender_artist_sidebar_smoke.py",
            "scripts/native_resources.py")
+_SEAL_FRAME_LOCALS = FrameType.__dict__["f_locals"]
+_SEAL_TYPE_DICT = type.__dict__["__dict__"]
+
+
+def _seal_locals_kind():
+    # Optimized Python3.13 frames expose a native, non-exported locals proxy.
+    return type(_SEAL_FRAME_LOCALS.__get__(sys._getframe(), FrameType))
+
+
+_SEAL_LOCALS_KIND = _seal_locals_kind()
+_SEAL_LOCALS_ITEMS = _SEAL_TYPE_DICT.__get__(_SEAL_LOCALS_KIND)["items"]
+
+
+def _seal_lookup(namespace, key):
+    # Literal dict lookup can dispatch a colliding foreign key's equality.
+    if type(namespace) is dict and len(namespace) <= 4096:
+        supplied = dict.items(namespace)
+    elif type(namespace) is _SEAL_LOCALS_KIND and len(namespace) <= 4096:
+        supplied = _SEAL_LOCALS_ITEMS(namespace)
+    else:
+        return None
+    for label, value in supplied:
+        if type(label) is str and label == key:
+            return value
+    return None
 
 
 def canonical(value):
     return json.dumps(value, sort_keys=True, ensure_ascii=True, allow_nan=False,
                       separators=(",", ":")).encode("ascii")
+
+
+def seal_diagnostic_config(module):
+    """Bind the actual original verifier and its raise sites before observation."""
+    assert type(module) is ModuleType
+    namespace = ModuleType.__getattribute__(module, "__dict__")
+    owner = namespace["SourceSeal"]
+    assert type(owner) is type
+    function = type.__dict__["__dict__"].__get__(owner)["verify"]
+    assert type(function) is FunctionType and type(function.__code__) is CodeType
+    path = Path(namespace["__file__"]).resolve(strict=True)
+    assert Path(function.__code__.co_filename).resolve(strict=True) == path
+    tree = ast.parse(path.read_bytes())
+    classes = [node for node in tree.body if type(node) is ast.ClassDef and node.name == "SourceSeal"]
+    assert len(classes) == 1
+    verifiers = [node for node in classes[0].body if type(node) is ast.FunctionDef and node.name == "verify"]
+    assert len(verifiers) == 1
+    sections = {}
+    for node in verifiers[0].body:
+        if type(node) is not ast.For:
+            continue
+        names = [value.id for value in node.target.elts]
+        section = {("module", "saved"): "module", ("owner", "mro", "saved"): "class",
+                   ("fn", "code", "namespace", "defaults", "keywords", "items", "closure"): "function"}.get(tuple(names))
+        if names == ["table", "saved"]:
+            section = "builtins" if type(node.iter) is ast.Name else "watch"
+        assert section is not None
+        sections.update({child.lineno: section for child in ast.walk(node) if type(child) is ast.Raise})
+    offsets = frozenset(row.offset for row in dis.get_instructions(function) if row.opname == "RAISE_VARARGS")
+    assert sections and offsets
+    return function.__code__, sections, offsets, owner
+
+
+def seal_failure_record(frame, config):
+    """Actual owned verifier facts; no RNA/provider, repr or foreign comparison.
+
+    This observes its compiler-owned locals under the fixture's original hook.
+    It does not promise passivity for a frame rewritten by another trace hook.
+    """
+    code, sections, offsets, seal_kind = config
+    if (type(frame) is not FrameType or type(code) is not CodeType or frame.f_code is not code
+            or frame.f_lasti not in offsets or frame.f_lineno not in sections):
+        return None
+    local = _SEAL_FRAME_LOCALS.__get__(frame, FrameType)
+    def lookup(name):
+        return _seal_lookup(local, name)
+    section = sections[frame.f_lineno]
+    result = {"schema": "STORAGE_SOURCE_SEAL_FAILURE_V1", "section": section,
+              "line": frame.f_lineno, "offset": frame.f_lasti, "code_id": id(code)}
+
+    def identity(value):
+        return {"object_id": id(value), "type_id": id(type(value))}
+
+    def token(value):
+        kind = type(value)
+        if kind is str and len(value) <= 256:
+            return ("str", value)
+        if kind is bytes and len(value) <= 64:
+            return ("bytes_hex", value.hex())
+        if kind is tuple and len(value) <= 4 and all(type(part) is str and len(part) <= 64 for part in value):
+            return ("tuple_of_str", value)
+        return None
+
+    def entries(value, *, native_class_fields=False):
+        kind = type(value)
+        assert (kind is dict or kind is tuple or (native_class_fields and kind is MappingProxyType)) and len(value) <= 4096
+        supplied = dict.items(value) if kind is dict else MappingProxyType.items(value) if kind is MappingProxyType else value
+        rows, foreign = {}, 0
+        for pair in supplied:
+            assert type(pair) is tuple and len(pair) == 2
+            name = token(pair[0])
+            if name is None:
+                foreign += 1
+            else:
+                rows[name] = identity(pair[1])
+        return rows, foreign
+
+    def row_index(rows, owner, width):
+        assert type(rows) is tuple and len(rows) <= 4096
+        for index, row in enumerate(rows):
+            assert type(row) is tuple and len(row) == width
+            if row[0] is owner:
+                return index
+        return None
+
+    if section == "function":
+        function = lookup("fn")
+        result["owner"] = identity(function)
+        if type(function) is FunctionType:
+            result["function_name"] = function.__name__[:256] if type(function.__name__) is str else None
+            fields = (("code", lookup("code"), function.__code__), ("globals", lookup("namespace"), function.__globals__),
+                      ("defaults", lookup("defaults"), function.__defaults__),
+                      ("kwdefaults", lookup("keywords"), function.__kwdefaults__))
+            result["function_fields"] = [{"field": name, "held": identity(old), "current": identity(now)}
+                                         for name, old, now in fields if old is not now]
+            index, cell, old_value = lookup("index"), lookup("cell"), lookup("value")
+            if type(index) is int and 0 <= index <= 64 and type(cell) is CellType:
+                result["closure_index"] = index
+                result["held_closure_value"] = identity(old_value)
+                try:
+                    result["current_closure_value"] = identity(CellType.__dict__["cell_contents"].__get__(cell))
+                except ValueError:
+                    result["current_closure_cell_empty"] = True
+        current, saved = lookup("keywords"), lookup("items")
+        owner_index = row_index(lookup("functions"), function, 7)
+    else:
+        owner = lookup("module") if section == "module" else lookup("owner") if section == "class" else lookup("table")
+        result["owner"] = identity(owner)
+        current = ModuleType.__getattribute__(owner, "__dict__") if section == "module" and type(owner) is ModuleType else _SEAL_TYPE_DICT.__get__(owner) if section == "class" and type(owner) is type else owner if type(owner) is dict else None
+        saved = lookup("saved")
+        if section == "watch":
+            seal = lookup("self")
+            assert type(seal) is seal_kind
+            saved_rows = tuple.__getitem__(seal, 5)
+        else:
+            saved_rows = lookup("rows") if section == "module" else lookup("classes") if section == "class" else lookup("tables")
+        owner_index = row_index(saved_rows, owner, 3 if section == "class" else 2)
+        if section == "class":
+            result["held_mro"] = identity(lookup("mro"))
+            if type(owner) is type:
+                result["current_mro"] = identity(type.__dict__["__mro__"].__get__(owner))
+    result["tuple_index"] = owner_index
+    if current is not None and saved is not None:
+        old, old_foreign = entries(saved)
+        now, now_foreign = entries(current, native_class_fields=section == "class")
+        changes = [{"field": name, "held": old.get(name), "current": now.get(name)}
+                   for name in sorted(old.keys() | now.keys()) if old.get(name) != now.get(name)]
+        result.update(held_count=len(saved), current_count=len(current), held_foreign_keys=old_foreign,
+                      current_foreign_keys=now_foreign, changed_fields=changes[:16],
+                      changed_field_count=len(changes), changed_fields_truncated=len(changes) > 16)
+        labels = {pair[0]: pair[1] for pair in saved if type(pair) is tuple and len(pair) == 2
+                  and type(pair[0]) is str and pair[0] in {"__name__", "__qualname__", "__module__"}
+                  and type(pair[1]) is str and len(pair[1]) <= 256}
+        if labels:
+            result["held_owner_labels"] = labels
+    return result
 
 
 def source_fingerprints():
@@ -403,6 +567,10 @@ class Observer:
         self.current_attribute, self.stopped, self.first_prepare = None, False, threading.Event()
         self.materialize_stack, self.native_started = [], []
         self.c_intervals = []
+        self.seal_diagnostic = seal_diagnostic_config(domain.source)
+        self.codes["source_seal"] = self.seal_diagnostic[0]
+        self.seal_failure = None
+        self.seal_diagnostic_error = {"schema": "STORAGE_SOURCE_SEAL_FAILURE_V1", "diagnostic_failed": True}
 
     def emit(self, kind, *, boundary, attribute=None):
         assert len(self.events) < 4096
@@ -434,6 +602,11 @@ class Observer:
 
     def profile(self, frame, event, argument):
         code = frame.f_code
+        if code is self.codes.get("source_seal") and event == "return" and self.seal_failure is None:
+            try:
+                self.seal_failure = seal_failure_record(frame, self.seal_diagnostic)
+            except Exception:
+                self.seal_failure = self.seal_diagnostic_error
         if event in {"c_call", "c_return", "c_exception"}:
             if code is not self.codes["prepare"] or getattr(argument, "__name__", None) != "foreach_get":
                 return
@@ -553,6 +726,7 @@ class Fixture:
             "process_instance": self.token, "process_id": os.getpid(), "failure": self.failure,
             "cases": self.cases, "targets": self.targets,
             "native_trace": None if self.observer is None else self.observer.summary(),
+            "source_seal_failure": None if self.observer is None else self.observer.seal_failure,
             "source_fingerprints": self.sources, "source_unchanged": source_fingerprints() == self.sources}
         domain_new(self.options.bridge_report.with_suffix(".failure.json"), canonical(raw))
         print(self.failure, file=sys.stderr, flush=True)

@@ -4010,3 +4010,146 @@ def test_mesh_storage_domain_durable_create_reopens_full_bytes_and_refuses_overw
         script.domain_file(path, expected={**binding, "sha256": "0" * 64})
     with pytest.raises(AssertionError):
         script.domain_file(path, maximum=len(payload) - 1)
+
+
+@pytest.mark.parametrize("fault,section", [(None, None), ("module", "module"), ("class", "class"),
+    ("function", "function"), ("watch", "watch"), ("foreign_key", "module"),
+    ("foreign_table", "builtins")])
+def test_mesh_storage_seal_diagnostic_observes_original_failure_without_foreign_dispatch(addon_package, monkeypatch, fault, section):
+    script = importlib.import_module("scripts.blender_mesh_storage_job_smoke")
+    source = importlib.import_module(addon_package + ".mesh_storage_source")
+    calls = []
+
+    class ForeignMeta(type):
+        def __eq__(self, other):
+            calls.append("metaclass equality")
+            raise AssertionError("Foreign metaclass compared")
+
+    class Foreign(metaclass=ForeignMeta):
+        def __hash__(self):
+            calls.append("foreign hash")
+            return hash("module")
+
+        def __eq__(self, other):
+            calls.append("foreign equality")
+            raise AssertionError("Foreign key compared")
+
+        def __repr__(self):
+            calls.append("foreign repr")
+            raise AssertionError("Foreign value formatted")
+
+        def __iter__(self):
+            calls.append("foreign iteration")
+            raise AssertionError("Foreign value iterated")
+
+        def __getitem__(self, key):
+            calls.append("foreign indexing")
+            raise AssertionError("Foreign value indexed")
+
+        def __getattr__(self, key):
+            calls.append("foreign getattr")
+            raise AssertionError("Foreign attribute read")
+
+    config = script.seal_diagnostic_config(source)
+    verifier = source.SourceSeal.__dict__["verify"]
+    original = (verifier.__code__, verifier.__globals__, verifier.__defaults__, verifier.__kwdefaults__, verifier.__closure__)
+    seal = source.SourceSeal.capture()
+    foreign = Foreign()
+    if fault == "module":
+        monkeypatch.setattr(source, "_diagnostic_model_extra", foreign, raising=False)
+    elif fault == "class":
+        monkeypatch.setattr(source.SourceSeal, "_diagnostic_model_extra", foreign, raising=False)
+    elif fault == "function":
+        monkeypatch.setattr(source._callback_fact, "__defaults__", (foreign,))
+    elif fault == "watch":
+        monkeypatch.setitem(source.graph.BUILDS, b"d13f752e3b9c", (0, 0, 0))
+    elif fault == "foreign_key":
+        monkeypatch.setitem(source.__dict__, foreign, object())
+    elif fault == "foreign_table":
+        slots = list(seal)
+        slots[3] = ((foreign, ()),)
+        seal = tuple.__new__(source.SourceSeal, slots)
+    observer = object.__new__(script.Observer)
+    def unused():
+        pass
+    observer.codes = dict.fromkeys(("rpc", "turn", "prepare", "field", "catalog", "provider", "cancel", "finish"), unused.__code__)
+    observer.codes["source_seal"] = config[0]
+    observer.seal_diagnostic, observer.seal_failure = config, None
+    observer.seal_diagnostic_error = {"diagnostic_failed": True}
+    entered = []
+
+    def profile(frame, event, argument):
+        if frame.f_code is config[0]:
+            entered.append(event)
+            observer.profile(frame, event, argument)
+
+    previous = sys.getprofile()
+    other_hooks = (sys.gettrace(), threading.getprofile(), threading.gettrace())
+    calls.clear()
+    try:
+        sys.setprofile(profile)
+        if fault is None:
+            verifier(seal)
+        else:
+            with pytest.raises(source.contract.BridgeError) as failure:
+                verifier(seal)
+            assert failure.value.context["reason"] == "STORAGE_SOURCE_CHANGED"
+    finally:
+        sys.setprofile(previous)
+    assert calls == []
+    assert sys.getprofile() is previous
+    assert all(now is held for now, held in zip((sys.gettrace(), threading.getprofile(), threading.gettrace()), other_hooks, strict=True))
+    assert all(now is held for now, held in zip((verifier.__code__, verifier.__globals__, verifier.__defaults__,
+               verifier.__kwdefaults__, verifier.__closure__), original, strict=True))
+    assert entered.count("call") == entered.count("return") == 1
+    record = observer.seal_failure
+    if fault is None:
+        assert record is None
+    else:
+        assert record["schema"] == "STORAGE_SOURCE_SEAL_FAILURE_V1" and record["section"] == section
+        assert record["code_id"] == id(verifier.__code__) and type(record["tuple_index"]) is int
+        assert not record.get("diagnostic_failed")
+        if fault in {"module", "class"}:
+            assert any(row["field"] == ("str", "_diagnostic_model_extra") for row in record["changed_fields"])
+        elif fault == "function":
+            assert record["function_name"] == "_callback_fact"
+            assert record["function_fields"][0]["field"] == "defaults"
+        elif fault == "foreign_key":
+            assert record["current_foreign_keys"] == 1
+        assert len(script.canonical(record)) <= 65536
+
+
+def test_mesh_storage_seal_diagnostic_lookup_skips_foreign_collision_keys_and_mappings():
+    script = importlib.import_module("scripts.blender_mesh_storage_job_smoke")
+    calls = []
+
+    class Foreign:
+        def __hash__(self):
+            return hash("module")
+        def __eq__(self, other):
+            calls.append("equality")
+            raise AssertionError("Foreign collision key compared")
+        def __getitem__(self, key):
+            calls.append("indexing")
+            raise AssertionError("Foreign mapping indexed")
+        def __iter__(self):
+            calls.append("iteration")
+            raise AssertionError("Foreign mapping iterated")
+        def __len__(self):
+            calls.append("length")
+            raise AssertionError("Foreign mapping measured")
+
+    foreign = Foreign()
+    namespace = {foreign: object(), "literal": "owned"}
+    assert script._seal_lookup(namespace, "module") is None
+    assert script._seal_lookup(namespace, "literal") == "owned"
+    assert script._seal_lookup(script.MappingProxyType(foreign), "module") is None
+    assert calls == []
+
+
+def test_mesh_storage_seal_diagnostic_ignores_unrelated_code_without_local_reads():
+    script = importlib.import_module("scripts.blender_mesh_storage_job_smoke")
+    class ForeignFrame:
+        def __getattr__(self, name):
+            pytest.fail("Unqualified frame was read")
+    assert script.seal_failure_record(ForeignFrame(), (None, {}, frozenset(), None)) is None
