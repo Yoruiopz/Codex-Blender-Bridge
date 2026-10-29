@@ -1502,6 +1502,170 @@ def protected_material_row(material, *, image=None):
             "tree": None if material.node_tree is None else protected_tree_row(material.node_tree, image=image)}
 
 
+def selective_trace_callbacks(observe):
+    """Observe original Python boundaries without C/line/opcode dispatch."""
+    returns = (("submit", "server.py"), ("_capture_mesh_return", "glb_stage_driver.py"),
+               ("attach_job", "glb_stage_runtime.py"), ("_invoke_owned", "executor.py"),
+               ("_access", "glb_stage_profile.py"), ("advance", "glb_stage_jobs.py"))
+    def returned(frame, event, value):
+        if event == "return":
+            observe(frame, event, value)
+        # Keep the return observer across handled exceptions and finally blocks.
+        return returned
+    def called(frame, event, value):
+        if event != "call":
+            return None
+        frame.f_trace_lines = False
+        frame.f_trace_opcodes = False
+        observe(frame, event, value)
+        name = frame.f_code.co_name
+        if name in {"submit", "_capture_mesh_return", "attach_job", "_invoke_owned", "_access", "advance"}:
+            path = frame.f_code.co_filename.replace("\\", "/")
+            if any(name == expected and path.endswith("/blender_codex_bridge/" + suffix)
+                   for expected, suffix in returns):
+                return returned
+        return None
+    return called, returned
+
+
+class OwnedObserverHooks:
+    """Fail closed before replacing hooks; restore held setters on every path."""
+    __slots__ = ("active", "baseline", "called", "getters", "returned", "setters")
+    def __init__(self, observe):
+        self.getters = (sys.getprofile, sys.gettrace, threading.getprofile, threading.gettrace)
+        self.setters = (sys.setprofile, sys.settrace, threading.setprofile, threading.settrace)
+        self.baseline = tuple(getter() for getter in self.getters)
+        assert all(value is None for value in self.baseline), "Owned fixture requires unused observer hooks"
+        self.called, self.returned = selective_trace_callbacks(observe)
+        self.active = False
+    def install_threads(self):
+        assert all(getter() is before for getter, before in zip(self.getters, self.baseline, strict=True)), "Observer hooks changed before installation"
+        self.active = True
+        try:
+            self.setters[3](self.called)
+        except BaseException:
+            self.restore()
+            raise
+    def install_main(self):
+        expected = (*self.baseline[:3], self.called)
+        assert self.active and all(getter() is before for getter, before in zip(self.getters, expected, strict=True)), "Observer hooks changed during installation"
+        try:
+            self.setters[1](self.called)
+        except BaseException:
+            self.restore()
+            raise
+    def restore(self):
+        if not self.active:
+            return
+        # Attempt every restoration even if an earlier setter itself fails.
+        try:
+            self.setters[0](self.baseline[0])
+        finally:
+            try:
+                self.setters[1](self.baseline[1])
+            finally:
+                try:
+                    self.setters[2](self.baseline[2])
+                finally:
+                    self.setters[3](self.baseline[3])
+        self.active = False
+
+
+def _failure_cache_get(value, key, maximum=8192):
+    if (type(value) is not dict or len(value) > maximum
+            or any(type(name) is not str or len(name) > 128 for name in value)):
+        raise ValueError("FAILED_FIXTURE_CACHE_SHAPE")
+    return value.get(key)
+
+
+def _failure_literal(value, budget, depth=0):
+    budget[0] -= 1
+    if budget[0] < 0:
+        raise OverflowError("FAILED_FIXTURE_LITERAL_BUDGET")
+    if depth > 8:
+        raise ValueError("FAILED_FIXTURE_LITERAL_SHAPE")
+    kind = type(value)
+    if value is None or kind is bool:
+        return value
+    if kind is str and len(value) <= 1024:
+        size = len(value.encode("utf-8"))
+        if size > 1024:
+            raise ValueError("FAILED_FIXTURE_LITERAL_SHAPE")
+        budget[1] -= size
+        if budget[1] < 0:
+            raise OverflowError("FAILED_FIXTURE_LITERAL_BUDGET")
+        return value
+    if kind is int and -(2**63) <= value < 2**64:
+        return value
+    if kind is float and math.isfinite(value):
+        return value
+    if kind is list and len(value) <= 128:
+        return [_failure_literal(item, budget, depth + 1) for item in value]
+    if kind is dict and len(value) <= 32:
+        if any(type(key) is not str or len(key) > 128 for key in value):
+            raise ValueError("FAILED_FIXTURE_LITERAL_KEYS")
+        budget[1] -= sum(len(key.encode("utf-8")) for key in value)
+        if budget[1] < 0:
+            raise OverflowError("FAILED_FIXTURE_LITERAL_BUDGET")
+        return {key: _failure_literal(item, budget, depth + 1) for key, item in value.items()}
+    raise ValueError("FAILED_FIXTURE_LITERAL_SHAPE")
+
+
+def failure_cached_receipt(data, accesses, effects, markers, histories):
+    """One failed request, detached cached literals only; never qualify success."""
+    if _failure_cache_get(data, "completed", 128) is not False:
+        raise ValueError("FAILED_FIXTURE_ONLY")
+    tcp = _failure_cache_get(data, "tcp", 128)
+    if type(tcp) is not list or not tcp:
+        return {"scope": "FAILED_FIXTURE_CACHED_LAST_REQUEST", "request_present": False,
+                "complete_workflow_evidence": False}
+    request = _failure_cache_get(tcp[-1], "request", 32)
+    identifier = _failure_cache_get(request, "id", 16)
+    method = _failure_cache_get(request, "method", 16)
+    if type(identifier) is not str or not 0 < len(identifier) <= 128 or type(method) is not str or not 0 < len(method) <= 128:
+        raise ValueError("FAILED_FIXTURE_REQUEST_SHAPE")
+    raw_counts = _failure_cache_get(accesses, identifier)
+    present = raw_counts is not None
+    raw_counts = {} if raw_counts is None else raw_counts
+    if type(raw_counts) is not dict or len(raw_counts) > 8192:
+        raise ValueError("FAILED_FIXTURE_COUNTER_SHAPE")
+    if any(type(key) is not str or not 0 < len(key) <= 128 for key in raw_counts):
+        raise ValueError("FAILED_FIXTURE_COUNTER_KEYS")
+    counts = {}
+    for index, (label, cell) in enumerate(raw_counts.items()):
+        if index == 1024:
+            break
+        entered = _failure_cache_get(cell, "entered", 2)
+        returned = _failure_cache_get(cell, "returned", 2)
+        if type(entered) is not int or type(returned) is not int or not 0 <= returned <= entered < 2**63:
+            raise ValueError("FAILED_FIXTURE_COUNTER_VALUES")
+        counts[label] = {"entered": entered, "returned": returned}
+    raw_effects = _failure_cache_get(effects, identifier)
+    raw_effects = [] if raw_effects is None else raw_effects
+    if type(raw_effects) is not list:
+        raise ValueError("FAILED_FIXTURE_EFFECT_SHAPE")
+    projected, budget = [], [8192, 128 * 1024]
+    for row in raw_effects[:128]:
+        try:
+            projected.append(_failure_literal(row, budget))
+        except OverflowError:
+            break  # Explicit bounded prefix, never a complete observation claim.
+    marker_count = _failure_cache_get(markers, identifier)
+    marker_count = 0 if marker_count is None else marker_count
+    if type(marker_count) is not int or not 0 <= marker_count < 2**63:
+        raise ValueError("FAILED_FIXTURE_MARKER_SHAPE")
+    history = _failure_cache_get(histories, identifier)
+    history_id = _failure_cache_get(history, "request_id", 32) if type(history) is dict else None
+    terminal = type(history_id) is str and history_id == identifier
+    return {"scope": "FAILED_FIXTURE_CACHED_LAST_REQUEST", "request_present": True,
+            "request_id": identifier, "method": method, "invocation_return_observed": terminal,
+            "native_access_counts_present": present, "native_access_counts": counts,
+            "native_access_counts_total": len(raw_counts), "native_access_counts_truncated": len(raw_counts) > 1024,
+            "protected_read_effect_attempts": projected, "protected_read_effect_attempts_total": len(raw_effects),
+            "protected_read_effect_attempts_truncated": len(projected) < len(raw_effects),
+            "checkpoint_marker_entries": marker_count, "complete_workflow_evidence": False}
+
+
 class RuntimeFixture:
     """Owned main-thread setup, raw fault actions and independent observations."""
     def __init__(self, root, folder, bpy, attestation):
@@ -1512,8 +1676,7 @@ class RuntimeFixture:
         self.receipts = {}
         self.boundaries = {}
         self.request_lifetimes = {}
-        self.before_thread_profile = threading.getprofile()
-        assert self.before_thread_profile is None
+        self.observer_hooks = OwnedObserverHooks(self.profile)
         self.path = folder / FILENAME
         assert not self.path.exists()
         binary = Path(bpy.app.binary_path).resolve(strict=True)
@@ -1528,8 +1691,6 @@ class RuntimeFixture:
             "protected_observer_logical_profile_ready": False, "hidden_layout_or_cache_passivity_claimed": False,
             "protected_observer_gate": "HELD_UNTIL_SOURCE_QUALIFIED_HEADER_AND_ARRAY_PREPARATION",
             "tcp": [], "cases": [], "observations": [], "raw_actions": []}
-        self.before_profile = sys.getprofile()
-        assert self.before_profile is None
         self.owned_allocations, self.watch, self.nested_probes = [], None, []
         self.name_sequence = 0
         self.group_index = 0
@@ -1690,7 +1851,7 @@ class RuntimeFixture:
         probe.bind(("127.0.0.1", 0))
         self.port = probe.getsockname()[1]
         probe.close()
-        threading.setprofile(self.profile)
+        self.observer_hooks.install_threads()
         self.runtime.start_server("127.0.0.1", self.port, request_timeout=90)
         self.data["runtime"] = {"host": "127.0.0.1", "port": self.port, "registered": self.runtime._registered,
             "runtime_identity": id(self.runtime), "registry_identity": id(self.runtime.registry),
@@ -1702,7 +1863,7 @@ class RuntimeFixture:
             "issued_at": time.monotonic(), "raw_owned_fixture_lifetime_setup": True, "prior": None})
         from blender_codex_bridge.glb_stage_driver import NativeOperations
         self.entry_code = NativeOperations._entry.__code__
-        sys.setprofile(self.profile)
+        self.observer_hooks.install_main()
         self.flush()
         self.bpy.app.timers.register(self.supervise, first_interval=.001)
         threading.Thread(target=self.worker, name="GLBStageRuntimeTCPFixture", daemon=True).start()
@@ -2006,9 +2167,15 @@ class RuntimeFixture:
             assert row["storage"] == "SINGLE" and row["data_type"] in allowed
             access = _Access(self.raw_observer)
             attribute = access.attribute(mesh, row)
-            # This is the explicitly authorized mutating getter. No geometry,
-            # values, groups, legacy UV data or stale leaf is touched first.
-            access.get(attribute, "data")
+            # Explicit owned-fixture materialization: obtaining the collection
+            # alone does not enter its raw array. The qualified reader checks
+            # collection/leaf/count/foreach_get bindings before copying all
+            # components, as in the separately qualified preparation primitive.
+            # No geometry, groups or legacy UV data is touched first.
+            values = access.values(attribute, row)
+            assert len(values) == row["count"]
+            if row["data_type"] == "BOOLEAN":
+                assert all(type(value) is bool for value in values)
             del attribute, access
             after = self.raw_observer.capture_headers(mesh)
             target = next(item for item in after["attributes"] if item["name"] == row["name"])
@@ -2669,10 +2836,15 @@ class RuntimeFixture:
 
     def finish(self, status, failure=None):
         from scripts.blender_artist_sidebar_smoke import owned_process_exit
-        sys.setprofile(self.before_profile)
-        threading.setprofile(self.before_thread_profile)
+        self.observer_hooks.restore()
         if status:
             self.data.update(completed=False, failure=failure)
+            try:
+                self.data["failure_cached_receipt"] = failure_cached_receipt(self.data, self.request_access,
+                    self.request_read_effects, self.marker_entries, self.histories)
+            except (ValueError, TypeError):
+                self.data["failure_cached_receipt"] = {"scope": "FAILED_FIXTURE_CACHED_LAST_REQUEST",
+                    "cache_projection_refused": True, "complete_workflow_evidence": False}
             try:
                 self.flush()
             except BaseException:

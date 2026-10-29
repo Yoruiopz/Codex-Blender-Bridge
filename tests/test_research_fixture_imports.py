@@ -3184,3 +3184,473 @@ def test_glb_runtime_profile_name_filter_covers_every_named_observation_branch(f
                 assert all(isinstance(value, ast.Constant) and type(value.value) is str for value in node.comparators[0].elts)
                 observed.update(value.value for value in node.comparators[0].elts)
     assert observed == allowed and len(allowed) == 13
+
+
+def glb_fake_observer_hooks(script, monkeypatch, *, initial=None, fail=None):
+    state, calls = list(initial or (None, None, None, None)), []
+    pending_failure = [fail]
+    def getter(index):
+        return lambda: state[index]
+    def setter(index):
+        def set_(value):
+            calls.append((index, value))
+            state[index] = value
+            if pending_failure[0] == index and value is not None:
+                pending_failure[0] = None
+                raise RuntimeError("partial hook installation")
+        return set_
+    monkeypatch.setattr(script, "sys", NS(getprofile=getter(0), gettrace=getter(1), setprofile=setter(0), settrace=setter(1)))
+    monkeypatch.setattr(script, "threading", NS(getprofile=getter(2), gettrace=getter(3), setprofile=setter(2), settrace=setter(3)))
+    return state, calls
+
+
+@pytest.mark.parametrize("index", range(4))
+def test_glb_owned_observer_refuses_existing_hooks_without_replacing_them(fixture_imports, monkeypatch, index):
+    script = importlib.import_module("scripts.blender_glb_stage_runtime_smoke")
+    initial = [None] * 4
+    initial[index] = object()
+    state, calls = glb_fake_observer_hooks(script, monkeypatch, initial=initial)
+    with pytest.raises(AssertionError, match="unused observer hooks"):
+        script.OwnedObserverHooks(lambda *_args: pytest.fail("Observer invoked during bootstrap"))
+    assert all(value is expected for value, expected in zip(state, initial, strict=True)) and calls == []
+
+
+@pytest.mark.parametrize("failure", [1, 3])
+def test_glb_owned_observer_restores_all_hooks_after_partial_installation(fixture_imports, monkeypatch, failure):
+    script = importlib.import_module("scripts.blender_glb_stage_runtime_smoke")
+    state, calls = glb_fake_observer_hooks(script, monkeypatch, fail=failure)
+    hooks = script.OwnedObserverHooks(lambda *_args: None)
+    with pytest.raises(RuntimeError, match="partial hook installation"):
+        hooks.install_threads()
+        hooks.install_main()
+    assert state == [None] * 4 and hooks.active is False
+    assert [index for index, _value in calls[-4:]] == [0, 1, 2, 3]
+    before = len(calls)
+    hooks.restore()
+    assert len(calls) == before
+
+
+def test_glb_trace_adapter_has_six_return_pairs_and_no_line_or_opcode_events(fixture_imports):
+    script = importlib.import_module("scripts.blender_glb_stage_runtime_smoke")
+    tree = ast.parse(Path(script.__file__).read_text())
+    callback = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "selective_trace_callbacks")
+    returns = ast.literal_eval(callback.body[1].value)
+    assert returns == (("submit", "server.py"), ("_capture_mesh_return", "glb_stage_driver.py"),
+                       ("attach_job", "glb_stage_runtime.py"), ("_invoke_owned", "executor.py"),
+                       ("_access", "glb_stage_profile.py"), ("advance", "glb_stage_jobs.py"))
+    assignments = [node for node in ast.walk(callback) if isinstance(node, ast.Assign)
+                   and any(isinstance(target, ast.Attribute) and target.attr in {"f_trace_lines", "f_trace_opcodes"} for target in node.targets)]
+    assert len(assignments) == 2 and all(isinstance(node.value, ast.Constant) and node.value.value is False for node in assignments)
+
+
+def glb_failure_cache_model():
+    identifier = "last-request"
+    data = {"completed": False, "tcp": [{"request": {"id": "old", "method": "old"}},
+                                        {"request": {"id": identifier, "method": "asset.glb_stage_preview"}}]}
+    accesses = {identifier: {"get:x": {"entered": 3, "returned": 2}}}
+    effects = {identifier: [{"kind": "READ", "allowed_effects": ["ARRAY_COW"], "logical_values_written": False}]}
+    markers = {identifier: 2}
+    histories = {identifier: {"request_id": identifier}}
+    return data, accesses, effects, markers, histories
+
+
+def test_glb_failure_diagnostic_uses_only_detached_typed_cache_literals(fixture_imports):
+    script = importlib.import_module("scripts.blender_glb_stage_runtime_smoke")
+    data, accesses, effects, markers, histories = glb_failure_cache_model()
+    row = script.failure_cached_receipt(data, accesses, effects, markers, histories)
+    assert row["request_id"] == "last-request" and row["invocation_return_observed"] is True
+    assert row["native_access_counts"] == {"get:x": {"entered": 3, "returned": 2}}
+    assert row["protected_read_effect_attempts"] == effects["last-request"]
+    assert row["complete_workflow_evidence"] is False and row["checkpoint_marker_entries"] == 2
+    accesses["last-request"]["get:x"]["entered"] = 8
+    effects["last-request"][0]["allowed_effects"].append("changed")
+    assert row["native_access_counts"]["get:x"]["entered"] == 3
+    assert row["protected_read_effect_attempts"][0]["allowed_effects"] == ["ARRAY_COW"]
+    data["completed"] = True
+    with pytest.raises(ValueError, match="FAILED_FIXTURE_ONLY"):
+        script.failure_cached_receipt(data, accesses, effects, markers, histories)
+
+
+def test_glb_failure_diagnostic_has_explicit_bounded_prefix_and_total_counts(fixture_imports):
+    script = importlib.import_module("scripts.blender_glb_stage_runtime_smoke")
+    data, accesses, effects, markers, histories = glb_failure_cache_model()
+    accesses["last-request"] = {f"label{i}": {"entered": 1, "returned": 1} for i in range(1025)}
+    effects["last-request"] *= 129
+    row = script.failure_cached_receipt(data, accesses, effects, markers, histories)
+    assert len(row["native_access_counts"]) == 1024 and row["native_access_counts_total"] == 1025
+    assert row["native_access_counts_truncated"] is True
+    assert len(row["protected_read_effect_attempts"]) == 128 and row["protected_read_effect_attempts_total"] == 129
+    assert row["protected_read_effect_attempts_truncated"] is True and row["complete_workflow_evidence"] is False
+
+
+def test_glb_failure_diagnostic_never_invokes_foreign_copy_getters_or_equality(fixture_imports):
+    script = importlib.import_module("scripts.blender_glb_stage_runtime_smoke")
+    class Foreign:
+        def __deepcopy__(self, _memo):
+            pytest.fail("Foreign deepcopy invoked")
+        def __getattr__(self, _name):
+            pytest.fail("Foreign getter invoked")
+        def __eq__(self, _other):
+            pytest.fail("Foreign equality invoked")
+    for location in ("effect", "counter", "history"):
+        data, accesses, effects, markers, histories = glb_failure_cache_model()
+        if location == "effect":
+            effects["last-request"][0]["provider"] = Foreign()
+            with pytest.raises(ValueError):
+                script.failure_cached_receipt(data, accesses, effects, markers, histories)
+        elif location == "counter":
+            accesses["last-request"]["get:x"]["entered"] = Foreign()
+            with pytest.raises(ValueError):
+                script.failure_cached_receipt(data, accesses, effects, markers, histories)
+        else:
+            histories["last-request"]["request_id"] = Foreign()
+            row = script.failure_cached_receipt(data, accesses, effects, markers, histories)
+            assert row["invocation_return_observed"] is False
+
+
+@pytest.mark.parametrize("fault", [None, "roles", "count", "boolean_type"])
+def test_glb_owned_raw_preparation_consumes_complete_values_and_preserves_header_cas(fixture_imports, monkeypatch, fault):
+    import copy
+    script = importlib.import_module("scripts.blender_glb_stage_runtime_smoke")
+    fixture = object.__new__(script.RuntimeFixture)
+    state = {"identity": {"uid": 7}, "uv_roles": {"active_index": -1},
+             "attributes": [{"name": ".select_edge", "storage": "SINGLE", "data_type": "BOOLEAN", "supported": True, "count": 3}]}
+    before, calls = copy.deepcopy(state), []
+    fixture.group_index = 0
+    fixture.storage_meshes = lambda _target=None: (NS(session_uid=7),)
+    fixture.protected_headers = lambda _target=None: [copy.deepcopy(state)]
+    fixture.raw_observer = NS(capture_headers=lambda _mesh: copy.deepcopy(state))
+    fixture.mesh_observation = lambda _mesh: ({"logical_projection": {"values": [True] * 3}}, {"authored_sha256": "a" * 64})
+    error = {"context": {"reason": "PROTECTED_MESH_SINGLE_REQUIRES_SEPARATE_PREPARATION"}}
+    fixture.data = {"single_storage_refusals": [{"request_id": "refusal", "runtime_group": 0, "mesh_target": None,
+                                               "headers": [before], "error": error, "recorded_at": 1.}],
+                    "tcp": [{"request": {"id": "refusal", "method": "asset.glb_stage_preview"}, "runtime_group": 0,
+                             "delivered": True, "response": {"ok": False, "error": error}, "received_at": 0.}],
+                    "raw_storage_preparations": []}
+    class Access:
+        def __init__(self, observer):
+            assert observer is fixture.raw_observer
+        def attribute(self, _mesh, header):
+            assert header == before["attributes"][0]
+            calls.append("qualified_attribute")
+            return object()
+        def values(self, _attribute, header):
+            assert header["count"] == 3
+            calls.append("qualified_complete_foreach_values")
+            state["attributes"][0]["storage"] = "ARRAY"
+            if fault == "roles":
+                state["uv_roles"]["active_index"] = 0
+            return ([True] * 2 if fault == "count" else [1] * 3 if fault == "boolean_type" else [True] * 3)
+    module = ModuleType("blender_codex_bridge.glb_stage_protected_mesh")
+    module._Access = Access
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    if fault is None:
+        result = fixture.prepare_storage("refusal")
+        assert result["actions"][0]["before_header"]["storage"] == "SINGLE"
+        assert result["actions"][0]["after_header"]["storage"] == "ARRAY"
+        assert result["post_readback"][0]["logical_projection"] == {"values": [True] * 3}
+        assert result["native_qualified"] is False and result["logical_values_reset"] is False
+    else:
+        with pytest.raises(AssertionError):
+            fixture.prepare_storage("refusal")
+    assert calls == ["qualified_attribute", "qualified_complete_foreach_values"]
+
+
+def test_glb_selective_observer_matches_actual_installed_hooks_in_isolated_process(tmp_path):
+    # A child owns these hooks; parent pytest/coverage instrumentation stays active.
+    probe = r'''"""Actual installed-hook observer differential; no Blender/native authority."""
+from __future__ import annotations
+
+import copy
+import importlib.util
+import json
+import pathlib
+import sys
+import threading
+from types import ModuleType, SimpleNamespace as NS
+
+ROOT = pathlib.Path(sys.argv[1])
+SOURCE = ROOT / "scripts/blender_glb_stage_runtime_smoke.py"
+RETURN_PAIRS = {"submit": "server.py", "_capture_mesh_return": "glb_stage_driver.py",
+                "attach_job": "glb_stage_runtime.py", "_invoke_owned": "executor.py",
+                "_access": "glb_stage_profile.py", "advance": "glb_stage_jobs.py"}
+
+
+def code(path, source):
+    namespace = {}
+    exec(compile(source, "/owned/blender_codex_bridge/" + path, "exec"), namespace)
+    return namespace
+
+
+SERVER = code("server.py", "def submit(request):\n    return request.id\n")
+EXECUTOR = code("executor.py", """
+def _invoke_owned(request, work):
+    undo_boundary = True
+    handler_entered = True
+    history_record = None
+    try:
+        return work()
+    finally:
+        request.finally_completed = True
+""")
+PROFILE = code("glb_stage_profile.py", """
+def _access(self, label, work):
+    cell = self._runtime_gate.counts.setdefault(label, {"entered": 0, "returned": 0})
+    cell["entered"] += 1
+    result = work()
+    cell["returned"] += 1
+    return result
+""")
+DRIVER = code("glb_stage_driver.py", """
+def _capture_mesh_return(self, receipt):
+    return receipt.body
+def _entry(check):
+    row = {"returned": True}
+    check()
+    return row
+""")
+RUNTIME = code("glb_stage_runtime.py", "def attach_job(result):\n    return result\n")
+JOBS = code("glb_stage_jobs.py", "def check():\n    return None\ndef advance(self):\n    return self.phase\n")
+JOURNAL = code("glb_stage_protected_mesh.py", "def enter(cell):\n    return cell\n")
+CHECKPOINTS = code("checkpoints.py", """
+def capture_job_markers():
+    return None
+def claim_pending():
+    return None
+def begin_owned():
+    return None
+def _stamp():
+    return None
+""")
+PERMISSIONS = code("permissions.py", "def permission_snapshot():\n    return None\n")
+TOOLS = code("tools/glb_stage.py", "def future_wrapper_name():\n    return None\n")
+
+
+class Gate:
+    def __init__(self):
+        self.counts = {}
+        self.snapshots = 0
+    def snapshot(self):
+        self.snapshots += 1
+        return copy.deepcopy(self.counts)
+
+
+def load(name):
+    spec = importlib.util.spec_from_file_location(name, SOURCE)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.time = NS(monotonic=lambda: 100.0)
+    module.os = NS(urandom=lambda n: b"x" * n)
+    return module
+
+
+def run(mode):
+    module = load("_actual_hook_" + mode)
+    fixture = object.__new__(module.RuntimeFixture)
+    for name in ("request_lifetimes", "receipts", "start_acceptances", "request_access", "pending_request_gates",
+                 "request_read_effects", "marker_entries", "histories", "boundaries"):
+        setattr(fixture, name, {})
+    fixture.current_requests, fixture.watch, fixture.nested_probes = [], None, []
+    fixture.data = {"executor_history_frames": []}
+    fixture.group_index, fixture.entry_code = 0, DRIVER["_entry"].__code__
+    stop_calls, boundary_calls, nested_execution = [], [], []
+    fixture.observe_post_return = lambda frame: stop_calls.append(frame.f_code.co_name)
+    fixture.boundaries["stage"] = {"phase": "phase", "event": NS(set=lambda: boundary_calls.append("set"))}
+
+    def rejected_nested(request):
+        # Actual nested executor function runs inside the observer callback.
+        # Both hook modes must suppress observer reentry here.
+        nested_execution.append(request.method)
+        EXECUTOR["_invoke_owned"](request, lambda: None)
+        return NS(to_dict=lambda: {"ok": False, "error": {"context": {"reason": "REENTRANT_MUTATION_BLOCKED"}}})
+
+    fixture.runtime = NS(executor=NS(execute_request=rejected_nested), jobs=NS(active=None))
+    protocol = ModuleType("blender_codex_bridge.protocol")
+    protocol.Request = lambda **values: NS(**values)
+    previous_protocol = sys.modules.get(protocol.__name__)
+    sys.modules[protocol.__name__] = protocol
+    old_hooks = (sys.getprofile(), sys.gettrace(), threading.getprofile(), threading.gettrace())
+    assert old_hooks == (None, None, None, None)
+    global_trace, _local_trace = module.selective_trace_callbacks(fixture.profile)
+    gate = Gate()
+    binding = NS(_runtime_gate=gate)
+    native_returns = []
+    owned_hooks = None
+
+    def work():
+        for _ in range(3):
+            PROFILE["_access"](binding, "get:x", lambda: native_returns.append(True))
+        JOURNAL["enter"]({"kind": "VERTEX_GROUP_READ", "attempts_entered": 1})
+        CHECKPOINTS["capture_job_markers"]()
+        receipt = NS(stage_id="stage", operation="create", role="mesh", body={"value": 1}, body_sha256="a" * 64)
+        DRIVER["_capture_mesh_return"](NS(_entries=[{"index": 1}]), receipt)
+        DRIVER["_entry"](JOBS["check"])
+        JOBS["advance"](NS(stage_id="stage", phase="phase"))
+        RUNTIME["attach_job"]({"accepted": True, "job_completed": False, "request_id": "success", "stage_id": "stage", "job_id": "job"})
+        for kind, callback in (("provider", PERMISSIONS["permission_snapshot"]),
+                               ("checkpoint", CHECKPOINTS["claim_pending"]),
+                               ("checkpoint", CHECKPOINTS["begin_owned"]),
+                               ("checkpoint", CHECKPOINTS["_stamp"]),
+                               ("handler", TOOLS["future_wrapper_name"]),
+                               ("finalizer", TOOLS["future_wrapper_name"])):
+            fixture.watch = {"kind": kind, "entered": False, "params": {}, "outer_request_id": "success"}
+            callback()
+            assert fixture.watch["entered"]
+        fixture.watch = None
+        return {"accepted": True, "job_completed": False, "request_id": "success", "stage_id": "stage", "job_id": "job"}
+
+    requests = []
+    try:
+        if mode == "profile":
+            threading.setprofile(fixture.profile)
+            sys.setprofile(fixture.profile)
+        else:
+            owned_hooks = module.OwnedObserverHooks(fixture.profile)
+            owned_hooks.install_threads()
+            owned_hooks.install_main()
+        request = NS(id="success", method="asset.glb_stage_create_start", _lifecycle="plain-lifetime", finally_completed=False)
+        requests.append(request)
+        EXECUTOR["_invoke_owned"](request, work)
+        request = NS(id="exception", method="asset.glb_stage_preview", _lifecycle="error-lifetime", finally_completed=False)
+        requests.append(request)
+        def fail():
+            raise ValueError("partial native model")
+        try:
+            EXECUTOR["_invoke_owned"](request, lambda: PROFILE["_access"](binding, "partial", fail))
+        except ValueError:
+            pass
+        thread = threading.Thread(target=lambda: SERVER["submit"](NS(id="worker", _lifecycle="thread-lifetime")))
+        thread.start()
+        thread.join(5)
+        assert not thread.is_alive()
+        fixture.watch = {"kind": "handler", "entered": False, "params": {}, "outer_request_id": "success"}
+        thread = threading.Thread(target=TOOLS["future_wrapper_name"])
+        thread.start()
+        thread.join(5)
+        assert not thread.is_alive() and fixture.watch["entered"] is False
+        fixture.watch = None
+    finally:
+        if owned_hooks is not None:
+            owned_hooks.restore()
+        sys.setprofile(old_hooks[0])
+        sys.settrace(old_hooks[1])
+        threading.setprofile(old_hooks[2])
+        threading.settrace(old_hooks[3])
+        if previous_protocol is None:
+            sys.modules.pop(protocol.__name__, None)
+        else:
+            sys.modules[protocol.__name__] = previous_protocol
+    assert (sys.getprofile(), sys.gettrace(), threading.getprofile(), threading.gettrace()) == old_hooks
+    assert all(request.finally_completed for request in requests)
+    assert fixture.current_requests == [] and fixture.pending_request_gates == {}
+    assert set(fixture.histories) == {"success", "exception"}, "Observer callback reentered hooks"
+    return {"lifetimes": fixture.request_lifetimes, "receipts": fixture.receipts,
+            "acceptances": fixture.start_acceptances, "request_access": fixture.request_access,
+            "read_effects": fixture.request_read_effects, "marker_entries": fixture.marker_entries,
+            "histories": fixture.histories, "nested_probes": fixture.nested_probes,
+            "stop_calls": stop_calls, "boundary_calls": boundary_calls,
+            "nested_execution": nested_execution, "native_returns": native_returns,
+            "snapshot_calls": gate.snapshots, "hooks_restored": True}
+
+
+def bootstrap_and_callback_failure():
+    def baseline():
+        values = (sys.getprofile(), sys.gettrace(), threading.getprofile(), threading.gettrace())
+        if any(value is not None for value in values):
+            raise RuntimeError("Owned observer requires unused hooks")
+        return values
+
+    setters = (sys.setprofile, sys.settrace, threading.setprofile, threading.settrace)
+    rejected = []
+    def sentinel(_frame, _event, _value):
+        return None
+    for index, setter in enumerate(setters):
+        saved = baseline()
+        try:
+            setter(sentinel)
+            try:
+                baseline()
+            except RuntimeError:
+                rejected.append(index)
+            else:
+                raise AssertionError("An existing hook was replaced")
+            observed = (sys.getprofile(), sys.gettrace(), threading.getprofile(), threading.gettrace())
+            assert observed[index] is sentinel
+        finally:
+            for restore, prior in zip(setters, saved, strict=True):
+                restore(prior)
+
+    calls = []
+    class Observer:
+        def profile(self, frame, event, _value):
+            if frame.f_code.co_filename.endswith("/server.py"):
+                calls.append((frame.f_code.co_name, event))
+    observer = Observer()
+    trace, _ = load("_held_trace_observer").selective_trace_callbacks(observer.profile)
+    Observer.profile = lambda *_args: (_ for _ in ()).throw(AssertionError("Fresh observer dispatch"))
+    saved = baseline()
+    try:
+        sys.settrace(trace)
+        SERVER["submit"](NS(id="held-observer"))
+    finally:
+        sys.settrace(saved[1])
+    assert calls == [("submit", "call"), ("submit", "return")]
+
+    failures = {}
+    for mode in ("profile", "trace"):
+        module = load("_hook_failure_" + mode)
+        f = object.__new__(module.RuntimeFixture)
+        f.current_requests, f.pending_request_gates, f.request_access = [], {}, {}
+        f.start_acceptances, f.histories, f.watch = {}, {}, None
+        f.data = {"executor_history_frames": []}
+        def snapshot():
+            raise MemoryError("Cached snapshot allocation model")
+        gate = NS(counts={}, snapshot=snapshot)
+        request = NS(id="failed", method="asset.glb_stage_preview", finally_completed=False)
+        trace, _ = module.selective_trace_callbacks(f.profile)
+        saved = baseline()
+        caught = False
+        try:
+            if mode == "profile":
+                sys.setprofile(f.profile)
+            else:
+                sys.settrace(trace)
+            try:
+                EXECUTOR["_invoke_owned"](request, lambda: PROFILE["_access"](NS(_runtime_gate=gate), "x", lambda: None))
+            except MemoryError:
+                caught = True
+        finally:
+            for restore, prior in zip(setters, saved, strict=True):
+                restore(prior)
+        assert caught and request.finally_completed and not f.pending_request_gates and not f.current_requests
+        failures[mode] = {"caught": caught, "finally": request.finally_completed,
+                          "pending_released": True, "stack_empty": True}
+    assert failures["profile"] == failures["trace"]
+    assert baseline() == (None, None, None, None)
+    return {"existing_hooks_rejected_without_replacement": rejected,
+            "held_observer_called_without_fresh_class_dispatch": calls,
+            "callback_failure": failures, "all_hooks_restored": True}
+
+
+def main():
+    before, after = run("profile"), run("trace")
+    assert before == after, (before, after)
+    result = {"scope": "ACTUAL installed sys/thread profile vs selective trace; synthetic Python functions and RPC models only, no Blender/native acceptance",
+              "outcomes_identical": True, "profile": before, "trace": after,
+              "observer_source": str(SOURCE), "line_and_opcode_events": False,
+              "bootstrap_and_failure": bootstrap_and_callback_failure()}
+    print(json.dumps({"outcomes_identical": result["outcomes_identical"], "histories": len(before["histories"]),
+                      "nested_probes": len(before["nested_probes"]), "worker_lifecycle": before["lifetimes"],
+                      "hooks_restored": True}))
+
+
+if __name__ == "__main__":
+    main()
+'''
+    path = tmp_path / "selective-observer-probe.py"
+    path.write_text(probe)
+    result = subprocess.run([sys.executable, str(path), str(ROOT)], cwd=tmp_path, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stdout[-2000:] + result.stderr[-4000:]
+    report = json.loads(result.stdout)
+    assert report["outcomes_identical"] is True and report["histories"] == 2 and report["nested_probes"] == 6
+    assert report["worker_lifecycle"] == {"worker": "thread-lifetime"} and report["hooks_restored"] is True
