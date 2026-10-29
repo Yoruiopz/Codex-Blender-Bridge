@@ -7,14 +7,17 @@ from __future__ import annotations
 
 import hashlib
 import importlib
+import math
 from array import array
 from types import (
     CodeType,
     FunctionType,
     GetSetDescriptorType,
     MappingProxyType,
+    MethodDescriptorType,
     MethodType,
     ModuleType,
+    WrapperDescriptorType,
 )
 
 from . import current_pixels_graph as graph
@@ -24,6 +27,8 @@ from .native_save_profile import available_memory_facts
 from .scene_job_reservations import TURN_METHOD
 from .task_plans import get_task_plans
 from .tool_registry import ToolContext, check_final_mutation
+from .tools import _scene_checkpoint_roles as checkpoint_roles
+from .tools import _scene_mutation as checkpoint_proof
 
 # Keep CPython's standard cache binding stable before the first source seal.
 # This is not an authority table or an exemption from namespace identity checks.
@@ -47,6 +52,7 @@ class SourceSeal(tuple):
                  # into tools.mesh_storage. Pin its directly reached helpers
                  # before a permission provider can replace those bindings.
                  "tools.mesh_storage", "tools.artist_loop", "tools._animation_scope", "errors",
+                 "tools._scene_checkpoint_roles", "tools._scene_mutation", "entry_effects",
                  "native_save_profile", "state", "permissions", "task_plans", "tool_registry",
                  "request_lifecycle", "scene_jobs", "scene_job_authority", "executor", "command_queue",
                  "checkpoints", "checkpoint_completion", "current_pixels_graph", "mesh_storage_prepare", "uv_edit_guard")
@@ -99,7 +105,8 @@ class SourceSeal(tuple):
         native += (ModuleType, event_kind)
         watches = []
         for module, name in ((graph, "BUILDS"), (graph, "_REGISTERED_TARGETS"),
-                             (primitive, "COLLECTION_BINDING_PINS"), (primitive, "_VALUE_CLASSES")):
+                             (primitive, "COLLECTION_BINDING_PINS"), (primitive, "_VALUE_CLASSES"),
+                             (checkpoint_proof, "RUNTIME_FIXED")):
             value = vars(module)[name]
             if type(value) is not dict or len(value) > 4096:
                 raise contract.refused("STORAGE_SOURCE_CONSTANT_SHAPE")
@@ -110,6 +117,16 @@ class SourceSeal(tuple):
                         or (type(item) is tuple and any(type(part) is not str and type(part) is not int for part in item))):
                     raise contract.refused("STORAGE_SOURCE_CONSTANT_SHAPE")
             watches.append((value, tuple(value.items())))
+        # Keep nested policy identities as well as their leaves: an in-place
+        # descriptor-policy change must fail before the next native getter.
+        runtime = checkpoint_proof.RUNTIME
+        if type(runtime) is not dict or any(type(key) is not str or type(value) is not dict for key, value in runtime.items()):
+            raise contract.refused("STORAGE_SOURCE_CONSTANT_SHAPE")
+        nested = []
+        for key, value in runtime.items():
+            if any(type(name) is not str or type(kind) is not str for name, kind in value.items()):
+                raise contract.refused("STORAGE_SOURCE_CONSTANT_SHAPE")
+            nested.append((key, value, tuple(value.items())))
         codes = {}
         pending = [row[1] for row in functions]
         while pending:
@@ -123,12 +140,28 @@ class SourceSeal(tuple):
         verify = SourceSeal.__dict__["verify"]
         verify_fact = (verify, verify.__code__, verify.__globals__, verify.__defaults__, verify.__kwdefaults__, verify.__closure__)
         return tuple.__new__(cls, (tuple(module_rows), tuple(class_rows), tuple(functions), tuple(builtins), native,
-                                  tuple(watches), MappingProxyType(codes), verify_fact))
+                                  tuple(watches), MappingProxyType(codes), verify_fact, (runtime, tuple(nested))))
 
     def verify(self):
         raw_get = ().__class__.__getitem__
         rows, classes, functions, tables, native = raw_get(self, 0), raw_get(self, 1), raw_get(self, 2), raw_get(self, 3), raw_get(self, 4)
         kind, length, dict_type, str_type, fn_type, module_dict, class_dict, class_mro, failure, module_type = native[:10]
+        runtime, nested = raw_get(self, 8)
+        if kind(runtime) is not dict_type or length(runtime) != length(nested):
+            raise failure
+        for key in runtime:
+            if kind(key) is not str_type:
+                raise failure
+        for name, table, saved in nested:
+            if (name not in runtime or runtime[name] is not table or kind(table) is not dict_type
+                    or length(table) != length(saved)):
+                raise failure
+            for key in table:
+                if kind(key) is not str_type:
+                    raise failure
+            for key, value in saved:
+                if key not in table or table[key] is not value:
+                    raise failure
         for table, saved in tables:
             if kind(table) is not dict_type or length(table) != length(saved):
                 raise failure
@@ -525,6 +558,471 @@ def metadata_matches(actual, initial, completed):
         raise contract.refused("STORAGE_FORWARD_METADATA_CHANGED")
 
 
+class _CheckpointRoleAccess:
+    """B2-only checked native reads; shared Scene readers stay unchanged."""
+    __slots__ = ("_origin", "array_type", "base", "bpy", "check", "collection_getter", "collection_type", "getter", "pointer", "struct_type", "types")
+
+    def __init__(self, bpy, check):
+        self.bpy, self.check = bpy, check
+        def load(owner, name):
+            check()
+            value = getattr(owner, name)
+            check()
+            return value
+        self.types = load(bpy, "types")
+        self.base = load(self.types, "bpy_struct")
+        self.getter = graph._class_find(self.base, "__getattribute__")
+        self.pointer = graph._class_find(self.base, "as_pointer")
+        self.array_type = load(self.types, "bpy_prop_array")
+        self.struct_type = load(self.types, "Struct")
+        self.collection_type = load(self.types, "bpy_prop_collection")
+        self.collection_getter = graph._class_find(self.collection_type, "__getattribute__")
+        if (type(self.getter) is not WrapperDescriptorType or self.getter.__objclass__ is not self.base
+                or self.getter.__name__ != "__getattribute__"
+                or type(self.pointer) is not MethodDescriptorType or self.pointer.__objclass__ is not self.base
+                or self.pointer.__name__ != "as_pointer"
+                or not any(parent is self.base for parent in graph._class_mro(self.struct_type))
+                or graph._class_find(self.struct_type, "__getattribute__") is not self.getter
+                or graph._class_find(self.struct_type, "as_pointer") is not self.pointer):
+            raise contract.refused("STORAGE_CHECKPOINT_NATIVE_ORIGIN_CHANGED")
+        self._origin = tuple((name, getattr(self, name)) for name in self.__slots__ if name != "_origin")
+
+    def call(self, function, *args):
+        origin = self._origin
+        check = self.check
+        for stage in range(3):
+            if self._origin is not origin or any(object.__getattribute__(self, name) is not value for name, value in origin):
+                raise contract.refused("STORAGE_CHECKPOINT_ROLE_ACCESS_CHANGED")
+            if stage == 0 or stage == 2:
+                check()
+            else:
+                result = function(*args)
+        if self._origin is not origin or any(object.__getattribute__(self, name) is not value for name, value in origin):
+            raise contract.refused("STORAGE_CHECKPOINT_ROLE_ACCESS_CHANGED")
+        return result
+
+    def raw(self, owner, name):
+        cls = type(owner)
+        # Reject a Python property before dispatch, even though the held native
+        # getter would otherwise be available. Metadata classes are also checked.
+        descriptor = graph._class_find(cls, name)
+        own_rna = name == "bl_rna" and type(descriptor) is self.struct_type
+        if name == "bl_rna" and self.call(getattr, self.types, "Struct") is not self.struct_type:
+            raise contract.refused("STORAGE_CHECKPOINT_NATIVE_STRUCT_CHANGED")
+        if not (own_rna or (name in {"user_map", "user_of_id"} and type(descriptor) is MethodDescriptorType
+                and descriptor.__name__ == name
+                and any(descriptor.__objclass__ is base for base in graph._class_mro(cls)))):
+            graph._unshadowed(cls, (name,))
+        if (graph._class_find(cls, "__getattribute__") is not self.getter
+                or graph._class_find(cls, "__getattr__") is not None
+                or graph._class_find(cls, "as_pointer") is not self.pointer):
+            raise contract.refused("STORAGE_CHECKPOINT_NATIVE_ORIGIN_CHANGED")
+        return self.call(self.getter, owner, name)
+
+    def key(self, owner):
+        if owner is None:
+            return None
+        if graph._class_find(type(owner), "as_pointer") is not self.pointer:
+            raise contract.refused("STORAGE_CHECKPOINT_NATIVE_ORIGIN_CHANGED")
+        return graph._int(self.call(self.pointer, owner), 2**64 - 1, minimum=1)
+
+    def token(self, owner):
+        pointer = self.key(owner)
+        if owner is None:
+            return pointer, None
+        try:
+            uid = self.raw(owner, "session_uid")
+        except AttributeError:
+            self.call(tuple)
+            return pointer, None
+        return pointer, graph._int(uid, 2**64 - 1, minimum=1)
+
+    def bounded(self, values, maximum, label):
+        iterator = self.call(iter, values)
+        result = []
+        for _ in range(maximum + 1):
+            try:
+                item = self.call(next, iterator)
+            except StopIteration:
+                self.call(tuple)
+                return tuple(result)
+            result.append(item)
+        raise checkpoint_proof.unsupported("Checkpoint " + label + " exceeds its bounded profile.")
+
+    def active(self, layer):
+        objects = self.raw(layer, "objects")
+        canonical = self.call(getattr, self.types, "LayerObjects")
+        rna = graph._class_dict(canonical).get("bl_rna")
+        props = self.bounded(self.raw(rna, "properties"), 512, "LayerObjects descriptors")
+        prop = next((item for item in props if self.raw(item, "identifier") == "active"), None)
+        if (prop is None or self.raw(prop, "type") != "POINTER" or self.raw(prop, "is_runtime")
+                or self.raw(prop, "is_registered")
+                or self.raw(self.raw(prop, "fixed_type"), "identifier") != "Object"
+                or type(objects) is not self.collection_type
+                or type(self.collection_getter) is not WrapperDescriptorType
+                or self.collection_getter.__objclass__ not in (self.collection_type, object)
+                or self.collection_getter.__name__ != "__getattribute__"
+                or graph._class_find(self.collection_type, "__getattribute__") is not self.collection_getter):
+            raise contract.refused("STORAGE_CHECKPOINT_ACTIVE_COLLECTION_CHANGED")
+        graph._unshadowed(self.collection_type, ("active",))
+        return self.call(self.collection_getter, objects, "active")
+
+    def lookup(self, collection, name):
+        descriptor = graph._class_find(self.collection_type, "get")
+        if (type(collection) is not self.collection_type or type(descriptor) is not MethodDescriptorType
+                or descriptor.__objclass__ is not self.collection_type or descriptor.__name__ != "get"):
+            raise contract.refused("STORAGE_CHECKPOINT_MAIN_COLLECTION_CHANGED")
+        return self.call(descriptor, collection, name)
+
+    def identity(self, owner, kind):
+        self.descriptors(owner)
+        return (("kind", kind), ("name", graph._text(self.raw(owner, "name"))),
+                ("pointer", format(self.key(owner), "x")),
+                ("session_uid", str(graph._int(self.raw(owner, "session_uid"), 2**64 - 1, minimum=1))))
+
+    def descriptors(self, owner):
+        rna = self.raw(owner, "bl_rna")
+        identifier = self.raw(rna, "identifier")
+        canonical = self.call(getattr, self.types, identifier)
+        if type(owner) is not canonical:
+            raise contract.refused("STORAGE_CHECKPOINT_NATIVE_OWNER_CHANGED")
+        canonical_rna = graph._class_dict(canonical).get("bl_rna")
+        # Native wrappers may differ while referring to the same StructRNA.
+        if canonical_rna is not rna and (canonical_rna is None or self.key(canonical_rna) != self.key(rna)):
+            raise contract.refused("STORAGE_CHECKPOINT_NATIVE_SCHEMA_CHANGED")
+        properties = self.bounded(self.raw(rna, "properties"), 512, "RNA descriptors")
+        allowed = checkpoint_proof.RUNTIME.get(identifier, {})
+        for prop in properties:
+            name, kind = self.raw(prop, "identifier"), self.raw(prop, "type")
+            if self.raw(prop, "is_runtime"):
+                if (allowed.get(name) != kind or self.raw(prop, "is_readonly") is not (name != "active_selection_set")
+                        or self.raw(prop, "is_registered")):
+                    raise contract.refused("STORAGE_CHECKPOINT_RUNTIME_DESCRIPTOR_CHANGED")
+                if name == "active_selection_set" and (self.raw(prop, "array_length") or self.raw(prop, "default") != 0):
+                    raise contract.refused("STORAGE_CHECKPOINT_RUNTIME_DESCRIPTOR_CHANGED")
+                if kind in {"POINTER", "COLLECTION"}:
+                    fixed = self.raw(prop, "fixed_type")
+                    if self.raw(fixed, "identifier") != checkpoint_proof.RUNTIME_FIXED.get((identifier, name)):
+                        raise contract.refused("STORAGE_CHECKPOINT_RUNTIME_DESCRIPTOR_CHANGED")
+        graph._unshadowed(canonical, tuple(self.raw(prop, "identifier") for prop in properties))
+        if identifier == "Object":
+            keys = self.bounded(self.call(self.method(owner, "keys")), 128, "Object custom keys")
+            if any(type(key) is not str for key in keys) or "active_selection_set" in keys:
+                raise contract.refused("STORAGE_CHECKPOINT_STORED_UI_SELECTION_UNQUALIFIED")
+        return properties
+
+    def pointer_field(self, owner, name, fixed_type):
+        prop = next((item for item in self.descriptors(owner) if self.raw(item, "identifier") == name), None)
+        if (prop is None or self.raw(prop, "is_runtime") or not self.raw(prop, "is_readonly")
+                or self.raw(prop, "type") != "POINTER" or self.raw(prop, "is_registered")
+                or self.raw(self.raw(prop, "fixed_type"), "identifier") != fixed_type):
+            raise contract.refused("STORAGE_CHECKPOINT_POINTER_DESCRIPTOR_CHANGED")
+        return self.raw(owner, name)
+
+    def value(self, raw, *, depth=0, budget=None):
+        if budget is None:
+            budget = [4096]
+        budget[0] -= 1
+        if depth > 8 or budget[0] < 0:
+            raise contract.refused("STORAGE_CHECKPOINT_VALUE_BUDGET")
+        kind = type(raw)
+        if raw is None or kind in {bool, int}:
+            return raw
+        if kind is str:
+            if len(raw) > 4096:
+                raise contract.refused("STORAGE_CHECKPOINT_VALUE_BUDGET")
+            return raw
+        if kind is float:
+            if not math.isfinite(raw):
+                raise contract.refused("STORAGE_CHECKPOINT_NONFINITE_VALUE")
+            return raw
+        # Writable ParticleEdit/ParticleBrush fields are primitive scalars,
+        # fixed arrays, enums, or native pointers. Other forms remain refused.
+        if any(base is self.base for base in graph._class_mro(kind)):
+            return ("RNA", *self.token(raw))
+        if kind not in (tuple, list, set) and kind is not self.array_type:
+            raise contract.refused("STORAGE_CHECKPOINT_VALUE_KIND_UNQUALIFIED")
+        values = self.bounded(raw, 256, "fixed values")
+        if kind is set:
+            if any(type(item) is not str for item in values):
+                raise contract.refused("STORAGE_CHECKPOINT_ENUM_SHAPE")
+            values = sorted(values)
+        return tuple(self.value(item, depth=depth + 1, budget=budget) for item in values)
+
+    def method(self, owner, name):
+        descriptor = graph._class_find(type(owner), name)
+        if (type(descriptor) is not MethodDescriptorType or descriptor.__objclass__ is not self.base
+                or name != "keys" or descriptor.__name__ != name):
+            raise contract.refused("STORAGE_CHECKPOINT_NATIVE_METHOD_CHANGED")
+        return descriptor.__get__(owner)
+
+    def settings(self, owner):
+        result = []
+        for prop in self.descriptors(owner):
+            if self.raw(prop, "is_runtime") or self.raw(prop, "is_readonly"):
+                continue
+            name, kind = self.raw(prop, "identifier"), self.raw(prop, "type")
+            if kind not in checkpoint_proof.PRIMITIVES | {"POINTER"}:
+                raise contract.refused("STORAGE_CHECKPOINT_WRITABLE_KIND_CHANGED")
+            result.append((name, self.value(self.raw(owner, name))))
+        # These settings owners have no admitted IDProperty payload. Refuse
+        # populated keys instead of omitting unknown values from protection.
+        keys = self.method(owner, "keys")
+        try:
+            supplied = self.call(keys)
+        except TypeError as error:
+            self.call(tuple)
+            if "doesn't support IDProperties" not in str(error):
+                raise
+            return tuple(result), ()
+        if self.bounded(supplied, 128, "custom keys"):
+            raise contract.refused("STORAGE_CHECKPOINT_CUSTOM_SETTINGS_UNQUALIFIED")
+        return tuple(result), ()
+
+    def references(self, scene):
+        database = self.call(getattr, self.bpy, "data")
+        method = self.raw(database, "user_map")
+        supplied = self.call(lambda: method(subset={scene}))
+        if type(supplied) is not dict or len(supplied) != 1 or next(iter(supplied)) is not scene:
+            raise contract.refused("STORAGE_CHECKPOINT_REVERSE_MAP_CHANGED")
+        direct = self.bounded(next(iter(dict.values(supplied))), 128, "Scene consumers")
+        rows = []
+        for user in direct:
+            rna = self.raw(user, "bl_rna")
+            method = self.raw(user, "user_of_id")
+            count = graph._int(self.call(method, scene), 65536)
+            rows.append((self.token(user), graph._text(self.raw(rna, "identifier")), graph._text(self.raw(user, "name")), count))
+        return ((self.token(scene), graph._int(self.raw(scene, "users"), 65536),
+                 graph._bool(self.raw(scene, "use_fake_user")), tuple(sorted(rows))),)
+
+
+class _StorageCheckpointPlan(checkpoint_roles.Plan):
+    """Original canonical push authority with B2 checked native readers."""
+    def __init__(self, bpy, scene, access, validator):
+        self.access = access
+        super().__init__(bpy, scene, active_validator=validator, include_brush=True)
+
+    def _read(self):
+        read, scene = self.access, self.scene
+        settings = read.pointer_field(scene, "tool_settings", "ToolSettings")
+        particle = read.pointer_field(settings, "particle_edit", "ParticleEdit")
+        if any(read.raw(prop, "identifier") == "scene" for prop in read.descriptors(particle)):
+            raise contract.refused("STORAGE_CHECKPOINT_EXPOSED_SCENE_ROLE")
+        particle_object = read.pointer_field(particle, "object", "Object")
+        original = read.pointer_field(scene, "original", "ID")
+        context = read.call(getattr, self.bpy, "context")
+        layer = read.raw(context, "view_layer")
+        checkpoint_roles.mark_view_layer_sync_possible()
+        active = read.active(layer)
+        if active is not None:
+            self.active_validator(self.bpy, active)
+            if (read.bounded(read.raw(active, "particle_systems"), 1, "particle sources")
+                    or read.pointer_field(active, "soft_body", "SoftBodySettings") is not None):
+                raise contract.refused("STORAGE_CHECKPOINT_ACTIVE_CACHE_SOURCE")
+        owners = (read.token(scene), read.key(settings), read.key(particle), read.token(original), read.token(active))
+        count = graph._int(read.call(read.raw(scene, "user_of_id"), scene), 65536)
+        return owners, count, read.token(particle_object)
+
+    def references(self):
+        self.check_after_read()
+        records = self.access.references(self.scene)
+        identity, users, fake_user, direct = records[0]
+        own = tuple(record for record in direct if record[0] == identity)
+        expected = () if self.expected[0] == 0 else ((identity, "Scene", self.access.raw(self.scene, "name"), 1),)
+        if own != expected:
+            raise contract.refused("STORAGE_CHECKPOINT_SCENE_SELF_CONSUMERS_CHANGED")
+        return ((identity, users, fake_user, tuple(record for record in direct if record[0] != identity)),)
+
+    def authored(self):
+        self.check_after_read()
+        read = self.access
+        settings = read.pointer_field(self.scene, "tool_settings", "ToolSettings")
+        particle = read.pointer_field(settings, "particle_edit", "ParticleEdit")
+        brush = read.pointer_field(particle, "brush", "ParticleBrush")
+        if brush is None or read.pointer_field(brush, "curve", "CurveMapping") is not None:
+            raise contract.refused("STORAGE_CHECKPOINT_BRUSH_CURVE_UNQUALIFIED")
+        return (self.owners, self.references(), read.settings(particle), read.key(brush), read.settings(brush), (None, None))
+
+
+class CheckpointRoles:
+    """Retained B2 owners and the sole native undo-poll role transition.
+
+    This admits no previous foreign weak owner. Broader transfer preservation
+    remains 1.0 work; clearing that owner would itself be an unowned edit.
+    """
+    __slots__ = (
+        "access",
+        "access_origin",
+        "after_readback",
+        "before_readback",
+        "bound_digest",
+        "bpy",
+        "gate",
+        "identities",
+        "initial_roles",
+        "last_readback",
+        "memberships",
+        "mesh",
+        "native_push_completed",
+        "obj",
+        "origin",
+        "owner_origin",
+        "phase",
+        "plan",
+        "plan_fields",
+        "scene",
+        "validator",
+    )
+
+    def __init__(self, bpy, metadata, gate):
+        self.bpy, self.gate, self.obj, self.mesh = bpy, gate, metadata.obj, metadata.mesh
+        self.access = _CheckpointRoleAccess(bpy, gate.pure)
+        self.scene = self.access.raw(self.access.call(getattr, bpy, "context"), "scene")
+        self.validator = self._validate_active
+        self.access_origin = tuple((name, getattr(self.access, name)) for name in _CheckpointRoleAccess.__slots__)
+        self.owner_origin = (bpy, gate, self.obj, self.mesh, self.scene, self.validator, self.access, self.access_origin)
+        # Explicit validator: the general Scene evaluation scope is not an
+        # authority for this separate, source-qualified mesh profile.
+        self.plan = _StorageCheckpointPlan(bpy, self.scene, self.access, self.validator)
+        self.plan_fields = tuple((key, value) for key, value in vars(self.plan).items() if key != "expected")
+        self.initial_roles = self.plan.expected
+        self.phase, self.memberships, self.bound_digest, self.origin = 0, None, None, None
+        self.before_readback = self.last_readback = self.after_readback = None
+        self.native_push_completed = False
+        self.identities = tuple(self.access.identity(owner, kind)
+                                for owner, kind in ((self.scene, "Scene"), (self.obj, "Object"), (self.mesh, "Mesh")))
+        CheckpointRoles.check_after_read(self)
+
+    def _validate_active(self, bpy, active):
+        if (bpy is not self.bpy or active is not self.obj or self.access.raw(active, "type") != "MESH"
+                or self.access.raw(active, "data") is not self.mesh):
+            raise contract.refused("STORAGE_CHECKPOINT_ACTIVE_OWNER_CHANGED")
+
+    def check_identity(self, origin=None):
+        """Pure held-instance proof, also safe during paused turn admission."""
+        if (type(self) is not CheckpointRoles or type(self.plan) is not _StorageCheckpointPlan
+                or (origin is not None and self.origin is not origin)
+                or type(self.phase) is not int or self.phase not in (0, 1)):
+            raise contract.refused("STORAGE_CHECKPOINT_ROLE_OWNER_CHANGED")
+        if origin is not None and (type(origin) is not tuple or len(origin) != 8
+                or origin[0] is not self or origin[1] is not self.plan
+                or origin[2] is not self.plan_fields or origin[3] is not self.identities
+                or origin[4] is not self.initial_roles or type(self.memberships) is not int
+                or origin[5] != self.memberships
+                or origin[6] is not self.bound_digest or origin[7] is not self.owner_origin):
+            raise contract.refused("STORAGE_CHECKPOINT_ROLE_OWNER_CHANGED")
+        if any(actual is not held for actual, held in zip(
+                (self.bpy, self.gate, self.obj, self.mesh, self.scene, self.validator, self.access, self.access_origin), self.owner_origin, strict=True)):
+            raise contract.refused("STORAGE_CHECKPOINT_ROLE_OWNER_CHANGED")
+        if (type(self.access) is not _CheckpointRoleAccess
+                or any(getattr(self.access, name) is not value for name, value in self.access_origin)):
+            raise contract.refused("STORAGE_CHECKPOINT_ROLE_ACCESS_CHANGED")
+        fields = vars(self.plan)
+        if (len(fields) != len(self.plan_fields) + 1 or any(type(key) is not str for key in fields)
+                or any(key not in fields or fields[key] is not value for key, value in self.plan_fields)
+                or fields.get("active_validator") is not self.validator
+                or fields.get("previous_witness") is not None):
+            raise contract.refused("STORAGE_CHECKPOINT_ROLE_OWNER_CHANGED")
+        expected = fields.get("expected")
+        if self.phase == 0:
+            valid_phase = expected is self.initial_roles
+        else:
+            # The canonical Plan creates exactly (1, held_active_token). Check
+            # builtin shapes before comparisons; a replaced expected value must
+            # never dispatch a provider-installed equality callback.
+            valid_phase = (type(expected) is tuple and len(expected) == 2
+                           and type(expected[0]) is int and expected[0] == 1
+                           and expected[1] is self.plan.active)
+        if not valid_phase:
+            raise contract.refused("STORAGE_CHECKPOINT_ROLE_PHASE_CHANGED")
+
+    def check_after_read(self):
+        CheckpointRoles.check_identity(self, self.origin)
+        self.gate.pure()
+        read = self.access
+        database = read.call(getattr, self.bpy, "data")
+        for (owner, kind, family), identity in zip(((self.scene, "Scene", "scenes"),
+                                                  (self.obj, "Object", "objects"),
+                                                  (self.mesh, "Mesh", "meshes")), self.identities, strict=True):
+            actual = read.identity(owner, kind)
+            if actual != identity or read.lookup(read.raw(database, family), dict(actual)["name"]) is not owner:
+                raise contract.refused("STORAGE_CHECKPOINT_MAIN_OWNER_CHANGED")
+        owners, self_count, particle_object = _StorageCheckpointPlan._read(self.plan)
+        native_self_count = graph._int(read.call(read.raw(self.scene, "user_of_id"), self.scene), 65536)
+        if (native_self_count != self_count or owners != self.plan.owners
+                or (self_count, particle_object) != self.plan.expected):
+            raise contract.refused("STORAGE_CHECKPOINT_NATIVE_ROLES_CHANGED")
+        self.gate.pure()
+        return owners, self_count, particle_object
+
+    def check_scene_object_count(self, reader, scene, obj, memberships):
+        if (reader.bpy is not self.bpy or scene is not self.scene or obj is not self.obj
+                or type(memberships) is not int or memberships < 1
+                or (self.memberships is not None and memberships != self.memberships)):
+            raise contract.refused("STORAGE_CHECKPOINT_STRUCTURAL_MEMBERSHIPS_CHANGED")
+        before = CheckpointRoles.check_after_read(self)
+        weak = int(before[1] == 1 and before[2] == self.plan.active)
+        count = graph._int(self.access.call(self.access.raw(scene, "user_of_id"), obj), 65536)
+        if count != memberships + weak:
+            error = contract.refused("SCENE_OBJECT_REFERENCE_ROLES_CHANGED")
+            error.context.update(expected_reference_count=memberships + weak, observed_reference_count=count)
+            raise error
+        after = CheckpointRoles.check_after_read(self)
+        if before != after:
+            raise contract.refused("STORAGE_CHECKPOINT_NATIVE_ROLES_CHANGED")
+        if self.memberships is None:
+            self.memberships = memberships  # Initial independently measured structural closure only.
+        self.last_readback = {"owners": after[0], "scene_self_references": after[1],
+                              "particle_object": after[2], "scene_object_references": count,
+                              "structural_memberships": memberships, "weak_object_references": weak}
+        if self.before_readback is None:
+            self.before_readback = self.last_readback
+
+    def authored(self):
+        CheckpointRoles.check_after_read(self)
+        if self.memberships is None:
+            raise contract.refused("STORAGE_CHECKPOINT_STRUCTURAL_WITNESS_REQUIRED")
+        # Plan.authored projects only its independently checked weak self role;
+        # all writable particle/brush fields and ordinary references remain.
+        return {"initial_owners": self.identities, "initial_roles": self.initial_roles,
+                "structural_memberships": self.memberships,
+                "authored": _StorageCheckpointPlan.authored(self.plan)}
+
+    def bind_protected(self, facts):
+        if self.origin is not None or self.last_readback is None or facts.get("checkpoint_roles") != CheckpointRoles.authored(self):
+            raise contract.refused("STORAGE_CHECKPOINT_PROTECTED_WITNESS_REQUIRED")
+        self.bound_digest = contract.digest(facts)
+        self.origin = (self, self.plan, self.plan_fields, self.identities, self.initial_roles,
+                       self.memberships, self.bound_digest, self.owner_origin)
+        CheckpointRoles.check_identity(self, self.origin)
+
+    def after_native_push(self, origin):
+        CheckpointRoles.check_identity(self, origin)
+        if origin is None:
+            raise contract.refused("STORAGE_CHECKPOINT_PROTECTED_WITNESS_REQUIRED")
+        # No getters/providers here. The held Plan claims its one-use canonical
+        # delegate event before changing any expected phase.
+        checkpoint_roles.Plan.after_native_push(self.plan)
+        self.phase = 1
+        self.native_push_completed = True
+
+    def verified(self, digest):
+        CheckpointRoles.check_identity(self, self.origin)
+        if self.origin is None or digest != self.bound_digest:
+            raise contract.refused("STORAGE_CHECKPOINT_PROTECTED_WITNESS_CHANGED")
+        if self.native_push_completed:
+            self.after_readback = self.last_readback
+
+    def report(self):
+        """Cached literals only, including when a caller has already stopped."""
+        return {"profile": "B2_EXACT_CHECKPOINT_WEAK_ROLE_V1", "initial_roles": self.initial_roles,
+                "before_readback": self.before_readback, "after_readback": self.after_readback,
+                "native_push_completed": self.native_push_completed,
+                "after_readback_measured": self.after_readback is not None,
+                "protected_scope_sha256": self.bound_digest,
+                "foreign_previous_owner_supported": False, "physical_cache_passivity_claimed": False}
+
+
 def array_hash(bpy, plan, header, bindings, pure):
     pure()
     access = primitive._Access(bpy, pure)
@@ -611,7 +1109,7 @@ def _material(reader, material):
     return row
 
 
-def protected_facts(bpy, metadata, gate, bindings, excluded):
+def protected_facts(bpy, metadata, gate, bindings, excluded, *, checkpoint_roles=None):
     """Complete admitted logical consumers; explicit refusal for broader roles.
 
     Native source qualification of these readbacks is a separate test gate.
@@ -632,7 +1130,7 @@ def protected_facts(bpy, metadata, gate, bindings, excluded):
     users = graph._user_map(reader, (obj, mesh))
     if users[mesh] != (obj,):
         raise contract.refused("STORAGE_SHARED_OR_UNKNOWN_MESH_CONSUMER")
-    closure = graph._collection_closure(reader, obj, users[obj])
+    closure = graph._collection_closure(reader, obj, users[obj], checkpoint_roles=checkpoint_roles)
     materials = graph._bounded(mesh.materials, MAX_MATERIALS)
     if len(obj.material_slots) != len(materials):
         raise contract.refused("STORAGE_MATERIAL_SLOT_CHANGED")
@@ -721,6 +1219,8 @@ def protected_facts(bpy, metadata, gate, bindings, excluded):
                         "selection": sorted((reader.local_id(value, "Object")
                                              for value in graph._bounded(context.selected_objects, 512)),
                                             key=lambda row: (row["name"], row["session_uid"], row["pointer"]))}}
+    if checkpoint_roles is not None:
+        fact["checkpoint_roles"] = CheckpointRoles.authored(checkpoint_roles)
     pure()
     return fact
 

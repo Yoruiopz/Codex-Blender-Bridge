@@ -87,7 +87,8 @@ def _capture_storage_driver(driver):
     native = (type, len, any, zip, type.__dict__["__dict__"], type.__dict__["__mro__"], dict, str, bool)
     failure = refused("MESH_STORAGE_DRIVER_SOURCE_CHANGED")
     owned = tuple((name, fields[name]) for name in ("gate", "origin", "bpy", "initial", "bindings", "parameters",
-                  "excluded", "protected", "protected_digest", "fingerprint", "completed", "value_hashes") if name in fields)
+                  "excluded", "protected", "protected_digest", "fingerprint", "completed", "value_hashes",
+                  "checkpoint_roles", "checkpoint_origin") if name in fields)
     proof = (driver, kind, facts, descriptor, source, source_facts, verify, _storage_function_fact(verify), journal,
              native, failure, owned)
     _check_storage_driver(proof)

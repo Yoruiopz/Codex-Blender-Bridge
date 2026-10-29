@@ -109,9 +109,14 @@ def seal_diagnostic_config(module):
     for node in verifiers[0].body:
         if type(node) is not ast.For:
             continue
-        names = [value.id for value in node.target.elts]
+        if type(node.target) is ast.Name:
+            assert node.target.id == "key" and type(node.iter) is ast.Name and node.iter.id == "runtime"
+            names = ["runtime_key"]
+        else:
+            names = [value.id for value in node.target.elts]
         section = {("module", "saved"): "module", ("owner", "mro", "saved"): "class",
-                   ("fn", "code", "namespace", "defaults", "keywords", "items", "closure"): "function"}.get(tuple(names))
+                   ("fn", "code", "namespace", "defaults", "keywords", "items", "closure"): "function",
+                   ("name", "table", "saved"): "nested_watch", ("runtime_key",): "nested_watch"}.get(tuple(names))
         if names == ["table", "saved"]:
             section = "builtins" if type(node.iter) is ast.Name else "watch"
         assert section is not None
@@ -172,6 +177,18 @@ def seal_failure_record(frame, config):
             if row[0] is owner:
                 return index
         return None
+
+    if section == "nested_watch":
+        runtime, nested, table = lookup("runtime"), lookup("nested"), lookup("table")
+        result["owner"] = identity(table)
+        result["runtime_count"] = len(runtime) if type(runtime) is dict else None
+        result["tuple_index"] = None
+        if type(nested) is tuple and len(nested) <= 4096:
+            for index, row in enumerate(nested):
+                if type(row) is tuple and len(row) == 3 and row[1] is table:
+                    result["tuple_index"] = index
+                    break
+        return result
 
     if section == "function":
         function = lookup("fn")
@@ -1142,7 +1159,8 @@ class Fixture:
         assert records["stop_counts"]["provider_before"] == records["stop_counts"]["provider_after"]
         row["evidence"].update(after=after, terminal=terminal,
             journal=None if terminal is None else terminal["storage_effects"],
-            stop_counts=records["stop_counts"], history=records["history"], recovery=records["recovery"])
+            stop_counts=records["stop_counts"], history=records["history"], recovery=records["recovery"],
+            checkpoint_roles=cached_checkpoint_roles(None, terminal))
         row["assertions"] = dict.fromkeys(("complete", "protected_preserved", "original_ids_preserved",
             "uv_roles_preserved", "expected_outcome", "no_late_domain_reads_or_writes"), True)
         return row
@@ -1399,9 +1417,46 @@ def control_hook_state():
     return state
 
 
-def control_result_facts(before, after, oracle, terminal, outcome):
+
+def cached_checkpoint_roles(preview, terminal):
+    """Copy only bounded literal reports already delivered by product code."""
+    def literal(value, depth=0):
+        kind = type(value)
+        assert depth <= 8
+        if value is None or kind is bool:
+            return value
+        if kind is int:
+            assert 0 <= value < 2**64
+            return value
+        if kind is str:
+            assert len(value) <= 256
+            return value
+        if kind is list or kind is tuple:
+            assert len(value) <= 32
+            return [literal(item, depth + 1) for item in value]
+        assert kind is dict and len(value) <= 32
+        assert all(type(key) is str and len(key) <= 128 for key in value)
+        return {key: literal(item, depth + 1) for key, item in value.items()}
+    result = {}
+    assert terminal is None or (type(terminal) is dict and all(type(key) is str for key in terminal))
+    for name, container in (("preview", preview), ("terminal", None if terminal is None else terminal.get("result"))):
+        assert container is None or (type(container) is dict and all(type(key) is str for key in container))
+        role = None if container is None else container.get("checkpoint_roles")
+        if role is not None:
+            assert type(role) is dict and all(type(key) is str for key in role)
+            assert type(role.get("profile")) is str and role["profile"] == "B2_EXACT_CHECKPOINT_WEAK_ROLE_V1"
+            assert role.get("foreign_previous_owner_supported") is False
+            assert role.get("physical_cache_passivity_claimed") is False
+        result[name] = literal(role)
+    result["source"] = "product_cached_literal_reports_only"
+    result["additional_RNA_reads"] = 0
+    result["failed_terminal_after_readback_retained"] = False
+    return result
+
+
+def control_result_facts(before, after, oracle, terminal, outcome, *, preview=None):
     selected = after["selected_values"] == oracle
-    return {"selected_values_match": selected,
+    return {"selected_values_match": selected, "checkpoint_roles": cached_checkpoint_roles(preview, terminal),
         "protected_sample_equal": before["protected"] == after["protected"] and before["uv_roles"] == after["uv_roles"],
         "identities_sample_equal": all(before[key] == after[key] for key in ("object_identity", "mesh_identity")),
         "product_success": (outcome == "JOB_TERMINAL" and terminal is not None
@@ -1503,7 +1558,8 @@ class FirstJobControl(Fixture):
             data["hooks"]["worker_after"] = control_hook_state()
             data["setup_oracle_values"] = target["oracle_values"]
             data.update(control_result_facts(data["before"], data["after"],
-                                            data["setup_oracle_values"], data["terminal"], data["outcome"]))
+                                            data["setup_oracle_values"], data["terminal"], data["outcome"],
+                                            preview=preview["result"] if preview["ok"] else None))
         except Exception:
             self.failure = traceback.format_exc()
         finally:

@@ -24,8 +24,12 @@ class MeshStorageDriver:
         self.bindings = primitive.qualify_collection_bindings(bpy.types, build_hash=bpy.app.build_hash,
             expected_sha256=primitive.COLLECTION_BINDING_PINS.get(bpy.app.build_hash))
         self.excluded = frozenset(row.name for row in self.initial.targets if row.action == "MATERIALIZE_SINGLE")
-        self.protected = source.protected_facts(bpy, self.initial.metadata, self.gate, self.bindings, self.excluded)
+        self.checkpoint_roles = source.CheckpointRoles(bpy, self.initial.metadata, self.gate)
+        self.protected = source.protected_facts(bpy, self.initial.metadata, self.gate, self.bindings, self.excluded,
+                                                 checkpoint_roles=self.checkpoint_roles)
         self.protected_digest = contract.digest(self.protected)
+        source.CheckpointRoles.bind_protected(self.checkpoint_roles, self.protected)
+        self.checkpoint_origin = self.checkpoint_roles.origin
         self.fingerprint = source.preview_fingerprint(context, self.parameters, self.initial, self.protected, self.source_seal)
         if self.fingerprint != self.parameters.expected_preparation_fingerprint:
             raise contract.refused("STORAGE_PREVIEW_STALE")
@@ -45,9 +49,12 @@ class MeshStorageDriver:
                 return  # Canonical provider-ordered paused/handoff check; no native inspection.
         self.gate.context = context
         self.gate.pure()
+        source.CheckpointRoles.check_identity(self.checkpoint_roles, self.checkpoint_origin)
+        source.CheckpointRoles.check_after_read(self.checkpoint_roles)
         current = source.build_plan(self.bpy, self.parameters, self.gate, self.origin)
         source.metadata_matches(current.metadata, self.initial.metadata, self.completed)
-        facts = source.protected_facts(self.bpy, current.metadata, self.gate, self.bindings, self.excluded)
+        facts = source.protected_facts(self.bpy, current.metadata, self.gate, self.bindings, self.excluded,
+                                       checkpoint_roles=self.checkpoint_roles)
         if contract.digest(facts) != self.protected_digest:
             raise contract.refused("STORAGE_PROTECTED_LOGICAL_STATE_CHANGED")
         for name, expected in self.value_hashes.items():
@@ -55,12 +62,14 @@ class MeshStorageDriver:
             if source.array_hash(self.bpy, current, header, self.bindings, self.gate.pure) != expected:
                 raise contract.refused("STORAGE_COMPLETED_ARRAY_VALUES_CHANGED")
         self.gate.pure()
+        source.CheckpointRoles.verified(self.checkpoint_roles, self.protected_digest)
 
     def native_push_delegates(self):
-        return ()
+        source.CheckpointRoles.check_identity(self.checkpoint_roles, self.checkpoint_origin)
+        return (self.checkpoint_origin[1],)
 
     def after_native_push(self):
-        self.check_after_read(self.gate.context)
+        source.CheckpointRoles.after_native_push(self.checkpoint_roles, self.checkpoint_origin)
 
     def advance(self, context):
         if self.done:
@@ -101,6 +110,7 @@ class MeshStorageDriver:
                 "protected_logical_state_verified": True, "requires_fresh_image_preview": True,
                 "native_calls_preemptible": False, "preparation_elapsed_seconds": self.preparation_elapsed_seconds,
                 "native_C_blocking_measured": False,
+                "checkpoint_roles": source.CheckpointRoles.report(self.checkpoint_roles),
                 "inverse_attempted": False, "project_saved": False,
                 "physical_read_effects": {"ARRAY_COW_or_tagging_possible": True,
                                           "image_buffer_cache_changes_possible": True},

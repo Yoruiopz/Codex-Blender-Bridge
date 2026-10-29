@@ -4014,7 +4014,7 @@ def test_mesh_storage_domain_durable_create_reopens_full_bytes_and_refuses_overw
 
 @pytest.mark.parametrize("fault,section", [(None, None), ("module", "module"), ("class", "class"),
     ("function", "function"), ("watch", "watch"), ("foreign_key", "module"),
-    ("foreign_table", "builtins")])
+    ("foreign_table", "builtins"), ("nested_watch", "nested_watch")])
 def test_mesh_storage_seal_diagnostic_observes_original_failure_without_foreign_dispatch(addon_package, monkeypatch, fault, section):
     script = importlib.import_module("scripts.blender_mesh_storage_job_smoke")
     source = importlib.import_module(addon_package + ".mesh_storage_source")
@@ -4063,6 +4063,8 @@ def test_mesh_storage_seal_diagnostic_observes_original_failure_without_foreign_
         monkeypatch.setattr(source._callback_fact, "__defaults__", (foreign,))
     elif fault == "watch":
         monkeypatch.setitem(source.graph.BUILDS, b"d13f752e3b9c", (0, 0, 0))
+    elif fault == "nested_watch":
+        monkeypatch.setitem(source.checkpoint_proof.RUNTIME["Scene"], "cycles", "STRING")
     elif fault == "foreign_key":
         monkeypatch.setitem(source.__dict__, foreign, object())
     elif fault == "foreign_table":
@@ -4735,3 +4737,37 @@ def test_mesh_storage_untraced_missing_terminal_never_reads_after_snapshot(addon
     control.scenario()
     assert control.done.is_set() and "original 60s poll bound" in control.failure
     assert calls == ["before"] and control.control_data["terminal"] is None
+
+
+def test_mesh_storage_cached_role_receipts_copy_only_delivered_literals():
+    script = importlib.import_module("scripts.blender_mesh_storage_job_smoke")
+    role = {"profile": "B2_EXACT_CHECKPOINT_WEAK_ROLE_V1", "foreign_previous_owner_supported": False,
+            "physical_cache_passivity_claimed": False, "initial_roles": (0, (None, None)),
+            "before_readback": {"scene_object_references": 2}, "after_readback": {"scene_object_references": 3},
+            "native_push_completed": True, "after_readback_measured": True}
+    result = script.cached_checkpoint_roles({"checkpoint_roles": role}, {"result": {"checkpoint_roles": role}})
+    assert result["preview"] == result["terminal"]
+    assert result["terminal"]["after_readback"]["scene_object_references"] == 3
+    role["after_readback"]["scene_object_references"] = 99
+    assert result["terminal"]["after_readback"]["scene_object_references"] == 3
+    assert result["additional_RNA_reads"] == 0
+    assert result["failed_terminal_after_readback_retained"] is False
+    failed = script.cached_checkpoint_roles(None, {"result": None, "state": "FAILED"})
+    assert failed["preview"] is failed["terminal"] is None
+
+
+def test_mesh_storage_cached_roles_refuse_foreign_values_without_dispatch():
+    script = importlib.import_module("scripts.blender_mesh_storage_job_smoke")
+    calls = []
+    class Foreign:
+        def __iter__(self):
+            calls.append("iteration")
+            return iter(())
+        def __str__(self):
+            calls.append("string")
+            return "foreign"
+    role = {"profile": "B2_EXACT_CHECKPOINT_WEAK_ROLE_V1", "foreign_previous_owner_supported": False,
+            "physical_cache_passivity_claimed": False, "before_readback": Foreign()}
+    with pytest.raises(AssertionError):
+        script.cached_checkpoint_roles({"checkpoint_roles": role}, None)
+    assert calls == []

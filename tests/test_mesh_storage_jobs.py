@@ -30,7 +30,7 @@ def storage_job(scene_jobs, addon_package, monkeypatch):  # noqa: F811 - importe
     native.scope_calls = []
     monkeypatch.setattr(source, "_foreign_verifier_calls", native.foreign_verifier_calls, raising=False)
 
-    def protected(_bpy, _metadata, gate, _bindings, excluded):
+    def protected(_bpy, _metadata, gate, _bindings, excluded, *, checkpoint_roles=None):
         gate.pure()
         return {**native.protected, "original_ARRAY_payloads": {
             name: tuple(value.values) for name, value in native.attrs.items()
@@ -43,6 +43,29 @@ def storage_job(scene_jobs, addon_package, monkeypatch):  # noqa: F811 - importe
             raise tools.contract.refused("MODELED_PROTECTED_TARGET")
 
     monkeypatch.setattr(source, "protected_facts", protected)
+    class ModeledRoles:
+        """Model native roles only; actual canonical completion remains real."""
+        def __init__(self, _bpy, _metadata, gate):
+            self.gate, self.origin, self.bound_digest, self.completed = gate, None, None, False
+        def bind_protected(self, facts):
+            self.bound_digest = source.contract.digest(facts)
+            self.origin = (self, self)
+        def check_identity(self, origin=None):
+            if origin is not None and origin is not self.origin:
+                raise source.contract.refused("MODELED_ROLE_ORIGIN_CHANGED")
+        def check_after_read(self):
+            self.gate.pure()
+        def after_native_push(self, origin):
+            self.check_identity(origin)
+            completion = importlib.import_module(addon_package + ".checkpoint_completion")
+            completion.claim_native_push_delegate(self)
+            self.completed = True
+        def verified(self, digest):
+            assert digest == self.bound_digest
+        def report(self):
+            return {"modeled_native_roles": True, "native_push_completed": self.completed}
+    ModeledRoles.__module__ = source.__name__
+    monkeypatch.setattr(source, "CheckpointRoles", ModeledRoles)
     monkeypatch.setattr(source, "available_memory_facts", lambda: dict(native.memory))
     monkeypatch.setattr(primitive, "qualify_collection_bindings", lambda *args, **kwargs: native.bindings)
     monkeypatch.setattr(tools, "require_blender", lambda: bpy)

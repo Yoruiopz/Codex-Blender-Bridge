@@ -1929,7 +1929,7 @@ def _user_map(reader: _Reader, owners: tuple[Any, ...]) -> dict[Any, tuple[Any, 
     return result
 
 
-def _collection_closure(reader: _Reader, obj: Any, incoming: tuple[Any, ...]) -> tuple[Any, ...]:
+def _collection_closure(reader: _Reader, obj: Any, incoming: tuple[Any, ...], *, checkpoint_roles: Any = None) -> tuple[Any, ...]:
     """Source-attributed embedded master/direct children; no learned counts."""
     bpy = reader.bpy
     scene = bpy.context.scene
@@ -1970,7 +1970,12 @@ def _collection_closure(reader: _Reader, obj: Any, incoming: tuple[Any, ...]) ->
     expected_object_count = int(root_link) + memberships
     if bool(scenes) is not bool(expected_object_count):
         raise refused("SCENE_OBJECT_REFERENCE_ROLES_CHANGED")
-    _user_count(reader, scene, obj, expected=expected_object_count, reason="SCENE_OBJECT_REFERENCE_ROLES_CHANGED")
+    if checkpoint_roles is None:
+        _user_count(reader, scene, obj, expected=expected_object_count, reason="SCENE_OBJECT_REFERENCE_ROLES_CHANGED")
+    else:
+        # Private B2 admission supplies a retained, source-sealed role proof,
+        # never a caller-selected count or a wildcard for extra consumers.
+        checkpoint_roles.check_scene_object_count(reader, scene, obj, expected_object_count)
     closure: set[Any] = {scene}
     for collection in (*collections, root):
         reader.check()

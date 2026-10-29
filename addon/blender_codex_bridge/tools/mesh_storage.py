@@ -65,11 +65,14 @@ def preview(context, params, *, source_seal=None):
     bindings = primitive.qualify_collection_bindings(bpy.types, build_hash=bpy.app.build_hash,
         expected_sha256=primitive.COLLECTION_BINDING_PINS.get(bpy.app.build_hash))
     excluded = frozenset(row.name for row in plan.targets if row.action == "MATERIALIZE_SINGLE")
-    facts = source.protected_facts(bpy, plan.metadata, gate, bindings, excluded)
+    roles = source.CheckpointRoles(bpy, plan.metadata, gate)
+    facts = source.protected_facts(bpy, plan.metadata, gate, bindings, excluded, checkpoint_roles=roles)
+    source.CheckpointRoles.bind_protected(roles, facts)
     return {"policy": contract.POLICY, **parameters.plain(), "plan": plan.summary(),
             "expected_preparation_fingerprint": source.preview_fingerprint(context, parameters, plan, facts, seal),
             "maximum_active_jobs": 1, "one_attribute_per_turn": True,
             "protected_logical_scope_sha256": contract.digest(facts),
+            "checkpoint_roles": source.CheckpointRoles.report(roles),
             "SINGLE_pre_value_hash_available": False, "native_calls_preemptible": False,
             "physical_read_effects": {"ARRAY_COW_or_tagging_possible": True, "image_cache_changes_possible": True},
             "inverse_available": False, "project_saved": False, "native_functional_qualified": False,

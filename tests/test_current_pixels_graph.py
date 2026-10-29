@@ -996,6 +996,44 @@ def test_reverse_collection_scene_closure_refuses_foreign_or_rebound_ownership_b
     assert model.counters["pixels"] == model.counters["packed"] == 0
 
 
+@pytest.mark.parametrize("adversary", ["none", "extra_reference", "foreign_scene", "nested_consumer", "extra_base", "same_count_replacement"])
+def test_checkpoint_witness_preserves_structural_consumer_closure(graph, capture_model, adversary):
+    model = capture_model
+    model.scene._custom["_synthetic_extra_count"] = {model.obj: 1}
+    calls = []
+    class ExactWitness:
+        def check_scene_object_count(self, reader, scene, obj, memberships):
+            calls.append((scene, obj, memberships))
+            if memberships != 2:
+                raise graph.refused("MODELED_STRUCTURAL_MEMBERSHIPS_CHANGED")
+            graph._user_count(reader, scene, obj, expected=3)
+    reader = graph._Reader(model.bpy, lambda: None)
+    with pytest.raises(graph.BridgeError):
+        graph._collection_closure(reader, model.obj, tuple(model.reverse[model.obj]))
+    if adversary == "extra_reference":
+        model.scene._custom["_synthetic_extra_count"][model.obj] = 2
+    elif adversary == "foreign_scene":
+        other = model.types.Scene(name="Foreign")
+        model.reverse[model.obj].add(other)
+    elif adversary == "nested_consumer":
+        outer = model.types.Collection(name="Nested", children=[], objects=[model.obj], is_embedded_data=False)
+        model.reverse[model.obj].add(outer)
+    elif adversary == "extra_base":
+        model.layer.objects.append(model.obj)
+    elif adversary == "same_count_replacement":
+        model.layer.objects.remove(model.obj)
+        model.scene._custom["_synthetic_extra_count"][model.obj] = 2
+    if adversary == "none":
+        closure = graph._collection_closure(reader, model.obj, tuple(model.reverse[model.obj]), checkpoint_roles=ExactWitness())
+        assert set(closure) == {model.scene, model.collection}
+        assert calls == [(model.scene, model.obj, 2)]
+    else:
+        with pytest.raises(graph.BridgeError):
+            graph._collection_closure(reader, model.obj, tuple(model.reverse[model.obj]), checkpoint_roles=ExactWitness())
+        if adversary in {"foreign_scene", "nested_consumer"}:
+            assert calls == []
+
+
 def test_direct_current_scene_child_collection_is_a_complete_supported_owner(capture_model):
     model = capture_model
     master = model.types.Collection(name="Master", children=type(model.collection.children)([model.collection]),

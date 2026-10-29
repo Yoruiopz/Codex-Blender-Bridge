@@ -6,12 +6,456 @@ from types import ModuleType
 from types import SimpleNamespace as NS
 
 import pytest
+from test_scene_checkpoint_roles import roles  # noqa: F401 - native-shaped RNA only
 from test_scene_jobs import scene_jobs  # noqa: F401 - canonical scheduler fixture
+from test_scene_mutation_boundaries import RNA, NativeOwner, Properties, prop
 
 
 @pytest.fixture
 def source(addon_package):
     return importlib.import_module(addon_package + ".mesh_storage_source")
+
+
+@pytest.fixture
+def checkpoint_case(source, roles, monkeypatch):  # noqa: F811
+    """Assume native constructor metadata; retain real Plan/count/CAS logic."""
+    case = roles
+    brush_type = type("ParticleBrush", (NativeOwner,), {"bl_rna": RNA("ParticleBrush", Properties([
+        prop("curve", "POINTER", is_readonly=True, fixed_type=NS(identifier="CurveMapping")),
+        prop("strength", "FLOAT")]))})
+    mesh_type = type("Mesh", (NativeOwner,), {"bl_rna": RNA("Mesh", Properties([]))})
+    case.bpy.types.ParticleBrush, case.bpy.types.Mesh, case.bpy.types.Struct = brush_type, mesh_type, RNA
+    brush = brush_type({"curve": None, "strength": 0.5})
+    case.particle.bl_rna.properties.append(prop("brush", "POINTER", is_readonly=True,
+                                              fixed_type=NS(identifier="ParticleBrush")))
+    case.particle._values["brush"] = brush
+    mesh = mesh_type({"name": "Mesh", "session_uid": 103})
+    case.active._values.update(name="Target", session_uid=102, type="MESH", data=mesh)
+    case.scene._values.update(session_uid=101)
+    case.bpy.context.scene = case.scene
+    case.bpy.data.scenes = {"Scene": case.scene}
+    case.bpy.data.objects = {"Target": case.active}
+    case.bpy.data.meshes = {"Mesh": mesh}
+    case.counts.update(memberships=2, extra=0)
+    def references(owner):
+        if owner is case.scene:
+            return case.counts["self"]
+        if owner is case.active:
+            return case.counts["memberships"] + int(case.particle.object is case.active) + case.counts["extra"]
+        return 0
+    case.scene.user_of_id = references
+    class Reader:
+        def __init__(self, bpy, check):
+            self.bpy, self.check = bpy, check
+        def local_id(self, owner, kind):
+            return {"kind": kind, "name": owner.name, "pointer": format(owner.as_pointer(), "x"),
+                    "session_uid": str(owner.session_uid)}
+    monkeypatch.setattr(source.graph, "_Reader", Reader)
+    monkeypatch.setattr(source.graph, "_query_context", lambda reader: (id(reader.bpy.context.scene),))
+    # Only C factory/descriptor bindings are modeled. Production guarded call,
+    # raw, descriptor scanning, iteration and Plan readers remain unchanged.
+    original_find = source.graph._class_find
+    case.native_events, case.native_after_stop = [], []
+    case.live = {"stopped": False}
+    def note(event):
+        case.native_events.append(event)
+        if case.live["stopped"]:
+            case.native_after_stop.append(event)
+    def native_get(owner, name):
+        note(("get", id(owner), name))
+        return getattr(owner, name)
+    def native_pointer(owner):
+        note(("pointer", id(owner)))
+        return owner.as_pointer()
+    def class_find(cls, name):
+        if name == "__getattribute__":
+            return native_get
+        if name == "__getattr__":
+            return None
+        if name == "as_pointer":
+            return native_pointer
+        return original_find(cls, name)
+    def access_init(self, bpy, check):
+        self.bpy, self.check = bpy, check
+        self.types, self.base, self.struct_type, self.array_type = bpy.types, NativeOwner, RNA, tuple
+        self.getter, self.pointer = native_get, native_pointer
+        self.collection_type, self.collection_getter = NS, object.__getattribute__
+        self._origin = tuple((name, getattr(self, name)) for name in self.__slots__ if name != "_origin")
+    def lookup(self, collection, name):
+        def get():
+            note(("Main.get", name))
+            return collection.get(name)
+        return self.call(get)
+    def native_method(self, owner, name):
+        assert name == "keys"
+        def keys():
+            note(("keys", id(owner)))
+            return NativeOwner.keys(owner)
+        return keys
+    def active(self, layer):
+        return self.raw(self.raw(layer, "objects"), "active")
+    monkeypatch.setattr(source.graph, "_class_find", class_find)
+    monkeypatch.setattr(source._CheckpointRoleAccess, "__init__", access_init)
+    monkeypatch.setattr(source._CheckpointRoleAccess, "lookup", lookup)
+    monkeypatch.setattr(source._CheckpointRoleAccess, "method", native_method)
+    monkeypatch.setattr(source._CheckpointRoleAccess, "active", active)
+    case.source, case.mesh, case.brush = source, mesh, brush
+    case.gate = NS(pure=lambda: None)
+    case.reader = Reader(case.bpy, case.gate.pure)
+    def capture():
+        role = source.CheckpointRoles(case.bpy, NS(obj=case.active, mesh=mesh), case.gate)
+        role.check_scene_object_count(case.reader, case.scene, case.active, case.counts["memberships"])
+        facts = {"complete_original_B2_scope": {"ARRAY": "signed-zero", "image": "all-pixels",
+                                                "material": "original"}, "checkpoint_roles": role.authored()}
+        role.bind_protected(facts)
+        return role, facts
+    case.capture = capture
+    return case
+
+
+def complete_b2_push(case, role, facts, addon_package, monkeypatch, *, effect=None):
+    """Actual canonical manager/event; only native undo side effects modeled."""
+    from test_checkpoint_snapshots import NativeStack
+    source = case.source
+    checkpoints = importlib.import_module(addon_package + ".checkpoints")
+    completion = importlib.import_module(addon_package + ".checkpoint_completion")
+    tools = importlib.import_module(addon_package + ".tool_registry")
+    permissions = importlib.import_module(addon_package + ".permissions")
+    state = importlib.import_module(addon_package + ".state")
+    stack, manager, registry = NativeStack(), checkpoints.CheckpointManager(), tools.ToolRegistry()
+    context = tools.ToolContext(state.BridgeState(), permissions.PermissionManager(lambda: {}), registry, manager)
+    method, params = "fixture.b2_roles", {}
+    class Guard:
+        def __call__(self):
+            self.check_after_read()
+        def check_after_read(self):
+            role.check_scene_object_count(case.reader, case.scene, case.active, case.counts["memberships"])
+            current = {**facts, "checkpoint_roles": role.authored()}
+            if source.contract.digest(current) != role.bound_digest:
+                raise source.contract.refused("MODELED_FULL_PROTECTION_CHANGED")
+            role.verified(source.contract.digest(current))
+        def native_push_delegates(self):
+            role.check_identity(role.origin)
+            return (role.plan,)
+        def after_native_push(self):
+            completion.claim_native_push_completion(context, method, self)
+            role.after_native_push(role.origin)
+    guard = Guard()
+    spec = registry.register(method, lambda *_: None, modifies=True, checkpoint_admission_factory=lambda *_: guard)
+    native = stack.bpy.ops.ed.undo_push
+    def push(**kwargs):
+        result = native(**kwargs)
+        if "FINISHED" in result:
+            (case.push if effect is None else effect)()
+        return result
+    with monkeypatch.context() as patches:
+        patches.setattr(checkpoints, "require_blender", lambda: stack.bpy)
+        patches.setattr(stack.bpy.ops.ed, "undo_push", push)
+        with (registry.mutation_entry(spec, params, context) as permit,
+              registry.checkpoint_admission(spec, params, context) as binding,
+              registry.native_push_completion(permit, binding, manager,
+                  final_check=lambda: binding.check_identity(method)) as consumer):
+            assert manager.before_modification(method, before_write=binding,
+                after_read=binding.check_after_read, after_native_push=consumer)
+    return NS(stack=stack, manager=manager, guard=guard)
+
+
+@pytest.mark.parametrize("initialized", [False, True])
+def test_b2_exact_weak_role_transition_preserves_frozen_scope_and_repeated_count(
+    checkpoint_case, addon_package, monkeypatch, initialized,
+):
+    c = checkpoint_case
+    if initialized:
+        c.push()
+    role, facts = c.capture()
+    fingerprint = c.source.contract.digest(facts)
+    before = role.before_readback
+    complete_b2_push(c, role, facts, addon_package, monkeypatch)
+    assert role.report()["after_readback_measured"] is True
+    assert role.after_readback["scene_self_references"] == 1
+    assert role.after_readback["scene_object_references"] == 3
+    assert role.after_readback["particle_object"] == c.module.proof.token(c.active)
+    assert role.bound_digest == fingerprint and role.before_readback is before
+    complete_b2_push(c, role, facts, addon_package, monkeypatch)
+    assert role.after_readback["scene_object_references"] == 3
+    assert c.source.contract.digest({**facts, "checkpoint_roles": role.authored()}) == fingerprint
+
+
+@pytest.mark.parametrize("initialized", [False, True])
+def test_b2_checked_reader_matches_original_plan_admitted_state(checkpoint_case, initialized):
+    c = checkpoint_case
+    if initialized:
+        c.push()
+    role, _ = c.capture()
+    original = c.module.Plan(c.bpy, c.scene, active_validator=role.validator, include_brush=True)
+    assert role.plan._read() == original._read()
+    assert role.plan.references() == original.references()
+    assert role.plan.authored() == original.authored()
+
+
+@pytest.mark.parametrize("change", ["main_owner", "uid", "original", "particle", "extra_reference", "settings", "protected"])
+def test_b2_foreign_change_after_genuine_push_refuses_with_truthful_partial_bookkeeping(
+    checkpoint_case, addon_package, monkeypatch, change,
+):
+    c = checkpoint_case
+    role, facts = c.capture()
+    def effect():
+        c.push()
+        if change == "main_owner":
+            c.bpy.data.objects["Target"] = c.other
+        elif change == "uid":
+            c.active.session_uid += 1
+        elif change == "original":
+            c.scene._values["original"] = c.other
+        elif change == "particle":
+            c.particle._values["object"] = c.other
+        elif change == "extra_reference":
+            c.counts["extra"] += 1
+        elif change == "settings":
+            c.brush._values["strength"] = 0.25
+        else:
+            facts["complete_original_B2_scope"]["material"] = "foreign"
+    with pytest.raises(c.source.contract.BridgeError) as caught:
+        complete_b2_push(c, role, facts, addon_package, monkeypatch, effect=effect)
+    assert caught.value.context["checkpoint_bookkeeping"]["native_snapshots_completed"] == 1
+    assert caught.value.context["checkpoint_bookkeeping"]["next_write_rejected"] == "after_native_undo_push"
+    assert role.report()["native_push_completed"] is True
+    assert role.report()["after_readback_measured"] is False
+
+
+@pytest.mark.parametrize("field", ["active_validator", "previous_witness", "_read", "check_after_read"])
+def test_b2_plan_instance_replacement_refuses_before_foreign_callback(checkpoint_case, field):
+    c = checkpoint_case
+    role, _ = c.capture()
+    calls = []
+    setattr(role.plan, field, lambda *_: calls.append("foreign"))
+    with pytest.raises(c.source.contract.BridgeError):
+        role.check_after_read()
+    assert calls == []
+
+
+@pytest.mark.parametrize("phase", [0, 1])
+def test_b2_replaced_expected_never_dispatches_foreign_equality(checkpoint_case, phase):
+    c = checkpoint_case
+    role, _ = c.capture()
+    calls = []
+    class Foreign:
+        def __eq__(self, _other):
+            calls.append("equality")
+            return True
+    role.phase = phase
+    role.plan.expected = Foreign()
+    with pytest.raises(c.source.contract.BridgeError) as caught:
+        role.check_after_read()
+    assert caught.value.context["reason"] == "STORAGE_CHECKPOINT_ROLE_PHASE_CHANGED"
+    assert calls == []
+
+
+@pytest.mark.parametrize("change", ["unannounced", "phase_only", "expected_only", "direct_completion"])
+def test_b2_weak_looking_values_without_canonical_completion_do_not_authorize_readback(checkpoint_case, change):
+    c = checkpoint_case
+    role, _ = c.capture()
+    c.push()
+    if change == "phase_only":
+        role.phase = 1
+    elif change == "expected_only":
+        role.plan.expected = (1, role.plan.active)
+    with pytest.raises(c.source.contract.BridgeError):
+        if change == "direct_completion":
+            role.after_native_push(role.origin)
+        else:
+            role.check_after_read()
+    assert role.native_push_completed is False
+    assert role.after_readback is None
+
+
+@pytest.mark.parametrize("boundary", ["field", "iterator", "pointer", "settings", "user_map", "user_of_id"])
+@pytest.mark.parametrize("fault", ["stop", "source_change"])
+def test_b2_role_native_boundary_stops_before_any_later_native_access(
+    checkpoint_case, monkeypatch, boundary, fault,
+):
+    c = checkpoint_case
+    held_seal = [None]
+    def check():
+        if held_seal[0] is not None:
+            c.source.verify_seal(held_seal[0])
+        if c.live["stopped"]:
+            raise c.source.contract.BridgeError("TIMEOUT", "Modeled stop inside native role access")
+    c.gate.pure = check
+    role, _ = c.capture()
+    held_seal[0] = c.source.SourceSeal.capture()
+    events = []
+    def trigger(value):
+        events.append("fault")
+        c.live["stopped"] = True
+        if fault == "source_change":
+            monkeypatch.setitem(c.source.checkpoint_proof.RUNTIME["Scene"], "cycles", "STRING")
+        return value
+    if boundary == "field":
+        c.scene.getter_hooks["tool_settings"] = lambda: trigger(c.settings)
+    elif boundary == "iterator":
+        original = c.scene.bl_rna.properties
+        class StopIterator:
+            def __iter__(self):
+                return self
+            def __next__(self):
+                if events:
+                    pytest.fail("A second native iterator step ran after stop")
+                return trigger(original[0])
+        c.scene.bl_rna.properties = StopIterator()
+    elif boundary == "pointer":
+        c.scene.as_pointer = lambda: trigger(id(c.scene))
+    elif boundary == "settings":
+        c.brush.getter_hooks["strength"] = lambda: trigger(0.5)
+    elif boundary == "user_map":
+        original = c.bpy.data.user_map
+        c.bpy.data.user_map = lambda **kwargs: trigger(original(**kwargs))
+    else:
+        original = c.scene.user_of_id
+        c.scene.user_of_id = lambda owner: trigger(original(owner))
+    with pytest.raises(c.source.contract.BridgeError) as caught:
+        role.authored() if boundary in {"settings", "user_map"} else role.check_after_read()
+    assert events == ["fault"]
+    assert c.native_after_stop == []
+    assert role.native_push_completed is False and role.after_readback is None
+    if fault == "source_change":
+        assert caught.value.context["reason"] == "STORAGE_SOURCE_CHANGED"
+    else:
+        assert caught.value.code == "TIMEOUT"
+
+
+def test_b2_role_shadow_property_refuses_before_python_getter(checkpoint_case, monkeypatch):
+    c = checkpoint_case
+    role, _ = c.capture()
+    calls = []
+    def foreign(owner):
+        calls.append("foreign property")
+        return owner._values["object"]
+    monkeypatch.setattr(type(c.particle), "object", property(foreign), raising=False)
+    with pytest.raises(c.source.contract.BridgeError) as caught:
+        role.check_after_read()
+    assert caught.value.context["reason"] == "NATIVE_FIELD_PYTHON_SHADOW:object"
+    assert calls == []
+
+
+@pytest.mark.parametrize("field", ["check", "getter", "pointer", "bpy", "types", "collection_getter"])
+def test_b2_access_binding_replacement_refuses_before_foreign_dispatch(checkpoint_case, field):
+    c = checkpoint_case
+    role, _ = c.capture()
+    calls = []
+    setattr(role.access, field, lambda *_: calls.append("foreign"))
+    with pytest.raises(c.source.contract.BridgeError) as caught:
+        role.check_after_read()
+    assert caught.value.context["reason"] == "STORAGE_CHECKPOINT_ROLE_ACCESS_CHANGED"
+    assert calls == []
+
+
+@pytest.mark.parametrize("field", ["check", "getter", "types", "_origin"])
+def test_b2_native_return_cannot_replace_next_access_or_guard(checkpoint_case, field):
+    c = checkpoint_case
+    role, _ = c.capture()
+    calls = []
+    def effect():
+        setattr(role.access, field, lambda *_: calls.append("foreign"))
+        return c.settings
+    c.scene.getter_hooks["tool_settings"] = effect
+    with pytest.raises(c.source.contract.BridgeError) as caught:
+        role.check_after_read()
+    assert caught.value.context["reason"] == "STORAGE_CHECKPOINT_ROLE_ACCESS_CHANGED"
+    assert calls == []
+
+
+def test_b2_checked_reader_keeps_original_stored_ui_selection_refusal(checkpoint_case):
+    c = checkpoint_case
+    role, _ = c.capture()
+    c.active.custom_values["active_selection_set"] = 0
+    with pytest.raises(c.source.contract.BridgeError) as caught:
+        role.check_after_read()
+    assert caught.value.context["reason"] == "STORAGE_CHECKPOINT_STORED_UI_SELECTION_UNQUALIFIED"
+
+
+def test_b2_unknown_settings_container_refuses_before_foreign_iteration(checkpoint_case):
+    c = checkpoint_case
+    role, _ = c.capture()
+    calls = []
+    class Foreign:
+        def __iter__(self):
+            calls.append("foreign iteration")
+            return iter(())
+    c.brush.getter_hooks["strength"] = Foreign
+    with pytest.raises(c.source.contract.BridgeError) as caught:
+        role.authored()
+    assert caught.value.context["reason"] == "STORAGE_CHECKPOINT_VALUE_KIND_UNQUALIFIED"
+    assert calls == []
+
+
+def test_b2_mutable_struct_alias_cannot_admit_python_shadow(checkpoint_case, monkeypatch):
+    c = checkpoint_case
+    role, _ = c.capture()
+    calls = []
+    def foreign(_owner):
+        calls.append("foreign")
+        return c.scene.bl_rna
+    monkeypatch.setattr(c.bpy.types, "Struct", property)
+    monkeypatch.setattr(type(c.scene), "bl_rna", property(foreign))
+    with pytest.raises(c.source.contract.BridgeError):
+        role.check_after_read()
+    assert calls == []
+
+
+def test_b2_replaced_membership_never_dispatches_foreign_equality(checkpoint_case):
+    c = checkpoint_case
+    role, _ = c.capture()
+    calls = []
+    class Foreign:
+        def __eq__(self, _other):
+            calls.append("equality")
+            return True
+    role.memberships = Foreign()
+    with pytest.raises(c.source.contract.BridgeError):
+        role.check_after_read()
+    assert calls == []
+
+
+@pytest.mark.parametrize("self_count,target", [(0, "active"), (1, "none"), (1, "other"), (2, "active"), (-1, "none")])
+def test_b2_initial_roles_refuse_unwitnessed_or_extra_native_owners(checkpoint_case, self_count, target):
+    c = checkpoint_case
+    c.counts["self"] = self_count
+    c.particle._values["object"] = {"active": c.active, "none": None, "other": c.other}[target]
+    with pytest.raises(c.source.contract.BridgeError):
+        c.capture()
+
+
+@pytest.mark.parametrize("policy", ["nested_leaf", "nested_table", "flat_leaf"])
+def test_checkpoint_descriptor_policy_in_place_change_is_source_refusal(source, monkeypatch, policy):
+    seal = source.SourceSeal.capture()
+    proof = source.checkpoint_proof
+    if policy == "nested_leaf":
+        monkeypatch.setitem(proof.RUNTIME["Scene"], "cycles", "STRING")
+    elif policy == "nested_table":
+        monkeypatch.setitem(proof.RUNTIME, "Scene", dict(proof.RUNTIME["Scene"]))
+    else:
+        monkeypatch.setitem(proof.RUNTIME_FIXED, ("Scene", "cycles"), "ForeignSettings")
+    with pytest.raises(source.contract.BridgeError) as caught:
+        source.verify_seal(seal)
+    assert caught.value.context["reason"] == "STORAGE_SOURCE_CHANGED"
+
+
+def test_source_verifier_refuses_replaced_any_before_foreign_builtin_dispatch(source):
+    seal = source.SourceSeal.capture()
+    table = source.SourceSeal.verify.__builtins__
+    original = table["any"]
+    calls = []
+    def foreign(*_args):
+        calls.append(True)
+        raise AssertionError("Foreign builtin executed")
+    table["any"] = foreign
+    try:
+        with pytest.raises(source.contract.BridgeError):
+            source.SourceSeal.verify(seal)
+    finally:
+        table["any"] = original
+    assert calls == []
 
 
 @pytest.mark.parametrize("change", ["module_function", "function_code", "class_method", "foreign_key", "module_class"])
@@ -61,16 +505,21 @@ def test_standard_warning_cache_updates_keep_complete_source_seal_valid(source, 
     owner = source.graph if owner_name == "graph" else source
     registry = owner.__warningregistry__
     assert type(registry) is dict
+    saved = dict(registry)
     registry.clear()
-    seal = source.SourceSeal.capture()
-    with warnings.catch_warnings(record=True) as observed:
-        warnings.simplefilter("default", DeprecationWarning)
-        for _ in range(2):
-            warnings.warn_explicit("Owned standard warning-cache model", DeprecationWarning,
-                                   owner.__file__, 571, module=owner.__name__, registry=registry)
-            source.verify_seal(seal)
-    assert len(observed) == 1 and observed[0].category is DeprecationWarning
-    assert owner.__warningregistry__ is registry and type(registry["version"]) is int
+    try:
+        seal = source.SourceSeal.capture()
+        with warnings.catch_warnings(record=True) as observed:
+            warnings.simplefilter("default", DeprecationWarning)
+            for _ in range(2):
+                warnings.warn_explicit("Owned standard warning-cache model", DeprecationWarning,
+                                       owner.__file__, 571, module=owner.__name__, registry=registry)
+                source.verify_seal(seal)
+        assert len(observed) == 1 and observed[0].category is DeprecationWarning
+        assert owner.__warningregistry__ is registry and type(registry["version"]) is int
+    finally:
+        registry.clear()
+        registry.update(saved)
 
 
 def test_forward_cas_permits_only_precomputed_selected_array_transition(source):
