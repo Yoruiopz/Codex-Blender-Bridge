@@ -573,6 +573,14 @@ def _checkpoint_descriptor_error(facts):
     return error
 
 
+def _checkpoint_native_keys(keys):
+    """Catch only the held native keys invocation, outside both control gates."""
+    try:
+        return keys(), None
+    except TypeError as error:
+        return None, error
+
+
 class _CheckpointRoleAccess:
     """B2-only checked native reads; shared Scene readers stay unchanged."""
     __slots__ = ("_origin", "array_type", "base", "bpy", "check", "collection_getter", "collection_type", "getter", "pointer", "struct_type", "types")
@@ -690,7 +698,17 @@ class _CheckpointRoleAccess:
         return self.call(descriptor, collection, name)
 
     def identity(self, owner, kind):
-        self.descriptors(owner)
+        # Identity proves the requested native ID type and actual identity
+        # fields. Full logical/schema protection remains the graph pass; its
+        # unread declarations are not this Scene role reader's settings scope.
+        canonical = self.call(getattr, self.types, kind)
+        if type(owner) is not canonical:
+            raise contract.refused("STORAGE_CHECKPOINT_NATIVE_OWNER_CHANGED")
+        rna = self.raw(owner, "bl_rna")
+        canonical_rna = graph._class_dict(canonical).get("bl_rna")
+        if (type(rna) is not self.struct_type or type(canonical_rna) is not self.struct_type
+                or self.raw(rna, "identifier") != kind or self.key(rna) != self.key(canonical_rna)):
+            raise contract.refused("STORAGE_CHECKPOINT_NATIVE_SCHEMA_CHANGED")
         return (("kind", kind), ("name", graph._text(self.raw(owner, "name"))),
                 ("pointer", format(self.key(owner), "x")),
                 ("session_uid", str(graph._int(self.raw(owner, "session_uid"), 2**64 - 1, minimum=1))))
@@ -806,12 +824,22 @@ class _CheckpointRoleAccess:
         # These settings owners have no admitted IDProperty payload. Refuse
         # populated keys instead of omitting unknown values from protection.
         keys = self.method(owner, "keys")
-        try:
-            supplied = self.call(keys)
-        except TypeError as error:
-            self.call(tuple)
-            if "doesn't support IDProperties" not in str(error):
-                raise
+        supplied, error = self.call(_checkpoint_native_keys, keys)
+        if error is not None:
+            # Preserve the previous native-TypeError branch's third control
+            # check. It is outside the native-only catch, like both call gates.
+            origin, check = self._origin, self.check
+            if self._origin is not origin or any(object.__getattribute__(self, name) is not value for name, value in origin):
+                raise contract.refused("STORAGE_CHECKPOINT_ROLE_ACCESS_CHANGED")
+            check()
+            if self._origin is not origin or any(object.__getattribute__(self, name) is not value for name, value in origin):
+                raise contract.refused("STORAGE_CHECKPOINT_ROLE_ACCESS_CHANGED")
+            if type(error) is not TypeError:
+                raise error
+            arguments = error.args
+            if (type(arguments) is not tuple or len(arguments) != 1 or type(arguments[0]) is not str
+                    or arguments[0] != "bpy_struct.keys(): this type doesn't support IDProperties"):
+                raise error
             return tuple(result), ()
         if self.bounded(supplied, 128, "custom keys"):
             raise contract.refused("STORAGE_CHECKPOINT_CUSTOM_SETTINGS_UNQUALIFIED")

@@ -456,6 +456,101 @@ def test_b2_descriptor_diagnostic_omits_foreign_values_without_dispatch(source):
     assert calls == []
 
 
+
+def test_b2_mesh_identity_does_not_read_unrelated_cycles_declaration(checkpoint_case, monkeypatch):
+    c = checkpoint_case
+    c.mesh.bl_rna.properties.append(prop("cycles", "POINTER", is_runtime=True, is_readonly=True,
+                                        fixed_type=NS(identifier="CyclesMeshSettings")))
+    calls = []
+    def foreign(_owner):
+        calls.append("cycles payload")
+        raise AssertionError("Identity must not inspect unrelated runtime payloads")
+    monkeypatch.setattr(type(c.mesh), "cycles", property(foreign), raising=False)
+    role, _ = c.capture()
+    assert role.access.identity(c.mesh, "Mesh") == role.identities[2]
+    role.check_after_read()
+    assert calls == []
+    with pytest.raises(c.source.contract.BridgeError) as caught:
+        role.access.descriptors(c.mesh)
+    assert caught.value.context["reason"] == "STORAGE_CHECKPOINT_RUNTIME_DESCRIPTOR_CHANGED"
+    assert caught.value.context["checkpoint_descriptor"]["property"] == "cycles"
+    assert calls == []
+    with pytest.raises(c.source.contract.BridgeError) as shadow:
+        role.access.raw(c.mesh, "cycles")
+    assert shadow.value.context["reason"] == "NATIVE_FIELD_PYTHON_SHADOW:cycles"
+    assert calls == []
+
+
+@pytest.mark.parametrize("change", ["wrong_class", "schema_name", "schema_pointer", "schema_kind", "uid", "Main", "stale_alias"])
+def test_b2_minimal_identity_refuses_foreign_or_changed_native_owners(checkpoint_case, monkeypatch, change):
+    c = checkpoint_case
+    role, _ = c.capture()
+    if change == "wrong_class":
+        with pytest.raises(c.source.contract.BridgeError) as caught:
+            role.access.identity(c.active, "Mesh")
+        assert caught.value.context["reason"] == "STORAGE_CHECKPOINT_NATIVE_OWNER_CHANGED"
+        return
+    if change == "schema_name":
+        rna = c.mesh.bl_rna
+        c.native_hook = lambda owner, name, value: "Object" if owner is rna and name == "identifier" else value
+    elif change == "schema_pointer":
+        alternate = RNA("Mesh", Properties([]))
+        c.native_hook = lambda owner, name, value: alternate if owner is c.mesh and name == "bl_rna" else value
+    elif change == "schema_kind":
+        c.native_hook = lambda owner, name, value: object() if owner is c.mesh and name == "bl_rna" else value
+    elif change == "uid":
+        c.mesh.session_uid += 1
+    elif change == "Main":
+        c.bpy.data.meshes["Mesh"] = c.other
+    else:
+        monkeypatch.setattr(c.bpy.types, "Mesh", type("ForeignMesh", (NativeOwner,), {"bl_rna": c.mesh.bl_rna}))
+    with pytest.raises(c.source.contract.BridgeError):
+        role.check_after_read()
+    assert role.after_readback is None
+    assert role.native_push_completed is False
+
+
+@pytest.mark.parametrize("uid", [0, -1, True, None])
+def test_b2_minimal_identity_requires_real_positive_native_uid(checkpoint_case, uid):
+    c = checkpoint_case
+    role, _ = c.capture()
+    c.mesh.session_uid = uid
+    with pytest.raises(c.source.contract.BridgeError):
+        role.check_after_read()
+    assert role.after_readback is None
+
+
+@pytest.mark.parametrize("fault", ["stop", "source_change"])
+def test_b2_minimal_identity_stops_at_first_schema_getter(checkpoint_case, monkeypatch, fault):
+    c = checkpoint_case
+    seal = [None]
+    primary = c.source.contract.BridgeError("TIMEOUT", "Stopped native identity getter")
+    def check():
+        if seal[0] is not None:
+            c.source.verify_seal(seal[0])
+        if c.live["stopped"]:
+            raise primary
+    c.gate.pure = check
+    role, _ = c.capture()
+    seal[0] = c.source.SourceSeal.capture()
+    def hook(owner, name, value):
+        if owner is c.mesh and name == "bl_rna":
+            c.live["stopped"] = True
+            if fault == "source_change":
+                monkeypatch.setitem(c.source.checkpoint_proof.RUNTIME["Scene"], "cycles", "STRING")
+        return value
+    c.native_hook = hook
+    c.native_events.clear()
+    with pytest.raises(c.source.contract.BridgeError) as caught:
+        role.access.identity(c.mesh, "Mesh")
+    assert c.native_after_stop == []
+    assert [event[2] for event in c.native_events if event[0] == "get" and event[1] == id(c.mesh)] == ["bl_rna"]
+    if fault == "stop":
+        assert caught.value is primary
+    else:
+        assert caught.value.context["reason"] == "STORAGE_SOURCE_CHANGED"
+
+
 def test_b2_role_shadow_property_refuses_before_python_getter(checkpoint_case, monkeypatch):
     c = checkpoint_case
     role, _ = c.capture()
@@ -830,3 +925,176 @@ def test_permission_provider_cannot_replace_affected_scope_closure_before_native
     assert failure.value.context["reason"] == "STORAGE_SOURCE_CHANGED"
     assert s.env.provider_calls > before
     assert calls == [] and scene_job_manager in {"scene", "native_save"}
+
+
+def _b2_owned_keys_case(case, monkeypatch, *, native_error=None, guard_phase=None, guard_error=None, guard_effect=None):
+    """Model only C keys/error bindings; exercise real call/helper/settings."""
+    import sys
+
+    source, events, armed = case.source, [], [False]
+    original_method = source._CheckpointRoleAccess.method
+
+    def owned_keys():
+        events.append("native_keys")
+        if armed[0] and native_error is not None:
+            raise native_error
+        return ()
+
+    def method(self, owner, name):
+        if owner is case.brush and name == "keys":
+            return owned_keys
+        return original_method(self, owner, name)
+
+    def check():
+        if not armed[0]:
+            return
+        caller = sys._getframe(1)
+        values = caller.f_locals
+        args = values.get("args")
+        if (caller.f_code is source._CheckpointRoleAccess.call.__code__
+                and values.get("function") is source._checkpoint_native_keys
+                and type(args) is tuple and len(args) == 1 and args[0] is owned_keys):
+            phase = "pre" if values["stage"] == 0 else "post"
+        elif caller.f_code is source._CheckpointRoleAccess.settings.__code__ and "native_keys" in events:
+            phase = "extra"
+        else:
+            return
+        events.append(phase)
+        if guard_effect is not None:
+            guard_effect(phase)
+        if guard_phase == phase:
+            raise guard_error
+
+    monkeypatch.setattr(source._CheckpointRoleAccess, "method", method)
+    case.gate.pure = check
+    role, _ = case.capture()
+    events.clear()
+    armed[0] = True
+    return role, events
+
+
+def test_b2_native_keys_exact_unsupported_typeerror_keeps_original_three_checks(checkpoint_case, monkeypatch):
+    primary = TypeError("bpy_struct.keys(): this type doesn't support IDProperties")
+    role, events = _b2_owned_keys_case(checkpoint_case, monkeypatch, native_error=primary)
+    assert role.access.settings(checkpoint_case.brush) == ((("strength", 0.5),), ())
+    assert events == ["pre", "native_keys", "post", "extra"]
+
+
+def test_b2_native_keys_success_keeps_two_checks(checkpoint_case, monkeypatch):
+    role, events = _b2_owned_keys_case(checkpoint_case, monkeypatch)
+    assert role.access.settings(checkpoint_case.brush) == ((("strength", 0.5),), ())
+    assert events == ["pre", "native_keys", "post"]
+
+
+def test_b2_native_keys_foreign_typeerror_never_formats_or_reads_foreign_args(checkpoint_case, monkeypatch):
+    calls = []
+
+    class ForeignTypeError(TypeError):
+        def __str__(self):
+            calls.append("str")
+            return "doesn't support IDProperties"
+
+        def __repr__(self):
+            calls.append("repr")
+            return "foreign"
+
+        def __getattribute__(self, name):
+            if name == "args":
+                calls.append("args")
+            return super().__getattribute__(name)
+
+    primary = ForeignTypeError("doesn't support IDProperties")
+    role, events = _b2_owned_keys_case(checkpoint_case, monkeypatch, native_error=primary)
+    with pytest.raises(TypeError) as caught:
+        role.access.settings(checkpoint_case.brush)
+    assert caught.value is primary
+    assert calls == []
+    assert events[:3] == ["pre", "native_keys", "post"]
+    assert events.count("native_keys") == 1
+
+
+@pytest.mark.parametrize("shape", ["empty", "multiple", "foreign_value", "string_subclass", "unrelated_message"])
+def test_b2_native_keys_malformed_error_rethrows_original_without_payload_dispatch(checkpoint_case, monkeypatch, shape):
+    calls = []
+
+    class Foreign:
+        def __str__(self):
+            calls.append("str")
+            return "doesn't support IDProperties"
+
+        def __repr__(self):
+            calls.append("repr")
+            return "foreign"
+
+        def __bool__(self):
+            calls.append("bool")
+            return True
+
+    class ForeignString(str):
+        def __str__(self):
+            calls.append("str-subclass")
+            return "doesn't support IDProperties"
+
+        def __contains__(self, _needle):
+            calls.append("contains-subclass")
+            return True
+
+    args = {
+        "empty": (),
+        "multiple": ("doesn't support IDProperties", "extra"),
+        "foreign_value": (Foreign(),),
+        "string_subclass": (ForeignString("doesn't support IDProperties"),),
+        "unrelated_message": ("unrelated native error",),
+    }[shape]
+    primary = TypeError(*args)
+    role, events = _b2_owned_keys_case(checkpoint_case, monkeypatch, native_error=primary)
+    with pytest.raises(TypeError) as caught:
+        role.access.settings(checkpoint_case.brush)
+    assert caught.value is primary and calls == []
+    assert events[:3] == ["pre", "native_keys", "post"]
+    assert events.count("native_keys") == 1
+
+
+@pytest.mark.parametrize("phase,native_unsupported", [("pre", False), ("pre", True), ("post", False), ("post", True), ("extra", True)])
+def test_b2_matching_guard_typeerror_never_becomes_native_keys_admission(checkpoint_case, monkeypatch, phase, native_unsupported):
+    message = "bpy_struct.keys(): this type doesn't support IDProperties"
+    primary = TypeError(message)
+    native_error = TypeError(message) if native_unsupported else None
+    role, events = _b2_owned_keys_case(checkpoint_case, monkeypatch,
+        native_error=native_error, guard_phase=phase, guard_error=primary)
+    with pytest.raises(TypeError) as caught:
+        role.access.settings(checkpoint_case.brush)
+    assert caught.value is primary
+    expected = {"pre": ["pre"], "post": ["pre", "native_keys", "post"],
+                "extra": ["pre", "native_keys", "post", "extra"]}
+    assert events == expected[phase]
+    assert events.count("native_keys") == (0 if phase == "pre" else 1)
+
+
+def test_b2_native_keys_non_typeerror_preserves_primary_without_later_guard(checkpoint_case, monkeypatch):
+    primary = RuntimeError("native keys fault")
+    role, events = _b2_owned_keys_case(checkpoint_case, monkeypatch, native_error=primary)
+    with pytest.raises(RuntimeError) as caught:
+        role.access.settings(checkpoint_case.brush)
+    assert caught.value is primary
+    assert events == ["pre", "native_keys"]
+
+
+@pytest.mark.parametrize("field", ["getter", "check", "_origin"])
+def test_b2_third_native_error_check_keeps_held_accessor_origin_fence(checkpoint_case, monkeypatch, field):
+    """Private guard-boundary parity; ordinary Gate.pure is provider-free."""
+    c, held, calls = checkpoint_case, [None], []
+    primary = TypeError("bpy_struct.keys(): this type doesn't support IDProperties")
+    def foreign(*_args):
+        calls.append("foreign")
+        return None
+    def effect(phase):
+        if phase == "extra":
+            setattr(held[0].access, field, foreign)
+    role, events = _b2_owned_keys_case(c, monkeypatch, native_error=primary, guard_effect=effect)
+    held[0] = role
+    with pytest.raises(c.source.contract.BridgeError) as caught:
+        role.access.settings(c.brush)
+    assert caught.value.context["reason"] == "STORAGE_CHECKPOINT_ROLE_ACCESS_CHANGED"
+    assert events == ["pre", "native_keys", "post", "extra"]
+    assert calls == []
