@@ -324,6 +324,47 @@ def test_b2_role_native_boundary_stops_before_any_later_native_access(
         assert caught.value.code == "TIMEOUT"
 
 
+@pytest.mark.parametrize("kind", ["Scene", "Object"])
+def test_b2_runtime_marker_declaration_is_screened_without_reading_its_payload(checkpoint_case, monkeypatch, kind):
+    c = checkpoint_case
+    owner = c.scene if kind == "Scene" else c.active
+    fixed = c.source.checkpoint_proof.RUNTIME_FIXED[(kind, "cycles")]
+    owner.bl_rna.properties.append(prop("cycles", "POINTER", is_runtime=True, is_readonly=True,
+                                        fixed_type=NS(identifier=fixed)))
+    calls = []
+    def marker(_owner):
+        calls.append("runtime payload")
+        raise AssertionError("An unread runtime declaration must not invoke its getter")
+    monkeypatch.setattr(type(owner), "cycles", property(marker), raising=False)
+    role, _ = c.capture()
+    original = c.module.Plan(c.bpy, c.scene, active_validator=role.validator, include_brush=True)
+    assert role.plan.authored() == original.authored()
+    assert calls == []
+    with pytest.raises(c.source.contract.BridgeError) as caught:
+        role.access.raw(owner, "cycles")
+    assert caught.value.context["reason"] == "NATIVE_FIELD_PYTHON_SHADOW:cycles"
+    assert calls == []
+
+
+@pytest.mark.parametrize("kind", ["Scene", "Object"])
+@pytest.mark.parametrize("change", ["unknown", "kind", "readonly", "registered", "fixed_type"])
+def test_b2_runtime_marker_signature_drift_refuses_before_its_getter(checkpoint_case, monkeypatch, kind, change):
+    c = checkpoint_case
+    owner = c.scene if kind == "Scene" else c.active
+    name = "unreviewed" if change == "unknown" else "cycles"
+    fixed = c.source.checkpoint_proof.RUNTIME_FIXED[(kind, "cycles")]
+    metadata = prop(name, "STRING" if change == "kind" else "POINTER", is_runtime=True,
+                    is_readonly=change != "readonly", is_registered=change == "registered",
+                    fixed_type=NS(identifier="ForeignSettings" if change == "fixed_type" else fixed))
+    owner.bl_rna.properties.append(metadata)
+    calls = []
+    monkeypatch.setattr(type(owner), name, property(lambda _owner: calls.append("foreign")), raising=False)
+    with pytest.raises(c.source.contract.BridgeError) as caught:
+        c.capture()
+    assert caught.value.context["reason"] == "STORAGE_CHECKPOINT_RUNTIME_DESCRIPTOR_CHANGED"
+    assert calls == []
+
+
 def test_b2_role_shadow_property_refuses_before_python_getter(checkpoint_case, monkeypatch):
     c = checkpoint_case
     role, _ = c.capture()

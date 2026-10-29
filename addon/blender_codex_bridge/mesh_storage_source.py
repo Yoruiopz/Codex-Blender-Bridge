@@ -704,7 +704,9 @@ class _CheckpointRoleAccess:
                     fixed = self.raw(prop, "fixed_type")
                     if self.raw(fixed, "identifier") != checkpoint_proof.RUNTIME_FIXED.get((identifier, name)):
                         raise contract.refused("STORAGE_CHECKPOINT_RUNTIME_DESCRIPTOR_CHANGED")
-        graph._unshadowed(canonical, tuple(self.raw(prop, "identifier") for prop in properties))
+        # Runtime declarations such as Scene.cycles carry Python markers.
+        # Screen their native metadata here; raw() still proves every field
+        # actually read before dispatching its getter. Do not read markers.
         if identifier == "Object":
             keys = self.bounded(self.call(self.method(owner, "keys")), 128, "Object custom keys")
             if any(type(key) is not str for key in keys) or "active_selection_set" in keys:
