@@ -20,24 +20,29 @@ testing are deferred until implementation is complete, remain unverified, and do
 not block this implementation pass.** Windows 11 and installed-package acceptance
 remain mandatory for the later stable 1.0 candidate.
 
-The previous published [**0.7.0 alpha**](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.7.0)
-dates to 2026-10-25 at **19:16:03 UTC**, from
-`8d07ad898ba92c5e94db57b1562fefef9c8e0e1c`. Its
-[exact-source evidence](releases/0.7.0.md#verified-evidence) records seven CI jobs,
-8,884 tests plus three Windows-only skips per matrix cell, selected source and
-installed native checks, and all six anonymous download hashes. It qualifies only
-the documented direct-weight/raw-point and selected-data preview profiles; it is
-not a complete artist workflow. Earlier releases and evidence remain available.
+Published [**0.9.0 alpha**](releases/0.9.0.md) dates to 2026-10-28 at
+**16:09:45 UTC**, from `d756b68bc8b44a4da69862214a19ebb25034d1eb`. Its
+[exact-source evidence](releases/0.9.0.md#verified-release-evidence) records seven
+CI jobs, 10,795 tests plus three Windows-only skips per matrix cell, selected
+Linux source/installed checks and all six anonymous download hashes. The finite
+save profile supports clean, loaded, packed FILE images within 16,777,216
+aggregate pixels, 80 MiB packed bytes and 256 MiB saved files. It does not qualify
+current edited pixels, paired 4K recovery or complete artist-project delivery.
+Earlier releases and evidence remain available.
 
-The [0.8.0 alpha scope](releases/0.8.0.md) adds matching components and two distinct
-native-save tools with canonical queued admission and explicit local consent.
-Actual accepted source/package/native/installed identities and measured outcomes
-belong in the [release evidence](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.8.0),
-not self-referential source metadata or inherited donor results. The
-[current blocker plan](releases/0.8.0-blocker-plan.md) gives concrete next steps beyond
-the finite save profile. All 29 items and fourteen gates stay **OPEN**. Meaningful
+The [current blocker plan](releases/0.9.0-blocker-plan.md) gives concrete work
+beyond that profile. All 29 items and fourteen gates stay **OPEN**. Meaningful
 tested prereleases are authorized, but elapsed time does not require publication,
 and stable 1.0 criteria remain unchanged.
+
+Current private work has three prerequisites: detached stored-setting snapshots
+for cloth/render observation; bounded Mesh-storage preparation with retained
+ownership/recovery; and GLB Runtime observation/creation/publication. Their native
+integration and installed acceptance remain unqualified. Mesh-storage handlers
+and current-pixel lifecycle controllers are not public registered tools. The
+proposed paired 4K 640 MiB packed / 1 GiB saved-file profile remains private and
+unqualified; preserve accepted public save limits until new evidence qualifies
+an extension. These steps support H01/H03/A04/A07/P02, not closure of those items.
 
 The private [structured GLB Runtime candidates](structured-glb-import.md) add
 new-owned staging and explicit Scene publication entry points in development
@@ -135,7 +140,7 @@ still incomplete.
 
 | ID | Requirements | Remaining contract and completion check | Scenarios |
 | --- | --- | --- | --- |
-| H01 | DELIVER-01, REC-01, UX-01 | Provide safe current-file Save, Save As and complete portable `.blend` delivery with bounded native callbacks/effects, approved paths, explicit overwrite policy and full fresh-process reopen. The current [save refusal](project-save-safety.md) stays until a reviewed replacement qualifies. | A–C, E–F |
+| H01 | DELIVER-01, REC-01, UX-01 | Provide safe current-file Save, Save As and complete portable `.blend` delivery with bounded native callbacks/effects, approved paths, explicit overwrite policy and full fresh-process reopen. Legacy [save refusal](project-save-safety.md) stays held; extend the separately qualified finite native-save alternative to ordinary artist projects and edited pixels. | A–C, E–F |
 | H02 | UX-01, EVID-02, LOOK-01 | Provide a supported protected visual-verification strategy with qualified native witnesses and predicted evaluation/isolation/restoration effects. Keep [protected capture](protected-capture-design.md) refused until then; solid-only evidence cannot certify materials. | A–C, E |
 | H03 | DELIVER-01, SAFE-01 | Provide a separately qualified strategy for required 5.2 import workflows without invoking or bypassing the [exact-build quarantine](asset-import.md). Prove source/dependency consent, destination ownership, complete content and recovery. | F |
 | H04 | SAFE-01, LOOK-01 | Complete required shader removal/conversion through a separately reviewed lifecycle/consumer-migration design. Held REMOVE work stays held; preserve declared nested users, identifiers, links, defaults, animation and recovery. | B, E |

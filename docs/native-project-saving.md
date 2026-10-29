@@ -1,15 +1,14 @@
 # Native project saving with explicit session permission
 
-**0.9.0 alpha candidate — exact-build qualification pending.** The two typed tools use canonical queued admission,
-retained source/path intent, a distinct local effects grant and bounded shared jobs.
-The source inventory has 270 tools and matching 0.9.0 metadata. Each accepted build
-must qualify this real installed path and retain exact source/package identities,
-measured native outcomes and limitations. New 0.9.0 bytes still need exact-commit
-full/static checks, all seven CI jobs, package integrity, installed core/image and
-native-save/4K qualification. See the [candidate scope and gates](releases/0.9.0.md).
-A source version or donor result does not establish acceptance or publication.
-Published [0.8.0 evidence](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.8.0)
-and the earlier 268-tool 0.7 release remain separate historical records.
+**Published 0.9.0 alpha.** The two typed tools use canonical queued admission,
+retained source/path intent, a distinct local effects grant and bounded shared
+jobs. The accepted release from `d756b68bc8b44a4da69862214a19ebb25034d1eb`
+contains 270 tools. Its [exact release evidence](releases/0.9.0.md#verified-release-evidence)
+records seven passing CI jobs, matching package/source integrity, selected Linux
+source/installed checks and all six verified anonymous download hashes. That
+qualifies the finite clean packed 4K profile below; later development source and
+broader artist-project saving require separate qualification. Earlier releases
+remain available with their own evidence.
 
 Legacy `project.save` retains its [quarantined refusal](project-save-safety.md).
 The native-save alternative does not provide an arbitrary-Python fallback or
@@ -20,17 +19,17 @@ The separate donor at `80ec3cb7dd2f64b5baa4fd8193fa9780fd3d93bf` passed nine
 registered save/interruption scenarios on official Linux 4.5.14/5.2.2. Its
 `418d79fda46bae16c59025657d844a452682b061` follow-up also passed native-save and
 inherited geometry/Scene/image job replays after renaming the save-specific
-helper. These are historical donor-source results. The 0.8 integration must
-retain the 0.7 weight/raw-curve bounds and canonical-provider/job dependencies,
-and qualify its genuine initial parameter hook through the actual installed TCP
-queue. Direct ToolContext calls or a substituted classifier are not that proof.
-No old source/package identity is reused as final 0.9 qualification.
+helper. These are historical donor-source results. The accepted 0.9 release separately
+qualified its genuine initial parameter hook through the installed TCP queue,
+while retaining its inherited weight/raw-curve and canonical-provider/job bounds.
+Direct ToolContext calls, substituted classifiers and donor-source identity are
+not that final qualification.
 
 The first registered native runs stopped before any save at unsupported factory
 palette data. The isolated qualification fixture now inventories all native data
 families and explicitly cleans known factory data before creating its owned test
 asset. It retains structured failure details and records the declared Scene/UI
-binding changes from that setup. Passing this cleaned fixture will establish only
+binding changes from that setup. The accepted cleaned fixture establishes only
 the narrow declared profile. Ordinary startup palettes, line styles and transient
 Viewer/runtime images still need a separately reviewed, measured extension;
 standard startup project support remains an open production usability requirement.
@@ -239,7 +238,7 @@ Windows, full portable production delivery or 1.0. Those requirements remain
 mandatory in the [readiness ledger](release-1.0-readiness.md).
 
 
-## Single clean packed 4K source evidence and candidate gates
+## Single clean packed 4K evidence and remaining gates
 
 The explicit `native_project_saving_large` isolated-runner case exercises one
 4096 × 4096 RGBA8, sRGB/STRAIGHT clean FILE image. Its original level-zero PNG
@@ -265,8 +264,8 @@ phase/deadline facts. Native writes remain non-preemptible; interruption must
 report effects already incurred and prevent subsequent unauthorized writes.
 Read-only inspection/history replay must not enter another save.
 
-Constrained-memory native qualification is **false on both builds**. The source
-run allocated zero pressure bytes and reported
+The prerequisite source run did **not qualify constrained memory on either
+build**. It allocated zero pressure bytes and reported
 `SAFE_OWNED_PRESSURE_CAP_OR_HEADROOM`; ordinary resource samples and portable
 denial models do not count as pressure acceptance. A bounded pressure
 exercise may run only when it can retain at least 6 GiB available memory with
@@ -278,14 +277,17 @@ the unchanged 300-second process/phase bound.
 The source result belongs to commit `6112fdf54e6464bf15ef9473ed9a57eef4650e69`,
 not to the new 0.9.0 metadata. The two source runs passed in about 226.24 seconds
 combined on official Linux 4.5.14 (`62c1db4208e8`) and 5.2.2 (`d13f752e3b9c`).
-The runner report retains `release_readiness: NOT_ASSESSED`; exact candidate
-native replays, reviewed retained evidence and installed-package qualification
-remain required. Dirty or
-generated images, identity-preserving current-pixel backup, broader artist
-projects, Windows and full H01/1.0 acceptance remain open. Users should not
+That runner report retains `release_readiness: NOT_ASSESSED`. The accepted
+`d756b68bc8b44a4da69862214a19ebb25034d1eb` release then passed separate
+source/installed replays and package checks. The installed 5.2 run measured
+low-memory admission refusal with 2,013,265,920 pressure bytes; 4.5 allocated zero
+pressure bytes and did not qualify that case. Successful saving under pressure,
+complete constrained-memory recovery, dirty/generated images, identity-preserving
+current-pixel backup, broader artist projects, Windows and full H01/1.0 acceptance
+remain open. Users should not
 downsize artwork to bypass a refusal.
 
-This candidate retains the 256 MiB file ceiling. A separate original/snapshot
+Published 0.9.0 retains the 256 MiB file ceiling. A separate original/snapshot
 raw-EXR pair can exceed the 16,777,216-pixel and 80 MiB packed limits. Work on
 33,554,432-pixel/640 MiB packed/1 GiB saved-file sizing and source recovery is
 in progress and excluded from 0.9.0. No current-pixel lifecycle, dirty/generated

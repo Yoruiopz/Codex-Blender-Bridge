@@ -1,14 +1,13 @@
 # Working toward 1.0.0
 
 Status: **not release-ready**. This is an acceptance plan, not a feature announcement
-or a promise of a release date. The [0.8.0 alpha scope](releases/0.8.0.md) includes a
-bounded native-save alternative with canonical queued admission. Every accepted
-package must be tied to the actual source/native/installed outcomes retained in
-its [release evidence](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.8.0).
-A version string does not establish publication or passing checks. Previous
-[0.7.0 alpha](releases/0.7.0.md) and its exact-source evidence remain separate and
-available; no earlier smoke result qualifies later bytes or completes a stable gate.
-Meaningful reviewed prereleases require matching packages, checksums and measured
+or a promise of a release date. Published [0.9.0 alpha](releases/0.9.0.md) qualifies
+a finite clean packed 4K native-save profile. Its
+[exact-source/package evidence](releases/0.9.0.md#verified-release-evidence) includes
+seven passing CI jobs, selected Linux native/installed checks and verified release
+downloads. This evidence does not qualify later private source or full artist
+workflows. Previous releases remain available with their own evidence. Meaningful
+reviewed prereleases require matching packages, checksums and measured
 source-specific behavior. Tool counts and elapsed time do not establish readiness.
 All fourteen stable gates remain open; Windows compatibility/testing remains
 explicitly deferred and unverified until implementation completion.
@@ -44,10 +43,13 @@ must expand through qualified implementations, scoped dependency preservation
 and measured recovery. Evaluate completion against the full required workflows
 and representative projects, retaining the safety and evidence gates.
 
-The current native-save 1M-pixel budget is a save-profile qualification limit.
-Other selected 4K workflows have separate evidence. Complete normal 4K save and
-fresh-process reopen at the artwork's original resolution before production
-delivery acceptance; a smaller fixture cannot supply that evidence.
+Published 0.9.0 admits clean, loaded, packed FILE images within 16,777,216
+aggregate pixels, 80 MiB packed bytes and a 256 MiB saved-file ceiling. Edited
+dirty/generated pixels and paired original/snapshot 4K storage are unqualified.
+Finish their durable save/recovery and fresh-process reopen at the artwork's
+original resolution before production delivery acceptance; clean-file evidence
+does not supply current-pixel proof. Proposed private larger budgets are not
+accepted public limits.
 
 The intended target is an agent that can carry a brief through a complete Blender art
 workflow: understand references and constraints, plan, create/edit assets, inspect its work,
@@ -149,9 +151,10 @@ and real enforcement metadata were preserved; the protected-data baseline was nu
 Original material/current viewport appearance and stronger hidden-state/populated-baseline
 guarantees remain unqualified. This does not close H02/F01 or a stable release gate.
 
-Safe saving has a separate blocker: asset-catalog `SAVE_POST` effects extend
-outside authored Main. A snapshot witness alone cannot establish approved-path
-filesystem effects or complete project delivery. See [capture design](protected-capture-design.md)
+Asset-catalog `SAVE_POST` effects extend outside authored Main. The qualified
+native-save alternative requires a separate local grant for normal native
+effects; it does not establish exact-path confinement or complete artist-project
+delivery. A snapshot witness alone cannot provide those guarantees. See [capture design](protected-capture-design.md)
 and [save safety](project-save-safety.md). Existing holds remain in place.
 
 ## Release gates

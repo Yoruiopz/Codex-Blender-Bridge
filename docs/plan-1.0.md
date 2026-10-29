@@ -12,39 +12,37 @@ functional gaps through scoped ownership, supported native effects and measured
 recovery; keep every required workflow on the completion checklist.
 
 Ordinary 4K texture saving and preservation of current edited pixels are required
-production work. The current native-save profile's aggregate 1M-pixel budget
-describes that save implementation's qualification. Selected 4K painting and
+production work. Published 0.9.0's native-save profile admits clean, loaded,
+packed FILE images within 16,777,216 aggregate pixels, 80 MiB packed bytes and a 256 MiB saved-file
+ceiling. These bounds qualify that finite save profile. Selected 4K painting and
 recovery evidence elsewhere has its own scope. Qualify expanded save/reopen and
 portable delivery at the artwork's original resolution; retain resource and
 recovery gates while implementing the necessary capacity.
 
-**Native-save blocker:** `project.save` refuses both current-file
-Save and Save As. Hidden C asset-catalog callbacks and runtime save effects are
-not bounded by existing path/permission checks. Earlier typed-save results are
-historical; current feature reopen fixtures use labeled owned setup serialization.
-Safe authorized saving and portable `.blend` delivery remain mandatory open
-requirements, with no scope reduction. See [the safety contract](project-save-safety.md).
+**Legacy-save hold:** `project.save` still refuses current-file Save and Save As.
+Its path/permission contract does not bound hidden native callback/catalog
+effects. The distinct qualified native-save alternative requires explicit local
+consent for those effects and supports the finite 0.9 profile. Broader ordinary
+artist-project saving, edited-pixel durability and complete portable `.blend`
+delivery remain mandatory open requirements. See [the safety contract](project-save-safety.md).
 
-## 0.8.0 alpha scope — 2026-10-26
+## Published 0.9.0 alpha — 2026-10-28
 
-The [0.8 notes](releases/0.8.0.md) describe matching components and the 270-tool
-source inventory, including native-save preview/start with canonical queued
-admission and a default-off local native-effects grant. The
-[release evidence](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.8.0)
-must bind accepted source/packages to their actual native and installed outcomes.
-Metadata alone is not publication or qualification. The
-[blocker plan](releases/0.8.0-blocker-plan.md) defines remaining implementation and
-validation work, not a release date or scope reduction. Legacy `project.save`
-remains held, and native overwrite/callback effects retain their explicit consent.
+[0.9.0](releases/0.9.0.md) was published as an alpha prerelease from
+`d756b68bc8b44a4da69862214a19ebb25034d1eb` at **16:09:45 UTC** on
+2026-10-28. Its [release evidence](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.9.0)
+binds the 270-tool source, matching packages, seven passing CI jobs, selected
+Linux native/installed behavior and all six verified anonymous download hashes.
+This qualifies the documented clean packed 4K save profile, not full artist
+saving, current edited-pixel portability or stable 1.0. Earlier releases and their
+source-specific evidence remain available.
 
-Previous [0.7.0 alpha](releases/0.7.0.md) and its selected direct-weight/raw-point/
-populated-protection evidence remain available. That exact-source evidence does not
-qualify 0.8 bytes. Neutral silhouette/framing review uses explicit alpha composition;
-earlier direct-viewer observations remain retained. All 29 implementation items and
-fourteen stable gates stay open; Windows remains deferred. Unsupported curve
-operations have no arbitrary-Python fallback.
+The [current blocker plan](releases/0.9.0-blocker-plan.md) defines remaining
+implementation and validation. Legacy `project.save` and protected
+`viewport.capture` remain held. All 29 implementation items and fourteen stable
+gates remain open; Windows remains deferred and unverified.
 
-## Current implementation priorities — 2026-10-26
+## Current implementation priorities — 2026-10-29
 
 The [29-item implementation checklist](implementation-completion.md) is the
 current finite worklist for the full agreed artist workflow. Finish the existing
@@ -63,19 +61,23 @@ protected-capture, shader REMOVE, animation-provider reproduction and exact-buil
 designs/alternatives, not retries or weaker evidence.
 
 Meaningful versioned GitHub **pre-releases are authorized** after a reviewed,
-functional increment, rather than according to elapsed time alone. The previous
-published [**0.7.0 alpha**](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.7.0)
-dates to 2026-10-25 at **19:16:03 UTC** from
-`8d07ad898ba92c5e94db57b1562fefef9c8e0e1c`. Its
-[retained exact-source evidence](releases/0.7.0.md#verified-evidence) includes all
-seven CI jobs, 8,884 tests with three Windows-only skips per matrix cell, selected
-source/installed native checks and all six anonymous download hashes. These do not
-qualify later native-save source or complete artist workflows. Each accepted 0.8 build must meet its
-[source/packages/installed requirements](releases/0.8.0.md) with separate exact-file
-release evidence. Build matching
-components/checksums from one clean reviewed source, disclose limits, retain proof,
-verify downloads and preserve previous releases. No merge authority or stable
-acceptance follows. All 29 items and fourteen gates remain **OPEN**.
+functional increment. Published [0.9.0](releases/0.9.0.md#verified-release-evidence)
+is the latest accepted alpha; its evidence qualifies only its exact bytes and
+documented profiles. Later source needs separate focused/full checks, applicable
+native and installed acceptance, exact-commit CI, matching packages/checksums and
+verified downloads. Preserve earlier releases. No merge authority or stable
+acceptance follows from release cadence. All 29 items and fourteen gates remain
+**OPEN**.
+
+The current private dependency sequence is: qualify detached native stored-setting
+snapshots before cloth/render integration; finish the bounded Mesh-storage job's
+ownership/recovery boundary and selected-Mesh context checks; resolve GLB Runtime
+observation cost within existing deadlines; then qualify real staged creation and
+publication. These prerequisites add no accepted public feature. Current-pixel
+paired 4K backup/packing/original-ID recovery remains separately unqualified;
+its proposed 640 MiB packed / 1 GiB saved-file budget is not the published save
+profile. Integrate useful domain workflows and scenarios A–F after their safety
+prerequisites rather than treating private research as completion.
 
 The architecture uses **official, unmodified Blender only**: no custom build, fork
 or distribution. The [native witness finding](release-1.0-readiness.md#current-native-witness-blocker)
@@ -130,7 +132,7 @@ acceptance evidence; native smoke reports themselves remain `NOT_ASSESSED`.
   They do not prove interactive UI installation, real undo interleaving or artistic quality.
 - The manifest's 4.2 minimum is not verified by the local matrix. Test it or explicitly resolve
   supported versions before RC. Do not infer Linux/macOS Blender support from Python CI.
-- Published 0.7.0 remains alpha, with older releases still available. Do not
+- Published 0.9.0 remains alpha, with older releases still available. Do not
   replace accepted artifacts or publish 1.0 early.
   Public-facing repository work is now authorized; it does not close any release gate.
 
