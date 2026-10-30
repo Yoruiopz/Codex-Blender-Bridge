@@ -160,6 +160,7 @@ class ToolContext:
     exclusive_mutation_lease: ExclusiveMutationLease | None = None
     artist_step_entry_captured: bool = False
     artist_step_entry: Any = None
+    storage_snapshots: Any = None
 
     def require(self, *permissions: Permission) -> None:
         self.permissions.require(permissions)

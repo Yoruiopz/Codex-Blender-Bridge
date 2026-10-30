@@ -20,6 +20,7 @@ from .permissions import permission_snapshot as _base_permission_snapshot
 from .selection import clear_selection_references
 from .server import LocalBridgeServer
 from .state import BridgeState, get_state
+from .storage_snapshot_service import StorageSnapshotService
 from .task_plans import get_task_plans
 from .tool_registry import ToolRegistry
 
@@ -190,6 +191,8 @@ class BridgeRuntime:
         self.jobs = NativeSaveJobs(lambda: checked_executor_context(self.executor),
                               lambda: getattr(_preferences(), "paint_job_budget_ms", 4),
                               native_save_policy=self.native_save_policy, registry=self.registry)
+        self.storage_snapshots = StorageSnapshotService(self)
+        self._storage_snapshot_origin = self.storage_snapshots
         self.glb_stage = GLBStageService(self)
         self._glb_stage_origin = self.glb_stage
         self.executor = MainThreadExecutor(
@@ -200,6 +203,7 @@ class BridgeRuntime:
             checkpoints=self.checkpoints,
             jobs=self.jobs,
             glb_stage=self.glb_stage,
+            storage_snapshots=self.storage_snapshots,
         )
         self.glb_stage._executor_origin = self.executor
         self.server = LocalBridgeServer(submit=self.executor.submit, state=self.state)

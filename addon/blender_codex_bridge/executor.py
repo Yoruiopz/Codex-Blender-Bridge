@@ -75,6 +75,7 @@ class MainThreadExecutor:
         maximum_per_tick: int = 4,
         jobs: Any = None,
         glb_stage: Any = None,
+        storage_snapshots: Any = None,
     ) -> None:
         self.command_queue = command_queue
         self.registry = registry
@@ -84,6 +85,7 @@ class MainThreadExecutor:
         self.evidence = SceneEvidenceStore()
         self.jobs = jobs
         self.glb_stage = glb_stage
+        self.storage_snapshots = storage_snapshots
         self.interval = interval
         self.maximum_per_tick = maximum_per_tick
         self._running = False
@@ -101,6 +103,7 @@ class MainThreadExecutor:
             evidence=self.evidence,
             jobs=self.jobs,
             glb_stage=self.glb_stage,
+            storage_snapshots=self.storage_snapshots,
         )
 
     def start(self) -> None:
