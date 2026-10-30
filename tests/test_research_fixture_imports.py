@@ -5033,3 +5033,261 @@ def test_atomic_monitor_restore_attempts_every_owned_slot_and_preserves_first_er
     assert api.owner is None and not any(api.local.values())
     with pytest.raises(AssertionError):
         monitor.summary()
+
+
+def _inspection_frozen_ast(value):
+    """Stable syntax fingerprint across the supported Python minor versions."""
+    if isinstance(value, ast.AST):
+        return [type(value).__name__, [[name, _inspection_frozen_ast(item)]
+                for name, item in ast.iter_fields(value) if name != "type_params"]]
+    if isinstance(value, list):
+        return [_inspection_frozen_ast(item) for item in value]
+    if isinstance(value, bytes):
+        return ["bytes", value.hex()]
+    return value
+
+
+def test_phased_inspection_probe_preserves_prior_fixture_and_observer_routes():
+    # Frozen from 0cf15f6d964748479995456a96524a393c710638. This checks actual
+    # prior bodies and defaults, not a second hand-maintained equivalent path.
+    expected = {
+        "Client": "4440a593e4aa15006cc9ca477b65e6884ef209044d309c142e8b0e7b7c270087",
+        "Observer": "0fbe528138e811617beb7ab51672631a7a54f81c553a7b0d2a8710ace8750d98",
+        "Fixture": "9e656e40b4f64ee7ed12be71ce46abd5338bd7de502e5e566e03efe65f469dc7",
+        "control_hook_state": "82c9a21d966e6c21569fb8225cadb511d24b1f1ffcc54b56dd21cd45092f1f98",
+        "FirstJobControl": "8055e41b59914a1f47bb475b672f4b147cf690ad56edf3a5c8f16066fa4b3cf5",
+        "AtomicPhaseMonitor": "0cf2534234816c813d6ee5857aeebca1b8215d552df12a9dd7f135bd1d5ccef8",
+        "AtomicPhaseTiming": "34abe08eab87fe7b90361feff1d0aba1ab387c9e93987a79172a92aa453bc01c",
+    }
+    source = (ROOT / "scripts/blender_mesh_storage_job_smoke.py").read_text()
+    tree = ast.parse(source)
+    actual = {node.name: hashlib.sha256(json.dumps(_inspection_frozen_ast(node),
+              ensure_ascii=True, separators=(",", ":")).encode()).hexdigest()
+              for node in tree.body if isinstance(node, (ast.ClassDef, ast.FunctionDef)) and node.name in expected}
+    assert actual == expected
+
+
+def test_phased_inspection_probe_import_is_inert(fixture_imports):
+    script = importlib.import_module("scripts.blender_mesh_storage_job_smoke")
+    assert issubclass(script.PhasedInspectionProbe, script.FirstJobControl)
+    assert script.PhasedInspectionProbe.setup is script.Fixture.setup
+    assert fixture_imports.timers == [] and fixture_imports.events == []
+
+
+def _inspection_hook_model(monkeypatch):
+    script = importlib.import_module("scripts.blender_mesh_storage_job_smoke")
+    calls = []
+    owners, events = [None] * 6, [0] * 6
+    def tool(index):
+        calls.append(("owner", index))
+        return owners[index]
+    def event(index):
+        calls.append(("events", index))
+        return events[index]
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("Unobserved inspection probe changed monitoring state")
+    monitoring = NS(get_tool=tool, get_events=event, use_tool_id=forbidden, free_tool_id=forbidden,
+                    set_events=forbidden, set_local_events=forbidden, register_callback=forbidden)
+    monkeypatch.setattr(sys, "monitoring", monitoring, raising=False)
+    for owner, name in ((sys, "getprofile"), (sys, "gettrace"),
+                        (threading, "getprofile"), (threading, "gettrace")):
+        monkeypatch.setattr(owner, name, lambda: None)
+    return script, calls, owners, events
+
+
+def test_phased_inspection_requires_all_public_monitoring_slots_unowned_without_mutating_them(monkeypatch):
+    script, calls, _owners, _events = _inspection_hook_model(monkeypatch)
+    assert script.inspection_hook_state() == {"python": [None] * 4,
+        "monitoring_tools": [None] * 6, "monitoring_global_events": [0] * 6}
+    assert calls == [("owner", index) for index in range(6)] + [("events", index) for index in range(6)]
+
+
+@pytest.mark.parametrize("slot", range(6))
+@pytest.mark.parametrize("fault", ("owner", "event", "bool_event", "foreign_event"))
+def test_phased_inspection_refuses_owned_or_malformed_monitoring_state_before_any_setter(monkeypatch, slot, fault):
+    script, _calls, owners, events = _inspection_hook_model(monkeypatch)
+    foreign_calls = []
+    class Foreign:
+        def __eq__(self, _other):
+            foreign_calls.append("eq")
+            return False
+        def __bool__(self):
+            foreign_calls.append("bool")
+            return False
+    if fault == "owner":
+        owners[slot] = Foreign()
+    elif fault == "event":
+        events[slot] = 1
+    elif fault == "bool_event":
+        events[slot] = False
+    else:
+        events[slot] = Foreign()
+    with pytest.raises(AssertionError):
+        script.inspection_hook_state()
+    assert foreign_calls == []
+
+
+@pytest.mark.parametrize("slot", range(4))
+def test_phased_inspection_refuses_python_hooks_before_monitoring_reads(monkeypatch, slot):
+    script, calls, _owners, _events = _inspection_hook_model(monkeypatch)
+    owner, name = ((sys, "getprofile"), (sys, "gettrace"),
+                   (threading, "getprofile"), (threading, "gettrace"))[slot]
+    monkeypatch.setattr(owner, name, lambda: object())
+    with pytest.raises(AssertionError, match="four hooks absent"):
+        script.inspection_hook_state()
+    assert calls == []
+
+
+def test_phased_inspection_refuses_missing_public_monitoring_api(monkeypatch):
+    script, calls, _owners, _events = _inspection_hook_model(monkeypatch)
+    monkeypatch.setattr(sys, "monitoring", None)
+    with pytest.raises(AssertionError):
+        script.inspection_hook_state()
+    assert calls == []
+
+
+def test_phased_inspection_constructor_retains_original_unobserved_setup_without_RNA(monkeypatch):
+    script, _calls, _owners, _events = _inspection_hook_model(monkeypatch)
+    class Blender:
+        app = NS(version=(5, 2, 2), build_hash=script.BUILD, version_string="5.2.2")
+        def __getattribute__(self, name):
+            assert name == "app", "Constructor accessed RNA before owned setup"
+            return object.__getattribute__(self, name)
+    probe = script.PhasedInspectionProbe(Blender(), NS(bridge_phase="success"), "1" * 32, {}, {})
+    assert probe.observe is False and probe.hooks is None and probe.observer is None
+    assert probe.inspection_data == {"requests": [], "timings": [], "terminal": None}
+
+
+@pytest.mark.parametrize("fault", ("active_job", "wrong_thread", "executing"))
+def test_phased_inspection_snapshot_requires_settled_runtime_before_all_native_samples(monkeypatch, fault):
+    script, control, calls = _b2_control_model(monkeypatch)
+    probe = object.__new__(script.PhasedInspectionProbe)
+    vars(probe).update(vars(control))
+    monkeypatch.setattr(script, "inspection_context_snapshot", lambda *_: calls.append("context") or {})
+    monkeypatch.setattr(script, "inspection_boundaries", lambda *_: calls.append("boundaries") or {})
+    monkeypatch.setattr(script, "inspection_hook_state", lambda: calls.append("hooks") or {})
+    if fault == "active_job":
+        probe.runtime.jobs.active = object()
+    elif fault == "wrong_thread":
+        probe.runtime.executor._main_thread_id += 1
+    else:
+        probe.runtime.state.is_executing = True
+    with pytest.raises(AssertionError, match="settled Runtime"):
+        probe.apply("inspection_snapshot", {"stage": "after"})
+    assert calls == []
+
+
+def test_phased_inspection_snapshot_refuses_observer_before_any_native_sample(monkeypatch):
+    script, control, calls = _b2_control_model(monkeypatch)
+    probe = object.__new__(script.PhasedInspectionProbe)
+    vars(probe).update(vars(control))
+    def refused():
+        raise AssertionError("Existing observer")
+    monkeypatch.setattr(script, "inspection_hook_state", refused)
+    monkeypatch.setattr(script, "inspection_context_snapshot", lambda *_: calls.append("context") or {})
+    monkeypatch.setattr(script, "inspection_boundaries", lambda *_: calls.append("boundaries") or {})
+    with pytest.raises(AssertionError, match="Existing observer"):
+        probe.apply("inspection_snapshot", {"stage": "before"})
+    assert calls == []
+
+
+def test_phased_inspection_probe_uses_only_real_client_and_queued_runtime_route():
+    tree = ast.parse((ROOT / "scripts/blender_mesh_storage_job_smoke.py").read_text())
+    cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "PhasedInspectionProbe")
+    scenario = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == "scenario")
+    forbidden = {"tick", "execute_request", "_invoke_owned", "_drain_timer", "invoke", "prepare", "undo_push",
+                 "setprofile", "settrace", "set_events", "set_local_events", "register_callback"}
+    assert not any(isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                   and node.func.attr in forbidden for node in ast.walk(cls))
+    assert not any(isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name)
+                   and node.value.id == "bpy" for node in ast.walk(scenario))
+    assert not any(isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name)
+                   and node.value.id == "self" and node.attr == "bpy" for node in ast.walk(scenario))
+    assert not any(isinstance(node, ast.Attribute) and node.attr in {"PREVIEW", "START"} for node in ast.walk(scenario))
+    source = ast.unparse(scenario)
+    assert "INSPECTION_START" in source and "jobs.inspect" in source and "jobs.list" in source
+
+
+def test_phased_inspection_payload_report_counts_complete_known_arrays_without_claiming_COW():
+    script = importlib.import_module("scripts.blender_mesh_storage_job_smoke")
+    sample = {"protected": {"original_ARRAY_values": [
+        ["bool", "FACE", "BOOLEAN", [True, False, True]],
+        ["int", "POINT", "INT", [1, 2]],
+        ["pair", "EDGE", "INT32_2D", [[1, 2], [3, 4]]],
+        ["uv", "CORNER", "FLOAT2", [["00000000", "0000803f"]]],
+        ["position", "POINT", "FLOAT_VECTOR", [["00000000"] * 3] * 2]],
+        "image": {"pixels_float32_le": "0000803f" * 16, "packed_bytes": 128}}}
+    report = script.inspection_payload_counts(sample)
+    assert report["original_ARRAY_elements"] == 10
+    assert report["original_ARRAY_payload_bytes"] == 3 + 8 + 16 + 8 + 24
+    assert report["image_float32_values"] == 16 and report["image_float32_bytes"] == 64
+    assert report["packed_bytes"] == 128 and report["selected_SINGLE_payloads_sampled"] is False
+    assert "not total native allocations or COW events" in report["scope"]
+
+
+def _inspection_cached_job_model(monkeypatch):
+    script = importlib.import_module("scripts.blender_mesh_storage_job_smoke")
+    class InspectionJob:
+        pass
+    class SourceSeal(tuple):
+        pass
+    for name, kind_name, kind in (("scene_jobs", "InspectionJob", InspectionJob),
+                                 ("mesh_storage_source", "SourceSeal", SourceSeal)):
+        module = ModuleType("blender_codex_bridge." + name)
+        setattr(module, kind_name, kind)
+        monkeypatch.setitem(sys.modules, module.__name__, module)
+    lifetime = NS(delivered=threading.Event(), rejected=threading.Event(),
+                  connection=NS(disconnected=threading.Event()))
+    lifetime.delivered.set()
+    job = InspectionJob()
+    vars(job).update(job_id="job_" + "1" * 32, request_id="request_1", method="jobs._inspection_turn",
+                     kind="mesh.attribute_storage_inspection", state="SUCCEEDED", phase="inspection_complete",
+                     revision=5, driver=None, lifetime=lifetime, deadline=1000.,
+                     result={"inspection_fingerprint": "a" * 64, "cached_at_completion": True,
+                             "native_state_revalidated": False, "write_authorized": False,
+                             "writer_handoff_supported": False})
+    runtime = NS(registry=object(), state=object(), jobs=NS(history=[job], _inspection_ready={}))
+    proof = (SourceSeal(), (None, None, runtime), NS(registry=runtime.registry), (), (runtime.state,), lifetime,
+             (), (), (), (), 1000.)
+    runtime.jobs._inspection_ready[id(job)] = proof
+    return script, runtime, job, proof
+
+
+def test_phased_inspection_runtime_sample_binds_actual_retired_job_and_cached_ready_scope(monkeypatch):
+    script, runtime, job, _proof = _inspection_cached_job_model(monkeypatch)
+    report = script.inspection_runtime_job(runtime, job.job_id)
+    assert report["job_id"] == job.job_id and report["request_id"] == job.request_id
+    assert report["method"] == "jobs._inspection_turn" and report["phase"] == "inspection_complete"
+    assert report["driver_retired"] is report["ready_record_present"] is True
+    assert report["original_runtime"] is report["registry_match"] is report["state_match"] is True
+    assert report["delivered"] is report["connection_present"] is True
+    assert report["rejected"] is report["disconnected"] is False
+    assert report["job_deadline"] == 1000. and report["ready_deadline"] == 1000.
+    assert type(report["sampled_at"]) is float
+    assert report["cached_result_sha256"] == hashlib.sha256(script.canonical(job.result)).hexdigest()
+    assert report["inspection_fingerprint"] == job.result["inspection_fingerprint"]
+
+
+@pytest.mark.parametrize("fault", ("missing_job", "duplicate_job", "wrong_job_class", "missing_ready", "foreign_tuple", "wrong_seal"))
+def test_phased_inspection_runtime_sample_refuses_missing_or_foreign_cached_origin(monkeypatch, fault):
+    script, runtime, job, proof = _inspection_cached_job_model(monkeypatch)
+    foreign_calls = []
+    class ForeignTuple(tuple):
+        def __iter__(self):
+            foreign_calls.append("iter")
+            return super().__iter__()
+    if fault == "missing_job":
+        runtime.jobs.history.clear()
+    elif fault == "duplicate_job":
+        runtime.jobs.history.append(job)
+    elif fault == "wrong_job_class":
+        runtime.jobs.history = [NS(**vars(job))]
+    elif fault == "missing_ready":
+        runtime.jobs._inspection_ready.clear()
+    elif fault == "foreign_tuple":
+        runtime.jobs._inspection_ready[id(job)] = ForeignTuple(proof)
+    else:
+        runtime.jobs._inspection_ready[id(job)] = ((), *proof[1:])
+    with pytest.raises(AssertionError):
+        script.inspection_runtime_job(runtime, job.job_id)
+    assert foreign_calls == []

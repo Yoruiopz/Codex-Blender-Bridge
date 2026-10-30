@@ -50,6 +50,17 @@ CONTROL_CASE = "mesh_storage_first_job_control"
 CONTROL_PROFILE = "MESH_STORAGE_FIRST_JOB_UNTRACED_CONTROL_V1"
 CONTROL_MARKER = "BLENDER_MESH_STORAGE_FIRST_JOB_CONTROL_DIAGNOSTIC "
 CONTROL_REPORT = "mesh-storage-first-job-control.json"
+INSPECTION_CASE = "mesh_storage_phased_inspection"
+INSPECTION_PROFILE = "MESH_STORAGE_PHASED_INSPECTION_NATIVE_V1"
+INSPECTION_MARKER = "BLENDER_MESH_STORAGE_PHASED_INSPECTION_OK "
+INSPECTION_REPORT = "mesh-storage-phased-inspection.json"
+INSPECTION_LIMITATIONS = {
+    "success_only": True, "inspection_only": True, "public_tool": False, "mcp": False,
+    "writer_handoff": False, "full_artist_workflow": False, "installed_package": False,
+    "windows": False, "blender_4_5": False, "physical_cache_passivity": False,
+    "exact_native_entry_counters": False, "COW_event_count_observed": False,
+    "postboundary_original_SINGLE_values_observed": False, "all_adversaries_qualified": False,
+}
 CONTROL_FLAGS = dict.fromkeys(("source_frame_observer_installed", "native_access_counter_observed",
     "checkpoint_boundary_observed", "complete_five_phase_qualified", "preservation_qualified",
     "cancel_disconnect_qualified", "recovery_qualified", "durable_backup_qualified",
@@ -1869,6 +1880,216 @@ class AtomicPhaseTiming(FirstJobControl):
         return None
 
 
+def inspection_hook_state():
+    """Refuse existing observers; never install or change one."""
+    python = control_hook_state()
+    monitoring = getattr(sys, "monitoring", None)
+    assert monitoring is not None
+    tools = [monitoring.get_tool(index) for index in range(6)]
+    events = [monitoring.get_events(index) for index in range(6)]
+    assert all(value is None for value in tools) and all(type(value) is int and value == 0 for value in events)
+    return {"python": python, "monitoring_tools": tools, "monitoring_global_events": events}
+
+
+def inspection_context_snapshot(bpy):
+    context = bpy.context
+    selected = tuple(context.selected_objects)
+    assert len(selected) <= 512
+    scene = context.scene
+    particle = scene.tool_settings.particle_edit
+    return {"mode": context.mode, "scene": identity(scene),
+            "active": None if context.view_layer.objects.active is None else identity(context.view_layer.objects.active),
+            "selection": sorted(identity(value) for value in selected),
+            "scene_self_references": scene.user_of_id(scene),
+            "particle_object": None if particle.object is None else identity(particle.object)}
+
+
+def inspection_boundaries(runtime):
+    """Cached application state only; no native undo/API counter is inferred."""
+    checkpoints, jobs = runtime.checkpoints, runtime.jobs
+    reservations = runtime.registry._scene_reservations
+    return {"operation_history": runtime.state.history(100), "checkpoints": checkpoints.list(100),
+            "undo_steps": len(checkpoints._undo_steps), "pending": checkpoints._pending is not None,
+            "owned_pending": len(checkpoints._owned_pending), "editor_session": checkpoints._editor_session is not None,
+            "recovery_ids": sorted(jobs.recovery_ledger), "reservation_owner": reservations.owner is not None,
+            "retained_reservations": len(reservations._retained), "write_turns": len(reservations._turns),
+            "read_turns": len(reservations._inspection_turns)}
+
+
+def inspection_runtime_job(runtime, identifier):
+    """Bind delivered wire data to the actual retired queued job; cached only."""
+    from blender_codex_bridge.mesh_storage_source import SourceSeal
+    from blender_codex_bridge.scene_jobs import InspectionJob
+    jobs = [job for job in runtime.jobs.history if job.job_id == identifier]
+    assert len(jobs) == 1 and type(jobs[0]) is InspectionJob
+    job = jobs[0]
+    proof = runtime.jobs._inspection_ready.get(id(job))
+    assert type(proof) is tuple and len(proof) == 11
+    seal, factory, authority, _rows, state, lifetime, _life, _connection, _events, _permissions, deadline = proof
+    assert type(seal) is SourceSeal and lifetime is job.lifetime
+    return {"job_id": job.job_id, "request_id": job.request_id, "method": job.method,
+            "kind": job.kind, "state": job.state, "phase": job.phase, "revision": job.revision,
+            "driver_retired": job.driver is None, "ready_record_present": True,
+            "original_runtime": factory[2] is runtime, "registry_match": authority.registry is runtime.registry,
+            "state_match": state[0] is runtime.state, "delivered": lifetime.delivered.is_set(),
+            "rejected": lifetime.rejected.is_set(), "connection_present": lifetime.connection is not None,
+            "disconnected": lifetime.connection is None or lifetime.connection.disconnected.is_set(),
+            "job_deadline": job.deadline, "ready_deadline": deadline, "sampled_at": time.monotonic(),
+            "cached_result_sha256": hashlib.sha256(canonical(job.result)).hexdigest(),
+            "inspection_fingerprint": job.result["inspection_fingerprint"]}
+
+
+def inspection_payload_counts(sample):
+    widths = {"BOOLEAN": 1, "INT": 4, "INT32_2D": 8, "FLOAT2": 8, "FLOAT_VECTOR": 12}
+    arrays = sample["protected"]["original_ARRAY_values"]
+    image = sample["protected"]["image"]
+    return {"original_ARRAY_elements": sum(len(row[3]) for row in arrays),
+            "original_ARRAY_payload_bytes": sum(len(row[3]) * widths[row[2]] for row in arrays),
+            "image_float32_values": len(image["pixels_float32_le"]) // 8,
+            "image_float32_bytes": len(image["pixels_float32_le"]) // 2,
+            "packed_bytes": image["packed_bytes"], "selected_SINGLE_payloads_sampled": False,
+            "scope": "Known fixture ARRAY/image payloads; not total native allocations or COW events"}
+
+
+class PhasedInspectionProbe(FirstJobControl):
+    """Unobserved success path through real TCP, Runtime and queued read turns."""
+
+    def __init__(self, bpy, options, token, sources, display):
+        super().__init__(bpy, options, token, sources, display)
+        inspection_hook_state()
+        self.inspection_data = {"requests": [], "timings": [], "terminal": None}
+
+    def apply(self, action, parameters):
+        assert action == "inspection_snapshot" and parameters["stage"] in {"before", "after"}
+        from scripts.native_resources import linux_available_memory, linux_process_memory
+        settled, hooks = self.settled(), inspection_hook_state()
+        began, cpu = time.monotonic(), time.process_time()
+        cached_job = None if parameters["stage"] == "before" else inspection_runtime_job(self.runtime, parameters["job_id"])
+        sample = snapshot(self.bpy, self.targets["main"])
+        result = {"snapshot": sample,
+                "context": inspection_context_snapshot(self.bpy),
+                "boundaries": inspection_boundaries(self.runtime),
+                "hooks": hooks, "settled": settled,
+                "payloads": inspection_payload_counts(sample),
+                "memory": {**linux_process_memory(), "available_bytes": linux_available_memory()},
+                "runtime_job": cached_job}
+        result["measurement"] = {"started_at": began, "ended_at": time.monotonic(),
+                                 "cpu_seconds": time.process_time() - cpu}
+        return result
+
+    def inspected_call(self, client, stage, method, **parameters):
+        began, cpu = time.monotonic(), time.process_time()
+        response = client.call(method, ok=None, **parameters)
+        self.inspection_data["timings"].append({"stage": stage,
+            "request_id": self.inspection_data["requests"][-1]["request"]["id"],
+            "sent_at": began, "received_at": time.monotonic(), "cpu_seconds": time.process_time() - cpu})
+        assert response["ok"] is True, response
+        return response["result"]
+
+    def scenario(self):
+        client = None
+        try:
+            data = self.inspection_data
+            data["worker_before"] = inspection_hook_state()
+            data["before"] = self.control("inspection_snapshot", stage="before")
+            client = Client(self.port, data["requests"])
+            target = self.targets["main"]
+            parameters = {"object_name": target["object_name"], "mesh_name": target["mesh_name"],
+                          "attribute_names": list(SELECTED), "time_limit_seconds": 300.}
+            accepted = self.inspected_call(client, "start", self.domain.contract.INSPECTION_START, **parameters)
+            assert accepted["accepted"] is True and accepted["terminal"] is False
+            assert accepted["ready"] is False and accepted["result"] is None
+            identifier = accepted["job_id"]
+            while time.monotonic() - self.started < 300:
+                summary = self.inspected_call(client, "inspect", "jobs.inspect", job_id=identifier)
+                if summary["terminal"]:
+                    data["terminal"] = summary
+                    break
+                time.sleep(.01)
+            assert data["terminal"] is not None and data["terminal"]["state"] == "SUCCEEDED", data["terminal"]
+            data["repeat"] = self.inspected_call(client, "repeat", "jobs.inspect", job_id=identifier)
+            data["listed"] = self.inspected_call(client, "list", "jobs.list")
+            # bridge.status intentionally records its own operation history.
+            # Keep that protocol fence outside the inspection preservation sample.
+            data["after"] = self.control("inspection_snapshot", stage="after", job_id=identifier)
+            self.inspected_call(client, "fence", "bridge.status")
+            # A final fence makes an earlier duplicate response an ID mismatch.
+            # Check buffered bytes too before closing this genuine connection.
+            client.socket.settimeout(.1)
+            began = time.monotonic()
+            try:
+                extra = client.stream.peek(1)
+                outcome = "EMPTY_READ"
+            except TimeoutError:
+                extra = b""
+                outcome = "SOCKET_TIMEOUT"
+            assert extra == b"", "Unexpected additional terminal protocol bytes"
+            data["extra_response_check"] = {"outcome": outcome, "bytes": len(extra),
+                "started_at": began, "ended_at": time.monotonic(), "timeout_seconds": .1}
+            data["worker_after"] = inspection_hook_state()
+            data["setup_oracle_values"] = target["oracle_values"]
+        except Exception:
+            self.failure = traceback.format_exc()
+        finally:
+            if client is not None:
+                client.close()
+            self.done.set()
+
+    def fail(self):
+        from scripts.blender_artist_sidebar_smoke import owned_process_exit
+        raw = {"schema": INSPECTION_PROFILE, "completed": False, "phase": self.phase,
+               "process_id": os.getpid(), "process_instance": self.token,
+               "failure": self.failure, "partial": self.inspection_data,
+               "limitations": dict(INSPECTION_LIMITATIONS)}
+        domain_new(self.options.bridge_report.with_suffix(".failure.json"), canonical(raw))
+        print(self.failure, file=sys.stderr, flush=True)
+        owned_process_exit(1)
+
+    def supervise(self):
+        from scripts.blender_artist_sidebar_smoke import owned_process_exit
+        try:
+            while not self.controls.empty():
+                action, parameters, event, result = self.controls.get_nowait()
+                try:
+                    result.extend((True, self.apply(action, parameters)))
+                except Exception:
+                    result.extend((False, traceback.format_exc()))
+                finally:
+                    event.set()
+            assert time.monotonic() - self.started <= 300, "Original native outer deadline expired"
+            if not self.done.is_set():
+                return .005
+            assert self.failure is None, self.failure
+            assert self.hooks is None and self.observe is False
+            inspection_hook_state()
+            self.settled()
+            assert source_fingerprints() == self.sources
+            full = {"schema": INSPECTION_PROFILE, "completed": True, "phase": self.phase,
+                "process_id": os.getpid(), "process_instance": self.token, "runtime_nonce": self.nonce,
+                "runtime_identity": self.runtime_identity, "source_build": self.control_build,
+                "blender_version": self.control_version, "binary_sha256": self.binary_sha256,
+                "helper_sha256": HELPER_SHA256, "source_fingerprints": self.sources,
+                "source_snapshot_sha256": hashlib.sha256(canonical(self.sources)).hexdigest(),
+                "private_display": self.display,
+                "transport": {"host": "127.0.0.1", "socket_json": True, "runtime_timer_queue": True,
+                              "direct_dispatch": False, "manual_scheduler_drain": False},
+                "limitations": dict(INSPECTION_LIMITATIONS), **self.inspection_data,
+                "hardware": {"system": platform.system(), "machine": platform.machine(),
+                             "processor": platform.processor(), "cpu_count": os.cpu_count()},
+                "process_cpu_seconds_at_completion": time.process_time(),
+                "seconds": time.monotonic() - self.started}
+            binding = domain_new(self.options.bridge_report, canonical(full))
+            compact = {key: full[key] for key in ("schema", "completed", "phase", "process_id",
+                "process_instance", "source_build", "blender_version", "binary_sha256", "source_snapshot_sha256")}
+            compact["full_receipt"] = binding
+            print(INSPECTION_MARKER + canonical(compact).decode("ascii"), flush=True)
+            owned_process_exit(0)
+        except Exception:
+            self.failure = traceback.format_exc()
+            self.fail()
+        return None
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bridge-phase", choices=PHASES, required=True)
@@ -1876,12 +2097,13 @@ def main(argv=None):
     parser.add_argument("--bridge-report", type=Path, required=True)
     parser.add_argument("--bridge-untraced-control", action="store_true")
     parser.add_argument("--bridge-atomic-phase-timing", action="store_true")
+    parser.add_argument("--bridge-phased-inspection", action="store_true")
     arguments = sys.argv[sys.argv.index("--") + 1:] if argv is None and "--" in sys.argv else argv
     options = parser.parse_args(arguments)
     assert sys.platform == "linux" and "--factory-startup" in sys.argv and "--disable-autoexec" in sys.argv
     parent, report = options.bridge_report.parent, options.bridge_report
-    assert not (options.bridge_untraced_control and options.bridge_atomic_phase_timing)
-    expected_report = TIMING_REPORT if options.bridge_atomic_phase_timing else CONTROL_REPORT if options.bridge_untraced_control else REPORT
+    assert sum((options.bridge_untraced_control, options.bridge_atomic_phase_timing, options.bridge_phased_inspection)) <= 1
+    expected_report = INSPECTION_REPORT if options.bridge_phased_inspection else TIMING_REPORT if options.bridge_atomic_phase_timing else CONTROL_REPORT if options.bridge_untraced_control else REPORT
     assert report.is_absolute() and report.name == expected_report and not report.exists() and not report.is_symlink()
     assert parent.resolve(strict=True) == parent and stat.S_IMODE(parent.stat().st_mode) == 0o700
     assert parent.stat().st_uid == os.getuid()
@@ -1907,7 +2129,7 @@ def main(argv=None):
     assert bpy.ops.wm.read_factory_settings(use_empty=True) == {"FINISHED"}
     sources = source_fingerprints()
     assert sources["addon/blender_codex_bridge/mesh_storage_prepare.py"] == HELPER_SHA256
-    fixture_type = AtomicPhaseTiming if options.bridge_atomic_phase_timing else FirstJobControl if options.bridge_untraced_control else Fixture
+    fixture_type = PhasedInspectionProbe if options.bridge_phased_inspection else AtomicPhaseTiming if options.bridge_atomic_phase_timing else FirstJobControl if options.bridge_untraced_control else Fixture
     fixture = fixture_type(bpy, options, token, sources, display)
     bpy.app.timers.register(fixture.setup, first_interval=.05)
 
