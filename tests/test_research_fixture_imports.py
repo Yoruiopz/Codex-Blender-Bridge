@@ -13,6 +13,7 @@ import socket
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 from types import ModuleType
 from types import SimpleNamespace as NS
@@ -4842,3 +4843,193 @@ def test_metadata_bulk_probe_success_keeps_exact_builtin_bool_sequence():
                                     lambda: events.append("pureflight"))
     assert result == (True, False) and events == ["pureflight", "pureflight"]
     assert all(type(value) is float and value >= 0 for value in interval.values())
+
+
+class AtomicMonitoringModel:
+    """Public monitoring API model, never a CPython/native timing result."""
+    def __init__(self):
+        self.events = NS(PY_START=1, PY_RETURN=4)
+        self.owner, self.global_mask = None, 0
+        self.local, self.callbacks = {}, {}
+        self.fail_code = None
+    def get_tool(self, _tool):
+        return self.owner
+    def get_events(self, _tool):
+        return self.global_mask
+    def get_local_events(self, _tool, code):
+        return self.local.get(code, 0)
+    def use_tool_id(self, _tool, name):
+        assert self.owner is None
+        self.owner = name
+    def register_callback(self, _tool, event, callback):
+        previous = self.callbacks.get(event)
+        self.callbacks[event] = callback
+        return previous
+    def set_local_events(self, _tool, code, mask):
+        self.local[code] = mask
+        if code is self.fail_code and mask:
+            raise MemoryError("owned monitoring setup failure")
+    def set_events(self, _tool, mask):
+        self.global_mask = mask
+    def free_tool_id(self, _tool):
+        assert self.global_mask == 0 and not any(self.local.values())
+        self.owner = None
+
+
+def atomic_monitor_model(clock=None):
+    script = importlib.import_module("scripts.blender_mesh_storage_job_smoke")
+    def outer():
+        pass
+    def inner():
+        pass
+    api = AtomicMonitoringModel()
+    monitor = script.AtomicPhaseMonitor({outer.__code__: "preview", inner.__code__: "build_plan"}, monitoring=api,
+        clock=time.monotonic if clock is None else clock, get_ident=lambda: 7)
+    return script, monitor, api, outer.__code__, inner.__code__
+
+
+def test_atomic_local_monitor_records_completed_nesting_and_restores_every_owned_slot():
+    ticks = iter([10., 11., 12., 14., 15.])
+    _script, monitor, api, outer, inner = atomic_monitor_model(lambda: next(ticks))
+    monitor.install()
+    monitor._start(outer, 0)
+    monitor._start(inner, 0)
+    monitor._return(inner, 0, object())
+    monitor._return(outer, 0, object())
+    monitor.restore()
+    result = monitor.summary()
+    assert [(row["label"], row["duration_seconds"], row["depth"]) for row in result["spans"]] == [
+        ("preview", 4., 0), ("build_plan", 1., 1)]
+    assert api.owner is None and api.global_mask == 0 and not any(api.local.values())
+    assert all(value is None for value in api.callbacks.values())
+    assert result["observed_timings_are_untraced_timings"] is False
+
+
+@pytest.mark.parametrize("kind", ["open", "inner_unwind_unknown", "recursion"])
+def test_atomic_local_monitor_never_invents_exact_unwind_or_recursive_duration(kind):
+    ticks = iter(float(i) for i in range(10, 30))
+    script, monitor, _api, outer, inner = atomic_monitor_model(lambda: next(ticks))
+    monitor.install()
+    monitor._start(outer, 0)
+    if kind == "inner_unwind_unknown":
+        monitor._start(inner, 0)
+        monitor._return(outer, 0, None)
+    elif kind == "recursion":
+        monitor._start(outer, 0)
+        monitor._return(outer, 0, None)
+        monitor._return(outer, 0, None)
+    monitor.restore()
+    unknown = [row for row in monitor.summary()["spans"] if row["end"] == script.TIMING_UNKNOWN]
+    assert unknown and all(row["duration_seconds"] is None and row["elapsed_upper_bound_seconds"] >= 0 for row in unknown)
+
+
+@pytest.mark.parametrize("fault", ["occupied", "global", "local", "callback", "setup_failure"])
+def test_atomic_monitor_refuses_existing_ownership_and_rolls_back_partial_install(fault):
+    _script, monitor, api, outer, _inner = atomic_monitor_model()
+    def previous(*_args):
+        return None
+    if fault == "occupied":
+        api.owner = "other tool"
+    elif fault == "global":
+        api.global_mask = 1
+    elif fault == "local":
+        api.local[outer] = 1
+    elif fault == "callback":
+        api.callbacks[1] = previous
+    else:
+        api.fail_code = outer
+    with pytest.raises((AssertionError, MemoryError)):
+        monitor.install()
+    if fault in {"occupied", "global", "local"}:
+        assert api.owner == ("other tool" if fault == "occupied" else None)
+        assert api.global_mask == int(fault == "global")
+        assert api.local.get(outer, 0) == int(fault == "local")
+    else:
+        assert api.owner is None and api.global_mask == 0 and not any(api.local.values())
+        assert api.callbacks.get(1) is (previous if fault == "callback" else None)
+        assert api.callbacks.get(4) is None
+
+
+@pytest.mark.parametrize("fault", ["clock", "bound", "foreign_thread", "foreign_code", "return_without_entry"])
+def test_atomic_monitor_bounded_callback_refusal_never_admits_summary(fault):
+    script, monitor, _api, outer, _inner = atomic_monitor_model()
+    monitor.install()
+    if fault == "clock":
+        monitor.clock = lambda: float("nan")
+    elif fault == "bound":
+        monitor.spans = [{}] * script.TIMING_MAX_ROWS
+    elif fault == "foreign_thread":
+        monitor.main_thread = 8
+    if fault == "return_without_entry":
+        monitor._return(outer, 0, None)
+    else:
+        monitor._start((lambda: None).__code__ if fault == "foreign_code" else outer, 0)
+    assert monitor.failure is not None
+    if fault == "clock":
+        monitor.clock = time.monotonic
+    monitor.restore()
+    with pytest.raises(AssertionError):
+        monitor.summary()
+
+
+def test_atomic_monitor_callback_replacement_restores_all_slots_before_refusal():
+    _script, monitor, api, _outer, _inner = atomic_monitor_model()
+    monitor.install()
+    api.callbacks[1] = lambda *_: None
+    with pytest.raises(AssertionError, match="callback ownership changed"):
+        monitor.restore()
+    assert api.owner is None and not any(api.local.values()) and all(value is None for value in api.callbacks.values())
+
+
+def test_atomic_monitor_preserves_original_control_profile_and_default_qualifier_AST():
+    script = importlib.import_module("scripts.blender_mesh_storage_job_smoke")
+    tree = ast.parse(Path(script.__file__).read_text())
+    cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "AtomicPhaseMonitor")
+    event = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == "_event")
+    text = ast.unparse(event)
+    assert "_getframe" not in text and "f_locals" not in text and "bpy" not in text
+    assert "setprofile" not in text and "settrace" not in text and "provider" not in text
+    codes = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "atomic_phase_codes")
+    assert "Gate" not in ast.unparse(codes) and "pure" not in ast.unparse(codes)
+    assert len(script.TIMING_LABELS) == 16 and script.TIMING_MAX_ROWS == 2048
+
+
+@pytest.mark.parametrize("fault", ["local", "global", "callback"])
+def test_atomic_monitor_restore_attempts_every_owned_slot_and_preserves_first_error(fault):
+    _script, monitor, api, outer, inner = atomic_monitor_model()
+    monitor.install()
+    primary = MemoryError("first public API cleanup failure")
+    attempts = []
+    original_local, original_global, original_callback = api.set_local_events, api.set_events, api.register_callback
+    def local(tool, code, mask):
+        attempts.append(("local", code))
+        if fault == "local" and code is outer:
+            raise primary
+        return original_local(tool, code, mask)
+    def global_events(tool, mask):
+        attempts.append(("global", mask))
+        if fault == "global":
+            raise primary
+        return original_global(tool, mask)
+    def callback(tool, event, value):
+        attempts.append(("callback", event))
+        if fault == "callback" and event == 1:
+            raise primary
+        return original_callback(tool, event, value)
+    api.set_local_events, api.set_events, api.register_callback = local, global_events, callback
+    with pytest.raises(MemoryError) as caught:
+        monitor.restore()
+    assert caught.value is primary
+    assert attempts == [("local", outer), ("local", inner), ("global", 0), ("callback", 1), ("callback", 4)]
+    assert api.local[inner] == 0 and api.callbacks[4] is None
+    if fault in {"local", "callback"}:
+        assert api.owner == monitor.tool_name
+    else:
+        assert api.owner is None  # Global mask was already zero and verified.
+    # A fresh pure cleanup attempt can release retained ownership, but never
+    # turns failed instrumentation into an accepted timing observation.
+    api.set_local_events, api.set_events, api.register_callback = original_local, original_global, original_callback
+    monitor.restore()
+    assert api.owner is None and not any(api.local.values())
+    with pytest.raises(AssertionError):
+        monitor.summary()

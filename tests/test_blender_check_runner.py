@@ -3635,3 +3635,108 @@ def test_bulk_probe_runner_uses_owned_background_profile_and_actual_child_pid(ru
     assert result["status"] == "passed" and result["process_id"] == 77
     assert result["retained_evidence_valid"] is True
     assert result["qualification_scope"]["product_adoption"] is False
+
+
+def mesh_storage_atomic_model(runner):
+    return {"backend": "sys.monitoring.local_START_RETURN", "tool_id": 4, "global_event_mask": 0,
+        "local_event_mask": 5, "restored": True, "callbacks_restored": True, "local_events_restored": True,
+        "tool_freed": True, "row_limit": 2048, "exact_unwind_observed": False,
+        "unknown_open_elapsed_is_upper_bound": True, "observed_timings_are_untraced_timings": False,
+        "speedup_qualified": False, "overlapping_nested_spans_may_not_be_added": True,
+        "catalog": [{**row, "code_sha256": "a" * 64} for row in runner._mesh_storage_atomic_catalog()],
+        "spans": [{"label": "preview", "entered_at": 10., "ended_at": 10.5, "elapsed_upper_bound_seconds": None,
+                   "duration_seconds": .5, "depth": 0, "end": "RETURN_COMPLETED", "ambiguous_recursion": False}]}
+
+
+@pytest.mark.parametrize("fault", [None, "source", "binary", "pid", "wire_deadline"])
+def test_atomic_timing_runner_keeps_original_RPC_factory_setup_and_diagnostic_scope(runner, monkeypatch, tmp_path, fault):
+    expected_catalog = runner._mesh_storage_atomic_catalog()
+    output, binary = mesh_storage_runner_root(runner, monkeypatch, tmp_path)
+    monkeypatch.setattr(runner, "_mesh_storage_atomic_catalog", lambda: expected_catalog)
+    calls = []
+    class Process:
+        pid = 77
+        def __init__(self, command, **kwargs):
+            calls.append(command)
+            assert "--bridge-atomic-phase-timing" in command and "--bridge-untraced-control" not in command
+            assert "--background" not in command and "--factory-startup" in command and "--disable-autoexec" in command
+            report, full = mesh_storage_control_model(runner, command, kwargs["env"], self.pid)
+            full["schema"] = runner.MESH_STORAGE_TIMING_PROFILE
+            full["atomic_timing"] = mesh_storage_atomic_model(runner)
+            if fault == "source":
+                (runner.ROOT / "scripts/run_blender_checks.py").write_text("# drift after frozen source snapshot\n")
+            elif fault == "binary":
+                binary.write_bytes(b"changed executable bytes, never launched")
+            elif fault == "pid":
+                full["process_id"] = 78
+            elif fault == "wire_deadline":
+                full["requests"][0]["request"]["timeout_ms"] = 60001
+            compact = mesh_storage_control_write(runner, report, full)
+            kwargs["stdout"].write((runner.MESH_STORAGE_TIMING_MARKER + json.dumps(compact) + "\n").encode())
+        def wait(self, timeout):
+            assert timeout == 300
+            return 0
+    monkeypatch.setattr(runner.subprocess, "Popen", Process)
+    monkeypatch.setenv("BRIDGE_TEST_PRIVATE_UI_MANIFEST", "owned-selector")
+    result = runner.run_case(binary, runner.MESH_STORAGE_TIMING_CASE, output, 1200)
+    assert result["status"] == ("diagnostic_completed" if fault is None else "failed"), result
+    assert result["retained_evidence_validation"]["qualified"] is False
+    assert len(calls) == 1 and all(value is False for value in result["qualification_scope"].values())
+    assert runner.MESH_STORAGE_TIMING_CASE in runner.OPT_IN_CASES & runner.INTERACTIVE_CASES
+
+
+@pytest.mark.parametrize("fault", ["unrestored", "callbacks", "local_events", "tool", "global", "mask", "scope", "speed",
+    "unwind", "upperbound", "row_limit", "empty", "oversize", "unknown_label", "filename", "catalog_count", "code_hash",
+    "depth_bool", "clock_bool", "clock_nan", "clock_order", "duration", "unknown_exact", "unknown_upper", "recursion_exact", "extra", "source_line", "source_label_path"])
+def test_atomic_timing_cold_validator_rejects_unbounded_unclean_or_overclaimed_spans(runner, fault):
+    observed = mesh_storage_atomic_model(runner)
+    row = observed["spans"][0]
+    if fault in {"unrestored", "callbacks", "local_events", "tool"}:
+        observed[{"unrestored": "restored", "callbacks": "callbacks_restored", "local_events": "local_events_restored", "tool": "tool_freed"}[fault]] = False
+    elif fault in {"global", "mask", "row_limit"}:
+        observed[{"global": "global_event_mask", "mask": "local_event_mask", "row_limit": "row_limit"}[fault]] = 1
+    elif fault in {"scope", "speed", "unwind"}:
+        observed[{"scope": "observed_timings_are_untraced_timings", "speed": "speedup_qualified", "unwind": "exact_unwind_observed"}[fault]] = True
+    elif fault == "upperbound":
+        observed["unknown_open_elapsed_is_upper_bound"] = False
+    elif fault == "empty":
+        observed["spans"] = []
+    elif fault == "oversize":
+        observed["spans"] = [row] * 2049
+    elif fault == "unknown_label":
+        row["label"] = "Gate.pure"
+    elif fault == "filename":
+        observed["catalog"][0]["filename"] = "arbitrary.py"
+    elif fault == "catalog_count":
+        observed["catalog"].pop()
+    elif fault == "source_line":
+        observed["catalog"][0]["first_line"] += 1
+    elif fault == "source_label_path":
+        observed["catalog"][0]["filename"] = observed["catalog"][1]["filename"]
+    elif fault == "code_hash":
+        observed["catalog"][0]["code_sha256"] = "foreign"
+    elif fault == "depth_bool":
+        row["depth"] = True
+    elif fault == "clock_bool":
+        row["entered_at"] = True
+    elif fault == "clock_nan":
+        row["ended_at"] = float("nan")
+    elif fault == "clock_order":
+        row["ended_at"] = 9.
+    elif fault == "duration":
+        row["duration_seconds"] = .6
+    elif fault == "unknown_exact":
+        row["end"] = "OPEN_AT_CUTOFF_OR_UNWOUND_UNKNOWN"
+    elif fault == "unknown_upper":
+        row.update(end="OPEN_AT_CUTOFF_OR_UNWOUND_UNKNOWN", duration_seconds=None, elapsed_upper_bound_seconds=.6)
+    elif fault == "recursion_exact":
+        row["ambiguous_recursion"] = True
+    else:
+        row["untraced_deadline_passed"] = True
+    assert not runner._mesh_storage_atomic_spans(observed, 1.)
+
+
+def test_atomic_timing_cold_validator_accepts_honest_unknown_open_upper_bound(runner):
+    observed = mesh_storage_atomic_model(runner)
+    observed["spans"][0].update(end="OPEN_AT_CUTOFF_OR_UNWOUND_UNKNOWN", duration_seconds=None, elapsed_upper_bound_seconds=.5)
+    assert runner._mesh_storage_atomic_spans(observed, 1.)

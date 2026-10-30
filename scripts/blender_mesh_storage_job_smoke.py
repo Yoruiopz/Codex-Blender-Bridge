@@ -1619,17 +1619,269 @@ class FirstJobControl(Fixture):
         return None
 
 
+
+TIMING_CASE = "mesh_storage_atomic_phase_timing"
+TIMING_PROFILE = "MESH_STORAGE_ATOMIC_PHASE_OBSERVED_DIAGNOSTIC_V1"
+TIMING_MARKER = "BLENDER_MESH_STORAGE_ATOMIC_PHASE_TIMING_DIAGNOSTIC "
+TIMING_REPORT = "mesh-storage-atomic-phase-timing.json"
+TIMING_UNKNOWN = "OPEN_AT_CUTOFF_OR_UNWOUND_UNKNOWN"
+TIMING_MAX_ROWS = 2048
+TIMING_LABELS = ("preview", "build_plan", "checkpoint_roles_init", "checkpoint_plan_read", "protected_facts",
+    "bind_protected", "roles_authored", "roles_check", "driver_init", "driver_full_check", "start_admission_init",
+    "start_admission_full_check", "turn_admission_full_check", "array_inventory", "material", "array_hash")
+
+
+class AtomicPhaseMonitor:
+    """Only local START/RETURN for held coarse code; no unwind/frame inference."""
+    tool_id = 4
+    tool_name = "bcb-private-atomic-phase-timing"
+
+    def __init__(self, codes, *, monitoring=None, clock=time.monotonic, get_ident=threading.get_ident):
+        assert type(codes) is dict and 1 <= len(codes) <= 16
+        assert all(type(code) is CodeType and type(label) is str and label in TIMING_LABELS for code, label in codes.items())
+        assert len(set(codes.values())) == len(codes)
+        self.monitoring = getattr(sys, "monitoring", None) if monitoring is None else monitoring
+        assert self.monitoring is not None, "Public local-code monitoring unavailable"
+        self.codes, self.clock, self.get_ident = dict(codes), clock, get_ident
+        self.main_thread = get_ident()
+        self.spans, self.stack = [], []
+        self.failure, self.claimed, self.armed, self.restored = None, False, [], False
+        self.prior_callbacks, self.released_callbacks = {}, set()
+        self.start_callback, self.return_callback = self._start, self._return
+        self.mask = self.monitoring.events.PY_START | self.monitoring.events.PY_RETURN
+        self.catalog = [{"label": label, "filename": str(Path(code.co_filename).relative_to(ROOT)),
+                         "first_line": code.co_firstlineno, "code_sha256": hashlib.sha256(code.co_code).hexdigest()}
+                        for code, label in codes.items()]
+
+    def _start(self, code, _offset):
+        self._event(code, True)
+
+    def _return(self, code, _offset, _value):
+        self._event(code, False)
+
+    def _event(self, code, starting):
+        # No frames, RNA, provider, source inspection, exception formatting or per-field hooks.
+        if self.failure is not None:
+            return
+        if self.get_ident() != self.main_thread or code not in self.codes:
+            self.failure = "MONITOR_FOREIGN_THREAD_OR_CODE"
+            return
+        now = self.clock()
+        if type(now) is not float or not math.isfinite(now) or now < 0:
+            self.failure = "MONITOR_CLOCK"
+            return
+        if starting:
+            if len(self.spans) >= TIMING_MAX_ROWS or len(self.stack) >= 64:
+                self.failure = "MONITOR_BOUND"
+                return
+            ambiguous = any(row[0] is code for row in self.stack)
+            if ambiguous:
+                for entry in self.stack:
+                    if entry[0] is code:
+                        entry[2]["ambiguous_recursion"] = True
+            row = {"label": self.codes[code], "entered_at": now, "ended_at": None,
+                   "elapsed_upper_bound_seconds": None, "duration_seconds": None,
+                   "depth": len(self.stack), "end": TIMING_UNKNOWN, "ambiguous_recursion": ambiguous}
+            self.spans.append(row)
+            self.stack.append([code, len(self.spans) - 1, row])
+            return
+        index = next((i for i in range(len(self.stack) - 1, -1, -1) if self.stack[i][0] is code), None)
+        if index is None:
+            self.failure = "MONITOR_RETURN_WITHOUT_ENTRY"
+            return
+        # Inner functions can unwind without a local event. Their cutoff is an
+        # UPPERBOUND only; matching returns never turn them into exact unwinds.
+        for _held_code, _ordinal, row in self.stack[index + 1:]:
+            row["ended_at"] = now
+            row["elapsed_upper_bound_seconds"] = now - row["entered_at"]
+        row = self.stack[index][2]
+        if now < row["entered_at"]:
+            self.failure = "MONITOR_CLOCK"
+            return
+        row["ended_at"] = now
+        if row["ambiguous_recursion"]:
+            row["elapsed_upper_bound_seconds"] = now - row["entered_at"]
+        else:
+            row["end"], row["duration_seconds"] = "RETURN_COMPLETED", now - row["entered_at"]
+        del self.stack[index:]
+
+    def install(self):
+        monitor, tool = self.monitoring, self.tool_id
+        assert monitor.get_tool(tool) is None and monitor.get_events(tool) == 0, "Monitoring tool already in use"
+        assert all(monitor.get_local_events(tool, code) == 0 for code in self.codes), "Existing local events"
+        monitor.use_tool_id(tool, self.tool_name)
+        self.claimed = True
+        try:
+            for event, callback in ((monitor.events.PY_START, self.start_callback), (monitor.events.PY_RETURN, self.return_callback)):
+                previous = monitor.register_callback(tool, event, callback)
+                self.prior_callbacks[event] = previous
+                assert previous is None, "Monitoring callback already present"
+            for code in self.codes:
+                self.armed.append(code)
+                monitor.set_local_events(tool, code, self.mask)
+            assert monitor.get_events(tool) == 0
+        except BaseException:
+            try:
+                self.restore()
+            except BaseException:
+                self.failure = "MONITOR_RESTORATION_FAILED"
+            raise
+
+    def restore(self):
+        if self.restored or not self.claimed:
+            return
+        monitor, tool = self.monitoring, self.tool_id
+        assert monitor.get_tool(tool) == self.tool_name, "Monitoring tool ownership changed"
+        errors, callbacks_done = [], True
+        # Attempt every bounded owned slot, even after an earlier public API
+        # failure. Free only after all events and callback baselines are proved.
+        for code in self.codes:
+            try:
+                monitor.set_local_events(tool, code, 0)
+            except BaseException as error:
+                errors.append(error)
+        try:
+            monitor.set_events(tool, 0)
+        except BaseException as error:
+            errors.append(error)
+        for event, previous in self.prior_callbacks.items():
+            expected = previous if event in self.released_callbacks else self.start_callback if event == monitor.events.PY_START else self.return_callback
+            try:
+                actual = monitor.register_callback(tool, event, previous)
+                self.released_callbacks.add(event)
+                if actual is not expected:
+                    errors.append(AssertionError("Monitoring callback ownership changed"))
+            except BaseException as error:
+                callbacks_done = False
+                errors.append(error)
+        inactive = monitor.get_events(tool) == 0 and all(monitor.get_local_events(tool, code) == 0 for code in self.codes)
+        if inactive and callbacks_done:
+            monitor.free_tool_id(tool)
+            assert monitor.get_tool(tool) is None
+            self.claimed, self.restored = False, True
+        else:
+            errors.append(AssertionError("Monitoring restoration incomplete; owned tool not freed"))
+        if errors:
+            self.failure = "MONITOR_RESTORATION_FAILED"
+            raise errors[0]
+        cutoff = self.clock()
+        assert type(cutoff) is float and math.isfinite(cutoff)
+        for _code, _ordinal, row in self.stack:
+            assert cutoff >= row["entered_at"]
+            row["ended_at"], row["elapsed_upper_bound_seconds"] = cutoff, cutoff - row["entered_at"]
+        self.stack.clear()
+
+    def summary(self):
+        assert self.restored and not self.claimed and self.failure is None
+        return {"backend": "sys.monitoring.local_START_RETURN", "tool_id": self.tool_id,
+                "global_event_mask": 0, "local_event_mask": self.mask, "restored": True,
+                "callbacks_restored": True, "local_events_restored": True, "tool_freed": True,
+                "catalog": self.catalog, "spans": self.spans, "row_limit": TIMING_MAX_ROWS,
+                "exact_unwind_observed": False, "unknown_open_elapsed_is_upper_bound": True,
+                "observed_timings_are_untraced_timings": False, "speedup_qualified": False,
+                "overlapping_nested_spans_may_not_be_added": True}
+
+
+def atomic_phase_codes():
+    from blender_codex_bridge import scene_jobs
+    from blender_codex_bridge.tools import mesh_storage as domain
+    from blender_codex_bridge.tools._mesh_storage_job import MeshStorageDriver
+    source = domain.source
+    functions = (domain.preview, source.build_plan, source.CheckpointRoles.__init__, source._StorageCheckpointPlan._read,
+        source.protected_facts, source.CheckpointRoles.bind_protected, source.CheckpointRoles.authored,
+        source.CheckpointRoles.check_after_read, MeshStorageDriver.__init__, MeshStorageDriver.check_after_read,
+        scene_jobs._StartAdmission.__init__, scene_jobs._StartAdmission.check_after_read,
+        scene_jobs._TurnAdmission.check_after_read, source.array_inventory, source._material, source.array_hash)
+    assert all(type(function) is FunctionType for function in functions)
+    return {function.__code__: label for function, label in zip(functions, TIMING_LABELS, strict=True)}
+
+
+class AtomicPhaseTiming(FirstJobControl):
+    """Original genuine RPC scenario, with explicitly observed coarse spans."""
+    def __init__(self, *args):
+        super().__init__(*args)
+        self.atomic_monitor = None
+
+    def apply(self, action, parameters):
+        if parameters.get("stage") == "after" and self.atomic_monitor is not None:
+            self.atomic_monitor.restore()
+        result = super().apply(action, parameters)
+        if parameters.get("stage") == "before":
+            assert self.atomic_monitor is None
+            self.atomic_monitor = AtomicPhaseMonitor(atomic_phase_codes())
+            self.atomic_monitor.install()
+        return result
+
+    def fail(self):
+        from scripts.blender_artist_sidebar_smoke import owned_process_exit
+        if self.atomic_monitor is not None:
+            try:
+                self.atomic_monitor.restore()
+            except BaseException:
+                self.failure = (self.failure or "") + "\nAtomic monitor restoration failed."
+        raw = {"schema": TIMING_PROFILE, "completed": False, "diagnostic_only": True,
+               "process_id": os.getpid(), "process_instance": self.token, "failure": self.failure}
+        domain_new(self.options.bridge_report.with_suffix(".failure.json"), canonical(raw))
+        print(self.failure, file=sys.stderr, flush=True)
+        owned_process_exit(1)
+
+    def supervise(self):
+        from scripts.blender_artist_sidebar_smoke import owned_process_exit
+        try:
+            while not self.controls.empty():
+                action, parameters, event, result = self.controls.get_nowait()
+                try:
+                    result.extend((True, self.apply(action, parameters)))
+                except Exception:
+                    result.extend((False, traceback.format_exc()))
+                finally:
+                    event.set()
+            assert time.monotonic() - self.started <= 300, "Original bounded native phase expired"
+            if not self.done.is_set():
+                return .005
+            assert self.failure is None, self.failure
+            assert self.hooks is None and self.observe is False
+            control_hook_state()
+            self.settled()
+            assert self.atomic_monitor is not None
+            self.atomic_monitor.restore()
+            assert source_fingerprints() == self.sources
+            encoded = canonical(self.sources)
+            full = {"schema": TIMING_PROFILE, "completed": True, "diagnostic_only": True, "phase": self.phase,
+                "process_id": os.getpid(), "process_instance": self.token, "runtime_nonce": self.nonce,
+                "runtime_identity": self.runtime_identity, "source_build": self.control_build,
+                "blender_version": self.control_version, "binary_sha256": self.binary_sha256,
+                "helper_sha256": HELPER_SHA256, "source_fingerprints": self.sources,
+                "source_snapshot_sha256": hashlib.sha256(encoded).hexdigest(), "private_display": self.display,
+                "transport": {"host": "127.0.0.1", "socket_json": True, "runtime_timer_queue": True,
+                              "direct_dispatch": False, "manual_scheduler_drain": False},
+                "flags": dict(CONTROL_FLAGS), **self.control_data, "atomic_timing": self.atomic_monitor.summary(),
+                "seconds": time.monotonic() - self.started}
+            binding = domain_new(self.options.bridge_report, canonical(full))
+            compact = {key: full[key] for key in ("schema", "completed", "diagnostic_only", "process_id",
+                "process_instance", "source_build", "blender_version", "binary_sha256", "source_snapshot_sha256", "product_success")}
+            compact["full_receipt"] = binding
+            print(TIMING_MARKER + canonical(compact).decode("ascii"), flush=True)
+            owned_process_exit(0)
+        except Exception:
+            self.failure = traceback.format_exc()
+            self.fail()
+        return None
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bridge-phase", choices=PHASES, required=True)
     parser.add_argument("--bridge-bundle", type=Path, required=True)
     parser.add_argument("--bridge-report", type=Path, required=True)
     parser.add_argument("--bridge-untraced-control", action="store_true")
+    parser.add_argument("--bridge-atomic-phase-timing", action="store_true")
     arguments = sys.argv[sys.argv.index("--") + 1:] if argv is None and "--" in sys.argv else argv
     options = parser.parse_args(arguments)
     assert sys.platform == "linux" and "--factory-startup" in sys.argv and "--disable-autoexec" in sys.argv
     parent, report = options.bridge_report.parent, options.bridge_report
-    expected_report = CONTROL_REPORT if options.bridge_untraced_control else REPORT
+    assert not (options.bridge_untraced_control and options.bridge_atomic_phase_timing)
+    expected_report = TIMING_REPORT if options.bridge_atomic_phase_timing else CONTROL_REPORT if options.bridge_untraced_control else REPORT
     assert report.is_absolute() and report.name == expected_report and not report.exists() and not report.is_symlink()
     assert parent.resolve(strict=True) == parent and stat.S_IMODE(parent.stat().st_mode) == 0o700
     assert parent.stat().st_uid == os.getuid()
@@ -1655,7 +1907,7 @@ def main(argv=None):
     assert bpy.ops.wm.read_factory_settings(use_empty=True) == {"FINISHED"}
     sources = source_fingerprints()
     assert sources["addon/blender_codex_bridge/mesh_storage_prepare.py"] == HELPER_SHA256
-    fixture_type = FirstJobControl if options.bridge_untraced_control else Fixture
+    fixture_type = AtomicPhaseTiming if options.bridge_atomic_phase_timing else FirstJobControl if options.bridge_untraced_control else Fixture
     fixture = fixture_type(bpy, options, token, sources, display)
     bpy.app.timers.register(fixture.setup, first_interval=.05)
 
