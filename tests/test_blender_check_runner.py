@@ -4015,6 +4015,272 @@ def test_phased_inspection_remains_excluded_from_default_interactive_inventory(r
     assert runner.MESH_STORAGE_INSPECTION_CASE not in cases
 
 
+def test_inspection_cost_probe_preserves_existing_cold_success_and_control_qualifiers():
+    import ast
+
+    from test_research_fixture_imports import _inspection_frozen_ast
+
+    expected = {
+        "_mesh_storage_control_matches": "97ad09dd6c0720eecce5179e53c139d2be04b9beeb9187a767f9cd668ac848e8",
+        "_mesh_storage_timing_matches": "288203d204e136f8ce1e62231c57e16fe8911349f4a01ba4ba8d5aeb6968a8f3",
+        "_inspection_result": "c00d85a6021e14c5c7287eed46b49b2b31f4c515adf8306a5133ca5c0af0fc26",
+        "_inspection_wire": "c9b289210f6691dca9465b77c81c2ad5e3a2e3c32fc45e5ff70dceef6152b4dd",
+        "_mesh_storage_inspection_matches": "c19b221d1a85542d1827739cef1af714ebefe9bb345c1ef3f35f948d1aba5c9a",
+        "_run_mesh_storage_inspection": "77e97b7f0101b12ca6a18e44b22d469473ee54b13565ad4d6834b579ffe5ab9e",
+    }
+    tree = ast.parse((ROOT / "scripts/run_blender_checks.py").read_text())
+    actual = {node.name: hashlib.sha256(json.dumps(_inspection_frozen_ast(node),
+              ensure_ascii=True, separators=(",", ":")).encode()).hexdigest()
+              for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in expected}
+    assert actual == expected
+
+
+def inspection_cost_runner_root(runner, monkeypatch, tmp_path):
+    output, binary = mesh_storage_runner_root(runner, monkeypatch, tmp_path)
+    for name in ("mesh_storage_source.py", "tools/_mesh_storage_inspection.py"):
+        relative = "addon/blender_codex_bridge/" + name
+        target = runner.ROOT / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes((ROOT / relative).read_bytes())
+    return output, binary
+
+
+def inspection_cost_model(runner, addon_package, monkeypatch, command, environment, pid, outcome="timeout"):
+    import importlib
+
+    from test_research_fixture_imports import AtomicMonitoringModel, inspection_failure_model
+
+    script = importlib.import_module("scripts.blender_mesh_storage_job_smoke")
+    report, route = mesh_storage_inspection_model(runner, addon_package, command, environment, pid)
+    domain = importlib.import_module(addon_package + ".tools._mesh_storage_inspection")
+    source = importlib.import_module(addon_package + ".mesh_storage_source")
+    primitive = importlib.import_module(addon_package + ".mesh_storage_prepare")
+    functions = (domain.MeshStorageInspectionDriver.__dict__["_advance"], source.Gate.__dict__["pure"],
+        source.SourceSeal.__dict__["verify"], primitive.build_plan, primitive.qualify_collection_bindings,
+        source.CheckpointRoles.__dict__["__init__"])
+    codes = tuple(function.__code__ for function in functions)
+    ticks = iter((10.2, 10.3, 10.4, 10.5, 10.6, 10.7, 10.8))
+    monitor = script.InspectionCostMonitor(dict(zip(codes, script.COST_LABELS, strict=True)),
+        monitoring=AtomicMonitoringModel(), clock=lambda: next(ticks), get_ident=lambda: 7)
+    monitor.install()
+    for code in codes[:3]:
+        monitor._start(code, 0)
+    monitor._return(codes[2], 0, None)
+    monitor._return(codes[1], 0, None)
+    if outcome == "success":
+        monitor._return(codes[0], 0, None)
+    monitor.restore()
+    keep = {"requests", "timings", "terminal", "worker_before", "before", "repeat", "listed", "after",
+            "extra_response_check", "worker_after", "setup_oracle_values"}
+    partial = {key: value for key, value in route.items() if key in keep}
+    failed, worker, supervisor, failure = None, None, None, None
+    if outcome == "timeout":
+        partial = {key: value for key, value in partial.items() if key in {"requests", "timings", "terminal", "worker_before", "before"}}
+        partial["requests"] = partial["requests"][:2]
+        partial["requests"][-1]["response"] = None
+        partial["timings"], partial["terminal"] = partial["timings"][:1], None
+        failed = {"stage": "inspect", "method": "jobs.inspect", "sent_at": 10.2, "failed_at": 70.2,
+            "cpu_seconds": 59., "response_received": False, "exception_type": "TimeoutError", "request_id": "inspection_2"}
+        failure = "Traceback (model only)\nTimeoutError: original socket deadline"
+        model = inspection_failure_model.__wrapped__(addon_package, monkeypatch)
+        model.job.request_id, model.job.deadline = "inspection_1", 310.05
+        model.turn.inspection_deadline, model.queued.deadline = 70., 70.2
+        sample_ticks = iter((70.21, 70.25))
+        with monkeypatch.context() as patch:
+            patch.setattr(script, "time", SimpleNamespace(monotonic=lambda: next(sample_ticks), process_time=lambda: 100.))
+            worker = script.inspection_failure_snapshot(model.origin, model.job.job_id, "worker")
+            supervisor = script.inspection_failure_snapshot(model.origin, model.job.job_id, "supervisor")
+    common = ("phase", "process_id", "process_instance", "runtime_nonce", "runtime_identity", "source_build",
+              "blender_version", "binary_sha256", "helper_sha256", "source_fingerprints", "source_snapshot_sha256",
+              "private_display", "transport")
+    full = {key: route[key] for key in common}
+    full.update(schema=runner.MESH_STORAGE_COST_PROFILE, completed=True, diagnostic_only=True,
+        failure=failure, secondary_failure=None, failed_call=failed, worker_cached=worker, supervisor_cached=supervisor,
+        partial=partial, cost_timing=monitor.summary(), product_success_qualified=False,
+        seconds=90. if outcome == "timeout" else 3.)
+    return report, json.loads(json.dumps(full))
+
+
+def inspection_cost_write(runner, report, full):
+    raw = json.dumps(full, sort_keys=True, ensure_ascii=True, allow_nan=False, separators=(",", ":")).encode("ascii")
+    report.write_bytes(raw)
+    marker = {key: full[key] for key in ("schema", "completed", "diagnostic_only", "phase", "process_id", "process_instance",
+        "source_build", "blender_version", "binary_sha256", "source_snapshot_sha256", "product_success_qualified")}
+    marker["full_receipt"] = runner._domain_regular(report, report.parent, 8 * 1024**2)[1]
+    return marker
+
+
+@pytest.mark.parametrize("outcome", ("timeout", "success"))
+def test_inspection_cost_cold_receipt_uses_actual_aggregate_and_route_helpers_without_qualification(
+        runner, addon_package, monkeypatch, tmp_path, outcome):
+    output, binary = inspection_cost_runner_root(runner, monkeypatch, tmp_path)
+    temporary = output / "private"
+    temporary.mkdir(mode=0o700)
+    sources = runner._mesh_storage_sources()
+    report, full = inspection_cost_model(runner, addon_package, monkeypatch,
+        [str(binary), "--bridge-report", str(temporary / runner.MESH_STORAGE_COST_REPORT)],
+        {"BRIDGE_TEST_PROCESS_TOKEN": "1" * 32}, 77, outcome)
+    marker = inspection_cost_write(runner, report, full)
+    result = runner._mesh_storage_cost_matches(marker, temporary, "1" * 32, 77,
+        {"sha256": runner.MESH_STORAGE_EXECUTABLE_SHA256}, sources, runner._domain_display())
+    assert result["diagnostic_completed"] is True and result["qualified"] is False, result
+    assert result["outcome"] == ("TRANSPORT_TIMEOUT" if outcome == "timeout" else "OBSERVED_SUCCESS")
+
+
+@pytest.mark.parametrize("kind", ("completed", "unknown"))
+def test_inspection_cost_aggregate_refuses_impossible_single_observation_sum_and_maximum(
+        runner, addon_package, monkeypatch, tmp_path, kind):
+    output, binary = inspection_cost_runner_root(runner, monkeypatch, tmp_path)
+    _report, full = inspection_cost_model(runner, addon_package, monkeypatch,
+        [str(binary), "--bridge-report", str(output / runner.MESH_STORAGE_COST_REPORT)],
+        {"BRIDGE_TEST_PROCESS_TOKEN": "1" * 32}, 77)
+    observed = full["cost_timing"]
+    row = observed["aggregates"]["gate_pure" if kind == "completed" else "driver_advance"]
+    total, maximum = (("completed_inclusive_seconds", "maximum_completed_seconds") if kind == "completed"
+                      else ("unknown_elapsed_upper_bound_seconds", "maximum_unknown_upper_bound_seconds"))
+    assert row[kind] == 1
+    row[total], row[maximum] = 5., 1.
+    assert runner._inspection_cost_aggregates(observed, full["seconds"]) is False
+
+
+@pytest.mark.parametrize("kind", ("completed", "unknown"))
+def test_inspection_cost_aggregate_accepts_real_iterative_fractional_sum_roundoff(
+        runner, addon_package, monkeypatch, tmp_path, kind):
+    output, binary = inspection_cost_runner_root(runner, monkeypatch, tmp_path)
+    _report, full = inspection_cost_model(runner, addon_package, monkeypatch,
+        [str(binary), "--bridge-report", str(output / runner.MESH_STORAGE_COST_REPORT)],
+        {"BRIDGE_TEST_PROCESS_TOKEN": "1" * 32}, 77)
+    observed = full["cost_timing"]
+    row = observed["aggregates"]["gate_pure" if kind == "completed" else "driver_advance"]
+    count, duration, accumulated = 18, .1, 0.
+    for _ in range(count):
+        accumulated += duration
+    assert accumulated > count * duration
+    row.update(started=count, returned=count if kind == "completed" else 0,
+               completed=count if kind == "completed" else 0, unknown=count if kind == "unknown" else 0)
+    if kind == "completed":
+        row.update(completed_inclusive_seconds=accumulated, maximum_completed_seconds=duration)
+    else:
+        row.update(unknown_elapsed_upper_bound_seconds=accumulated, maximum_unknown_upper_bound_seconds=duration)
+    assert runner._inspection_cost_aggregates(observed, full["seconds"]) is True
+
+
+def test_inspection_cost_aggregate_refuses_wrong_maximum_type_before_arithmetic(
+        runner, addon_package, monkeypatch, tmp_path):
+    output, binary = inspection_cost_runner_root(runner, monkeypatch, tmp_path)
+    _report, full = inspection_cost_model(runner, addon_package, monkeypatch,
+        [str(binary), "--bridge-report", str(output / runner.MESH_STORAGE_COST_REPORT)],
+        {"BRIDGE_TEST_PROCESS_TOKEN": "1" * 32}, 77)
+    calls = []
+    class Foreign:
+        def __rmul__(self, _other):
+            calls.append("multiply")
+            raise AssertionError("Arithmetic preceded exact finite-float validation")
+    observed = full["cost_timing"]
+    observed["aggregates"]["gate_pure"]["maximum_completed_seconds"] = Foreign()
+    assert runner._inspection_cost_aggregates(observed, full["seconds"]) is False
+    assert calls == []
+
+
+@pytest.mark.parametrize("path,value", [
+    (("product_success_qualified",), True),
+    (("diagnostic_only",), False),
+    (("helper_sha256",), "0" * 64),
+    (("source_snapshot_sha256",), "0" * 64),
+    (("transport", "direct_dispatch"), True),
+    (("secondary_failure",), {"stage": "restore"}),
+    (("cost_timing", "restored"), False),
+    (("cost_timing", "exact_unwind_observed"), True),
+    (("cost_timing", "observed_timings_are_untraced_timings"), True),
+    (("cost_timing", "global_event_mask"), 1),
+    (("cost_timing", "catalog", 0, "label"), "foreign"),
+    (("cost_timing", "catalog", 0, "first_line"), 1),
+    (("cost_timing", "catalog", 0, "filename"), "foreign.py"),
+    (("cost_timing", "catalog", 0, "code_sha256"), "A" * 64),
+    (("cost_timing", "aggregates", "gate_pure", "started"), True),
+    (("cost_timing", "aggregates", "gate_pure", "returned"), 2),
+    (("cost_timing", "aggregates", "gate_pure", "maximum_completed_seconds"), 1000.),
+    (("cost_timing", "aggregates", "driver_advance", "unknown"), 0),
+    (("failed_call", "exception_type"), "AssertionError"),
+    (("failed_call", "response_received"), True),
+    (("failed_call", "failed_at"), 1000.),
+    (("partial", "requests", 1, "request", "timeout_ms"), 60001),
+    (("partial", "requests", 0, "request", "params", "time_limit_seconds"), 301.),
+    (("worker_cached", "non_atomic_cached_only"), False),
+    (("worker_cached", "job", "deadline"), True),
+    (("worker_cached", "job", "request_id"), "foreign"),
+    (("worker_cached", "pending_queue", 0, "stop_requested"), 0),
+])
+def test_inspection_cost_cold_receipt_rejects_counter_code_clock_cache_or_scope_forgery(
+        runner, addon_package, monkeypatch, tmp_path, path, value):
+    output, binary = inspection_cost_runner_root(runner, monkeypatch, tmp_path)
+    temporary = output / "private"
+    temporary.mkdir(mode=0o700)
+    sources = runner._mesh_storage_sources()
+    report, full = inspection_cost_model(runner, addon_package, monkeypatch,
+        [str(binary), "--bridge-report", str(temporary / runner.MESH_STORAGE_COST_REPORT)],
+        {"BRIDGE_TEST_PROCESS_TOKEN": "1" * 32}, 77)
+    owner = full
+    for key in path[:-1]:
+        owner = owner[key]
+    owner[path[-1]] = value
+    marker = inspection_cost_write(runner, report, full)
+    result = runner._mesh_storage_cost_matches(marker, temporary, "1" * 32, 77,
+        {"sha256": runner.MESH_STORAGE_EXECUTABLE_SHA256}, sources, runner._domain_display())
+    assert result["diagnostic_completed"] is False and result["qualified"] is False, (path, result)
+
+
+@pytest.mark.parametrize("outcome,fault", (("timeout", None), ("success", None),
+    ("timeout", "exit"), ("timeout", "binary"), ("timeout", "source"), ("timeout", "marker")))
+def test_inspection_cost_runner_preserves_real_route_limits_and_separate_diagnostic_marker(
+        runner, addon_package, monkeypatch, tmp_path, outcome, fault):
+    output, binary = inspection_cost_runner_root(runner, monkeypatch, tmp_path)
+    calls = []
+    class Process:
+        pid = 77
+        def __init__(self, command, **kwargs):
+            calls.append((command, kwargs))
+            report, full = inspection_cost_model(runner, addon_package, monkeypatch, command, kwargs["env"], self.pid, outcome)
+            if fault == "binary":
+                binary.write_bytes(b"changed modeled executable after launch")
+            elif fault == "source":
+                (runner.ROOT / "scripts/run_blender_checks.py").write_text("# source changed after launch\n")
+            marker = inspection_cost_write(runner, report, full)
+            text = runner.MESH_STORAGE_COST_MARKER + json.dumps(marker) + "\n"
+            kwargs["stdout"].write(("missing marker\n" if fault == "marker" else text).encode())
+        def wait(self, timeout):
+            assert timeout == 300
+            return 1 if fault == "exit" else 0
+    monkeypatch.setattr(runner.subprocess, "Popen", Process)
+    monkeypatch.setenv("BRIDGE_TEST_PRIVATE_UI_MANIFEST", "owned-selector")
+    monkeypatch.setattr(runner.sys, "platform", "linux")
+    result = runner.run_case(binary, runner.MESH_STORAGE_COST_CASE, output, 1200)
+    assert result["status"] == ("diagnostic_completed" if fault is None else "failed"), result
+    assert len(calls) == 1
+    command, options = calls[0]
+    assert command.count("--bridge-inspection-cost-timing") == 1 and "--bridge-phased-inspection" not in command
+    assert "--background" not in command and "--factory-startup" in command and "--disable-autoexec" in command
+    assert command[command.index("--bridge-phase") + 1] == "success"
+    assert options["cwd"].is_relative_to(output) and options["start_new_session"] is True
+    assert runner.MESH_STORAGE_COST_CASE in runner.OPT_IN_CASES & runner.INTERACTIVE_CASES
+    assert result["qualification_scope"]["product_success"] is False
+    assert result["qualification_scope"]["untraced_timings"] is False
+
+
+@pytest.mark.parametrize("status,expected", (("diagnostic_completed", 0), ("passed", 1), ("failed", 1), ("timeout", 1)))
+def test_inspection_cost_cli_never_labels_observed_measurement_a_qualified_check(runner, monkeypatch, tmp_path, status, expected):
+    binary = tmp_path / "blender"
+    binary.write_bytes(b"not executed")
+    output = tmp_path / "evidence"
+    monkeypatch.setattr(runner.sys, "argv", ["runner", "--blender", str(binary), "--output", str(output),
+                                           "--case", runner.MESH_STORAGE_COST_CASE])
+    monkeypatch.setattr(runner, "git_value", lambda *_args: "")
+    monkeypatch.setattr(runner, "run_case", lambda *_args: {"case": runner.MESH_STORAGE_COST_CASE, "status": status})
+    assert runner.main() == expected
+    report = json.loads((output / "report.json").read_text())
+    assert report["checks_passed"] is False and report["release_readiness"] == "NOT_ASSESSED"
+
+
 @pytest.mark.parametrize("outcome", ["success", "failed", "preview_refused", "start_refused"])
 @pytest.mark.parametrize("fault", [None, "source", "binary", "pid", "wire_deadline"])
 def test_atomic_timing_runner_keeps_original_RPC_factory_setup_and_diagnostic_scope(runner, monkeypatch, tmp_path, fault, outcome):

@@ -64,6 +64,12 @@ INSPECTION_CASE = "mesh_storage_phased_inspection"
 INSPECTION_PROFILE = "MESH_STORAGE_PHASED_INSPECTION_NATIVE_V1"
 INSPECTION_MARKER = "BLENDER_MESH_STORAGE_PHASED_INSPECTION_OK "
 INSPECTION_REPORT = "mesh-storage-phased-inspection.json"
+COST_CASE = "mesh_storage_inspection_cost_timing"
+COST_PROFILE = "MESH_STORAGE_INSPECTION_COST_OBSERVED_V1"
+COST_MARKER = "BLENDER_MESH_STORAGE_INSPECTION_COST_DIAGNOSTIC "
+COST_REPORT = "mesh-storage-inspection-cost.json"
+COST_LABELS = ("driver_advance", "gate_pure", "source_seal_verify", "metadata_plan", "collection_bindings", "checkpoint_roles_init")
+COST_MAX_CALLS = 131072
 INSPECTION_LIMITATIONS = {
     "success_only": True, "inspection_only": True, "public_tool": False, "mcp": False,
     "writer_handoff": False, "full_artist_workflow": False, "installed_package": False,
@@ -2329,6 +2335,226 @@ class PhasedInspectionProbe(FirstJobControl):
         return None
 
 
+def inspection_cost_codes():
+    from blender_codex_bridge import mesh_storage_prepare as primitive
+    from blender_codex_bridge import mesh_storage_source as source
+    from blender_codex_bridge.tools._mesh_storage_inspection import MeshStorageInspectionDriver
+    functions = (MeshStorageInspectionDriver.__dict__["_advance"], source.Gate.__dict__["pure"],
+        source.SourceSeal.__dict__["verify"], primitive.build_plan, primitive.qualify_collection_bindings,
+        source.CheckpointRoles.__dict__["__init__"])
+    assert all(type(function) is FunctionType for function in functions)
+    return {function.__code__: label for function, label in zip(functions, COST_LABELS, strict=True)}
+
+
+class InspectionCostMonitor(AtomicPhaseMonitor):
+    """Fixed aggregate counters; inclusive nested durations are not additive."""
+    tool_name = "bcb-private-inspection-cost"
+
+    def __init__(self, codes, *, monitoring=None, clock=time.monotonic, get_ident=threading.get_ident):
+        assert type(codes) is dict and len(codes) == 6
+        assert all(type(code) is CodeType and type(label) is str for code, label in codes.items())
+        assert tuple(codes.values()) == COST_LABELS
+        self.monitoring = getattr(sys, "monitoring", None) if monitoring is None else monitoring
+        assert self.monitoring is not None
+        self.codes, self.raw_clock, self.get_ident, self.main_thread = dict(codes), clock, get_ident, get_ident()
+        self.stack, self.failure, self.claimed, self.armed, self.restored = [], None, False, [], False
+        self.prior_callbacks, self.released_callbacks = {}, set()
+        self.start_callback, self.return_callback = self._start, self._return
+        self.mask = self.monitoring.events.PY_START | self.monitoring.events.PY_RETURN
+        self.calls, self.last_clock = 0, 0.
+        self.clock = self._checked_clock
+        self.aggregates = {label: {"started": 0, "returned": 0, "completed": 0,
+            "completed_inclusive_seconds": 0., "maximum_completed_seconds": 0.,
+            "unknown": 0, "unknown_elapsed_upper_bound_seconds": 0., "maximum_unknown_upper_bound_seconds": 0.}
+            for label in COST_LABELS}
+        self.catalog = [{"label": label, "filename": str(Path(code.co_filename).relative_to(ROOT)),
+            "first_line": code.co_firstlineno, "code_sha256": hashlib.sha256(code.co_code).hexdigest()}
+            for code, label in codes.items()]
+
+    def _checked_clock(self):
+        try:
+            value = self.raw_clock()
+        except BaseException:
+            self.failure = "MONITOR_CLOCK_CALLBACK"
+            raise
+        if type(value) is not float or not math.isfinite(value) or value < self.last_clock:
+            self.failure = "MONITOR_CLOCK"
+            raise ValueError("MONITOR_CLOCK")
+        self.last_clock = value
+        return value
+
+    def _unknown(self, code, row, cutoff):
+        duration = cutoff-row["entered_at"]
+        assert duration >= 0 and math.isfinite(duration)
+        aggregate = self.aggregates[self.codes[code]]
+        aggregate["unknown"] += 1
+        aggregate["unknown_elapsed_upper_bound_seconds"] += duration
+        aggregate["maximum_unknown_upper_bound_seconds"] = max(aggregate["maximum_unknown_upper_bound_seconds"], duration)
+
+    def _event(self, code, starting):
+        if self.failure is not None:
+            return
+        if type(code) is not CodeType or not any(held is code for held in self.codes):
+            self.failure = "MONITOR_FOREIGN_THREAD_OR_CODE"
+            return
+        try:
+            current_thread = self.get_ident()
+        except BaseException:
+            self.failure = "MONITOR_THREAD_CALLBACK"
+            raise
+        if current_thread != self.main_thread:
+            self.failure = "MONITOR_FOREIGN_THREAD_OR_CODE"
+            return
+        now = self.clock()
+        if type(now) is not float or not math.isfinite(now) or not self.last_clock <= now:
+            self.failure = "MONITOR_CLOCK"
+            return
+        self.last_clock = now
+        aggregate = self.aggregates[self.codes[code]]
+        if starting:
+            if self.calls >= COST_MAX_CALLS or len(self.stack) >= 64:
+                self.failure = "MONITOR_BOUND"
+                return
+            self.calls += 1
+            aggregate["started"] += 1
+            recursive = any(entry[0] is code for entry in self.stack)
+            if recursive:
+                for held, _ordinal, row in self.stack:
+                    if held is code:
+                        row["recursive"] = True
+            self.stack.append([code, 0, {"entered_at": now, "ended_at": None, "recursive": recursive}])
+            return
+        aggregate["returned"] += 1
+        index = next((index for index in range(len(self.stack)-1, -1, -1) if self.stack[index][0] is code), None)
+        if index is None:
+            self.failure = "MONITOR_RETURN_WITHOUT_ENTRY"
+            return
+        for held, _ordinal, row in self.stack[index+1:]:
+            self._unknown(held, row, now)
+        row = self.stack[index][2]
+        if row["recursive"]:
+            self._unknown(code, row, now)
+        else:
+            duration = now-row["entered_at"]
+            aggregate["completed"] += 1
+            aggregate["completed_inclusive_seconds"] += duration
+            aggregate["maximum_completed_seconds"] = max(aggregate["maximum_completed_seconds"], duration)
+        del self.stack[index:]
+
+    def restore(self):
+        pending = tuple(self.stack)
+        was_restored = self.restored
+        super().restore()  # The original all-owned-slot restoration contract.
+        if not was_restored and self.restored:
+            for code, _ordinal, row in pending:
+                self._unknown(code, row, row["ended_at"])
+
+    def summary(self):
+        assert self.restored and not self.claimed and self.failure is None
+        return {"backend": "sys.monitoring.local_START_RETURN.aggregate", "tool_id": self.tool_id,
+            "global_event_mask": 0, "local_event_mask": self.mask, "restored": True,
+            "callbacks_restored": True, "local_events_restored": True, "tool_freed": True,
+            "exact_unwind_observed": False, "unknown_open_elapsed_is_upper_bound": True,
+            "observed_timings_are_untraced_timings": False, "overlapping_inclusive_times_may_not_be_added": True,
+            "product_success_qualified": False, "call_limit": COST_MAX_CALLS,
+            "catalog": self.catalog, "aggregates": self.aggregates}
+
+
+class InspectionCostTiming(PhasedInspectionProbe):
+    """Repeat the original route with a separate diagnostic-only marker."""
+    def __init__(self, bpy, options, token, sources, display):
+        super().__init__(bpy, options, token, sources, display)
+        self.cost_monitor = None
+        self.cost_exiting = self.cost_fallback_attempted = False
+
+    def apply(self, action, parameters):
+        if parameters["stage"] == "after" and self.cost_monitor is not None:
+            self.cost_monitor.restore()
+        result = super().apply(action, parameters)
+        if parameters["stage"] == "before":
+            self.cost_monitor = InspectionCostMonitor(inspection_cost_codes())
+            self.cost_monitor.install()
+        return result
+
+    def _cost_exit(self):
+        from scripts.blender_artist_sidebar_smoke import owned_process_exit
+        primary = self.failure
+        try:
+            assert not self.cost_exiting, "Cost diagnostic exit already attempted"
+            self.cost_exiting = True
+            assert self.cost_monitor is not None
+            self.cost_monitor.restore()
+            observed = self.cost_monitor.summary()
+            full = {"schema": COST_PROFILE, "completed": True, "diagnostic_only": True, "phase": self.phase,
+            "process_id": os.getpid(), "process_instance": self.token, "runtime_nonce": self.nonce,
+            "runtime_identity": self.runtime_identity, "source_build": self.control_build,
+            "blender_version": self.control_version, "binary_sha256": self.binary_sha256,
+            "helper_sha256": HELPER_SHA256, "source_fingerprints": self.sources,
+            "source_snapshot_sha256": hashlib.sha256(canonical(self.sources)).hexdigest(), "private_display": self.display,
+            "transport": {"host": "127.0.0.1", "socket_json": True, "runtime_timer_queue": True,
+                          "direct_dispatch": False, "manual_scheduler_drain": False},
+            "failure": primary, "secondary_failure": self.secondary_failure, "failed_call": self.failed_call,
+            "worker_cached": self.worker_cached, "supervisor_cached": self.supervisor_cached,
+            "partial": self.inspection_data, "cost_timing": observed,
+                "product_success_qualified": False, "seconds": time.monotonic()-self.started}
+            assert source_fingerprints() == self.sources
+            assert full["seconds"] <= 300
+            binding = domain_new(self.options.bridge_report, canonical(full))
+            compact = {key: full[key] for key in ("schema", "completed", "diagnostic_only", "phase", "process_id", "process_instance",
+            "source_build", "blender_version", "binary_sha256", "source_snapshot_sha256", "product_success_qualified")}
+            compact["full_receipt"] = binding
+            print(COST_MARKER+canonical(compact).decode("ascii"), flush=True)
+            owned_process_exit(0)
+        except Exception:
+            self.failure = primary
+            return self._cost_fallback(traceback.format_exc())
+
+    def _cost_fallback(self, secondary):
+        from scripts.blender_artist_sidebar_smoke import owned_process_exit
+        self.secondary_failure = {"stage": "cost_diagnostic_exit", "traceback": secondary}
+        if self.failure is None:
+            self.failure = secondary
+        if self.cost_fallback_attempted:
+            print(self.failure, file=sys.stderr, flush=True)
+            owned_process_exit(1)
+            return None
+        self.cost_fallback_attempted = True
+        if self.cost_monitor is not None:
+            try:
+                self.cost_monitor.restore()
+            except Exception:
+                self.secondary_failure["monitor_restore_failure"] = traceback.format_exc()
+        return PhasedInspectionProbe.fail(self)
+
+    def fail(self):
+        return self._cost_exit()
+
+    def supervise(self):
+        try:
+            if self.failure is not None:
+                self.supervisor_cached = inspection_failure_snapshot(self.failure_origin,
+                    _inspection_failure_identifier(self.inspection_data), "supervisor")
+                return self._cost_exit()
+            while not self.controls.empty():
+                action, parameters, event, result = self.controls.get_nowait()
+                try:
+                    result.extend((True, self.apply(action, parameters)))
+                except Exception:
+                    result.extend((False, traceback.format_exc()))
+                finally:
+                    event.set()
+            assert time.monotonic()-self.started <= 300
+            if self.failure is not None:
+                self.supervisor_cached = inspection_failure_snapshot(self.failure_origin,
+                    _inspection_failure_identifier(self.inspection_data), "supervisor")
+                return self._cost_exit()
+            if not self.done.is_set():
+                return .005
+            return self._cost_exit()
+        except Exception:
+            return self._cost_fallback(traceback.format_exc())
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bridge-phase", choices=PHASES, required=True)
@@ -2337,12 +2563,14 @@ def main(argv=None):
     parser.add_argument("--bridge-untraced-control", action="store_true")
     parser.add_argument("--bridge-atomic-phase-timing", action="store_true")
     parser.add_argument("--bridge-phased-inspection", action="store_true")
+    parser.add_argument("--bridge-inspection-cost-timing", action="store_true")
     arguments = sys.argv[sys.argv.index("--") + 1:] if argv is None and "--" in sys.argv else argv
     options = parser.parse_args(arguments)
     assert sys.platform == "linux" and "--factory-startup" in sys.argv and "--disable-autoexec" in sys.argv
     parent, report = options.bridge_report.parent, options.bridge_report
-    assert sum((options.bridge_untraced_control, options.bridge_atomic_phase_timing, options.bridge_phased_inspection)) <= 1
-    expected_report = INSPECTION_REPORT if options.bridge_phased_inspection else TIMING_REPORT if options.bridge_atomic_phase_timing else CONTROL_REPORT if options.bridge_untraced_control else REPORT
+    assert sum((options.bridge_untraced_control, options.bridge_atomic_phase_timing, options.bridge_phased_inspection,
+                options.bridge_inspection_cost_timing)) <= 1
+    expected_report = COST_REPORT if options.bridge_inspection_cost_timing else INSPECTION_REPORT if options.bridge_phased_inspection else TIMING_REPORT if options.bridge_atomic_phase_timing else CONTROL_REPORT if options.bridge_untraced_control else REPORT
     assert report.is_absolute() and report.name == expected_report and not report.exists() and not report.is_symlink()
     assert parent.resolve(strict=True) == parent and stat.S_IMODE(parent.stat().st_mode) == 0o700
     assert parent.stat().st_uid == os.getuid()
@@ -2368,7 +2596,7 @@ def main(argv=None):
     assert bpy.ops.wm.read_factory_settings(use_empty=True) == {"FINISHED"}
     sources = source_fingerprints()
     assert sources["addon/blender_codex_bridge/mesh_storage_prepare.py"] == HELPER_SHA256
-    fixture_type = PhasedInspectionProbe if options.bridge_phased_inspection else AtomicPhaseTiming if options.bridge_atomic_phase_timing else FirstJobControl if options.bridge_untraced_control else Fixture
+    fixture_type = InspectionCostTiming if options.bridge_inspection_cost_timing else PhasedInspectionProbe if options.bridge_phased_inspection else AtomicPhaseTiming if options.bridge_atomic_phase_timing else FirstJobControl if options.bridge_untraced_control else Fixture
     fixture = fixture_type(bpy, options, token, sources, display)
     bpy.app.timers.register(fixture.setup, first_interval=.05)
 

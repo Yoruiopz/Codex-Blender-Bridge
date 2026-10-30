@@ -57,6 +57,11 @@ MESH_STORAGE_INSPECTION_CASE = "mesh_storage_phased_inspection"
 MESH_STORAGE_INSPECTION_PROFILE = "MESH_STORAGE_PHASED_INSPECTION_NATIVE_V1"
 MESH_STORAGE_INSPECTION_MARKER = "BLENDER_MESH_STORAGE_PHASED_INSPECTION_OK "
 MESH_STORAGE_INSPECTION_REPORT = "mesh-storage-phased-inspection.json"
+MESH_STORAGE_COST_CASE = "mesh_storage_inspection_cost_timing"
+MESH_STORAGE_COST_PROFILE = "MESH_STORAGE_INSPECTION_COST_OBSERVED_V1"
+MESH_STORAGE_COST_MARKER = "BLENDER_MESH_STORAGE_INSPECTION_COST_DIAGNOSTIC "
+MESH_STORAGE_COST_REPORT = "mesh-storage-inspection-cost.json"
+MESH_STORAGE_COST_LABELS = ("driver_advance", "gate_pure", "source_seal_verify", "metadata_plan", "collection_bindings", "checkpoint_roles_init")
 MESH_STORAGE_INSPECTION_LIMITS = {
     "success_only": True, "inspection_only": True, "public_tool": False, "mcp": False,
     "writer_handoff": False, "full_artist_workflow": False, "installed_package": False,
@@ -110,6 +115,7 @@ RUNTIME_BULK_BUILDS = {
 }
 
 CASES = {
+    MESH_STORAGE_COST_CASE: ("blender_mesh_storage_job_smoke.py", MESH_STORAGE_COST_MARKER),
     MESH_STORAGE_INSPECTION_CASE: ("blender_mesh_storage_job_smoke.py", MESH_STORAGE_INSPECTION_MARKER),
     MESH_STORAGE_TIMING_CASE: ("blender_mesh_storage_job_smoke.py", MESH_STORAGE_TIMING_MARKER),
     RUNTIME_BULK_CASE: ("blender_runtime_metadata_bulk_probe_smoke.py", "BLENDER_RUNTIME_METADATA_BULK_PROBE_OK "),
@@ -406,6 +412,8 @@ OPT_IN_CASES.add(MESH_STORAGE_TIMING_CASE)
 INTERACTIVE_CASES.add(MESH_STORAGE_TIMING_CASE)
 OPT_IN_CASES.add(MESH_STORAGE_INSPECTION_CASE)
 INTERACTIVE_CASES.add(MESH_STORAGE_INSPECTION_CASE)
+OPT_IN_CASES.add(MESH_STORAGE_COST_CASE)
+INTERACTIVE_CASES.add(MESH_STORAGE_COST_CASE)
 OPT_IN_CASES.add(RUNTIME_BULK_CASE)
 
 GLB_STAGE_CASES = frozenset({"glb_stage_constructor", "glb_stage_structure", "glb_stage_runtime"})
@@ -2667,6 +2675,268 @@ def _mesh_storage_inspection_matches(payload, temporary, process_instance, pid, 
     return result
 
 
+def _inspection_cost_catalog():
+    import ast
+    specs = (("driver_advance", "tools/_mesh_storage_inspection.py", "MeshStorageInspectionDriver", "_advance"),
+        ("gate_pure", "mesh_storage_source.py", "Gate", "pure"),
+        ("source_seal_verify", "mesh_storage_source.py", "SourceSeal", "verify"),
+        ("metadata_plan", "mesh_storage_prepare.py", None, "build_plan"),
+        ("collection_bindings", "mesh_storage_prepare.py", None, "qualify_collection_bindings"),
+        ("checkpoint_roles_init", "mesh_storage_source.py", "CheckpointRoles", "__init__"))
+    result = []
+    for label, relative, owner, name in specs:
+        path = ROOT / "addon/blender_codex_bridge" / relative
+        tree = ast.parse(path.read_bytes())
+        body = tree.body if owner is None else next(node.body for node in tree.body if type(node) is ast.ClassDef and node.name == owner)
+        function = next(node for node in body if type(node) is ast.FunctionDef and node.name == name)
+        result.append({"label": label, "filename": str(path.relative_to(ROOT)),
+                       "first_line": function.decorator_list[0].lineno if function.decorator_list else function.lineno})
+    return result
+
+
+def _inspection_cost_aggregates(value, seconds):
+    fields = {"backend", "tool_id", "global_event_mask", "local_event_mask", "restored", "callbacks_restored",
+        "local_events_restored", "tool_freed", "exact_unwind_observed", "unknown_open_elapsed_is_upper_bound",
+        "observed_timings_are_untraced_timings", "overlapping_inclusive_times_may_not_be_added", "product_success_qualified",
+        "call_limit", "catalog", "aggregates"}
+    if (type(value) is not dict or set(value) != fields
+            or value["backend"] != "sys.monitoring.local_START_RETURN.aggregate"
+            or any(type(value[key]) is not int or value[key] != expected for key, expected in
+                {"tool_id": 4, "global_event_mask": 0, "local_event_mask": 5, "call_limit": 131072}.items())
+            or any(value[key] is not True for key in ("restored", "callbacks_restored", "local_events_restored", "tool_freed",
+                "unknown_open_elapsed_is_upper_bound", "overlapping_inclusive_times_may_not_be_added"))
+            or any(value[key] is not False for key in ("exact_unwind_observed", "observed_timings_are_untraced_timings", "product_success_qualified"))):
+        return False
+    catalog, expected = value["catalog"], _inspection_cost_catalog()
+    if type(catalog) is not list or len(catalog) != 6:
+        return False
+    for row, source in zip(catalog, expected, strict=True):
+        if (type(row) is not dict or set(row) != set(source) | {"code_sha256"}
+                or any(type(row[key]) is not type(item) or row[key] != item for key, item in source.items())
+                or not _inspection_hex(row["code_sha256"])):
+            return False
+    aggregates = value["aggregates"]
+    if type(aggregates) is not dict or set(aggregates) != set(MESH_STORAGE_COST_LABELS):
+        return False
+    count = 0
+    for row in aggregates.values():
+        fields = {"started", "returned", "completed", "completed_inclusive_seconds", "maximum_completed_seconds",
+                  "unknown", "unknown_elapsed_upper_bound_seconds", "maximum_unknown_upper_bound_seconds"}
+        if (type(row) is not dict or set(row) != fields
+                or any(type(row[key]) is not int or not 0 <= row[key] <= 131072 for key in ("started", "returned", "completed", "unknown"))
+                or not 0 <= row["completed"] <= row["returned"] <= row["started"]
+                or row["completed"]+row["unknown"] != row["started"]):
+            return False
+        for prefix, number, total in (("completed", "completed", "completed_inclusive_seconds"),
+                                      ("unknown", "unknown", "unknown_elapsed_upper_bound_seconds")):
+            maximum = "maximum_completed_seconds" if prefix == "completed" else "maximum_unknown_upper_bound_seconds"
+            if (not _inspection_clock(row[total]) or not _inspection_clock(row[maximum])
+                    or not 0 <= row[maximum] <= min(row[total], seconds)):
+                return False
+            maximum_sum = row[number]*row[maximum]
+            # Nonnegative incremental addition can round once per observation.
+            roundoff = row[number]*math.ulp(maximum_sum)
+            if (row[total] > row[number]*seconds or row[total] > maximum_sum+roundoff
+                    or (row[number] == 1 and row[total] != row[maximum])
+                    or (row[number] == 0 and (row[total] != 0. or row[maximum] != 0.))):
+                return False
+        count += row["started"]
+    return (count <= 131072 and all(aggregates[key]["started"] > 0 for key in ("driver_advance", "gate_pure", "source_seal_verify")))
+
+
+def _inspection_cost_cache(cache, stage, job_id, owner, first):
+    fields = {"available", "stage", "non_atomic_cached_only", "sampled_at", "cpu_seconds", "truncated",
+              "origin_identity_valid", "job", "active_is_expected", "inspection_turns", "pending_queue"}
+    if (type(cache) is not dict or set(cache) != fields or cache["available"] is not True or cache["stage"] != stage
+            or cache["non_atomic_cached_only"] is not True or cache["origin_identity_valid"] is not True
+            or any(type(cache[key]) is not bool for key in ("truncated", "active_is_expected"))
+            or not all(_inspection_clock(cache[key]) for key in ("sampled_at", "cpu_seconds"))):
+        return False
+    job = cache["job"]
+    fields = {"job_id", "request_id", "method", "kind", "state", "phase", "revision", "progress", "error", "deadline",
+              "in_tick", "in_commit", "native_reads_started", "cancel_reason", "ready_valid", "invalidated_reason"}
+    if (type(job) is not dict or set(job) != fields or job["job_id"] != job_id or job["request_id"] != owner
+            or job["kind"] != "mesh.attribute_storage_inspection" or job["method"] != "jobs._inspection_turn"
+            or job["state"] not in {"QUEUED", "RUNNING", "PAUSED", "SUCCEEDED", "FAILED", "CANCELLED"}
+            or job["phase"] not in {"inspection_plan", "inspection_capture", "inspection_seal", "inspection_complete"}
+            or type(job["revision"]) is not int or not 1 <= job["revision"] <= 32
+            or any(type(job[key]) is not bool for key in ("in_tick", "in_commit", "native_reads_started", "ready_valid"))
+            or any(type(job[key]) is not str or len(job[key]) > 4096 for key in ("cancel_reason", "invalidated_reason"))
+            or not _inspection_clock(job["deadline"]) or not first["sent_at"]+300 <= job["deadline"] <= first["received_at"]+300):
+        return False
+    progress = job["progress"]
+    if (type(progress) is not dict or set(progress) != {"phase", "completed", "total"}
+            or type(progress["phase"]) is not str or len(progress["phase"]) > 128
+            or type(progress["completed"]) is not int or not 0 <= progress["completed"] <= 3
+            or type(progress["total"]) is not int or progress["total"] != 3):
+        return False
+    error = job["error"]
+    if error is not None and (type(error) is not dict or set(error) != {"code", "message", "context"}
+            or type(error["code"]) is not str or not 1 <= len(error["code"]) <= 64
+            or type(error["message"]) is not str or len(error["message"]) > 512 or type(error["context"]) is not dict):
+        return False
+    turns, queued = cache["inspection_turns"], cache["pending_queue"]
+    if type(turns) is not list or len(turns) > 2 or type(queued) is not list or len(queued) > 8:
+        return False
+    for row in turns:
+        if (type(row) is not dict or set(row) != {"phase", "revision", "used", "check_only", "inspection_deadline", "belongs_to_expected_job"}
+                or row["phase"] not in {"inspection_plan", "inspection_capture", "inspection_seal", "inspection_complete"}
+                or type(row["revision"]) is not int or not 1 <= row["revision"] <= 32
+                or any(type(row[key]) is not bool for key in ("used", "check_only", "belongs_to_expected_job"))
+                or not _inspection_clock(row["inspection_deadline"]) or not first["sent_at"] <= row["inspection_deadline"] <= job["deadline"]):
+            return False
+    for row in queued:
+        if (type(row) is not dict or set(row) != {"request_id", "method", "deadline", "state", "stop_requested", "response_present"}
+                or type(row["request_id"]) is not str or not 1 <= len(row["request_id"]) <= 128
+                or type(row["method"]) is not str or not 1 <= len(row["method"]) <= 128
+                or row["state"] not in {"pending", "running", "completed", "cancelled"}
+                or not _inspection_clock(row["deadline"]) or any(type(row[key]) is not bool for key in ("stop_requested", "response_present"))):
+            return False
+    return True
+
+
+def _inspection_cost_attempt(full):
+    partial, failed = full["partial"], full["failed_call"]
+    required = {"before", "worker_before", "requests", "timings", "terminal"}
+    allowed = required | {"repeat", "listed", "after", "extra_response_check", "worker_after", "setup_oracle_values"}
+    if type(partial) is not dict or not required <= set(partial) <= allowed:
+        return False
+    if full["failure"] is None:
+        return (failed is None and full["worker_cached"] is None and full["supervisor_cached"] is None
+                and _inspection_wire({**partial, "blender_version": full["blender_version"]}))
+    if (type(full["failure"]) is not str or not 1 <= len(full["failure"]) <= 16384
+            or type(failed) is not dict or set(failed) != {"stage", "method", "sent_at", "failed_at", "cpu_seconds",
+                "response_received", "exception_type", "request_id"}
+            or failed["stage"] != "inspect" or failed["method"] != "jobs.inspect"
+            or failed["exception_type"] != "TimeoutError" or failed["response_received"] is not False
+            or not all(_inspection_clock(failed[key]) for key in ("sent_at", "failed_at", "cpu_seconds"))
+            or not 0 <= failed["failed_at"]-failed["sent_at"] <= 65):
+        return False
+    requests, timings = partial["requests"], partial["timings"]
+    if (type(requests) is not list or not 2 <= len(requests) <= 256 or type(timings) is not list
+            or len(timings) != len(requests)-1 or partial["terminal"] is not None):
+        return False
+    accepted, seen, previous = requests[0]["response"]["result"], set(), 0.
+    owner = requests[0]["request"]["id"]
+    job_id = accepted["job_id"]
+    if (type(job_id) is not str or len(job_id) != 36 or not job_id.startswith("job_")
+            or any(char not in "0123456789abcdef" for char in job_id[4:])
+            or not _inspection_summary(accepted, job_id, owner, accepted=True)):
+        return False
+    params = {"object_name": partial["before"]["snapshot"]["object_identity"][0],
+        "mesh_name": partial["before"]["snapshot"]["mesh_identity"][0], "attribute_names": [".uv_select_face", "UVSingle"], "time_limit_seconds": 300.}
+    for index, row in enumerate(requests):
+        if type(row) is not dict or set(row) != {"request", "response"}:
+            return False
+        request, response = row["request"], row["response"]
+        if (type(request) is not dict or set(request) != {"id", "method", "params", "protocol_version", "timeout_ms"}
+                or type(request["id"]) is not str or request["id"] in seen or not 1 <= len(request["id"]) <= 128
+                or request["protocol_version"] != "1.0" or type(request["timeout_ms"]) is not int or request["timeout_ms"] != 60000
+                or request["method"] != ("mesh.attribute_storage_prepare_inspection_start" if index == 0 else "jobs.inspect")
+                or not _inspection_equal(request["params"], params if index == 0 else {"job_id": job_id})):
+            return False
+        seen.add(request["id"])
+        if index == len(requests)-1:
+            if response is not None or failed["request_id"] != request["id"] or not previous <= failed["sent_at"]:
+                return False
+            continue
+        timing = timings[index]
+        if (type(response) is not dict or set(response) != {"id", "ok", "result", "timestamp", "protocol_version"}
+                or response["id"] != request["id"] or response["ok"] is not True or response["protocol_version"] != "1.0"
+                or type(response["timestamp"]) is not str or not 1 <= len(response["timestamp"]) <= 128
+                or type(timing) is not dict or set(timing) != {"stage", "request_id", "sent_at", "received_at", "cpu_seconds"}
+                or timing["stage"] != ("start" if index == 0 else "inspect") or timing["request_id"] != request["id"]
+                or not all(_inspection_clock(timing[key]) for key in ("sent_at", "received_at", "cpu_seconds"))
+                or not previous <= timing["sent_at"] <= timing["received_at"] or timing["received_at"]-timing["sent_at"] > 60
+                or (index and (not _inspection_summary(response["result"], job_id, owner) or response["result"]["terminal"]))):
+            return False
+        previous = timing["received_at"]
+    for stage, cache in (("worker", full["worker_cached"]), ("supervisor", full["supervisor_cached"])):
+        if not _inspection_cost_cache(cache, stage, job_id, owner, timings[0]):
+            return False
+    return (failed["failed_at"] <= full["worker_cached"]["sampled_at"] <= full["supervisor_cached"]["sampled_at"]
+            and full["supervisor_cached"]["sampled_at"]-partial["before"]["measurement"]["started_at"] <= full["seconds"])
+
+
+def _mesh_storage_cost_matches(payload, temporary, process_instance, pid, binary, sources, display):
+    result = {"diagnostic_completed": False, "qualified": False, "path": str(temporary / MESH_STORAGE_COST_REPORT)}
+    try:
+        common = {"schema", "completed", "diagnostic_only", "phase", "process_id", "process_instance", "source_build",
+                  "blender_version", "binary_sha256", "source_snapshot_sha256", "product_success_qualified"}
+        if type(payload) is not dict or not _inspection_plain(payload) or set(payload) != common | {"full_receipt"}:
+            raise ValueError("INSPECTION_COST_MARKER")
+        expected = {"schema": MESH_STORAGE_COST_PROFILE, "completed": True, "diagnostic_only": True, "phase": "success",
+                    "process_id": pid, "process_instance": process_instance, "source_build": "d13f752e3b9c",
+                    "binary_sha256": binary["sha256"], "product_success_qualified": False}
+        path = temporary / MESH_STORAGE_COST_REPORT
+        if (type(pid) is not int or pid <= 0 or binary["sha256"] != MESH_STORAGE_EXECUTABLE_SHA256
+                or any(type(payload[key]) is not type(value) or payload[key] != value for key, value in expected.items())
+                or payload["blender_version"] not in {"5.2.2", "5.2.2 LTS"} or payload["full_receipt"].get("path") != str(path)):
+            raise ValueError("INSPECTION_COST_PROCESS")
+        before = path.lstat()
+        if not stat.S_ISREG(before.st_mode) or before.st_uid != os.getuid() or before.st_nlink != 1:
+            raise ValueError("INSPECTION_COST_FILE")
+        raw = _domain_binding(payload["full_receipt"], temporary, DOMAIN_MAX_REPORT, capture=True)
+        after = path.lstat()
+        if not stat.S_ISREG(after.st_mode) or after.st_uid != os.getuid() or after.st_nlink != 1:
+            raise ValueError("INSPECTION_COST_FILE")
+        full = _native_save_json(raw)
+        extras = {"runtime_nonce", "runtime_identity", "helper_sha256", "source_fingerprints", "private_display", "transport",
+            "failure", "secondary_failure", "failed_call", "worker_cached", "supervisor_cached", "partial", "cost_timing", "seconds"}
+        if (type(full) is not dict or not _inspection_plain(full) or set(full) != common | extras
+                or any(not _inspection_equal(full[key], payload[key]) for key in common)
+                or full["helper_sha256"] != MESH_STORAGE_HELPER_SHA256 or full["secondary_failure"] is not None
+                or not _inspection_equal(full["source_fingerprints"], sources) or _mesh_storage_sources() != sources
+                or not _inspection_equal(full["private_display"], display) or _domain_display() != display
+                or full["source_snapshot_sha256"] != hashlib.sha256(json.dumps(sources, sort_keys=True, ensure_ascii=True,
+                    allow_nan=False, separators=(",", ":")).encode("ascii")).hexdigest()
+                or not _inspection_equal(full["transport"], {"host": "127.0.0.1", "socket_json": True, "runtime_timer_queue": True,
+                    "direct_dispatch": False, "manual_scheduler_drain": False})
+                or not _inspection_clock(full["seconds"]) or not 0 < full["seconds"] <= 300
+                or not _inspection_cost_aggregates(full["cost_timing"], full["seconds"])):
+            raise ValueError("INSPECTION_COST_SOURCE_OR_COUNTERS")
+        identity = full["runtime_identity"]
+        if (type(identity) is not dict or set(identity) != {"process_instance", "runtime_id", "registry_id", "queue_id"}
+                or identity["process_instance"] != process_instance
+                or any(type(identity[key]) is not int or not 0 < identity[key] < 2**64 for key in ("runtime_id", "registry_id", "queue_id"))
+                or len({identity[key] for key in ("runtime_id", "registry_id", "queue_id")}) != 3
+                or full["runtime_nonce"] != hashlib.sha256(json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:32]):
+            raise ValueError("INSPECTION_COST_RUNTIME")
+        sample = full["partial"]["before"]
+        if (type(sample) is not dict or not _mesh_storage_snapshot(sample["snapshot"])
+                or not _inspection_sample_details(sample) or not _inspection_hooks(sample["hooks"])
+                or not _inspection_hooks(full["partial"]["worker_before"]) or not _inspection_cost_attempt(full)):
+            raise ValueError("INSPECTION_COST_CACHED_ROUTE")
+        result.update(diagnostic_completed=True, sha256=hashlib.sha256(raw).hexdigest(), bytes=len(raw),
+                      outcome="TRANSPORT_TIMEOUT" if full["failure"] is not None else "OBSERVED_SUCCESS")
+    except (OSError, ValueError, KeyError, TypeError, IndexError, AttributeError, OverflowError, RecursionError, UnicodeError, StopIteration) as error:
+        result["reason"] = str(error) if isinstance(error, ValueError) else "INSPECTION_COST_RECEIPT_INVALID"
+    return result
+
+
+def _run_mesh_storage_cost(blender: Path, output: Path, timeout: int) -> dict:
+    result = {"case": MESH_STORAGE_COST_CASE, "status": "failed", "diagnostic_only": True}
+    try:
+        display = _domain_display()
+        executable = blender.resolve(strict=True)
+        _raw, binary = _domain_regular(executable, executable.parent, 1024**3)
+        if binary["sha256"] != MESH_STORAGE_EXECUTABLE_SHA256:
+            raise ValueError("Inspection cost diagnostic requires pinned5.2.2")
+        sources = _mesh_storage_sources()
+        bundle = output / f"{MESH_STORAGE_COST_CASE}-bundle"
+        bundle.mkdir(mode=0o700)
+        result = _run_process(executable, MESH_STORAGE_COST_CASE, output, timeout,
+            phase="success", bundle=bundle, phase_marker=MESH_STORAGE_COST_MARKER,
+            domain_binary=binary, domain_sources=sources, domain_display=display)
+        _domain_binding(binary, executable.parent, 1024**3)
+        if _mesh_storage_sources() != sources or _domain_display() != display:
+            raise ValueError("Inspection cost diagnostic source or display changed")
+    except (OSError, ValueError, KeyError, TypeError, IndexError, UnicodeError, RecursionError):
+        result["status"] = "failed"
+        result["admission_error"] = "Inspection cost diagnostic admission refused"
+    return result
+
+
 def _run_mesh_storage_inspection(blender: Path, output: Path, timeout: int) -> dict:
     """One opt-in unobserved success probe, before the adverse native matrix."""
     started = time.monotonic()
@@ -2798,6 +3068,12 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
                 or any(type(value) is not dict for value in (domain_binary, domain_sources, domain_display))):
             raise ValueError("Owned storage jobs require a private Linux attested phase")
         timeout = min(timeout, 300)
+    if case == MESH_STORAGE_COST_CASE:
+        if (phase != "success" or bundle is None or sys.platform != "linux"
+                or any(type(value) is not dict for value in (domain_binary, domain_sources, domain_display))):
+            raise ValueError("Inspection cost requires private attested Linux success phase")
+        command.append("--bridge-inspection-cost-timing")
+        timeout = min(timeout, 300)
     if case == MESH_STORAGE_INSPECTION_CASE:
         if (phase != "success" or bundle is None or sys.platform != "linux"
                 or any(type(value) is not dict for value in (domain_binary, domain_sources, domain_display))):
@@ -2820,11 +3096,13 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
         command.extend(["--", "--bridge-populated-protection"])
     # Blender writes quit.blend on normal UI exit. Keep it outside the user's temp recovery.
     temporary = output / f"{label}-temp"
-    temporary.mkdir(mode=0o700 if case in CURRENT_PIXELS_READ_CASES or case in GLB_STAGE_CASES or case in {"native_project_saving_large", MESH_STORAGE_CASE, MESH_STORAGE_CONTROL_CASE, MESH_STORAGE_TIMING_CASE, MESH_STORAGE_INSPECTION_CASE} else 0o777)
+    temporary.mkdir(mode=0o700 if case in CURRENT_PIXELS_READ_CASES or case in GLB_STAGE_CASES or case in {"native_project_saving_large", MESH_STORAGE_CASE, MESH_STORAGE_CONTROL_CASE, MESH_STORAGE_TIMING_CASE, MESH_STORAGE_INSPECTION_CASE, MESH_STORAGE_COST_CASE} else 0o777)
     if case == MESH_STORAGE_CASE:
         command.extend(["--bridge-report", str(temporary / "mesh-storage-job.json")])
     if case == MESH_STORAGE_CONTROL_CASE:
         command.extend(["--bridge-report", str(temporary / MESH_STORAGE_CONTROL_REPORT)])
+    if case == MESH_STORAGE_COST_CASE:
+        command.extend(["--bridge-report", str(temporary / MESH_STORAGE_COST_REPORT)])
     if case == MESH_STORAGE_INSPECTION_CASE:
         command.extend(["--bridge-report", str(temporary / MESH_STORAGE_INSPECTION_REPORT)])
     if case == MESH_STORAGE_TIMING_CASE:
@@ -2849,7 +3127,7 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
         environment[key] = str(directory)
     launch_cwd = ROOT
     if (case in PORTABLE_BLEND_RESEARCH_PHASES or case in PAIRED_RECOVERY_PROFILES
-            or case in {"isolated_asset_preview_probe", "native_project_saving", "native_project_saving_large", MESH_STORAGE_CASE, MESH_STORAGE_CONTROL_CASE, MESH_STORAGE_TIMING_CASE, MESH_STORAGE_INSPECTION_CASE, *CURRENT_PIXELS_READ_CASES, *GLB_STAGE_CASES}):
+            or case in {"isolated_asset_preview_probe", "native_project_saving", "native_project_saving_large", MESH_STORAGE_CASE, MESH_STORAGE_CONTROL_CASE, MESH_STORAGE_TIMING_CASE, MESH_STORAGE_INSPECTION_CASE, MESH_STORAGE_COST_CASE, *CURRENT_PIXELS_READ_CASES, *GLB_STAGE_CASES}):
         # Research-only operational profile. This is not an OS/network sandbox.
         # Do not inherit credential variables or arbitrary Python/Blender paths.
         environment = {key: os.environ[key] for key in (
@@ -2890,7 +3168,7 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
         "status": "failed",
         "exit_code": None,
         "execution_mode": (
-            "private_interactive_display" if case in {MESH_STORAGE_CASE, MESH_STORAGE_CONTROL_CASE, MESH_STORAGE_TIMING_CASE, MESH_STORAGE_INSPECTION_CASE}
+            "private_interactive_display" if case in {MESH_STORAGE_CASE, MESH_STORAGE_CONTROL_CASE, MESH_STORAGE_TIMING_CASE, MESH_STORAGE_INSPECTION_CASE, MESH_STORAGE_COST_CASE}
             else "private_windows_desktop" if interactive and sys.platform == "win32"
             else "interactive_display" if interactive else "background"
         ),
@@ -2945,6 +3223,10 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
     if case == MESH_STORAGE_CASE:
         result["qualification_scope"] = dict(MESH_STORAGE_LIMITS)
         result["binary"] = domain_binary
+    if case == MESH_STORAGE_COST_CASE:
+        result["binary"] = domain_binary
+        result["diagnostic_only"] = True
+        result["qualification_scope"] = {"observed_costs_only": True, "untraced_timings": False, "product_success": False, "release_acceptance": False}
     if case == MESH_STORAGE_INSPECTION_CASE:
         result["binary"] = domain_binary
         result["qualification_scope"] = dict(MESH_STORAGE_INSPECTION_LIMITS)
@@ -2974,7 +3256,7 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
 
                 process = run_isolated(command, cwd=launch_cwd, stdout=stream,
                                        timeout=timeout, env=environment)
-            elif case in {MESH_STORAGE_CASE, MESH_STORAGE_CONTROL_CASE, MESH_STORAGE_TIMING_CASE, MESH_STORAGE_INSPECTION_CASE}:
+            elif case in {MESH_STORAGE_CASE, MESH_STORAGE_CONTROL_CASE, MESH_STORAGE_TIMING_CASE, MESH_STORAGE_INSPECTION_CASE, MESH_STORAGE_COST_CASE}:
                 process = subprocess.Popen(command, cwd=launch_cwd, stdout=stream, stderr=subprocess.STDOUT,
                                            env=environment, start_new_session=True)
                 result["os_process_id"] = process.pid
@@ -3003,7 +3285,7 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
                     timeout=timeout, check=False, env=environment,
                     creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
                 )
-            if case not in {MESH_STORAGE_CASE, MESH_STORAGE_CONTROL_CASE, MESH_STORAGE_TIMING_CASE, MESH_STORAGE_INSPECTION_CASE}:
+            if case not in {MESH_STORAGE_CASE, MESH_STORAGE_CONTROL_CASE, MESH_STORAGE_TIMING_CASE, MESH_STORAGE_INSPECTION_CASE, MESH_STORAGE_COST_CASE}:
                 result["exit_code"] = process.returncode
         except subprocess.TimeoutExpired:
             result["status"] = "timeout"
@@ -3013,7 +3295,7 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
             if case not in GLB_STAGE_CASES:
                 raise
             result["input_validation_error"] = str(exc)
-    if case in {MESH_STORAGE_CONTROL_CASE, MESH_STORAGE_TIMING_CASE, MESH_STORAGE_INSPECTION_CASE}:
+    if case in {MESH_STORAGE_CONTROL_CASE, MESH_STORAGE_TIMING_CASE, MESH_STORAGE_INSPECTION_CASE, MESH_STORAGE_COST_CASE}:
         payload = None
         try:
             raw_log, _binding = _domain_regular(log, output, 4 * 1024**2, capture=True)
@@ -3043,7 +3325,7 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
         with log.open("rb") as stream:
             stream.seek(max(0, log.stat().st_size - 65536))
             log_text = stream.read().decode("utf-8", errors="replace")
-        if case in {"native_project_saving_large", MESH_STORAGE_CASE, MESH_STORAGE_CONTROL_CASE, MESH_STORAGE_TIMING_CASE, MESH_STORAGE_INSPECTION_CASE}:
+        if case in {"native_project_saving_large", MESH_STORAGE_CASE, MESH_STORAGE_CONTROL_CASE, MESH_STORAGE_TIMING_CASE, MESH_STORAGE_INSPECTION_CASE, MESH_STORAGE_COST_CASE}:
             candidates = [line[len(marker):] for line in log_text.splitlines() if line.startswith(marker)]
             payload = None
             if len(candidates) == 1:
@@ -3081,6 +3363,13 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
     if case == MESH_STORAGE_CASE:
         phase_evidence = _mesh_storage_receipt_matches(payload, temporary, process_instance, phase,
             bundle, result.get("os_process_id"), domain_binary, domain_sources, domain_display)
+    if case == MESH_STORAGE_COST_CASE:
+        phase_evidence = False
+        validation = _mesh_storage_cost_matches(payload, temporary, process_instance,
+            result.get("os_process_id"), domain_binary, domain_sources, domain_display)
+        result["retained_evidence_validation"] = validation
+        if result["exit_code"] == 0 and payload is not None and version and validation["diagnostic_completed"]:
+            result["status"] = "diagnostic_completed"
     if case == MESH_STORAGE_INSPECTION_CASE:
         validation = _mesh_storage_inspection_matches(payload, temporary, process_instance,
             result.get("os_process_id"), domain_binary, domain_sources, domain_display)
@@ -3274,6 +3563,8 @@ def _run_runtime_bulk_probe(blender: Path, output: Path, timeout: int) -> dict:
 
 
 def run_case(blender: Path, case: str, output: Path, timeout: int) -> dict:
+    if case == MESH_STORAGE_COST_CASE:
+        return _run_mesh_storage_cost(blender, output, timeout)
     if case == MESH_STORAGE_INSPECTION_CASE:
         return _run_mesh_storage_inspection(blender, output, timeout)
     if case == MESH_STORAGE_TIMING_CASE:
@@ -3354,7 +3645,7 @@ def main() -> int:
         parser.error("Each Blender path must be an existing executable file")
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
-    defaults = [case for case in CASES if case not in {"native_project_saving_large", MESH_STORAGE_CONTROL_CASE, MESH_STORAGE_TIMING_CASE, MESH_STORAGE_INSPECTION_CASE}
+    defaults = [case for case in CASES if case not in {"native_project_saving_large", MESH_STORAGE_CONTROL_CASE, MESH_STORAGE_TIMING_CASE, MESH_STORAGE_INSPECTION_CASE, MESH_STORAGE_COST_CASE}
                 and (args.include_interactive or case not in INTERACTIVE_CASES | OPT_IN_CASES)
                 and (case != "installed_addon_probe" or args.package_probe_config is not None)]
     cases = list(dict.fromkeys(args.cases or defaults))
@@ -3408,12 +3699,12 @@ def main() -> int:
             report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
             print(f"{index}:{case}: {result['status']}", flush=True)
     report["completed_at"] = datetime.now(timezone.utc).isoformat()
-    report["checks_passed"] = all(r["case"] not in {MESH_STORAGE_CONTROL_CASE, MESH_STORAGE_TIMING_CASE, MESH_STORAGE_INSPECTION_CASE} and r["status"] == "passed"
+    report["checks_passed"] = all(r["case"] not in {MESH_STORAGE_CONTROL_CASE, MESH_STORAGE_TIMING_CASE, MESH_STORAGE_INSPECTION_CASE, MESH_STORAGE_COST_CASE} and r["status"] == "passed"
                                   for r in report["results"])
     report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(report_path)
-    diagnostics_completed = all((r["case"] not in {MESH_STORAGE_CONTROL_CASE, MESH_STORAGE_TIMING_CASE, MESH_STORAGE_INSPECTION_CASE} and r["status"] == "passed") or
-        (r["case"] in {MESH_STORAGE_CONTROL_CASE, MESH_STORAGE_TIMING_CASE, MESH_STORAGE_INSPECTION_CASE} and r["status"] == "diagnostic_completed")
+    diagnostics_completed = all((r["case"] not in {MESH_STORAGE_CONTROL_CASE, MESH_STORAGE_TIMING_CASE, MESH_STORAGE_INSPECTION_CASE, MESH_STORAGE_COST_CASE} and r["status"] == "passed") or
+        (r["case"] in {MESH_STORAGE_CONTROL_CASE, MESH_STORAGE_TIMING_CASE, MESH_STORAGE_INSPECTION_CASE, MESH_STORAGE_COST_CASE} and r["status"] == "diagnostic_completed")
         for r in report["results"])
     return 0 if diagnostics_completed else 1
 
