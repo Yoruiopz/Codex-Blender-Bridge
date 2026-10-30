@@ -5291,3 +5291,502 @@ def test_phased_inspection_runtime_sample_refuses_missing_or_foreign_cached_orig
     with pytest.raises(AssertionError):
         script.inspection_runtime_job(runtime, job.job_id)
     assert foreign_calls == []
+
+
+def test_inspection_failure_literal_detaches_only_bounded_builtin_values():
+    script = importlib.import_module("scripts.blender_mesh_storage_job_smoke")
+    value = {"phase": "inspection_capture", "flags": (False, True, None),
+             "counts": [-(2**64 - 1), 2**64 - 1, -0., 2.5], "nested": {"value": "x" * 4096}}
+    report = script._inspection_failure_literal(value)
+    assert report == {**value, "flags": [False, True, None]}
+    assert report is not value and report["counts"] is not value["counts"] and report["nested"] is not value["nested"]
+
+
+@pytest.mark.parametrize("fault", ("list_width", "dict_width", "string", "integer", "nan", "infinity", "depth", "nodes", "cycle"))
+def test_inspection_failure_literal_refuses_excess_or_nonfinite_values_without_partial_claim(fault):
+    script = importlib.import_module("scripts.blender_mesh_storage_job_smoke")
+    if fault == "list_width":
+        value = [0] * 33
+    elif fault == "dict_width":
+        value = {str(index): 0 for index in range(33)}
+    elif fault == "string":
+        value = "x" * 4097
+    elif fault == "integer":
+        value = 2**64
+    elif fault == "nan":
+        value = float("nan")
+    elif fault == "infinity":
+        value = float("inf")
+    elif fault == "nodes":
+        value = [[0] * 32 for _ in range(16)]
+    elif fault == "cycle":
+        value = []
+        value.append(value)
+    else:
+        value = 0
+        for _ in range(10):
+            value = [value]
+    with pytest.raises(ValueError, match="DIAGNOSTIC_LITERAL"):
+        script._inspection_failure_literal(value)
+
+
+@pytest.mark.parametrize("kind", ("object", "list", "dict", "key", "metaclass"))
+def test_inspection_failure_literal_refuses_foreign_dunders_and_container_subclasses(kind):
+    script = importlib.import_module("scripts.blender_mesh_storage_job_smoke")
+    calls = []
+    class Meta(type):
+        def __eq__(self, _other):
+            calls.append("type_eq")
+            return False
+        def __hash__(self):
+            calls.append("type_hash")
+            return 0
+    class Foreign:
+        def __str__(self):
+            calls.append("str")
+            return "foreign"
+        def __repr__(self):
+            calls.append("repr")
+            return "foreign"
+        def __bool__(self):
+            calls.append("bool")
+            return False
+        def __iter__(self):
+            calls.append("iter")
+            return iter(())
+        def __hash__(self):
+            calls.append("hash")
+            return hash("state")
+        def __eq__(self, _other):
+            calls.append("eq")
+            return False
+    class ForeignList(list, Foreign):
+        pass
+    class ForeignDict(dict, Foreign):
+        pass
+    class ForeignType(metaclass=Meta):
+        pass
+    if kind == "list":
+        value = ForeignList([0])
+    elif kind == "dict":
+        value = ForeignDict(state=0)
+    elif kind == "key":
+        value = {Foreign(): 0}
+    elif kind == "metaclass":
+        value = ForeignType()
+    else:
+        value = Foreign()
+    calls.clear()
+    with pytest.raises(ValueError, match="DIAGNOSTIC_LITERAL"):
+        script._inspection_failure_literal(value)
+    assert calls == []
+
+
+@pytest.fixture
+def inspection_failure_model(addon_package, monkeypatch):
+    """Real Python container/slot classes; no Runtime or Blender is started."""
+    import queue
+    from collections import deque
+
+    script = importlib.import_module("scripts.blender_mesh_storage_job_smoke")
+    modules = {name: importlib.import_module(addon_package + "." + name) for name in
+               ("runtime", "native_save_jobs", "command_queue", "protocol", "scene_job_reservations", "scene_jobs")}
+    for name, source in modules.items():
+        module = ModuleType("blender_codex_bridge." + name)
+        for kind in {"runtime": ("BridgeRuntime",), "native_save_jobs": ("NativeSaveJobs",),
+                     "command_queue": ("CommandQueue", "QueuedRequest"), "protocol": ("Request",),
+                     "scene_job_reservations": ("SceneJobReservations", "_Reservation", "_Turn"),
+                     "scene_jobs": ("InspectionJob",)}[name]:
+            setattr(module, kind, getattr(source, kind))
+        monkeypatch.setitem(sys.modules, module.__name__, module)
+    runtime = object.__new__(modules["runtime"].BridgeRuntime)
+    jobs = object.__new__(modules["native_save_jobs"].NativeSaveJobs)
+    commands = object.__new__(modules["command_queue"].CommandQueue)
+    service = object.__new__(modules["scene_job_reservations"].SceneJobReservations)
+    fifo_owner = queue.Queue()
+    vars(runtime).update(jobs=jobs, command_queue=commands)
+    vars(jobs).update(reservations=service, history=deque(), active=None)
+    vars(commands)["_queue"] = fifo_owner
+    vars(service)["_inspection_turns"] = {}
+    origin = script.inspection_failure_origin(runtime)
+    values = {"job_id": "job_" + "1" * 32, "request_id": "inspection_1", "method": "jobs._inspection_turn",
+        "kind": "mesh.attribute_storage_inspection", "state": "RUNNING", "phase": "inspection_capture", "revision": 2,
+        "progress": {"phase": "inspection_capture", "completed": 1, "total": 3}, "error": None,
+        "deadline": time.monotonic() + 300., "in_tick": True, "in_commit": False, "native_reads_started": True,
+        "cancel_reason": "", "ready_valid": False, "invalidated_reason": ""}
+    def job_factory(identifier=None):
+        job = object.__new__(modules["scene_jobs"].InspectionJob)
+        for name, value in values.items():
+            object.__setattr__(job, name, identifier if name == "job_id" and identifier is not None else value)
+        return job
+    job = job_factory()
+    vars(jobs)["active"] = job
+    reservation = object.__new__(modules["scene_job_reservations"]._Reservation)
+    reservation.job = job
+    turn = object.__new__(modules["scene_job_reservations"]._Turn)
+    for name, value in {"phase": "inspection_capture", "revision": 2, "used": True, "check_only": False,
+                        "inspection_deadline": time.monotonic() + 60., "owner": reservation}.items():
+        setattr(turn, name, value)
+    vars(service)["_inspection_turns"][1] = turn
+    request = modules["protocol"].Request("pending_inspect", "jobs.inspect", {})
+    queued = object.__new__(modules["command_queue"].QueuedRequest)
+    for name, value in {"request": request, "deadline": time.monotonic() + 60., "_state": "pending",
+                        "_stop_requested": False, "response": None}.items():
+        setattr(queued, name, value)
+    fifo_owner.queue.append(queued)
+    return NS(script=script, runtime=runtime, jobs=jobs, commands=commands, service=service, fifo_owner=fifo_owner,
+              origin=origin, job=job, job_factory=job_factory, reservation=reservation, turn=turn,
+              request=request, queued=queued, modules=modules)
+
+
+def test_inspection_failure_snapshot_reports_only_nonatomic_cached_python_facts(inspection_failure_model):
+    e = inspection_failure_model
+    report = e.script.inspection_failure_snapshot(e.origin, e.job.job_id, "worker")
+    assert report["available"] is report["origin_identity_valid"] is True
+    assert report["non_atomic_cached_only"] is True and report["truncated"] is False
+    assert report["job"]["phase"] == "inspection_capture" and report["active_is_expected"] is True
+    assert report["job"]["progress"] == {"phase": "inspection_capture", "completed": 1, "total": 3}
+    assert report["inspection_turns"] == [{"phase": "inspection_capture", "revision": 2, "used": True,
+        "check_only": False, "inspection_deadline": e.turn.inspection_deadline, "belongs_to_expected_job": True}]
+    assert report["pending_queue"] == [{"request_id": "pending_inspect", "method": "jobs.inspect",
+        "deadline": e.queued.deadline, "state": "pending", "stop_requested": False, "response_present": False}]
+    assert set(report["job"]) == {name for name, _descriptor in e.origin[3][0][1]}
+    assert type(report["sampled_at"]) is type(report["cpu_seconds"]) is float
+
+
+def test_inspection_failure_snapshot_never_calls_runtime_job_driver_event_queue_or_lock_callbacks(inspection_failure_model, monkeypatch):
+    e = inspection_failure_model
+    calls = []
+    def forbidden(*_args, **_kwargs):
+        calls.append("callback")
+        raise AssertionError("Cached failure observation dispatched a callback")
+    class Trap:
+        def __getattribute__(self, name):
+            calls.append(name)
+            raise AssertionError("Cached failure observation inspected a foreign object")
+    vars(e.runtime).update(registry=Trap(), executor=Trap(), permissions=Trap())
+    vars(e.jobs).update(inspect=forbidden, list=forbidden, tick=forbidden, _inspection_record=forbidden)
+    vars(e.fifo_owner).update(mutex=Trap(), not_empty=Trap(), not_full=Trap(), all_tasks_done=Trap(),
+                             qsize=forbidden, get=forbidden, get_nowait=forbidden)
+    e.job.driver, e.queued.completed, e.queued._lock = Trap(), Trap(), Trap()
+    monkeypatch.setattr(e.modules["scene_jobs"].InspectionJob, "summary", forbidden)
+    report = e.script.inspection_failure_snapshot(e.origin, e.job.job_id, "worker")
+    assert report["available"] is True and calls == []
+
+
+@pytest.mark.parametrize("fault", ("history", "fifo", "turns", "jobs", "commands", "service", "queue_owner"))
+def test_inspection_failure_snapshot_refuses_replaced_original_container_or_owner(inspection_failure_model, fault):
+    from collections import deque
+    e = inspection_failure_model
+    if fault == "history":
+        e.jobs.history = deque()
+    elif fault == "fifo":
+        e.fifo_owner.queue = deque()
+    elif fault == "turns":
+        e.service._inspection_turns = {}
+    elif fault == "jobs":
+        e.runtime.jobs = object()
+    elif fault == "commands":
+        e.runtime.command_queue = object()
+    elif fault == "service":
+        e.jobs.reservations = object()
+    else:
+        e.commands._queue = object()
+    report = e.script.inspection_failure_snapshot(e.origin, e.job.job_id, "worker")
+    assert report["available"] is False and report["origin_identity_valid"] is False
+    assert report["non_atomic_cached_only"] is True and report["unavailable_reason"] == "DIAGNOSTIC_CACHE_UNAVAILABLE"
+
+
+def test_inspection_failure_snapshot_bounds_history_and_queue_prefixes(inspection_failure_model):
+    e = inspection_failure_model
+    for index in range(100):
+        e.jobs.history.append(e.job_factory("other_" + str(index)))
+    e.fifo_owner.queue.extend([e.queued] * 100)
+    report = e.script.inspection_failure_snapshot(e.origin, e.job.job_id, "supervisor")
+    assert report["available"] is True and report["truncated"] is True
+    assert len(report["pending_queue"]) == 8 and report["active_is_expected"] is True
+
+
+@pytest.mark.parametrize("fault", ("job_deadline", "job_revision", "job_flag", "turn_deadline", "turn_flag", "queue_deadline", "queue_flag"))
+def test_inspection_failure_snapshot_refuses_malformed_cached_typed_facts(inspection_failure_model, fault):
+    e = inspection_failure_model
+    if fault == "job_deadline":
+        e.job.deadline = 1
+    elif fault == "job_revision":
+        e.job.revision = True
+    elif fault == "job_flag":
+        e.job.in_tick = 1
+    elif fault == "turn_deadline":
+        e.turn.inspection_deadline = 1
+    elif fault == "turn_flag":
+        e.turn.check_only = 0
+    elif fault == "queue_deadline":
+        e.queued.deadline = 1
+    else:
+        e.queued._stop_requested = 0
+    report = e.script.inspection_failure_snapshot(e.origin, e.job.job_id, "worker")
+    assert report["available"] is False and report["origin_identity_valid"] is False
+
+
+@pytest.mark.parametrize("fault", ("origin", "row", "reader", "dictionary_descriptor", "slot_descriptor",
+                                  "unknown_owner", "unknown_stage", "identifier", "dictionary_key",
+                                  "turn_key", "ambiguous_job", "history_owner", "foreign_progress"))
+def test_inspection_failure_snapshot_refuses_foreign_origins_without_callbacks(inspection_failure_model, fault):
+    e = inspection_failure_model
+    calls = []
+    class Foreign:
+        def __iter__(self):
+            calls.append("iter")
+            return iter(())
+        def __str__(self):
+            calls.append("str")
+            return "foreign"
+        def __repr__(self):
+            calls.append("repr")
+            return "foreign"
+        def __bool__(self):
+            calls.append("bool")
+            return False
+        def __eq__(self, _other):
+            calls.append("eq")
+            return False
+        def __hash__(self):
+            calls.append("hash")
+            return hash("jobs")
+    class ForeignTuple(tuple, Foreign):
+        pass
+    class ForeignStr(str, Foreign):
+        pass
+    class ForeignDict(dict, Foreign):
+        pass
+    origin, identifier, stage = e.origin, e.job.job_id, "worker"
+    if fault == "origin":
+        origin = ForeignTuple(origin)
+    elif fault == "row":
+        origin = ((Foreign(), *origin[0][1:]), *origin[1:])
+    elif fault == "reader":
+        origin = (*origin[:3], (Foreign(), *origin[3][1:]), origin[4])
+    elif fault == "dictionary_descriptor":
+        first = origin[0][0]
+        origin = (((first[0], first[1], Foreign(), first[3]), *origin[0][1:]), *origin[1:])
+    elif fault == "slot_descriptor":
+        kind, rows = origin[3][0]
+        origin = (*origin[:3], ((kind, ((rows[0][0], Foreign()), *rows[1:])), *origin[3][1:]), origin[4])
+    elif fault == "unknown_owner":
+        e.jobs.active = Foreign()
+    elif fault == "unknown_stage":
+        stage = Foreign()
+    elif fault == "identifier":
+        identifier = ForeignStr(identifier)
+    elif fault == "dictionary_key":
+        vars(e.runtime)[Foreign()] = 0
+    elif fault == "turn_key":
+        e.service._inspection_turns["foreign"] = e.turn
+    elif fault == "ambiguous_job":
+        e.jobs.history.append(e.job)
+    elif fault == "history_owner":
+        e.jobs.history.append(Foreign())
+    else:
+        e.job.progress = ForeignDict(phase="inspection_capture")
+    calls.clear()
+    report = e.script.inspection_failure_snapshot(origin, identifier, stage)
+    assert report["available"] is False and report["origin_identity_valid"] is False
+    assert report["non_atomic_cached_only"] is True and calls == []
+    if fault == "unknown_stage":
+        assert report["stage"] == "unknown"
+
+
+def test_inspection_failure_origin_refuses_unknown_runtime_before_attribute_callbacks(inspection_failure_model):
+    e = inspection_failure_model
+    calls = []
+    class Foreign:
+        def __getattribute__(self, name):
+            calls.append(name)
+            raise AssertionError("Unknown runtime attribute dispatched")
+    with pytest.raises(ValueError, match="DIAGNOSTIC_RUNTIME_ORIGIN"):
+        e.script.inspection_failure_origin(Foreign())
+    assert calls == []
+
+
+def test_inspection_failure_origin_refuses_foreign_dictionary_keys_before_lookup(inspection_failure_model):
+    e = inspection_failure_model
+    calls = []
+    class Key:
+        def __hash__(self):
+            calls.append("hash")
+            return hash("jobs")
+        def __eq__(self, _other):
+            calls.append("eq")
+            return False
+    vars(e.runtime)[Key()] = 0
+    calls.clear()
+    with pytest.raises(ValueError, match="DIAGNOSTIC_DICTIONARY_ORIGIN"):
+        e.script.inspection_failure_origin(e.runtime)
+    assert calls == []
+
+
+def _inspection_failed_probe_model(model):
+    script = model.script
+    probe = object.__new__(script.PhasedInspectionProbe)
+    probe.inspection_data = {"requests": [], "timings": [], "terminal": None}
+    probe.failure_origin = model.origin
+    probe.failed_call = probe.worker_cached = probe.supervisor_cached = probe.secondary_failure = None
+    probe.failure = None
+    return probe
+
+
+@pytest.mark.parametrize("secondary", (False, True))
+def test_inspection_failed_call_records_real_failure_timing_and_reraises_original(inspection_failure_model, monkeypatch, secondary):
+    e = inspection_failure_model
+    probe = _inspection_failed_probe_model(e)
+    primary = TimeoutError("original socket deadline")
+    calls = []
+    class Client:
+        def call(self, method, *, ok, **parameters):
+            assert ok is None and method == "jobs.inspect" and parameters == {"job_id": e.job.job_id}
+            probe.inspection_data["requests"].append({"request": {"id": "failed_1", "method": method}, "response": None})
+            raise primary
+    def cached(origin, identifier, stage):
+        calls.append((origin is e.origin, identifier, stage))
+        if secondary:
+            raise MemoryError("secondary cached observation failed")
+        return {"available": False, "non_atomic_cached_only": True}
+    monkeypatch.setattr(e.script, "inspection_failure_snapshot", cached)
+    with pytest.raises(TimeoutError) as failure:
+        probe.inspected_call(Client(), "inspect", "jobs.inspect", job_id=e.job.job_id)
+    assert failure.value is primary and failure.value.__traceback__ is not None
+    failed = probe.failed_call
+    assert set(failed) == {"stage", "method", "sent_at", "failed_at", "cpu_seconds", "response_received", "exception_type", "request_id"}
+    assert failed["stage"] == "inspect" and failed["method"] == "jobs.inspect"
+    assert failed["request_id"] == "failed_1" and failed["exception_type"] == "TimeoutError"
+    assert failed["response_received"] is False and failed["failed_at"] >= failed["sent_at"]
+    assert failed["cpu_seconds"] >= 0. and probe.inspection_data["timings"] == []
+    assert probe.inspection_data["requests"][-1]["response"] is None
+    assert calls == [(True, "", "worker")]
+    if secondary:
+        assert probe.secondary_failure == {"stage": "worker_cached_sample", "exception_type": "MemoryError"}
+    else:
+        assert probe.secondary_failure is None and probe.worker_cached["non_atomic_cached_only"] is True
+
+
+def test_inspection_success_call_preserves_original_timing_schema(inspection_failure_model):
+    e = inspection_failure_model
+    probe = _inspection_failed_probe_model(e)
+    class Client:
+        def call(self, method, *, ok, **parameters):
+            assert ok is None
+            probe.inspection_data["requests"].append({"request": {"id": "success_1"},
+                                                      "response": {"ok": True, "result": {"owned": True}}})
+            return probe.inspection_data["requests"][-1]["response"]
+    assert probe.inspected_call(Client(), "start", "owned.start") == {"owned": True}
+    assert len(probe.inspection_data["timings"]) == 1
+    timing = probe.inspection_data["timings"][0]
+    assert set(timing) == {"stage", "request_id", "sent_at", "received_at", "cpu_seconds"}
+    assert timing["stage"] == "start" and timing["request_id"] == "success_1"
+    assert timing["received_at"] >= timing["sent_at"] and timing["cpu_seconds"] >= 0.
+    assert probe.failed_call is probe.worker_cached is probe.secondary_failure is None
+
+
+def test_inspection_failed_call_does_not_adopt_prior_request_id_when_no_row_was_sent(inspection_failure_model):
+    e = inspection_failure_model
+    probe = _inspection_failed_probe_model(e)
+    probe.inspection_data["requests"] = [{"request": {"id": "prior_start"},
+        "response": {"result": {"job_id": e.job.job_id}}}]
+    primary = TimeoutError("failed before a new request row")
+    class Client:
+        def call(self, *_args, **_kwargs):
+            raise primary
+    with pytest.raises(TimeoutError) as failure:
+        probe.inspected_call(Client(), "inspect", "jobs.inspect", job_id=e.job.job_id)
+    assert failure.value is primary
+    assert probe.failed_call["request_id"] is None and probe.failed_call["response_received"] is False
+    assert probe.inspection_data["requests"][0]["request"]["id"] == "prior_start"
+
+
+@pytest.mark.parametrize("secondary", (False, True))
+def test_inspection_worker_samples_before_socket_close_and_preserves_primary_traceback(inspection_failure_model, monkeypatch, secondary):
+    e = inspection_failure_model
+    probe = _inspection_failed_probe_model(e)
+    probe.domain = NS(contract=NS(INSPECTION_START="owned.inspection_start"))
+    probe.targets = {"main": {"object_name": "Object", "mesh_name": "Mesh"}}
+    probe.started, probe.port, probe.done = time.monotonic(), 1234, threading.Event()
+    probe.control = lambda *_args, **_kwargs: {}
+    primary = TimeoutError("ORIGINAL PRIMARY SOCKET DEADLINE")
+    events, clients = [], []
+    class Client:
+        def __init__(self, port, transcript):
+            assert port == 1234
+            self.transcript, self.closed = transcript, False
+            clients.append(self)
+        def call(self, method, *, ok, **parameters):
+            assert ok is None
+            row = {"request": {"id": "request_" + str(len(self.transcript)), "method": method}, "response": None}
+            self.transcript.append(row)
+            if method == "owned.inspection_start":
+                row["response"] = {"ok": True, "result": {"accepted": True, "terminal": False,
+                    "ready": False, "result": None, "job_id": e.job.job_id}}
+                return row["response"]
+            events.append("primary")
+            raise primary
+        def close(self):
+            events.append("close")
+            self.closed = True
+            e.job.cancel_reason = "fixture socket disconnect"
+    original = e.script.inspection_failure_snapshot
+    def cached(origin, identifier, stage):
+        assert not clients[0].closed
+        events.append("cached")
+        if secondary:
+            raise MemoryError("SECONDARY CACHE FAILURE")
+        return original(origin, identifier, stage)
+    monkeypatch.setattr(e.script, "Client", Client)
+    monkeypatch.setattr(e.script, "inspection_hook_state", lambda: {})
+    monkeypatch.setattr(e.script, "inspection_failure_snapshot", cached)
+    probe.scenario()
+    assert probe.done.is_set() and clients[0].closed and events == ["primary", "cached", "close"]
+    assert "TimeoutError: ORIGINAL PRIMARY SOCKET DEADLINE" in probe.failure
+    assert "MemoryError" not in probe.failure and probe.failed_call["exception_type"] == "TimeoutError"
+    assert "in call" in probe.failure and "raise primary" in probe.failure
+    if secondary:
+        assert probe.secondary_failure == {"stage": "worker_cached_sample", "exception_type": "MemoryError"}
+    else:
+        assert probe.worker_cached["job"]["cancel_reason"] == ""
+        assert e.job.cancel_reason == "fixture socket disconnect"
+
+
+@pytest.mark.parametrize("secondary", (False, True))
+def test_inspection_supervisor_preserves_primary_failure_and_uses_only_cached_snapshot(inspection_failure_model, monkeypatch, secondary):
+    e = inspection_failure_model
+    probe = _inspection_failed_probe_model(e)
+    primary = "ORIGINAL PRIMARY TRACEBACK\nTimeoutError: original deadline"
+    probe.failure = primary
+    probe.inspection_data["requests"] = [{"response": {"result": {"job_id": e.job.job_id}}}]
+    calls = []
+    class Stop(BaseException):
+        pass
+    class Trap:
+        def __getattribute__(self, name):
+            pytest.fail("Supervisor performed noncached cleanup: " + name)
+    probe.controls = probe.done = probe.hooks = Trap()
+    def fail():
+        calls.append("fail")
+        raise Stop
+    probe.fail = fail
+    sidebar = ModuleType("scripts.blender_artist_sidebar_smoke")
+    sidebar.owned_process_exit = lambda *_args: pytest.fail("Diagnostic model attempted process exit")
+    monkeypatch.setitem(sys.modules, sidebar.__name__, sidebar)
+    original = e.script.inspection_failure_snapshot
+    def cached(origin, identifier, stage):
+        calls.append(stage)
+        if secondary:
+            raise MemoryError("SECONDARY SUPERVISOR CACHE FAILURE")
+        return original(origin, identifier, stage)
+    monkeypatch.setattr(e.script, "inspection_failure_snapshot", cached)
+    with pytest.raises(Stop):
+        probe.supervise()
+    assert probe.failure is primary and calls == ["supervisor", "fail"]
+    if secondary:
+        assert probe.secondary_failure["stage"] == "supervisor"
+        assert "MemoryError: SECONDARY SUPERVISOR CACHE FAILURE" in probe.secondary_failure["traceback"]
+    else:
+        assert probe.supervisor_cached["non_atomic_cached_only"] is True and probe.secondary_failure is None

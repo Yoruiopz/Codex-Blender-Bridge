@@ -24,8 +24,18 @@ import threading
 import time
 import traceback
 from array import array
+from collections import deque
 from pathlib import Path
-from types import CellType, CodeType, FrameType, FunctionType, MappingProxyType, ModuleType
+from types import (
+    CellType,
+    CodeType,
+    FrameType,
+    FunctionType,
+    GetSetDescriptorType,
+    MappingProxyType,
+    MemberDescriptorType,
+    ModuleType,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA = "MESH_STORAGE_OWNED_JOB_NATIVE_V1"
@@ -1880,6 +1890,194 @@ class AtomicPhaseTiming(FirstJobControl):
         return None
 
 
+def _inspection_failure_literal(value, depth=0, budget=None):
+    """Fail closed without calling foreign conversion or container methods."""
+    if budget is None:
+        budget = [512]
+    budget[0] -= 1
+    if depth > 8 or budget[0] < 0:
+        raise ValueError("DIAGNOSTIC_LITERAL_BUDGET")
+    kind = type(value)
+    if value is None or kind is bool:
+        return value
+    if kind is str and len(value) <= 4096:
+        return value
+    if kind is int and value.bit_length() <= 64:
+        return value
+    if kind is float and math.isfinite(value):
+        return value
+    if kind is list or kind is tuple:
+        if len(value) > 32:
+            raise ValueError("DIAGNOSTIC_LITERAL_BUDGET")
+        return [_inspection_failure_literal(item, depth+1, budget) for item in value]
+    if kind is dict and len(value) <= 32 and all(type(key) is str and len(key) <= 128 for key in value):
+        return {key: _inspection_failure_literal(item, depth+1, budget) for key, item in value.items()}
+    raise ValueError("DIAGNOSTIC_LITERAL_UNAVAILABLE")
+
+
+def _inspection_failure_dictionary(owner):
+    kind = type(owner)
+    for base in type.__dict__["__mro__"].__get__(kind):
+        fields = type.__dict__["__dict__"].__get__(base)
+        descriptor = fields.get("__dict__")
+        if type(descriptor) is GetSetDescriptorType:
+            data = descriptor.__get__(owner, kind)
+            if type(data) is dict and len(data) <= 256 and all(type(key) is str for key in data):
+                return owner, kind, descriptor, data
+    raise ValueError("DIAGNOSTIC_DICTIONARY_ORIGIN")
+
+
+def inspection_failure_origin(runtime):
+    """Capture fixed Python-only readers before the first RPC/provider."""
+    from blender_codex_bridge.command_queue import CommandQueue, QueuedRequest
+    from blender_codex_bridge.native_save_jobs import NativeSaveJobs
+    from blender_codex_bridge.protocol import Request
+    from blender_codex_bridge.runtime import BridgeRuntime
+    from blender_codex_bridge.scene_job_reservations import (
+        SceneJobReservations,
+        _Reservation,
+        _Turn,
+    )
+    from blender_codex_bridge.scene_jobs import InspectionJob
+    if type(runtime) is not BridgeRuntime:
+        raise ValueError("DIAGNOSTIC_RUNTIME_ORIGIN")
+    runtime_row = _inspection_failure_dictionary(runtime)
+    jobs, commands = runtime_row[3]["jobs"], runtime_row[3]["command_queue"]
+    if type(jobs) is not NativeSaveJobs or type(commands) is not CommandQueue:
+        raise ValueError("DIAGNOSTIC_SERVICE_ORIGIN")
+    jobs_row, commands_row = _inspection_failure_dictionary(jobs), _inspection_failure_dictionary(commands)
+    reservations, fifo_owner = jobs_row[3]["reservations"], commands_row[3]["_queue"]
+    if type(reservations) is not SceneJobReservations or type(fifo_owner) is not queue.Queue:
+        raise ValueError("DIAGNOSTIC_SERVICE_ORIGIN")
+    dictionaries = (runtime_row, jobs_row, _inspection_failure_dictionary(reservations),
+                    commands_row, _inspection_failure_dictionary(fifo_owner))
+    history, fifo = dictionaries[1][3]["history"], dictionaries[4][3]["queue"]
+    if type(history) is not deque or type(fifo) is not deque:
+        raise ValueError("DIAGNOSTIC_CONTAINER_ORIGIN")
+    turns = dictionaries[2][3]["_inspection_turns"]
+    if type(turns) is not dict or len(turns) > 2 or any(type(key) is not int for key in turns):
+        raise ValueError("DIAGNOSTIC_TURN_CONTAINER")
+    fields = (
+        (InspectionJob, ("job_id", "request_id", "method", "kind", "state", "phase", "revision", "progress", "error", "deadline",
+                         "in_tick", "in_commit", "native_reads_started", "cancel_reason", "ready_valid", "invalidated_reason")),
+        (_Turn, ("phase", "revision", "used", "check_only", "inspection_deadline", "owner")),
+        (_Reservation, ("job",)),
+        (QueuedRequest, ("request", "deadline", "_state", "_stop_requested", "response")),
+        (Request, ("id", "method")),
+    )
+    readers = []
+    for kind, names in fields:
+        namespace = type.__dict__["__dict__"].__get__(kind)
+        rows = tuple((name, namespace.get(name)) for name in names)
+        if any(type(descriptor) is not MemberDescriptorType or descriptor.__objclass__ is not kind for _name, descriptor in rows):
+            raise ValueError("DIAGNOSTIC_SLOT_ORIGIN")
+        readers.append((kind, rows))
+    return dictionaries, history, fifo, tuple(readers), turns
+
+
+def _inspection_failure_slots(owner, reader):
+    if type(reader) is not tuple or len(reader) != 2:
+        raise ValueError("DIAGNOSTIC_SLOT_ORIGIN")
+    kind, rows = reader
+    if type(kind) is not type or type(owner) is not kind or type(rows) is not tuple or len(rows) > 32:
+        raise ValueError("DIAGNOSTIC_SLOT_OWNER")
+    if (any(type(row) is not tuple or len(row) != 2 or type(row[0]) is not str for row in rows)
+            or any(type(descriptor) is not MemberDescriptorType or descriptor.__objclass__ is not kind for _name, descriptor in rows)):
+        raise ValueError("DIAGNOSTIC_SLOT_ORIGIN")
+    return {name: descriptor.__get__(owner, kind) for name, descriptor in rows}
+
+
+def inspection_failure_snapshot(origin, identifier, stage):
+    """Non-atomic cached Python observation; never inspect a stopped driver."""
+    valid_stage = type(stage) is str and stage in ("worker", "supervisor")
+    result = {"available": False, "stage": stage if valid_stage else "unknown", "non_atomic_cached_only": True,
+              "sampled_at": time.monotonic(), "cpu_seconds": time.process_time(), "truncated": False}
+    try:
+        if (not valid_stage or type(origin) is not tuple or len(origin) != 5
+                or type(identifier) is not str or len(identifier) > 128):
+            raise ValueError("DIAGNOSTIC_ORIGIN_UNAVAILABLE")
+        dictionaries, history, fifo, readers, turns = origin
+        if (type(dictionaries) is not tuple or len(dictionaries) != 5 or type(readers) is not tuple or len(readers) != 5
+                or any(type(row) is not tuple or len(row) != 4 for row in dictionaries)):
+            raise ValueError("DIAGNOSTIC_ORIGIN_UNAVAILABLE")
+        for owner, kind, descriptor, data in dictionaries:
+            if (type(owner) is not kind or type(descriptor) is not GetSetDescriptorType
+                    or descriptor.__get__(owner, kind) is not data or type(data) is not dict
+                    or len(data) > 256 or any(type(key) is not str for key in data)):
+                raise ValueError("DIAGNOSTIC_DICTIONARY_ORIGIN")
+        runtime, jobs, service, commands, queue_fields = tuple(row[3] for row in dictionaries)
+        if (runtime.get("jobs") is not dictionaries[1][0] or runtime.get("command_queue") is not dictionaries[3][0]
+                or jobs.get("reservations") is not dictionaries[2][0] or commands.get("_queue") is not dictionaries[4][0]
+                or jobs.get("history") is not history or queue_fields.get("queue") is not fifo
+                or type(history) is not deque or type(fifo) is not deque or service.get("_inspection_turns") is not turns):
+            raise ValueError("DIAGNOSTIC_CONTAINER_ORIGIN")
+        active = jobs.get("active")
+        candidates = ([] if active is None else [active]) + [deque.__getitem__(history, index) for index in range(min(len(history), 32))]
+        result["truncated"] = len(history) > 32 or len(fifo) > 8
+        budget, matches, matched_owner = [512], [], None
+        for candidate in candidates:
+            fields = _inspection_failure_slots(candidate, readers[0])
+            if type(fields["job_id"]) is not str:
+                raise ValueError("DIAGNOSTIC_JOB_ID")
+            if fields["job_id"] == identifier:
+                matches.append(fields)
+                matched_owner = candidate
+        if len(matches) > 1:
+            raise ValueError("DIAGNOSTIC_JOB_AMBIGUOUS")
+        job = None if not matches else _inspection_failure_literal(matches[0], budget=budget)
+        if job is not None and (type(job["deadline"]) is not float or type(job["revision"]) is not int
+                or any(type(job[key]) is not bool for key in ("in_tick", "in_commit", "native_reads_started", "ready_valid"))):
+            raise ValueError("DIAGNOSTIC_JOB_LITERAL_TYPE")
+        if type(turns) is not dict or len(turns) > 2 or any(type(key) is not int for key in turns):
+            raise ValueError("DIAGNOSTIC_TURN_CONTAINER")
+        retained_turns = []
+        for turn in tuple(turns.values()):
+            fields = _inspection_failure_slots(turn, readers[1])
+            reservation = _inspection_failure_slots(fields.pop("owner"), readers[2])
+            owner = _inspection_failure_slots(reservation["job"], readers[0])
+            if type(owner["job_id"]) is not str:
+                raise ValueError("DIAGNOSTIC_JOB_ID")
+            fields["belongs_to_expected_job"] = owner["job_id"] == identifier
+            if (type(fields["inspection_deadline"]) is not float or type(fields["revision"]) is not int
+                    or any(type(fields[key]) is not bool for key in ("used", "check_only"))):
+                raise ValueError("DIAGNOSTIC_TURN_LITERAL_TYPE")
+            retained_turns.append(_inspection_failure_literal(fields, budget=budget))
+        queued = []
+        for index in range(min(len(fifo), 8)):
+            item = deque.__getitem__(fifo, index)
+            fields = _inspection_failure_slots(item, readers[3])
+            request = _inspection_failure_slots(fields["request"], readers[4])
+            if type(fields["deadline"]) is not float or type(fields["_stop_requested"]) is not bool:
+                raise ValueError("DIAGNOSTIC_QUEUE_LITERAL_TYPE")
+            queued.append(_inspection_failure_literal({"request_id": request["id"], "method": request["method"],
+                "deadline": fields["deadline"], "state": fields["_state"], "stop_requested": fields["_stop_requested"],
+                "response_present": fields["response"] is not None}, budget=budget))
+        result.update(available=True, origin_identity_valid=True, job=job, active_is_expected=active is not None and active is matched_owner,
+            inspection_turns=retained_turns, pending_queue=queued)
+    except (ValueError, TypeError, AttributeError, KeyError, RuntimeError, IndexError):
+        result.update(available=False, origin_identity_valid=False, unavailable_reason="DIAGNOSTIC_CACHE_UNAVAILABLE")
+    return result
+
+
+def _inspection_failure_identifier(data):
+    if type(data) is not dict or any(type(key) is not str for key in data):
+        return ""
+    requests = data.get("requests")
+    if type(requests) is not list or not requests or type(requests[0]) is not dict:
+        return ""
+    exchange = requests[0]
+    if any(type(key) is not str for key in exchange):
+        return ""
+    response = exchange.get("response")
+    if type(response) is not dict or any(type(key) is not str for key in response):
+        return ""
+    result = response.get("result")
+    if type(result) is not dict or any(type(key) is not str for key in result):
+        return ""
+    identifier = result.get("job_id")
+    return identifier if type(identifier) is str and len(identifier) <= 128 else ""
+
+
 def inspection_hook_state():
     """Refuse existing observers; never install or change one."""
     python = control_hook_state()
@@ -1958,11 +2156,14 @@ class PhasedInspectionProbe(FirstJobControl):
         super().__init__(bpy, options, token, sources, display)
         inspection_hook_state()
         self.inspection_data = {"requests": [], "timings": [], "terminal": None}
+        self.failure_origin = self.failed_call = self.worker_cached = self.supervisor_cached = self.secondary_failure = None
 
     def apply(self, action, parameters):
         assert action == "inspection_snapshot" and parameters["stage"] in {"before", "after"}
         from scripts.native_resources import linux_available_memory, linux_process_memory
         settled, hooks = self.settled(), inspection_hook_state()
+        if parameters["stage"] == "before":
+            self.failure_origin = inspection_failure_origin(self.runtime)
         began, cpu = time.monotonic(), time.process_time()
         cached_job = None if parameters["stage"] == "before" else inspection_runtime_job(self.runtime, parameters["job_id"])
         sample = snapshot(self.bpy, self.targets["main"])
@@ -1979,7 +2180,30 @@ class PhasedInspectionProbe(FirstJobControl):
 
     def inspected_call(self, client, stage, method, **parameters):
         began, cpu = time.monotonic(), time.process_time()
-        response = client.call(method, ok=None, **parameters)
+        requests = self.inspection_data["requests"]
+        prior_count = len(requests)
+        try:
+            response = client.call(method, ok=None, **parameters)
+        except Exception as error:
+            self.failed_call = {"stage": stage, "method": method, "sent_at": began, "failed_at": time.monotonic(),
+                "cpu_seconds": time.process_time()-cpu, "response_received": False,
+                "exception_type": type.__dict__["__name__"].__get__(type(error), type), "request_id": None}
+            if len(requests) == prior_count+1:
+                exchange = requests[prior_count]
+                if type(exchange) is dict and all(type(key) is str for key in exchange):
+                    self.failed_call["response_received"] = exchange.get("response") is not None
+                    request = exchange.get("request")
+                    if type(request) is dict and all(type(key) is str for key in request):
+                        request_id = request.get("id")
+                        if type(request_id) is str or type(request_id) is int:
+                            self.failed_call["request_id"] = request_id
+            try:
+                self.worker_cached = inspection_failure_snapshot(self.failure_origin,
+                    _inspection_failure_identifier(self.inspection_data), "worker")
+            except Exception as secondary:
+                self.secondary_failure = {"stage": "worker_cached_sample",
+                    "exception_type": type.__dict__["__name__"].__get__(type(secondary), type)}
+            raise
         self.inspection_data["timings"].append({"stage": stage,
             "request_id": self.inspection_data["requests"][-1]["request"]["id"],
             "sent_at": began, "received_at": time.monotonic(), "cpu_seconds": time.process_time() - cpu})
@@ -2040,6 +2264,8 @@ class PhasedInspectionProbe(FirstJobControl):
         raw = {"schema": INSPECTION_PROFILE, "completed": False, "phase": self.phase,
                "process_id": os.getpid(), "process_instance": self.token,
                "failure": self.failure, "partial": self.inspection_data,
+               "failed_call": self.failed_call, "worker_cached": self.worker_cached,
+               "supervisor_cached": self.supervisor_cached, "secondary_failure": self.secondary_failure,
                "limitations": dict(INSPECTION_LIMITATIONS)}
         domain_new(self.options.bridge_report.with_suffix(".failure.json"), canonical(raw))
         print(self.failure, file=sys.stderr, flush=True)
@@ -2048,6 +2274,11 @@ class PhasedInspectionProbe(FirstJobControl):
     def supervise(self):
         from scripts.blender_artist_sidebar_smoke import owned_process_exit
         try:
+            if self.failure is not None:
+                self.supervisor_cached = inspection_failure_snapshot(self.failure_origin,
+                    _inspection_failure_identifier(self.inspection_data), "supervisor")
+                self.fail()
+                return None
             while not self.controls.empty():
                 action, parameters, event, result = self.controls.get_nowait()
                 try:
@@ -2059,7 +2290,11 @@ class PhasedInspectionProbe(FirstJobControl):
             assert time.monotonic() - self.started <= 300, "Original native outer deadline expired"
             if not self.done.is_set():
                 return .005
-            assert self.failure is None, self.failure
+            if self.failure is not None:
+                self.supervisor_cached = inspection_failure_snapshot(self.failure_origin,
+                    _inspection_failure_identifier(self.inspection_data), "supervisor")
+                self.fail()
+                return None
             assert self.hooks is None and self.observe is False
             inspection_hook_state()
             self.settled()
@@ -2085,7 +2320,11 @@ class PhasedInspectionProbe(FirstJobControl):
             print(INSPECTION_MARKER + canonical(compact).decode("ascii"), flush=True)
             owned_process_exit(0)
         except Exception:
-            self.failure = traceback.format_exc()
+            secondary = traceback.format_exc()
+            if self.failure is None:
+                self.failure = secondary
+            else:
+                self.secondary_failure = {"stage": "supervisor", "traceback": secondary}
             self.fail()
         return None
 
