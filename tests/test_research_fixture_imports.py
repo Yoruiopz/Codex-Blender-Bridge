@@ -21,6 +21,10 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 HELPERS = (
+    'scripts.blender_system_storage_snapshot_smoke',
+    'scripts.blender_storage_snapshot_adapter_smoke',
+    'scripts.blender_storage_snapshot_cleanup_smoke',
+    'scripts.blender_storage_snapshot_dispatch_smoke',
     "scripts.blender_runtime_metadata_bulk_probe_smoke",
     "scripts.blender_current_pixels_lifecycle_smoke",
     "scripts.blender_mesh_storage_job_smoke",
@@ -124,6 +128,10 @@ def fixture_imports(addon_package, monkeypatch):
 
 
 @pytest.mark.parametrize("name,helper", [
+    ('scripts.blender_system_storage_snapshot_smoke', "main"),
+    ('scripts.blender_storage_snapshot_adapter_smoke', "main"),
+    ('scripts.blender_storage_snapshot_cleanup_smoke', "main"),
+    ('scripts.blender_storage_snapshot_dispatch_smoke', "main"),
     ("scripts.blender_runtime_metadata_bulk_probe_smoke", "main"),
     ("scripts.blender_current_pixels_lifecycle_smoke", "main"),
     ("scripts.blender_mesh_storage_job_smoke", "main"),
@@ -4842,3 +4850,1917 @@ def test_metadata_bulk_probe_success_keeps_exact_builtin_bool_sequence():
                                     lambda: events.append("pureflight"))
     assert result == (True, False) and events == ["pureflight", "pureflight"]
     assert all(type(value) is float and value >= 0 for value in interval.values())
+
+
+@pytest.mark.parametrize("mode,expected,status", [
+    ("valid", ["writer", "parser", "getter"], "INSPECTED"),
+    ("absent", ["writer", "parser"], "INSPECTED"),
+    ("malformed", ["writer", "parser"], "REFUSED"),
+    ("writer_failure", ["writer"], "WRITER_FAILED"),
+    ("denied", [], "DENIED"),
+    ("stop_before", [], "STOPPED_BEFORE"),
+    ("stop_after", ["writer"], "STOPPED_AFTER"),
+])
+def test_system_storage_attempt_never_inspects_or_cleans_after_stop(mode, expected, status):
+    from scripts.blender_system_storage_snapshot_smoke import attempt
+    calls = []
+
+    class Malformed(ValueError):
+        reason = "RAW_PROPERTY_TYPE_UNQUALIFIED"
+
+    def writer():
+        calls.append("writer")
+        if mode == "writer_failure":
+            raise OSError("owned fixture write failure")
+
+    def inspect_storage():
+        calls.append("parser")
+        if mode == "malformed":
+            raise Malformed()
+        return {"storage": {"state": "ABSENT" if mode == "absent" else "GROUP"}}
+
+    def getter():
+        calls.append("getter")
+        return True
+
+    row = attempt(writer, inspect_storage, getter, authorized=mode != "denied", stopped=mode == "stop_before",
+                  stop_after_native=mode == "stop_after")
+    assert calls == expected
+    assert row["status"] == status
+    assert row["calls_after_stop"] == 0 and row["bridge_cleanup_performed"] is False
+    assert (row["native_entries"], row["parser_entries"], row["getter_entries"]) == tuple(
+        calls.count(name) for name in ("writer", "parser", "getter"))
+
+
+
+@pytest.mark.parametrize("modern", [False, True])
+def test_system_storage_owned_setup_handles_static_types_across_malformed_case(modern):
+    from scripts.blender_system_storage_snapshot_smoke import (
+        EXTRA_NAMES,
+        NAMES,
+        attempt,
+        author_owned_settings,
+    )
+    names = NAMES + EXTRA_NAMES if modern else NAMES
+    values, calls = {}, []
+
+    class StaticGroup:
+        def __getattr__(self, name):
+            raise AssertionError("Typed scalar getter must not run during owned setup or malformed refusal")
+
+        def __setattr__(self, name, value):
+            assert name in names and type(value) is bool
+            if name in values and type(values[name]) is not bool:
+                raise TypeError("Existing STATIC_TYPE property cannot change type")
+            values[name] = value
+            calls.append(("declared_setter", name))
+
+        def __setitem__(self, name, value):
+            if name in values and type(values[name]) is not type(value):
+                raise TypeError("Existing STATIC_TYPE property cannot change type")
+            values[name] = value
+            calls.append(("raw_set", name))
+
+        def __delitem__(self, name):
+            del values[name]
+            calls.append(("raw_delete", name))
+
+    group = StaticGroup()
+    author_owned_settings(group, names)
+    expected = {name: bool(index % 2) for index, name in enumerate(names)}
+    assert values == expected
+    with pytest.raises(TypeError, match="STATIC_TYPE"):
+        group["use_denoising"] = "wrong scalar storage"
+    author_owned_settings(group, names, malformed=True)
+    before = {**expected, "use_denoising": "wrong scalar storage"}
+    assert values == before
+    assert calls[-2:] == [("raw_delete", "use_denoising"), ("raw_set", "use_denoising")]
+
+    class Malformed(ValueError):
+        reason = "RAW_PROPERTY_TYPE_UNQUALIFIED"
+
+    def writer():
+        assert values == before
+
+    def inspect_storage():
+        raise Malformed()
+
+    def forbidden_getter():
+        raise AssertionError("Malformed storage must refuse before the original typed getter")
+
+    row = attempt(writer, inspect_storage, forbidden_getter)
+    assert row["status"] == "REFUSED" and row["getter_entries"] == 0
+    assert values == before
+    # The following writer-failure case must establish its own valid baseline
+    # without attempting a type-changing assignment over the malformed cell.
+    author_owned_settings(group, names)
+    assert values == expected and all(type(value) is bool for value in values.values())
+
+
+
+def test_system_storage_entry_refuses_unowned_before_blender_or_io(monkeypatch):
+    helper = importlib.import_module("scripts.blender_system_storage_snapshot_smoke")
+    monkeypatch.setattr(sys, "argv", [str(Path(helper.__file__))])
+    monkeypatch.delitem(sys.modules, "bpy", raising=False)
+    with pytest.raises(AssertionError, match="isolated private interactive runner"):
+        helper.main()
+    assert "bpy" not in sys.modules
+
+
+
+def _storage_adapter_report_model(phase):
+    """Synthetic adversarial qualifier input, never native acceptance evidence."""
+    from copy import deepcopy
+
+    from scripts import blender_storage_snapshot_adapter_smoke as case
+    names = case.NAMES
+    source = {"fixture.py": "a" * 64}
+    binary = {"path": "/owned/blender", "sha256": "b" * 64}
+    full = {"schema": case.SCHEMA, "profile": case.PROFILE, "phase": phase, "completed": True,
+            "version": [4, 5, 14], "build_hash": case.BUILDS[(4, 5, 14)], "blender_version": "4.5.14 LTS",
+            "process_instance": "c" * 32, "process_id": 12345, "source_fingerprints": source,
+            "binary": binary, "native_adapter_qualified": True, "source_unchanged": True,
+            "elapsed_seconds": .5, "peak_memory": {"metric": "ru_maxrss", "units": "KiB", "value": 1024},
+            "cases": [], **dict.fromkeys(case.FALSE_FLAGS, False)}
+    targets = [{"scene_name": "Home", "view_layer_name": "ViewLayer"},
+               {"scene_name": "Second", "view_layer_name": "ViewLayer"}]
+    identities = [{"scene_identity": [11, 21, "Home"], "layer_identity": [31, "ViewLayer"]},
+                  {"scene_identity": [12, 22, "Second"], "layer_identity": [32, "ViewLayer"]}]
+    for name in case.CASES[phase]:
+        prefix = case.expected_prefix(name)
+        counts = dict(zip(case.COUNTERS[:4], prefix, strict=True))
+        counts.update(native_reads=10 if prefix[1] else 0, after_stop=dict.fromkeys(case.COUNTERS, 0))
+        raw = []
+        for index in range(2):
+            values = []
+            if name != "absent":
+                for ordinal, key in enumerate(names):
+                    value = "wrong scalar storage" if name == "malformed" and index == 1 and key == "use_denoising" else (ordinal + index) % 2
+                    values.append([key, type(value).__name__, value])
+            raw.append({"present": name != "absent", "values": values})
+        home = {"ids": {family: [] for family in case.FAMILIES}, "filepath": "", "dirty": True,
+                "context": ["OBJECT", 11, "ViewLayer", 111, [111], 1, 0., name != "absent"],
+                "mesh": {"vertices": [[0., 0., 0.], [1., 0., 0.], [0., 1., 0.]], "edges": [[0, 1]],
+                         "polygons": [[0, 1, 2]], "materials": [300]},
+                "materials": [["M", 300]], "raw_settings": raw[0],
+                "image": {"size": [2, 2], "channels": 4, "has_data": True, "dirty": True,
+                          "pixels_sha256_float32": "d" * 64, "packed_sha256": "e" * 64}}
+        home["ids"] = {family: [] for family in case.FAMILIES}
+        home["ids"]["scenes"] = [["Home", 11, 21, 1, False], ["Second", 12, 22, 1, False]]
+        before = {"home": home, "targets": targets, "raw_settings": raw, "clocks": [], "node_defaults": [], "objects": []}
+        row = {"name": name, "outcome": case.expected_outcome(name), "error": None,
+               "before": before, "after": deepcopy(before), "source_preserved": True, "counts": counts,
+               "journal": {"snapshots": [], "runtime_retention_qualified": False, "durable_backup_qualified": False,
+                           "full_source_preservation_qualified": False}, "owned_root": "/owned/" + phase + "-" + name + "-owned",
+               "raw_targets": deepcopy(targets), "target_identities": deepcopy(identities), "native_file": None,
+               "retained_parser": [], "projections": []}
+        if prefix[1] or name == "revoke_second":
+            row["journal"]["snapshots"] = [{"reserved": True, "directory_returned": True,
+                "native_entered": bool(prefix[1]), "native_returned": bool(prefix[2]),
+                "parser_entered": bool(prefix[3]), "parser_returned": prefix[3] == 2 and name != "malformed",
+                "identity_verified": name in {"absent", "valid", "late_consume", "duplicate_consume"},
+                "consumed": name in {"absent", "valid", "duplicate_consume"},
+                "cleanup_entered": False, "cleanup_returned": False,
+                "retained_directory_possible": True, "retained_file_possible": bool(prefix[1]),
+                "native_seconds": .001 if prefix[2] else None}]
+        if prefix[2]:
+            row["native_file"] = {"path": "/owned/native.blend", "bytes": 1234, "sha256": "f" * 64}
+            for index, target in enumerate(targets):
+                if name == "malformed" and index == 1:
+                    row["retained_parser"].append({"target": target, "error": {
+                        "type": "StorageSnapshotError", "reason": "RAW_PROPERTY_TYPE_UNQUALIFIED"}})
+                    continue
+                children = [] if name == "absent" else [{"name": key, "type": 1, "subtype": 0, "flag": 2,
+                    "len": 1, "totallen": 0, "value": (ordinal + index) % 2, "value2": 0}
+                    for ordinal, key in enumerate(names)]
+                root = {"name": "root", "type": 6, "subtype": 0, "flag": 0, "len": 1, "totallen": 0}
+                group = {**root, "name": "cycles", "len": len(children)}
+                storage = {"state": "ABSENT" if name == "absent" else "GROUP", "storage": "USER",
+                           "root_present": name != "absent", "root_header": None if name == "absent" else root,
+                           "property": None if name == "absent" else group, "children": children}
+                proof = {"storage": storage, "storage_fingerprint": "1" * 64}
+                row["retained_parser"].append({"target": target, "result": proof})
+                def header(value):
+                    return None if value is None else [value[key] for key in ("name", "type", "subtype", "flag", "len", "totallen")]
+                projection = {"scene": identities[index]["scene_identity"], "layer": identities[index]["layer_identity"],
+                    "state": storage["state"], "storage": "USER", "root_present": name != "absent",
+                    "root": header(storage["root_header"]), "group": header(storage["property"]),
+                    "children": [[*[child[key] for key in ("name", "type", "subtype", "flag", "len", "totallen")],
+                                  child["value"], child["value2"]] for child in children], "storage_fingerprint": "1" * 64}
+                if name in {"absent", "valid", "duplicate_consume"}:
+                    row["projections"].append(projection)
+        if row["outcome"] != "SUCCESS":
+            code = "PERMISSION_DENIED" if name.startswith("deny_") or name == "revoke_second" else "NOT_IMPLEMENTED"
+            if name in {"paused", "emergency", "stop_after"}:
+                code = "AGENT_PAUSED" if name == "paused" else "EMERGENCY_STOPPED"
+            row["error"] = {"type": "PermissionError" if name == "writer_failure" else "BridgeError", "code": code,
+                            "reason": "SNAPSHOT_ONE_USE_OR_TURN_CHANGED" if name in {"late_consume", "duplicate_consume"}
+                            else "RAW_PROPERTY_TYPE_UNQUALIFIED" if name == "malformed" else None}
+            if name == "malformed":
+                row["error"].update(type="StorageSnapshotError", code=None, message="RAW_PROPERTY_TYPE_UNQUALIFIED",
+                                    canonical_storage_error=True)
+        full["cases"].append(row)
+    return case, full
+
+
+
+def _adapter_model_valid(case, full):
+    return case.validate_full(full, phase=full["phase"], process_instance=full["process_instance"],
+                              sources=full["source_fingerprints"], binary=full["binary"], process_id=full["process_id"])
+
+
+
+@pytest.mark.parametrize("phase", ("absent", "valid", "malformed", "permission_controls", "stop_controls", "writer_failure", "turn_binding"))
+def test_actual_storage_adapter_model_all_declared_phase_contracts(phase):
+    case, full = _storage_adapter_report_model(phase)
+    assert _adapter_model_valid(case, full)
+
+
+
+@pytest.mark.parametrize("field", ("runtime_retention_qualified", "full_authored_preservation_qualified", "durable_backup_qualified",
+                                   "cache_pairing_qualified", "native_calls_preemptible", "windows_qualified", "installed_package_qualified",
+                                   "cleanup_qualified", "native_memory_cap_claimed", "hidden_Main_passivity_claimed"))
+def test_actual_storage_adapter_qualifier_refuses_false_broad_claim(field):
+    case, full = _storage_adapter_report_model("valid")
+    full[field] = True
+    assert not _adapter_model_valid(case, full)
+
+
+
+@pytest.mark.parametrize("tamper", ("missing_case", "late_parser", "bool_counter", "late_bool_zero", "changed_pixels", "empty_ids",
+                                    "partial_raw", "wrong_raw_value", "unconsumed", "cleanup", "wrong_projection", "wrong_error"))
+def test_actual_storage_adapter_qualifier_refuses_incomplete_or_conflicting_evidence(tamper):
+    case, full = _storage_adapter_report_model("valid" if tamper != "wrong_error" else "permission_controls")
+    row = full["cases"][0]
+    if tamper == "missing_case":
+        full["cases"] = []
+    elif tamper == "late_parser":
+        row["counts"]["after_stop"]["parser"] = 1
+    elif tamper == "bool_counter":
+        row["counts"]["writer_entered"] = True
+    elif tamper == "late_bool_zero":
+        row["counts"]["after_stop"]["parser"] = False
+    elif tamper == "changed_pixels":
+        row["after"]["home"]["image"]["pixels_sha256_float32"] = "f" * 64
+    elif tamper == "empty_ids":
+        row["before"]["home"]["ids"] = {family: [] for family in case.FAMILIES}
+        row["after"] = json.loads(json.dumps(row["before"]))
+    elif tamper == "partial_raw":
+        row["before"]["raw_settings"][1]["values"].pop()
+        row["after"] = json.loads(json.dumps(row["before"]))
+    elif tamper == "wrong_raw_value":
+        row["retained_parser"][1]["result"]["storage"]["children"][0]["value"] = 0
+    elif tamper in {"unconsumed", "cleanup"}:
+        row["journal"]["snapshots"][0]["consumed" if tamper == "unconsumed" else "cleanup_returned"] = tamper != "unconsumed"
+    elif tamper == "wrong_projection":
+        row["projections"][1]["scene"][1] += 1
+    elif tamper == "wrong_error":
+        row["error"]["code"] = "NOT_IMPLEMENTED"
+    assert not _adapter_model_valid(case, full)
+
+
+
+def test_actual_storage_adapter_expected_native_failure_and_stop_are_distinct():
+    case, stopped = _storage_adapter_report_model("stop_controls")
+    assert _adapter_model_valid(case, stopped)
+    stopped["cases"][-1]["counts"]["writer_returned"] = 0
+    assert not _adapter_model_valid(case, stopped)
+    _, failed = _storage_adapter_report_model("writer_failure")
+    failed["cases"][0]["counts"]["writer_returned"] = 1
+    assert not _adapter_model_valid(case, failed)
+
+
+
+def test_actual_storage_adapter_observer_real_python_and_c_events_in_isolated_model():
+    """Exercise installed hooks outside pytest coverage; this is not Blender."""
+    code = r'''
+import sys, threading
+from types import SimpleNamespace as NS
+from scripts import blender_storage_snapshot_adapter_smoke as case
+def require(): pass
+def parser(): pass
+def read(): pass
+def model(name):
+    observer = object.__new__(case.Observer)
+    values = []
+    writer = values.append
+    fixture = NS(runtime=NS(state=NS(emergency_stopped=False)), prefs=NS(allow_save_project=True))
+    observer.fixture, observer.name, observer.adapter = fixture, name, None
+    observer.counts = dict.fromkeys(case.COUNTERS, 0)
+    observer.after_stop = dict.fromkeys(case.COUNTERS, 0)
+    observer.stopped, observer.operation = False, NS(native=NS(writer=writer))
+    observer.require_code, observer.parser_code, observer.read_codes = require.__code__, parser.__code__, {read.__code__}
+    observer.original = None
+    return observer, writer, values, fixture
+for name in ('valid', 'stop_after'):
+    observer, writer, values, fixture = model(name)
+    try:
+        with observer:
+            require(); read(); require(); writer('actual builtin call')
+            if name != 'stop_after': parser(); parser()
+            raise RuntimeError('fixture actor exception')
+    except RuntimeError: pass
+    assert values == ['actual builtin call']
+    assert observer.counts == {'provider':2,'writer_entered':1,'writer_returned':1,'parser':2 if name=='valid' else 0,'native_reads':1}
+    assert observer.after_stop == dict.fromkeys(case.COUNTERS, 0)
+    assert fixture.runtime.state.emergency_stopped is (name=='stop_after')
+    assert (sys.getprofile(),threading.getprofile(),sys.gettrace(),threading.gettrace()) == (None,None,None,None)
+observer, *_ = model('valid')
+old = lambda *args: None
+sys.setprofile(old)
+try:
+    try: observer.__enter__()
+    except AssertionError: pass
+    else: raise AssertionError('preexisting profiler accepted')
+    assert sys.getprofile() is old
+finally: sys.setprofile(None)
+print('real CPython observer countermodel passed; no Blender/native qualification')
+'''
+    result = subprocess.run([sys.executable, "-B", "-c", code], cwd=ROOT, text=True,
+                            capture_output=True, timeout=20, check=False)
+    assert result.returncode == 0, result.stderr
+    assert "countermodel passed" in result.stdout
+
+
+
+def test_actual_storage_adapter_exception_diagnostics_never_format_foreign_values():
+    from scripts import blender_storage_snapshot_adapter_smoke as case
+    calls = []
+    class Foreign:
+        def __str__(self):
+            calls.append("str")
+            raise AssertionError("foreign formatter")
+        def __repr__(self):
+            calls.append("repr")
+            raise AssertionError("foreign formatter")
+    class HostileError(Exception):
+        def __getattribute__(self, name):
+            calls.append(name)
+            raise AssertionError("foreign exception getter")
+        def __str__(self):
+            calls.append("error_str")
+            raise AssertionError("foreign exception formatter")
+    try:
+        raise HostileError(Foreign())
+    except HostileError as error:
+        receipt = case.exception_receipt(error)
+    assert calls == []
+    assert receipt["type"] == "HostileError" and receipt["message"] is None
+    assert receipt["code"] is None and receipt["reason"] is None
+    assert receipt["frames"][-1]["function"] == "test_actual_storage_adapter_exception_diagnostics_never_format_foreign_values"
+    assert receipt["source_accessor"] is None
+    case.canonical(receipt)
+
+
+
+def test_actual_storage_adapter_exception_diagnostics_bound_message_and_frame_count():
+    from scripts import blender_storage_snapshot_adapter_smoke as case
+    def nested(depth):
+        if depth:
+            nested(depth - 1)
+        else:
+            raise AttributeError("actual missing declaration " + "x" * 10000)
+    try:
+        nested(30)
+    except AttributeError as error:
+        receipt = case.exception_receipt(error)
+    assert receipt["type"] == "AttributeError" and len(receipt["message"]) == 2048
+    assert len(receipt["frames"]) == 24 and receipt["frames_truncated"] is True
+    assert all(set(frame) == {"file", "function", "line"} for frame in receipt["frames"])
+    assert all(type(frame["line"]) is int for frame in receipt["frames"])
+
+
+
+def test_actual_storage_adapter_exception_diagnostics_retain_literal_original_source_accessor():
+    import operator
+    from types import ModuleType
+
+    from scripts import blender_storage_snapshot_adapter_smoke as case
+    module = ModuleType("pathlib")
+    function = operator.attrgetter("_drv")
+    value = type("PurePath", (), {"drive": property(function), "root": property(operator.attrgetter("_root"))})
+    # Model source frames use the original path/name but never call or replace
+    # the actual guard. The exact native accessor still requires a native run.
+    namespace = {"module": module, "function": function, "value": value}
+    code = compile("def _function(function):\n    raise RuntimeError('original strict refusal')\n"
+                   "def capture_cloth_sources():\n    name='PurePath'\n    value=globals()['value']\n"
+                   "    module=globals()['module']\n    return _function(globals()['function'])\n",
+                   case._SOURCE_ACCESSOR_PATH, "exec")
+    exec(code, namespace)
+    try:
+        namespace["capture_cloth_sources"]()
+    except RuntimeError as error:
+        assert case.exception_receipt(error)["source_accessor"] is None
+        receipt = case.exception_receipt(error, source_codes=(namespace["_function"].__code__,
+                                                             namespace["capture_cloth_sources"].__code__))
+    accessor = receipt["source_accessor"]
+    assert accessor == {"callable_type": {"module": "operator", "name": "attrgetter"},
+                        "function_module": None, "function_qualname": None,
+                        "owner_module": "pathlib", "owner_name": "PurePath", "property_getters": ["drive"]}
+    assert receipt["frames"][-1]["function"] == "_function"
+
+
+
+def test_actual_storage_adapter_exception_diagnostics_preserve_domain_reason_without_getattr(addon_package):
+    errors = importlib.import_module(addon_package + ".errors")
+    from scripts import blender_storage_snapshot_adapter_smoke as case
+    try:
+        raise errors.BridgeError("NOT_IMPLEMENTED", "literal failure", {"reason": "ACTUAL_SOURCE_REASON"})
+    except errors.BridgeError as error:
+        receipt = case.exception_receipt(error)
+    assert receipt["code"] == "NOT_IMPLEMENTED" and receipt["reason"] == "ACTUAL_SOURCE_REASON"
+    assert receipt["message"] == "literal failure"
+
+
+
+@pytest.mark.parametrize("field", ["code", "context", "reason"])
+def test_actual_storage_adapter_exception_diagnostics_reject_collision_key_callbacks(field):
+    from scripts import blender_storage_snapshot_adapter_smoke as case
+    calls = []
+    class Collision:
+        def __hash__(self):
+            return hash(field)
+        def __eq__(self, other):
+            calls.append("equality")
+            return False
+    error = RuntimeError("literal")
+    values = case._EXCEPTION_DICT.__get__(error, BaseException)
+    target = values
+    if field == "reason":
+        values["context"] = target = {}
+    target[Collision()] = "foreign"
+    calls.clear()
+    receipt = case.exception_receipt(error)
+    assert calls == [] and receipt["code"] is None and receipt["reason"] is None
+
+
+
+def test_actual_storage_adapter_exception_diagnostics_ignore_arbitrary_mapping_proxy():
+    import operator
+    from types import MappingProxyType, ModuleType
+
+    from scripts import blender_storage_snapshot_adapter_smoke as case
+    calls = []
+    class Mapping:
+        def __len__(self):
+            calls.append("len")
+            raise AssertionError("foreign mapping")
+        def __getitem__(self, key):
+            calls.append("getitem")
+            raise AssertionError("foreign mapping")
+        def __iter__(self):
+            calls.append("iter")
+            raise AssertionError("foreign mapping")
+    namespace = {"module": ModuleType("pathlib"), "function": operator.attrgetter("_drv"),
+                 "fields": MappingProxyType(Mapping()), "value": object()}
+    code = compile("def _function(function):\n    raise RuntimeError('original strict refusal')\n"
+                   "def capture_cloth_sources():\n    name='PurePath'\n    fields=globals()['fields']\n"
+                   "    value=globals()['value']\n    module=globals()['module']\n    return _function(globals()['function'])\n",
+                   case._SOURCE_ACCESSOR_PATH, "exec")
+    exec(code, namespace)
+    try:
+        namespace["capture_cloth_sources"]()
+    except RuntimeError as error:
+        receipt = case.exception_receipt(error, source_codes=(namespace["_function"].__code__,
+                                                             namespace["capture_cloth_sources"].__code__))
+    assert calls == [] and receipt["source_accessor"]["property_getters"] == []
+
+
+
+def test_actual_storage_adapter_diagnostic_preserves_actual_parser_reason_with_empty_context(addon_package):
+    parser = importlib.import_module(addon_package + ".blend_storage_sdna")
+    from scripts import blender_storage_snapshot_adapter_smoke as case
+    try:
+        raise parser.StorageSnapshotError("RAW_PROPERTY_TYPE_UNQUALIFIED")
+    except parser.StorageSnapshotError as error:
+        assert error.context == {}
+        receipt = case.exception_receipt(error)
+    assert receipt["type"] == "StorageSnapshotError" and receipt["code"] is None
+    assert receipt["message"] == receipt["reason"] == "RAW_PROPERTY_TYPE_UNQUALIFIED"
+
+
+
+@pytest.mark.parametrize("tamper", ["false_identity", "bool_identity", "wrong_type", "wrong_message", "missing_message", "wrong_reason", "bridge_code"])
+def test_actual_storage_adapter_malformed_qualifier_keeps_exact_typed_parser_refusal(tamper):
+    case, full = _storage_adapter_report_model("malformed")
+    assert _adapter_model_valid(case, full)
+    error = full["cases"][0]["error"]
+    if tamper == "missing_message":
+        error.pop("message")
+    else:
+        field, value = {"false_identity": ("canonical_storage_error", False),
+                        "bool_identity": ("canonical_storage_error", 1),
+                        "wrong_type": ("type", "BridgeError"), "wrong_message": ("message", "some other error"),
+                        "wrong_reason": ("reason", "BLEND_HEADER_UNQUALIFIED"),
+                        "bridge_code": ("code", "NOT_IMPLEMENTED")}[tamper]
+        error[field] = value
+    assert not _adapter_model_valid(case, full)
+
+
+
+def _storage_cleanup_report_model(phase):
+    """Cold adversarial model only; no fabricated model qualifies Blender."""
+    from copy import deepcopy
+
+    from scripts import blender_storage_snapshot_cleanup_smoke as case
+    _, adapter = _storage_adapter_report_model("valid")
+    template = adapter["cases"][0]
+    full = {key: deepcopy(value) for key, value in adapter.items() if key != "cases"}
+    full.update(schema=case.SCHEMA, profile=case.PROFILE, phase=phase, cases=[], cleanup_qualified=True,
+                request_binding_kind=case.REQUEST_BINDING, **dict.fromkeys(case.FALSE_FLAGS, False))
+
+    def error(stage, *, code=None, reason=None, kind="BridgeError"):
+        return {"type": kind, "code": code, "reason": reason, "message": reason, "frames": [],
+                "frames_truncated": False, "source_accessor": None, "stage": stage}
+
+    for name in case.CASES[phase]:
+        count = 16 if name == "sixteen_captures" else 1
+        root = "/owned/" + phase + "-" + name + "-owned"
+        unknown = name == "unknown_after_writer_stop"
+        done = name not in {*case.CASES["permission_denial"], *case.CASES["ownership_tamper"], "unknown_after_writer_stop"}
+        journal = {"schema": "owned_storage_inspection_effects_v1", "capacity": count, "snapshots": [],
+                   **dict.fromkeys(("runtime_retention_qualified", "durable_backup_qualified", "full_source_preservation_qualified",
+                                    "native_calls_preemptible"), False)}
+        row = {"name": name, "owned_root": root, "raw_targets": deepcopy(template["raw_targets"]),
+               "before": deepcopy(template["before"]), "after": deepcopy(template["after"]), "source_preserved": True,
+               "sentinel": {"path": "/owned/" + phase + "-" + name + "-sentinel.bin", "bytes": 30, "sha256": "a" * 64},
+               "journal_before": journal, "journal_after": None, "evidence_copies": [], "cleanup_receipts": [],
+               "errors": [], "events": [], "after_stop": [], "outcome": case.expected_outcome(name),
+               "actor": {"applied": name in case.CASES["ownership_tamper"], "removed": False,
+                         "retry_with_fresh_context": False, "fault_kind": name if name in case.CASES["ownership_tamper"] else None,
+                         "request_ids": [format(index + 1, "032x") for index in range(2 * count)], "contexts_created": 2 * count},
+               "retirement": {"consume_refused": name == "retire_before_consume", "native_checks_after_retirement": 0,
+                              "reason": "SNAPSHOT_WITNESS_RETIRED" if name == "retire_before_consume" else None}}
+        for index in range(count):
+            leaf = "bcb-storage-" + format(index + 1, "032x")
+            path = root + "/" + leaf + "/snapshot.blend"
+            identity = [1, index + 30, 1234, 4000]
+            cell = {"root": root, "directory": root + "/" + leaf, "filepath": path,
+                    "root_identity": [1, 10], "directory_identity": [1, index + 20],
+                    "file_identity": [] if unknown else identity, "file_bytes": None if unknown else 1234,
+                    "file_sha256": None if unknown or name == "malformed_cleanup" else "f" * 64,
+                    "native_entered": True, "native_returned": True, "reserved": True, "directory_returned": True,
+                    "consumed": name not in {"malformed_cleanup", "retire_before_consume", "unknown_after_writer_stop"},
+                    "cleanup_entered": False, "cleanup_returned": False}
+            journal["snapshots"].append(cell)
+            proofs = deepcopy(template["retained_parser"])
+            if name == "malformed_cleanup":
+                proofs[1] = {"target": row["raw_targets"][1], "error": {
+                    "type": "StorageSnapshotError", "reason": "RAW_PROPERTY_TYPE_UNQUALIFIED"}}
+            row["evidence_copies"].append({"owner_index": index, "original_path": path, "original_identity": identity,
+                "original_binding": None if unknown else [1, index + 30, 1000, 0o600, 1, 1234, 4000, 5000],
+                "original_sha256": "f" * 64, "copy": {"path": "/owned/" + phase + "-" + name + "-evidence/" + str(index) + ".blend",
+                "bytes": 1234, "sha256": "f" * 64}, "retained_parser": proofs})
+            cleanup = {"schema": "owned_storage_cleanup_effects_v1", "root": root, "directory_leaf": leaf,
+                       "original_file_identity_known": not unknown, "unlink_entered": done, "unlink_returned": done,
+                       "rmdir_entered": done, "rmdir_returned": done, "complete": done, "retained_unknown": unknown,
+                       "failed": name in {"stop_after_unlink", "unlink_failure", "rmdir_failure"}, "close_failed": False,
+                       **dict.fromkeys(("runtime_retention_qualified", "durable_backup_qualified", "current_pixels_backup_qualified",
+                                        "hostile_same_uid_namespace_races_qualified"), False)}
+            row["cleanup_receipts"].append({"owner_index": index, "receipt": cleanup})
+            if name not in case.CASES["permission_denial"]:
+                row["events"].append({"event": "c_return", "name": "open", "after_stop": False})
+            if done:
+                row["events"].extend({"event": "c_return", "name": value, "after_stop": False} for value in ("unlink", "rmdir"))
+        row["journal_after"] = deepcopy(journal)
+        for cell in row["journal_after"]["snapshots"]:
+            cell.update(cleanup_entered=name not in case.CASES["permission_denial"], cleanup_returned=done)
+        if name in case.CASES["permission_denial"]:
+            code = "PERMISSION_DENIED" if name.startswith("deny_") else "AGENT_PAUSED" if name == "paused" else "EMERGENCY_STOPPED"
+            row["errors"].append(error("cleanup", code=code))
+        elif name in case.CASES["ownership_tamper"]:
+            row["errors"].append(error("cleanup", code="OPERATION_FAILED", reason="SNAPSHOT_CLEANUP_FILE_CHANGED"))
+        elif name in {"malformed_cleanup", "retire_before_consume"}:
+            row["errors"].append(error("capture" if name == "malformed_cleanup" else "consume",
+                reason="RAW_PROPERTY_TYPE_UNQUALIFIED" if name == "malformed_cleanup" else "SNAPSHOT_WITNESS_RETIRED",
+                kind="StorageSnapshotError" if name == "malformed_cleanup" else "BridgeError"))
+        elif name in {"stop_after_unlink", "unknown_after_writer_stop"}:
+            row["errors"].append(error("cleanup" if name == "stop_after_unlink" else "capture",
+                code="AGENT_PAUSED" if name == "stop_after_unlink" else "EMERGENCY_STOPPED"))
+        elif name in {"unlink_failure", "rmdir_failure"}:
+            row["errors"].append(error("cleanup", kind="PermissionError" if name == "unlink_failure" else "OSError"))
+            row["events"].append({"event": "c_exception", "name": name.split("_")[0], "after_stop": False})
+        if name in {"stop_after_unlink", "unlink_failure", "rmdir_failure"}:
+            row["actor"].update(applied=True, removed=True, retry_with_fresh_context=True, fault_kind=name)
+        if name == "stop_after_unlink":
+            event = {"event": "c_return", "name": "close", "after_stop": True}
+            row["events"].append(event)
+            row["after_stop"].append(deepcopy(event))
+        full["cases"].append(row)
+    return case, full
+
+
+
+@pytest.mark.parametrize("phase", ("success", "permission_denial", "ownership_tamper", "stop_retry", "partial_failure", "sixteen_captures"))
+def test_owned_cleanup_model_all_six_fixed_phase_contracts(phase):
+    case, full = _storage_cleanup_report_model(phase)
+    assert _adapter_model_valid(case, full)
+
+
+
+@pytest.mark.parametrize("tamper", ("missing_case", "source_drift", "changed_last_pixel", "empty_main", "empty_events", "missing_deletion",
+    "retirement_native_read", "wrong_denial", "denial_filesystem", "unknown_adopted", "unknown_deleted", "late_inspection", "missing_stop_close",
+    "fake_partial_failure", "duplicate_request", "nonhex_request", "bool_context_count", "ordinary_parser_refusal", "malformed_wrong_target",
+    "last_copy_hash", "last_owner_identity", "immutable_journal_changed", "false_recovery", "dispatch_claim", "unproven_request_binding",
+    "bool_capacity", "bool_copy_index", "bool_cleanup_index"))
+def test_owned_cleanup_qualifier_refuses_forged_or_incomplete_recovery_evidence(tamper):
+    phase = ("permission_denial" if tamper in {"wrong_denial", "denial_filesystem"} else
+             "stop_retry" if tamper in {"unknown_adopted", "unknown_deleted", "late_inspection", "missing_stop_close"} else
+             "partial_failure" if tamper in {"fake_partial_failure", "false_recovery"} else
+             "sixteen_captures" if tamper.startswith("last_") else "success")
+    case, full = _storage_cleanup_report_model(phase)
+    assert _adapter_model_valid(case, full)
+    row = full["cases"][0]
+    if tamper == "missing_case":
+        full["cases"].pop()
+    elif tamper == "source_drift":
+        full["source_unchanged"] = False
+    elif tamper == "changed_last_pixel":
+        row["after"]["home"]["image"]["pixels_sha256_float32"] = "0" * 64
+    elif tamper == "empty_main":
+        row["before"]["home"]["ids"] = {key: [] for key in row["before"]["home"]["ids"]}
+        row["after"] = json.loads(json.dumps(row["before"]))
+    elif tamper == "empty_events":
+        row["events"] = []
+    elif tamper == "missing_deletion":
+        row["events"] = [event for event in row["events"] if event["name"] != "unlink"]
+    elif tamper == "retirement_native_read":
+        full["cases"][1]["retirement"]["native_checks_after_retirement"] = 1
+    elif tamper == "wrong_denial":
+        row["errors"][0]["code"] = "OPERATION_FAILED"
+    elif tamper == "denial_filesystem":
+        row["events"].append({"event": "c_call", "name": "open", "after_stop": False})
+    elif tamper in {"unknown_adopted", "unknown_deleted"}:
+        row = full["cases"][1]
+        if tamper == "unknown_adopted":
+            row["evidence_copies"][0]["original_binding"] = [1] * 8
+        else:
+            row["cleanup_receipts"][0]["receipt"]["unlink_entered"] = True
+    elif tamper == "late_inspection":
+        event = {"event": "c_call", "name": "lstat", "after_stop": True}
+        row["events"].append(event)
+        row["after_stop"].append(event.copy())
+    elif tamper == "missing_stop_close":
+        row["events"] = [event for event in row["events"] if not event["after_stop"]]
+        row["after_stop"] = []
+    elif tamper == "fake_partial_failure":
+        row["events"] = [event for event in row["events"] if event["event"] != "c_exception"]
+    elif tamper == "duplicate_request":
+        row["actor"]["request_ids"][1] = row["actor"]["request_ids"][0]
+    elif tamper == "nonhex_request":
+        row["actor"]["request_ids"][0] = "cleanup_" + "a" * 32
+    elif tamper == "bool_context_count":
+        row["actor"]["contexts_created"] = True
+    elif tamper == "bool_capacity":
+        row["journal_before"]["capacity"] = True
+    elif tamper == "bool_copy_index":
+        row["evidence_copies"][0]["owner_index"] = False
+    elif tamper == "bool_cleanup_index":
+        row["cleanup_receipts"][0]["owner_index"] = False
+    elif tamper == "ordinary_parser_refusal":
+        row["evidence_copies"][0]["retained_parser"][0] = {"target": row["raw_targets"][0], "error": {"type": "StorageSnapshotError", "reason": "OTHER"}}
+    elif tamper == "malformed_wrong_target":
+        full["cases"][2]["evidence_copies"][0]["retained_parser"].reverse()
+    elif tamper == "last_copy_hash":
+        row["evidence_copies"][-1]["copy"]["sha256"] = "0" * 64
+    elif tamper == "last_owner_identity":
+        row["evidence_copies"][-1]["original_identity"][-1] = -1
+    elif tamper == "immutable_journal_changed":
+        row["journal_after"]["snapshots"][0]["filepath"] += "-foreign"
+    elif tamper == "false_recovery":
+        row["actor"]["retry_with_fresh_context"] = False
+    elif tamper == "dispatch_claim":
+        full["canonical_dispatch_qualified"] = True
+    elif tamper == "unproven_request_binding":
+        full["request_binding_kind"] = "EXECUTOR_GENERATED_DISPATCH"
+    assert not _adapter_model_valid(case, full)
+
+
+
+@pytest.mark.parametrize("flag", ("runtime_retention_qualified", "durable_backup_qualified", "current_pixels_backup_qualified",
+                                  "hostile_same_uid_namespace_races_qualified"))
+def test_owned_cleanup_receipt_never_upgrades_temporary_files_to_recovery_backups(flag):
+    case, full = _storage_cleanup_report_model("success")
+    full["cases"][0]["cleanup_receipts"][0]["receipt"][flag] = True
+    assert not _adapter_model_valid(case, full)
+
+
+
+def test_owned_cleanup_evidence_copy_is_create_only_fsynced_and_exact(tmp_path, monkeypatch):
+    from scripts import blender_storage_snapshot_cleanup_smoke as case
+    source, destination = tmp_path / "original.blend", tmp_path / "evidence.blend"
+    source.write_bytes(b"NATIVE FILE TEST MODEL" * 7000)
+    syncs = []
+    original_fsync = os.fsync
+    monkeypatch.setattr(os, "fsync", lambda descriptor: (syncs.append(descriptor), original_fsync(descriptor))[1])
+    original, identity, copy = case.evidence_copy(source, destination)
+    info = source.stat()
+    assert identity == [info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns]
+    assert original["sha256"] == copy["sha256"] and original["bytes"] == copy["bytes"]
+    assert destination.read_bytes() == source.read_bytes() and destination.stat().st_mode & 0o777 == 0o600
+    assert len(syncs) == 2
+    with pytest.raises(FileExistsError):
+        case.evidence_copy(source, destination)
+    assert source.read_bytes() == destination.read_bytes()
+
+
+
+@pytest.mark.skipif(not hasattr(os, "link"), reason="POSIX identity primitives")
+@pytest.mark.parametrize("tamper", ("symlink", "hardlink", "replaced_after_first_hash", "changed_after_first_hash"))
+def test_owned_cleanup_evidence_copy_refuses_foreign_or_changed_native_original(tmp_path, monkeypatch, tamper):
+    from scripts import blender_storage_snapshot_cleanup_smoke as case
+    source, destination = tmp_path / "original.blend", tmp_path / "evidence.blend"
+    source.write_bytes(b"ORIGINAL NATIVE TEST MODEL")
+    if tamper == "symlink":
+        source.rename(tmp_path / "foreign.blend")
+        source.symlink_to(tmp_path / "foreign.blend")
+    elif tamper == "hardlink":
+        os.link(source, tmp_path / "second.blend")
+    else:
+        original = case.gateway.ordinary_file
+        def changed(path, maximum):
+            result = original(path, maximum)
+            if path == source:
+                if tamper == "replaced_after_first_hash":
+                    path.rename(tmp_path / "retained-original.blend")
+                path.write_bytes(b"FOREIGN OR CHANGED CONTENT")
+            return result
+        monkeypatch.setattr(case.gateway, "ordinary_file", changed)
+    with pytest.raises(AssertionError):
+        case.evidence_copy(source, destination)
+    assert not destination.exists()
+
+
+
+def test_owned_cleanup_observer_records_real_kernel_stop_and_failure_boundaries_in_isolated_model():
+    """Actual C profile events in a model process; this is not Blender evidence."""
+    code = r'''
+import os, sys, tempfile
+from pathlib import Path
+from types import ModuleType, SimpleNamespace as NS
+from scripts import blender_storage_snapshot_cleanup_smoke as case
+def require(): pass
+def check(): pass
+package = ModuleType("blender_codex_bridge")
+adapter = ModuleType("blender_codex_bridge.storage_snapshot")
+adapter.__file__ = "/owned/cleanup-observer-model.py"
+adapter._CLEANUP_OS_ORIGINS = tuple((name, getattr(os, name)) for name in case.OS_NAMES)
+adapter._NativeSource = NS(check=check)
+registry = ModuleType("blender_codex_bridge.tool_registry")
+registry.ToolContext = NS(require=require)
+package.storage_snapshot = adapter
+sys.modules.update({package.__name__: package, adapter.__name__: adapter, registry.__name__: registry})
+fixture = NS(runtime=NS(state=NS(paused=False)))
+with tempfile.TemporaryDirectory() as folder:
+    root = Path(folder)
+    child = root / "child"
+    child.mkdir()
+    original = child / "snapshot.blend"
+    original.write_bytes(b"MODEL")
+    operation = NS(cell=NS(directory=str(child)))
+    events = []
+    scope = {"os": os, "path": str(original), "directory": str(child)}
+    exec(compile("def run():\n fd=os.open(path,os.O_RDONLY)\n os.unlink(path)\n os.close(fd)\n", adapter.__file__, "exec"), scope)
+    observer = case.FSObserver(fixture, "stop_after_unlink", operation, events)
+    with observer:
+        scope["run"]()
+    assert observer.applied and fixture.runtime.state.paused and not original.exists()
+    assert [(e["event"],e["name"]) for e in events if e["after_stop"]] == [("c_call","close"),("c_return","close")]
+    assert all(value is None for value in (sys.getprofile(),sys.gettrace()))
+    events = []
+    fixture.runtime.state.paused = False
+    exec(compile("def run():\n os.rmdir(directory)\n", adapter.__file__, "exec"), scope)
+    observer = case.FSObserver(fixture, "rmdir_failure", operation, events)
+    with observer:
+        try:
+            scope["run"]()
+        except OSError:
+            pass
+        else:
+            raise AssertionError("Actual ENOTEMPTY was required")
+    assert observer.applied and observer.extra.read_bytes() == b"FIXTURE ACTOR OWNED FAILURE SENTINEL"
+    assert any(e["event"] == "c_exception" and e["name"] == "rmdir" for e in events)
+    observer.extra.unlink()
+    child.rmdir()
+'''
+    completed = subprocess.run([sys.executable, "-B", "-c", code], cwd=ROOT, capture_output=True, text=True, timeout=20)
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+
+
+
+def test_owned_cleanup_fixture_keeps_capture_consume_and_source_qualified_request_contract():
+    from scripts import blender_storage_snapshot_cleanup_smoke as case
+    tree = ast.parse(inspect.getsource(case))
+    fresh = next(node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == "fresh_context")
+    names = {node.func.id for node in ast.walk(fresh) if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)}
+    assert {"QueuedRequest", "Request", "FunctionType"} <= names
+    source = inspect.getsource(case.Fixture.run_case)
+    assert "observer.operation = operation" in source
+    assert source.index("self.copy_native(operation") < source.index("cleanup = FSObserver")
+    assert "witness.consume(context, self.bpy, self.scenes)" in source
+    assert "SOURCE_QUALIFIED_REPLICA" in case.REQUEST_BINDING
+    assert "canonical_dispatch_qualified" in case.FALSE_FLAGS and "transport_qualified" in case.FALSE_FLAGS
+    assert case.source_names()[0] == "scripts/blender_storage_snapshot_cleanup_smoke.py"
+    assert not any("MCP" in name for name in names)
+
+
+
+def test_owned_cleanup_fresh_context_binds_real_distinct_requests_without_claiming_dispatch(addon_package, monkeypatch):
+    from scripts import blender_storage_snapshot_cleanup_smoke as case
+    package = ModuleType("blender_codex_bridge")
+    for label in ("executor", "command_queue", "protocol", "request_lifecycle"):
+        module = importlib.import_module(addon_package + "." + label)
+        setattr(package, label, module)
+        monkeypatch.setitem(sys.modules, "blender_codex_bridge." + label, module)
+    monkeypatch.setitem(sys.modules, "blender_codex_bridge", package)
+    fixture = case.Fixture.__new__(case.Fixture)
+    fixture.runtime = NS(executor=NS(context=NS()))
+    fixture.context_count, fixture.request_ids = 0, []
+    first = fixture.fresh_context()
+    first_owner = first.check_cancelled.__self__
+    assert type(first_owner) is package.command_queue.QueuedRequest and first_owner.state == "running"
+    assert first_owner.request.id == first.request_id == fixture.request_ids[0]
+    assert first_owner.request._lifecycle is first.request_lifecycle and first.request_lifecycle.delivered.is_set()
+    assert first.check_final_request.__globals__ is vars(package.executor)
+    assert first.check_final_request.__closure__[0].cell_contents is first_owner
+    first.check_final_request()
+    first_owner._stop_requested = True
+    errors = importlib.import_module(addon_package + ".errors")
+    with pytest.raises(errors.BridgeError):
+        first.check_final_request()
+    second = fixture.fresh_context()
+    assert second.check_cancelled.__self__ is not first_owner and fixture.context_count == 2
+    assert len(set(fixture.request_ids)) == 2 and all(len(value) == 32 for value in fixture.request_ids)
+    second.check_final_request()
+
+
+
+def test_owned_cleanup_observer_install_failure_attempts_all_four_hook_restorations(monkeypatch):
+    from scripts import blender_storage_snapshot_cleanup_smoke as case
+    observer = case.FSObserver.__new__(case.FSObserver)
+    observer.observe = lambda *_: None
+    calls = []
+    def profile(value):
+        calls.append(("sys_profile", value))
+        if value is observer.observe:
+            raise RuntimeError("fixture installation failure")
+    for module, label in ((sys, "sys"), (threading, "threading")):
+        for name in ("getprofile", "gettrace"):
+            monkeypatch.setattr(module, name, lambda: None)
+        for name in ("setprofile", "settrace"):
+            monkeypatch.setattr(module, name, lambda value, key=label + "_" + name[3:]: calls.append((key, value)))
+    monkeypatch.setattr(sys, "setprofile", profile)
+    with pytest.raises(RuntimeError, match="fixture installation failure"):
+        observer.__enter__()
+    assert [key for key, _value in calls] == ["sys_profile", "sys_profile", "threading_profile", "sys_trace", "threading_trace"]
+    assert all(value is None for _key, value in calls[1:])
+
+
+
+@pytest.mark.parametrize("failure_kind", ("resource_refusal", "unexpected_error"))
+@pytest.mark.parametrize("stage", ("capture", "cleanup"))
+def test_owned_cleanup_unexpected_stage_preserves_original_failure(addon_package, monkeypatch, tmp_path, failure_kind, stage):
+    """Exercise the real fixture catch path without a native operation."""
+    from scripts import blender_storage_snapshot_cleanup_smoke as case
+    errors = importlib.import_module(addon_package + ".errors")
+    failure = (errors.BridgeError(errors.ErrorCode.NOT_IMPLEMENTED, "Resource floor refused.",
+                                 {"reason": "SNAPSHOT_RESOURCE_FLOOR"})
+               if failure_kind == "resource_refusal" else RuntimeError("Unexpected capture failure."))
+    package = ModuleType("blender_codex_bridge")
+    adapter = ModuleType("blender_codex_bridge.storage_snapshot")
+    effects = ModuleType("blender_codex_bridge.storage_snapshot_effects")
+
+    class RefusedOperation:
+        def __init__(self, *_):
+            self.cell, self.cleanup_owner = NS(filepath=str(tmp_path / "model-snapshot.blend")), NS()
+
+        def run(self):
+            if stage == "capture":
+                raise failure
+            return NS(consume=lambda *_: None)
+
+    def cleanup_step(*_):
+        raise failure
+
+    class Observer:
+        def __init__(self, *_):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+    adapter.SnapshotOperation = RefusedOperation
+    adapter.cleanup_step = cleanup_step
+    effects.SnapshotJournal = lambda count: NS(capacity=count, snapshot=lambda: {"snapshots": [{}]})
+    package.storage_snapshot = adapter
+    for module in (package, adapter, effects):
+        monkeypatch.setitem(sys.modules, module.__name__, module)
+    monkeypatch.setattr(case.gateway, "Observer", Observer)
+    monkeypatch.setattr(case, "FSObserver", Observer)
+    fixture = case.Fixture.__new__(case.Fixture)
+    fixture.folder, fixture.options = tmp_path, NS(bridge_phase="success")
+    fixture.bpy, fixture.scenes, fixture.request_ids = NS(), (), []
+    fixture.runtime = NS(state=NS(paused=False, emergency_stopped=False))
+    fixture.reset, fixture.complete_snapshot, fixture.fresh_context = lambda: None, lambda: {}, lambda: NS()
+    fixture.copy_native = lambda *_: {}
+    with pytest.raises(type(failure)) as caught:
+        fixture.run_case("consume_cleanup")
+    assert caught.value is failure
+    receipt = case.gateway.exception_receipt(caught.value)
+    assert receipt["type"] == type(failure).__name__
+    assert receipt["reason"] == ("SNAPSHOT_RESOURCE_FLOOR" if failure_kind == "resource_refusal" else None)
+    assert receipt["frames"][-1]["function"] == ("run" if stage == "capture" else "cleanup_step")
+
+
+
+def _storage_dispatch_report_model(phase):
+    """Adversarial report model, never native qualification."""
+    import hashlib
+    from copy import deepcopy
+
+    from scripts import blender_storage_snapshot_dispatch_smoke as case
+    _, base = _storage_cleanup_report_model("success")
+    template = base["cases"][0]
+    full = {key: deepcopy(value) for key, value in base.items() if key != "cases"}
+    full.update(schema=case.SCHEMA, profile=case.PROFILE, phase=phase, request_binding_kind=case.REQUEST_BINDING,
+                stop_observation_scope="STORAGE_OPERATION_AND_CLEANUP_ONLY",
+                actual_dispatch_qualified=True, transport_qualified=True, native_undo_pushes=0,
+                hooks_restored=True, services_stopped=True, cases=[], dispatch=[], wire=[], request_ids=[], sent=[], terminal=[],
+                **dict.fromkeys(case.FALSE_FLAGS, False))
+    for ordinal, name in enumerate(case.CASES[phase]):
+        unknown = name in {"cancel_after_writer", "disconnect_after_writer"}
+        copy = deepcopy(template["evidence_copies"][0])
+        copy["original_binding"] = None if unknown else copy["original_binding"]
+        journal = deepcopy(template["journal_after"])
+        cell = journal["snapshots"][0]
+        cell.update(consumed=not unknown, parser_entered=not unknown, file_identity=[] if unknown else cell["file_identity"])
+        receipt = deepcopy(template["cleanup_receipts"][0]["receipt"])
+        done = not unknown and name != "file_replace"
+        receipt.update(original_file_identity_known=not unknown, retained_unknown=unknown, complete=done,
+                       unlink_entered=done, unlink_returned=done, rmdir_entered=done, rmdir_returned=done)
+        outcomes = {"success": ["complete"], "deny_inspect": ["PERMISSION_DENIED", "complete"],
+                    "deny_save": ["PERMISSION_DENIED", "complete"], "deny_external": ["PERMISSION_DENIED", "complete"],
+                    "deny_capture": ["PERMISSION_DENIED"], "cancel_after_writer": ["TIMEOUT", "retained_unknown"],
+                    "disconnect_after_writer": ["TIMEOUT", "retained_unknown"], "pause_after_unlink": ["AGENT_PAUSED", "complete"],
+                    "unlink_failure": ["OPERATION_FAILED", "complete"], "file_replace": ["NOT_IMPLEMENTED"]}[name]
+        actions = ["capture", "cleanup", "inspect"]
+        if name == "deny_capture":
+            actions = ["capture", "inspect"]
+        elif name.startswith("deny_") or name in {"pause_after_unlink", "unlink_failure"}:
+            actions = ["capture", "cleanup", "cleanup", "inspect"]
+        identifiers = [format(ordinal * 8 + index + 1, "032x") for index in range(len(actions))]
+        row = {"name": name, "before": deepcopy(template["before"]), "after": deepcopy(template["after"]),
+               "source_preserved": True, "healthy_after": True, "events": [], "requests": identifiers,
+               "copy": None if name == "deny_capture" else copy, "journal": None if name == "deny_capture" else journal,
+               "cleanup": receipt, "outcomes": outcomes, "handler_entries": 1 if name == "deny_capture" else len(actions),
+               "stop_applied": name in {"cancel_after_writer", "disconnect_after_writer", "pause_after_unlink", "unlink_failure"}}
+        if name != "deny_capture":
+            row["events"] = [{"event": kind, "name": "writer", "after_stop": False} for kind in ("c_call", "c_return")]
+            if name in {"cancel_after_writer", "disconnect_after_writer", "pause_after_unlink"}:
+                row["events"].append({"event": "c_return", "name": "close", "after_stop": True})
+            if name == "unlink_failure":
+                row["events"].append({"event": "c_exception", "name": "unlink", "after_stop": False})
+        full["cases"].append(row)
+        full["request_ids"].extend(identifiers)
+        for index, (identifier, action) in enumerate(zip(identifiers, actions, strict=True)):
+            denied = (name == "deny_capture" and index == 0) or (name.startswith("deny_") and name != "deny_capture" and index == 1)
+            code = None
+            if denied:
+                code = "PERMISSION_DENIED"
+            elif unknown and action == "capture":
+                code = "TIMEOUT"
+            elif index == 1:
+                code = {"pause_after_unlink": "AGENT_PAUSED", "unlink_failure": "OPERATION_FAILED", "file_replace": "NOT_IMPLEMENTED"}.get(name)
+            result = {"captured": True} if action == "capture" else {"healthy": True} if action == "inspect" else {"cleanup": deepcopy(receipt)}
+            response = {"id": identifier, "protocol_version": "1.0", "ok": code is None}
+            response.update(error={"code": code} if code else None) if code else response.update(result=result)
+            full["sent"].append({"id": identifier, "action": action, "case": name})
+            if not (name == "disconnect_after_writer" and action == "capture"):
+                full["wire"].append({"id": identifier, "response": response, "sha256": hashlib.sha256(case.gateway.canonical(response)).hexdigest()})
+            if not denied:
+                full["dispatch"].append({"id": identifier, "action": action, "case": name,
+                                         "queued_running": True, "actual_closure": True, "main_thread": True})
+                full["terminal"].append({"id": identifier, "state": "completed", "completed": True, "response": deepcopy(response)})
+    return case, full
+
+
+
+@pytest.mark.parametrize("phase", ("success_denial", "stops", "failures"))
+def test_storage_actual_dispatch_requires_fixed_nonvacuous_phase_results(phase):
+    case, full = _storage_dispatch_report_model(phase)
+    assert case.validate_full(full, phase=phase, process_instance=full["process_instance"],
+                              sources=full["source_fingerprints"], binary=full["binary"], process_id=full["process_id"])
+
+
+
+@pytest.mark.parametrize("fault", ("replica", "fake_closure", "not_running", "wrong_thread", "reused_request", "duplicate_wire",
+                                   "wire_changed", "empty_cases", "empty_dispatch", "changed_scene", "post_stop_read",
+                                   "retained_known_claim", "unknown_deleted", "dropped_refusal", "no_retry", "undo_push",
+                                   "hook_leak", "server_running", "broader_claim", "source_changed"))
+def test_storage_actual_dispatch_counterfeit_evidence_is_rejected(fault):
+    from copy import deepcopy
+    case, full = _storage_dispatch_report_model("stops" if fault in {"retained_known_claim", "unknown_deleted", "post_stop_read", "no_retry"} else "success_denial")
+    if fault == "replica":
+        full["request_binding_kind"] = "SOURCE_QUALIFIED_REPLICA_FRESH_QUEUED_REQUEST"
+    elif fault in {"fake_closure", "not_running", "wrong_thread"}:
+        full["dispatch"][0][{"fake_closure": "actual_closure", "not_running": "queued_running", "wrong_thread": "main_thread"}[fault]] = False
+    elif fault == "reused_request":
+        full["request_ids"].append(full["request_ids"][0])
+    elif fault == "duplicate_wire":
+        full["wire"].append(deepcopy(full["wire"][0]))
+    elif fault == "wire_changed":
+        full["wire"][0]["response"]["result"]["healthy"] = False
+    elif fault == "empty_cases":
+        full["cases"] = []
+    elif fault == "empty_dispatch":
+        full["dispatch"] = []
+    elif fault == "changed_scene":
+        full["cases"][0]["after"]["home"]["mesh"]["vertices"][-1][0] += 1.0
+    elif fault == "post_stop_read":
+        full["cases"][0]["events"].append({"event": "native_read", "name": "source_or_parser", "after_stop": True})
+    elif fault == "retained_known_claim":
+        full["cases"][0]["cleanup"]["original_file_identity_known"] = True
+    elif fault == "unknown_deleted":
+        full["cases"][0]["cleanup"].update(unlink_entered=True, unlink_returned=True)
+    elif fault == "dropped_refusal":
+        full["cases"][1]["outcomes"] = ["complete"]
+    elif fault == "no_retry":
+        full["cases"][-1]["outcomes"] = ["AGENT_PAUSED"]
+    elif fault == "undo_push":
+        full["native_undo_pushes"] = 1
+    elif fault == "hook_leak":
+        full["hooks_restored"] = False
+    elif fault == "server_running":
+        full["services_stopped"] = False
+    elif fault == "broader_claim":
+        full["shipping_caller_qualified"] = True
+    elif fault == "source_changed":
+        full["source_unchanged"] = False
+    assert not case.validate_full(full, phase=full["phase"], process_instance=full["process_instance"],
+                                  sources=full["source_fingerprints"], binary=full["binary"], process_id=full["process_id"])
+
+
+
+def test_storage_actual_dispatch_has_no_replica_or_manual_context_binding():
+    import ast
+
+    from scripts import blender_storage_snapshot_dispatch_smoke as case
+    tree = ast.parse(Path(case.__file__).read_text())
+    forbidden = {"check_final_request", "check_cancelled", "checkpoint_method", "request_lifecycle", "request_id"}
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            assert not any(isinstance(item, ast.Attribute) and isinstance(item.ctx, ast.Store) and item.attr in forbidden
+                           for target in targets for item in ast.walk(target))
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            assert node.func.id not in {"FunctionType", "QueuedRequest", "RequestLifetime"}
+    names = case.source_names()
+    assert names[0] == "scripts/blender_storage_snapshot_dispatch_smoke.py"
+    assert len(set(names)) == len(names)
+    assert case.METHOD == "simulation.cache_preview"
+
+
+
+@pytest.mark.parametrize("fault", ("alien_wire", "overlapping_cases", "unmatched_action", "missing_terminal",
+                                   "fake_terminal", "invented_denial", "wire_success_for_denial", "extra_disconnect_wire",
+                                   "terminal_wrong_error", "integer_consumed", "null_parser", "no_writer_events",
+                                   "no_stop_closes", "claimed_full_executor_observation"))
+def test_storage_actual_dispatch_binds_queue_terminal_and_wire_outcomes(fault):
+    import hashlib
+    from copy import deepcopy
+
+    phase = "stops" if fault in {"extra_disconnect_wire", "terminal_wrong_error", "no_stop_closes"} else "success_denial"
+    case, full = _storage_dispatch_report_model(phase)
+    if fault == "alien_wire":
+        full["wire"][0]["id"] = "f" * 32
+        full["wire"][0]["response"]["id"] = "f" * 32
+        full["wire"][0]["sha256"] = hashlib.sha256(case.gateway.canonical(full["wire"][0]["response"])).hexdigest()
+    elif fault == "overlapping_cases":
+        full["cases"][1]["requests"][0] = full["cases"][0]["requests"][0]
+    elif fault == "unmatched_action":
+        full["sent"][0]["action"] = "inspect"
+    elif fault == "missing_terminal":
+        full["terminal"].pop()
+    elif fault == "fake_terminal":
+        full["terminal"][0]["completed"] = False
+    elif fault == "invented_denial":
+        full["cases"][0]["outcomes"] = ["PERMISSION_DENIED", "complete"]
+    elif fault == "wire_success_for_denial":
+        identifier = full["cases"][1]["requests"][1]
+        wire = next(row for row in full["wire"] if row["id"] == identifier)
+        wire["response"] = {"id": identifier, "protocol_version": "1.0", "ok": True,
+                            "result": {"cleanup": deepcopy(full["cases"][1]["cleanup"])}}
+        wire["sha256"] = hashlib.sha256(case.gateway.canonical(wire["response"])).hexdigest()
+    elif fault == "extra_disconnect_wire":
+        identifier = full["cases"][1]["requests"][0]
+        terminal = next(row for row in full["terminal"] if row["id"] == identifier)
+        full["wire"].append({"id": identifier, "response": terminal["response"],
+                             "sha256": hashlib.sha256(case.gateway.canonical(terminal["response"])).hexdigest()})
+    elif fault == "terminal_wrong_error":
+        identifier = full["cases"][1]["requests"][0]
+        next(row for row in full["terminal"] if row["id"] == identifier)["response"]["error"]["code"] = "SERVER_ERROR"
+    elif fault == "integer_consumed":
+        full["cases"][0]["journal"]["snapshots"][0]["consumed"] = 1
+    elif fault == "null_parser":
+        full["cases"][0]["journal"]["snapshots"][0]["parser_entered"] = None
+    elif fault == "no_writer_events":
+        full["cases"][0]["events"] = []
+    elif fault == "no_stop_closes":
+        full["cases"][0]["events"] = [event for event in full["cases"][0]["events"] if event["name"] != "close"]
+    else:
+        full["full_executor_after_stop_qualified"] = True
+    assert not case.validate_full(full, phase=phase, process_instance=full["process_instance"],
+                                  sources=full["source_fingerprints"], binary=full["binary"], process_id=full["process_id"])
+
+
+
+def _storage_dispatch_retained_model(tmp_path, monkeypatch, kind="success"):
+    """Synthetic SDNA/parser model; never supplies native acceptance."""
+    import hashlib
+    import importlib.util
+    import os
+    import sys
+    from copy import deepcopy
+
+    from test_blend_storage_sdna import BlendModel
+
+    from scripts import blender_storage_snapshot_dispatch_smoke as case
+
+    blob = BlendModel(502)
+    targets = []
+    for index, label in enumerate(("A", "B")):
+        address = 0x1000 + index * 0x1000
+        scene, identifier, layer = blob.record("Scene"), blob.record("ID"), blob.record("ViewLayer")
+        blob.put(identifier, "ID", "name", "SCScene" + label)
+        blob.embed(scene, "Scene", "id", identifier)
+        blob.embed(scene, "Scene", "view_layers", blob.linked(address + 0x100, address + 0x100))
+        blob.put(layer, "ViewLayer", "name", "Layer" + label)
+        blob.add("Scene", address, scene, b"SC\0\0")
+        blob.add("ViewLayer", address + 0x100, layer)
+        targets.append({"scene_name": "Scene" + label, "view_layer_name": "Layer" + label})
+    source = tmp_path / "source" / "addon/blender_codex_bridge/blend_storage_sdna.py"
+    source.parent.mkdir(parents=True)
+    source.write_bytes((ROOT / "addon/blender_codex_bridge/blend_storage_sdna.py").read_bytes()
+                       + ("\nLAYOUT_PINS = (" + repr(blob.pin()) + ",)\n").encode())
+    monkeypatch.setattr(case, "ROOT", tmp_path / "source")
+    phase = "stops" if kind == "cancel_after_writer" else "failures" if kind == "file_replace" else "success_denial"
+    prefix = phase + "-" + kind
+    root = tmp_path / (prefix + "-owned")
+    root.mkdir(mode=0o700)
+    child = root / ("bcb-storage-" + "a" * 32)
+    child.mkdir(mode=0o700)
+    evidence = tmp_path / (prefix + "-evidence")
+    evidence.mkdir(mode=0o700)
+    native, copyfile = child / "snapshot.blend", evidence / "0.blend"
+    for path in (native, copyfile):
+        path.write_bytes(blob.output())
+        os.chmod(path, 0o600)
+    info = native.stat()
+    identity = [info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns]
+    checksum = hashlib.sha256(native.read_bytes()).hexdigest()
+    unknown = kind == "cancel_after_writer"
+    cell = {"root": str(root), "directory": str(child), "filepath": str(native),
+            "root_identity": [root.stat().st_dev, root.stat().st_ino],
+            "directory_identity": [child.stat().st_dev, child.stat().st_ino],
+            "file_identity": [] if unknown else identity, "file_bytes": None if unknown else info.st_size,
+            "file_sha256": None if unknown else checksum}
+    spec = importlib.util.spec_from_file_location("_storage_dispatch_model_reader", source)
+    parser = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = parser
+    try:
+        spec.loader.exec_module(parser)
+    finally:
+        sys.modules.pop(spec.name, None)
+    copy = {"owner_index": 0, "original_path": str(native), "original_identity": identity,
+            "original_binding": None if unknown else [info.st_dev, info.st_ino, info.st_uid, 0o600, 1, info.st_size, info.st_mtime_ns, info.st_ctime_ns],
+            "original_sha256": checksum, "copy": case.gateway.ordinary_file(copyfile, 1024**3),
+            "retained_parser": [{"target": target, "result": parser.inspect_view_layer_storage(str(copyfile),
+                                target["scene_name"], target["view_layer_name"], allowed_names=parser.CYCLES_502_NAMES)} for target in targets]}
+    _, template = _storage_cleanup_report_model("success")
+    receipt = deepcopy(template["cases"][0]["cleanup_receipts"][0]["receipt"])
+    done = kind == "success"
+    receipt.update(root=str(root), directory_leaf=child.name, original_file_identity_known=not unknown,
+                   complete=done, unlink_entered=done, unlink_returned=done, rmdir_entered=done, rmdir_returned=done,
+                   retained_unknown=unknown)
+    sentinel = tmp_path / (prefix + "-sentinel.bin")
+    record = case.cleanup.create_file(sentinel, b"PROTECTED INDEPENDENT SENTINEL")
+    row = {"name": kind, "owned_root": str(root), "raw_targets": targets,
+           "before": {"targets": deepcopy(targets)}, "after": {"targets": deepcopy(targets)},
+           "journal": {"snapshots": [cell]}, "copy": copy, "cleanup": receipt, "sentinel": record}
+    if done:
+        native.unlink()
+        child.rmdir()
+    elif kind == "file_replace":
+        native.rename(child / "snapshot.blend-original")
+        case.cleanup.create_file(native, b"FOREIGN REPLACEMENT")
+    return case, {"phase": phase, "version": [5, 2, 2], "cases": [row]}, copyfile
+
+
+
+@pytest.mark.parametrize("kind", ("success", "cancel_after_writer", "file_replace"))
+def test_storage_dispatch_retained_cold_reader_binds_known_unknown_and_foreign_artifacts(tmp_path, monkeypatch, kind):
+    case, full, _copy = _storage_dispatch_retained_model(tmp_path, monkeypatch, kind)
+    assert case.validate_retained(full, tmp_path) is True
+
+
+
+@pytest.mark.parametrize("fault", ("copy_hash", "copy_path", "copy_mode", "copy_hardlink", "copy_symlink", "copy_extra",
+                                   "sentinel", "root_mode", "root_identity", "cell_root", "cell_path", "directory_bool",
+                                   "identity_float", "identity_inode", "binding_inode", "binding_uid", "binding_links",
+                                   "known_binding_missing", "unknown_binding_adopted", "targets_duplicate", "target_before",
+                                   "target_after", "projection", "live_original", "foreign_file", "unknown_extra"))
+def test_storage_dispatch_retained_forged_bindings_and_live_files_refuse(tmp_path, monkeypatch, fault):
+    import os
+
+    kind = "cancel_after_writer" if fault in {"unknown_binding_adopted", "live_original", "unknown_extra"} else "file_replace" if fault == "foreign_file" else "success"
+    case, full, path = _storage_dispatch_retained_model(tmp_path, monkeypatch, kind)
+    assert case.validate_retained(full, tmp_path)
+    row, cell = full["cases"][0], full["cases"][0]["journal"]["snapshots"][0]
+    copy = row["copy"]
+    if fault == "copy_hash":
+        copy["copy"]["sha256"] = "0" * 64
+    elif fault == "copy_path":
+        copy["copy"]["path"] = str(path.with_name("foreign.blend"))
+    elif fault == "copy_mode":
+        path.chmod(0o644)
+    elif fault == "copy_hardlink":
+        os.link(path, tmp_path / "foreign-hardlink")
+    elif fault == "copy_symlink":
+        path.rename(tmp_path / "symlink-target")
+        path.symlink_to(tmp_path / "symlink-target")
+    elif fault == "copy_extra":
+        path.with_name("extra.blend").write_bytes(b"foreign")
+    elif fault == "sentinel":
+        Path(row["sentinel"]["path"]).write_bytes(b"changed")
+    elif fault == "root_mode":
+        Path(row["owned_root"]).chmod(0o755)
+    elif fault == "root_identity":
+        cell["root_identity"][1] += 1
+    elif fault == "cell_root":
+        cell["root"] = str(tmp_path)
+    elif fault == "cell_path":
+        cell["filepath"] = str(path)
+    elif fault == "directory_bool":
+        cell["directory_identity"][0] = True
+    elif fault == "identity_float":
+        copy["original_identity"][0] = float(copy["original_identity"][0])
+    elif fault == "identity_inode":
+        copy["original_identity"][1] += 1
+    elif fault == "binding_inode":
+        copy["original_binding"][1] += 1
+    elif fault == "binding_uid":
+        copy["original_binding"][2] += 1
+    elif fault == "binding_links":
+        copy["original_binding"][4] = 2
+    elif fault == "known_binding_missing":
+        copy["original_binding"] = None
+    elif fault == "unknown_binding_adopted":
+        copy["original_binding"] = [*copy["original_identity"][:2], os.geteuid(), 0o600, 1, *copy["original_identity"][2:], 1]
+    elif fault == "targets_duplicate":
+        row["raw_targets"][1] = dict(row["raw_targets"][0])
+    elif fault == "target_before":
+        row["before"]["targets"][0]["scene_name"] = "foreign"
+    elif fault == "target_after":
+        row["after"]["targets"][0]["scene_name"] = "foreign"
+    elif fault == "projection":
+        copy["retained_parser"][0]["result"]["storage_fingerprint"] = "0" * 64
+    elif fault == "live_original":
+        Path(cell["filepath"]).write_bytes(b"changed")
+    elif fault == "foreign_file":
+        Path(cell["filepath"]).write_bytes(b"changed foreign")
+    elif fault == "unknown_extra":
+        Path(cell["directory"], "foreign-entry").write_bytes(b"foreign")
+    with pytest.raises((ValueError, OSError)):
+        case.validate_retained(full, tmp_path)
+
+
+
+def test_storage_dispatch_retained_rehashes_copy_after_cold_parser(tmp_path, monkeypatch):
+    import importlib.util
+
+    case, full, path = _storage_dispatch_retained_model(tmp_path, monkeypatch)
+    original = importlib.util.spec_from_file_location
+    def instrument(name, location, *args, **kwargs):
+        spec = original(name, location, *args, **kwargs)
+        if name != "_bcb_dispatch_cold_sdna":
+            return spec
+        loader = spec.loader
+        class AfterParse:
+            def create_module(self, _spec):
+                return None
+
+            def exec_module(self, module):
+                loader.exec_module(module)
+                read, count = module.inspect_view_layer_storage, [0]
+                def changed(*args, **kwargs):
+                    result = read(*args, **kwargs)
+                    count[0] += 1
+                    if count[0] == 2:
+                        path.write_bytes(path.read_bytes() + b"X")
+                    return result
+                module.inspect_view_layer_storage = changed
+        spec.loader = AfterParse()
+        return spec
+    monkeypatch.setattr(importlib.util, "spec_from_file_location", instrument)
+    with pytest.raises(ValueError, match="COPY_CHANGED_DURING_PARSE"):
+        case.validate_retained(full, tmp_path)
+
+
+
+def _storage_dispatch_cached_failure_env(case):
+    from types import SimpleNamespace
+
+    class StoppedInspection:
+        def __getattribute__(self, name):
+            raise AssertionError("Stopped service was inspected: " + name)
+
+    primary = {"type": "AssertionError", "code": None, "reason": None, "message": None, "frames": []}
+    typed = {"code": "NOT_IMPLEMENTED", "message": "Stored-settings observation refused",
+             "context": {"reason": "OBSERVED_NATIVE_REASON"}}
+    return SimpleNamespace(worker_failure=primary, worker_close_failure=None, rows={"success": {"name": "success", "events": []}},
+        options=SimpleNamespace(bridge_phase="success_denial"), wire=[{"id": "owned", "response": {"ok": False, "error": typed}}],
+        sent=[{"id": "owned", "action": "capture", "case": "success"}], terminal=[], request_ids=["owned"],
+        dispatch=[{"id": "owned", "actual_closure": True}], operations=StoppedInspection(), journals=StoppedInspection(),
+        executor=StoppedInspection(), server=StoppedInspection(), state=StoppedInspection(), bpy=StoppedInspection())
+
+
+
+def test_storage_dispatch_failure_retains_cached_native_wire_and_original_worker_error(monkeypatch):
+    from scripts import blender_storage_snapshot_dispatch_smoke as case
+
+    env = _storage_dispatch_cached_failure_env(case)
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("Failure diagnostics inspected a stopped dependency")
+    monkeypatch.setattr(case.gateway, "exception_receipt", forbidden)
+    monkeypatch.setattr(case, "source_fingerprints", forbidden)
+    result = case.Fixture.cached_failure(env)
+    assert result["failure"] is env.worker_failure and result["worker_failure"] is env.worker_failure
+    assert result["wire"] is env.wire and result["wire"][0]["response"]["error"]["context"]["reason"] == "OBSERVED_NATIVE_REASON"
+    assert result["cases"] == [env.rows["success"]] and result["cases"][0] is env.rows["success"]
+    for name in ("sent", "terminal", "request_ids", "dispatch"):
+        assert result[name] is getattr(env, name)
+    assert result["completed"] is False and result["actual_dispatch_qualified"] is False and result["transport_qualified"] is False
+
+
+
+def test_storage_dispatch_worker_failure_tick_persists_primary_without_assert_replacement(monkeypatch):
+    import queue
+    from types import MethodType
+
+    from scripts import blender_storage_snapshot_dispatch_smoke as case
+
+    env = _storage_dispatch_cached_failure_env(case)
+    env.deadline, env.controls, env.data = float("inf"), queue.Queue(), {}
+    env.done = __import__("threading").Event()
+    env.done.set()
+    env.cached_failure = MethodType(case.Fixture.cached_failure, env)
+    events = []
+    env.flush = lambda: events.append(("flush", env.data["failure"]))
+    env.finish = lambda status: events.append(("finish", status))
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("Original worker failure must not be reformatted or replaced")
+    monkeypatch.setattr(case.gateway, "exception_receipt", forbidden)
+    assert case.Fixture.tick(env) is None
+    assert env.data["failure"] is env.worker_failure
+    assert env.data["wire"][0]["response"]["error"]["code"] == "NOT_IMPLEMENTED"
+    assert events == [("flush", env.worker_failure), ("finish", 1)]
+
+
+
+def test_storage_dispatch_failure_without_worker_keeps_original_typed_exception():
+    from scripts import blender_storage_snapshot_dispatch_smoke as case
+
+    env = _storage_dispatch_cached_failure_env(case)
+    env.worker_failure = None
+    class OriginalFailure(Exception):
+        def __str__(self):
+            raise AssertionError("Do not format the original typed failure")
+    error = OriginalFailure("original diagnostic")
+    error.code, error.context = "NOT_IMPLEMENTED", {"reason": "SOURCE_REFUSAL"}
+    result = case.Fixture.cached_failure(env, error)
+    assert result["failure"]["type"] == "OriginalFailure"
+    assert result["failure"]["code"] == "NOT_IMPLEMENTED" and result["failure"]["reason"] == "SOURCE_REFUSAL"
+    assert result["failure"]["message"] == "original diagnostic" and result["worker_failure"] is None
+
+
+
+def test_storage_dispatch_worker_close_failure_keeps_primary_and_cached_secondary(monkeypatch):
+    import threading
+    from types import SimpleNamespace
+
+    from scripts import blender_storage_snapshot_dispatch_smoke as case
+
+    class Client:
+        def close(self):
+            raise OSError("secondary owned socket close")
+    def original(*_args):
+        raise RuntimeError("original owned fixture failure")
+    monkeypatch.setattr(case, "Client", lambda *_args: Client())
+    env = SimpleNamespace(options=SimpleNamespace(bridge_phase="success_denial"), control=original,
+                          worker_failure=None, worker_close_failure=None, done=threading.Event())
+    case.Fixture.worker(env, 12345)
+    assert env.done.is_set()
+    assert env.worker_failure["type"] == "RuntimeError" and env.worker_failure["message"] == "original owned fixture failure"
+    assert env.worker_close_failure["type"] == "OSError" and env.worker_close_failure["message"] == "secondary owned socket close"
+
+
+def _storage_runtime_context_report_model():
+    """Finite synthetic diagnostic input; this is never native acceptance evidence."""
+    from copy import deepcopy
+
+    from scripts import blender_storage_snapshot_adapter_smoke as case
+    _, adapter = _storage_adapter_report_model("valid")
+    _, cleanup = _storage_cleanup_report_model("success")
+    template = adapter["cases"][0]
+    owned = cleanup["cases"][0]
+    display_binding = {"path": "/owned/private-display.json", "bytes": 123, "sha256": "d" * 64}
+    full = {key: deepcopy(adapter[key]) for key in ("version", "build_hash", "blender_version", "process_instance",
+        "process_id", "source_fingerprints", "binary", "source_unchanged")}
+    full.update(schema=case.RUNTIME_SCHEMA, profile=case.RUNTIME_PROFILE, phase="runtime_context", completed=True,
+        private_display={"manifest_path": display_binding["path"], "manifest_sha256": display_binding["sha256"],
+                         "manifest": {"input_disabled": True, "owned_process": True, "tcp_disabled": True}},
+        private_display_binding=display_binding,
+        source_fixture_scope={"factory_owned": True, "image_size": [2, 2], "dirty_current_buffer": True,
+            "raw_setup_before_each_operation_baseline": True, "current_pixels_serialized_backup_claimed": False},
+        declared_names=list(case.NAMES), target_pair=deepcopy(template["raw_targets"]), cases=[], sent=[], wire=[],
+        terminal=[], dispatch=[], fixture_only_registration=True, original_preferences_provider=True,
+        python_disabled=True, jobs_non_null=True, hooks_restored=True, services_stopped=True,
+        native_undo_pushes=0, case_deadline_seconds=300, limitations=dict.fromkeys(case.RUNTIME_FALSE, False))
+    for ordinal, name in enumerate(case.RUNTIME_SCENARIOS):
+        ids = [format(ordinal * 2 + index + 1, "032x") for index in range(2)]
+        row = {"name": name, "requests": ids, "before": deepcopy(template["before"]), "after": deepcopy(template["after"]),
+            "source_preserved": True, "owned_root": "/owned/" + name + "-owned", "evidence_root": "/owned/" + name + "-evidence",
+            "journal": None, "copy": None, "cleanup": None, "witness_consumed": name == "success",
+            "factory_restored": True, "healthy_after": True, "projections": [],
+            "target_identities": deepcopy(template["target_identities"])}
+        if name == "success":
+            row["journal"] = deepcopy(owned["journal_after"])
+            cell = row["journal"]["snapshots"][0]
+            cell.update(reserved=True, directory_entered=True, directory_returned=True, native_entered=True, native_returned=True,
+                        parser_entered=True, parser_returned=True, identity_verified=True, consumed=True,
+                        cleanup_entered=True, cleanup_returned=True, stopped=False, failed=False,
+                        retained_directory_possible=False, retained_file_possible=False, native_completion_means_source_preserved=False,
+                        available_memory_bytes=8 * 1024**3, available_disk_bytes=2 * 1024**3, native_seconds=.001)
+            row["copy"] = deepcopy(owned["evidence_copies"][0])
+            row["cleanup"] = deepcopy(owned["cleanup_receipts"][0]["receipt"])
+            row["projections"] = deepcopy(template["projections"])
+            child = row["owned_root"] + "/" + row["cleanup"]["directory_leaf"]
+            cell.update(root=row["owned_root"], directory=child, filepath=child + "/snapshot.blend")
+            row["copy"]["original_path"] = cell["filepath"]
+            row["cleanup"]["root"] = row["owned_root"]
+        full["cases"].append(row)
+        for index, (identifier, action) in enumerate(zip(ids, ("capture", "inspect"), strict=True)):
+            denial = action == "capture" and name != "success"
+            response = {"id": identifier, "protocol_version": "1.0", "ok": not denial, "timestamp": "2026-10-30T00:00:00+00:00"}
+            if denial:
+                response["error"] = {"code": "PERMISSION_DENIED" if name == "permission_denial" else "NOT_IMPLEMENTED",
+                    "message": "Owned diagnostic refusal.",
+                    "context": {} if name == "permission_denial" else {"reason": "GLB_CANONICAL_CONTEXT_COMPONENT_CHANGED"}}
+            else:
+                response["result"] = {"captured": True} if action == "capture" else {"healthy": True}
+            sent = {"id": identifier, "action": action, "case": name}
+            full["sent"].append(sent)
+            full["wire"].append({"id": identifier, "response": response,
+                                 "sha256": hashlib.sha256(case.canonical(response)).hexdigest()})
+            counts = {"provider": 0 if name == "factory_crossbinding" and index == 0 else 1,
+                      **dict.fromkeys(("domain", "writer_entered", "writer_returned"), int(name == "success" and index == 0))}
+            full["terminal"].append({"id": identifier, "state": "completed", "completed": True,
+                                     "response": deepcopy(response), "counts": counts})
+            if not denial:
+                full["dispatch"].append({**sent, "components": dict.fromkeys(case.RUNTIME_COMPONENTS, True)})
+    return case, full
+
+
+def _runtime_context_model_valid(case, full):
+    return case.validate_runtime_context(full, process_instance=full["process_instance"], process_id=full["process_id"],
+                                         sources=full["source_fingerprints"], binary=full["binary"])
+
+
+@pytest.mark.parametrize("field", ("ok", "captured"))
+@pytest.mark.parametrize("counterfeit", (1, 1.0))
+def test_storage_runtime_context_terminal_response_retains_exact_wire_boolean_types(field, counterfeit):
+    case, full = _storage_runtime_context_report_model()
+    response = full["terminal"][0]["response"]
+    if field == "ok":
+        response["ok"] = counterfeit
+    else:
+        response["result"]["captured"] = counterfeit
+    assert not _runtime_context_model_valid(case, full)
+
+
+def test_storage_runtime_context_finite_model_requires_actual_queue_and_jobs_evidence():
+    case, full = _storage_runtime_context_report_model()
+    assert _runtime_context_model_valid(case, full)
+    assert len(full["sent"]) == len(full["terminal"]) == len(full["wire"]) == 6
+    assert len(full["dispatch"]) == 4 and all(value is False for value in full["limitations"].values())
+
+
+@pytest.mark.parametrize("fault", ("extra_top_key", "missing_case", "duplicate_id", "nonhex_id", "wire_digest", "wire_error",
+    "terminal_response", "terminal_order", "terminal_count_bool", "terminal_count_float", "missing_terminal", "extra_dispatch",
+    "null_jobs", "foreign_factory", "replica_closure", "foreign_owner", "wrong_thread", "source_changed", "scene_changed",
+    "native_before_denial", "provider_before_factory_refusal", "missing_denial", "wrong_factory_reason", "unhealthy_recovery",
+    "writer_missing", "unconsumed", "low_memory", "low_disk", "undo_bool", "deadline_float", "broad_claim", "hook_leak"))
+def test_storage_runtime_context_model_refuses_counterfeit_or_incomplete_receipts(fault):
+    case, full = _storage_runtime_context_report_model()
+    if fault == "extra_top_key":
+        full["new_claim"] = True
+    elif fault == "missing_case":
+        full["cases"].pop()
+    elif fault in {"duplicate_id", "nonhex_id"}:
+        full["sent"][0]["id"] = full["sent"][1]["id"] if fault == "duplicate_id" else "z" * 32
+    elif fault == "wire_digest":
+        full["wire"][0]["sha256"] = "0" * 64
+    elif fault == "wire_error":
+        full["wire"][0]["response"]["error"] = {"code": "NOT_IMPLEMENTED"}
+    elif fault == "terminal_response":
+        full["terminal"][0]["response"]["result"]["captured"] = False
+    elif fault == "terminal_order":
+        full["terminal"][:2] = reversed(full["terminal"][:2])
+    elif fault in {"terminal_count_bool", "terminal_count_float"}:
+        full["terminal"][0]["counts"]["writer_returned"] = True if fault.endswith("bool") else 1.0
+    elif fault == "missing_terminal":
+        full["terminal"].pop()
+    elif fault == "extra_dispatch":
+        full["dispatch"].append(dict(full["dispatch"][0]))
+    elif fault in {"null_jobs", "foreign_factory", "replica_closure", "foreign_owner", "wrong_thread"}:
+        key = {"null_jobs": "jobs_non_null", "foreign_factory": "factory_origin", "replica_closure": "original_closure",
+               "foreign_owner": "queued_owner", "wrong_thread": "main_thread"}[fault]
+        full["dispatch"][0]["components"][key] = False
+    elif fault == "source_changed":
+        full["source_unchanged"] = False
+    elif fault == "scene_changed":
+        full["cases"][0]["after"]["home"]["image"]["pixels_sha256_float32"] = "0" * 64
+    elif fault == "native_before_denial":
+        full["terminal"][2]["counts"]["writer_entered"] = 1
+    elif fault == "provider_before_factory_refusal":
+        full["terminal"][4]["counts"]["provider"] = 1
+    elif fault in {"missing_denial", "wrong_factory_reason"}:
+        index = 2 if fault == "missing_denial" else 4
+        full["wire"][index]["response"]["error"]["code" if index == 2 else "context"] = (
+            "NOT_IMPLEMENTED" if index == 2 else {"reason": "OTHER"})
+        full["wire"][index]["sha256"] = hashlib.sha256(case.canonical(full["wire"][index]["response"])).hexdigest()
+        full["terminal"][index]["response"] = json.loads(case.canonical(full["wire"][index]["response"]))
+    elif fault == "unhealthy_recovery":
+        full["cases"][1]["healthy_after"] = False
+    elif fault == "writer_missing":
+        full["terminal"][0]["counts"]["writer_returned"] = 0
+    elif fault == "unconsumed":
+        full["cases"][0]["witness_consumed"] = False
+    elif fault in {"low_memory", "low_disk"}:
+        full["cases"][0]["journal"]["snapshots"][0]["available_memory_bytes" if fault == "low_memory" else "available_disk_bytes"] = 0
+    elif fault == "undo_bool":
+        full["native_undo_pushes"] = False
+    elif fault == "deadline_float":
+        full["case_deadline_seconds"] = 300.0
+    elif fault == "broad_claim":
+        full["limitations"]["canonical_job_resumption_qualified"] = True
+    elif fault == "hook_leak":
+        full["hooks_restored"] = False
+    assert not _runtime_context_model_valid(case, full)
+
+
+@pytest.mark.parametrize("fault", ("scope_extra", "scope_bool", "scope_float", "identity_bool", "identity_float", "identity_tuple",
+    "layer_bool", "layer_float", "identity_name", "timestamp_empty", "timestamp_bool", "timestamp_oversize", "response_extra",
+    "result_extra", "result_integer", "error_extra", "error_message_bool", "error_context_list", "journal_capacity_bool",
+    "journal_capacity_float", "journal_extra", "journal_false_claim", "cell_extra", "cell_missing", "cell_boolean_integer",
+    "cell_stopped", "cell_retained_claim", "projection_bool", "projection_float", "parser_tuple"))
+def test_storage_runtime_context_model_requires_exact_typed_schema_and_lifecycle_cells(fault):
+    from copy import deepcopy
+
+    case, full = _storage_runtime_context_report_model()
+    row = full["cases"][0]
+    journal, cell = row["journal"], row["journal"]["snapshots"][0]
+    response_index = 2 if fault.startswith("error_") else 0
+    response = full["wire"][response_index]["response"]
+    if fault == "scope_extra":
+        full["source_fixture_scope"]["new_claim"] = True
+    elif fault in {"scope_bool", "scope_float"}:
+        full["source_fixture_scope"]["image_size"][0] = True if fault.endswith("bool") else 2.0
+    elif fault in {"identity_bool", "identity_float", "identity_tuple"}:
+        identity = row["target_identities"][0]
+        if fault == "identity_tuple":
+            identity["scene_identity"] = tuple(identity["scene_identity"])
+        else:
+            identity["scene_identity"][0] = True if fault.endswith("bool") else 11.0
+            row["projections"][0]["scene"][0] = identity["scene_identity"][0]
+    elif fault in {"layer_bool", "layer_float"}:
+        identity = row["target_identities"][0]
+        identity["layer_identity"][0] = True if fault.endswith("bool") else 31.0
+        row["projections"][0]["layer"][0] = identity["layer_identity"][0]
+    elif fault == "identity_name":
+        row["target_identities"][0]["scene_identity"][2] = "foreign"
+    elif fault.startswith("timestamp_"):
+        response["timestamp"] = {"timestamp_empty": "", "timestamp_bool": True, "timestamp_oversize": "x" * 129}[fault]
+    elif fault == "response_extra":
+        response["new_claim"] = True
+    elif fault == "result_extra":
+        response["result"]["new_claim"] = True
+    elif fault == "result_integer":
+        response["result"]["captured"] = 1
+    elif fault == "error_extra":
+        response["error"]["new_claim"] = True
+    elif fault == "error_message_bool":
+        response["error"]["message"] = True
+    elif fault == "error_context_list":
+        response["error"]["context"] = []
+    elif fault in {"journal_capacity_bool", "journal_capacity_float"}:
+        journal["capacity"] = True if fault.endswith("bool") else 1.0
+    elif fault == "journal_extra":
+        journal["new_claim"] = True
+    elif fault == "journal_false_claim":
+        journal["runtime_retention_qualified"] = True
+    elif fault == "cell_extra":
+        cell["new_claim"] = True
+    elif fault == "cell_missing":
+        cell.pop("directory_entered")
+    elif fault == "cell_boolean_integer":
+        cell["consumed"] = 1
+    elif fault == "cell_stopped":
+        cell["stopped"] = True
+    elif fault == "cell_retained_claim":
+        cell["retained_file_possible"] = True
+    elif fault in {"projection_bool", "projection_float"}:
+        row["projections"][0]["children"][0][1] = True if fault.endswith("bool") else 1.0
+    elif fault == "parser_tuple":
+        row["copy"]["retained_parser"] = tuple(row["copy"]["retained_parser"])
+    full["wire"][response_index]["sha256"] = hashlib.sha256(case.canonical(response)).hexdigest()
+    full["terminal"][response_index]["response"] = deepcopy(response)
+    assert not _runtime_context_model_valid(case, full)
+
+
+def _storage_runtime_context_retained_model(tmp_path, monkeypatch):
+    """Small synthetic blend storage parsed independently for both targets."""
+    from copy import deepcopy
+
+    dispatch, prior, path = _storage_dispatch_retained_model(tmp_path, monkeypatch)
+    case, full = _storage_runtime_context_report_model()
+    monkeypatch.setattr(case, "ROOT", dispatch.ROOT)
+    previous = prior["cases"][0]
+    old_root, old_evidence = Path(previous["owned_root"]), path.parent
+    root, evidence = tmp_path / "success-owned", tmp_path / "success-evidence"
+    old_root.rename(root)
+    old_evidence.rename(evidence)
+    path = evidence / "0.blend"
+    row = full["cases"][0]
+    row.update(owned_root=str(root), evidence_root=str(evidence), journal=previous["journal"],
+               copy=previous["copy"], cleanup=previous["cleanup"])
+    child = root / Path(row["journal"]["snapshots"][0]["directory"]).name
+    native = child / "snapshot.blend"
+    cell = row["journal"]["snapshots"][0]
+    cell.update(root=str(root), directory=str(child), filepath=str(native))
+    row["copy"].update(original_path=str(native), copy=case.ordinary_file(path, 1024**3))
+    row["cleanup"]["root"] = str(root)
+    full["version"], full["build_hash"], full["blender_version"] = [5, 2, 2], case.BUILDS[(5, 2, 2)], "5.2.2"
+    full["declared_names"] = list(case.NAMES + case.EXTRA_NAMES)
+    full["target_pair"] = previous["raw_targets"]
+    row["target_identities"] = [{"scene_identity": [11 + i, 21 + i, target["scene_name"]],
+                                 "layer_identity": [31 + i, target["view_layer_name"]]}
+                                for i, target in enumerate(full["target_pair"])]
+    row["projections"] = []
+    for proof, identity in zip(row["copy"]["retained_parser"], row["target_identities"], strict=True):
+        raw = proof["result"]
+        fields = ("name", "type", "subtype", "flag", "len", "totallen")
+        def header(value, fields=fields):
+            return None if value is None else [value[key] for key in fields]
+        storage = raw["storage"]
+        row["projections"].append({"scene": identity["scene_identity"], "layer": identity["layer_identity"],
+            "state": storage["state"], "storage": storage["storage"], "root_present": storage["root_present"],
+            "root": header(storage["root_header"]), "group": header(storage["property"]),
+            "children": [[*[child[key] for key in fields], child["value"], child["value2"]] for child in storage["children"]],
+            "storage_fingerprint": raw["storage_fingerprint"]})
+    for denied in full["cases"][1:]:
+        for suffix, key in (("owned", "owned_root"), ("evidence", "evidence_root")):
+            directory = tmp_path / (denied["name"] + "-" + suffix)
+            directory.mkdir(mode=0o700)
+            denied[key] = str(directory)
+        denied["target_identities"] = deepcopy(row["target_identities"])
+    return case, full, path
+
+
+def test_storage_runtime_context_retained_cold_reader_binds_both_original_targets(tmp_path, monkeypatch):
+    case, full, _path = _storage_runtime_context_retained_model(tmp_path, monkeypatch)
+    assert case.validate_runtime_retained(full, tmp_path) is True
+
+
+@pytest.mark.parametrize("fault", ("owner_index_bool", "owner_index_float", "identity_bool", "identity_float", "identity_tuple",
+    "binding_bool", "binding_float", "binding_tuple", "binding_uid", "binding_links", "binding_inode", "binding_size", "binding_missing",
+    "root_bool", "root_float", "root_tuple", "root_identity", "directory_bool", "directory_float", "directory_tuple",
+    "file_identity_bool", "file_identity_float", "file_identity_tuple", "file_bytes_bool", "file_bytes_float",
+    "cell_root", "original_path", "cell_filepath", "owner_leaf_short", "owner_leaf_nonhex", "owner_leaf_upper", "copy_extra_key",
+    "copy_hash", "copy_path", "copy_bytes_bool", "copy_bytes_float", "copy_record_extra", "parser_tuple",
+    "copy_mode", "copy_hardlink", "copy_symlink", "copy_extra_file", "root_mode", "root_nonempty",
+    "cleanup_root", "cleanup_leaf", "cleanup_extra_key", "denial_artifact", "projection", "parser_target"))
+def test_storage_runtime_context_retained_refuses_counterfeit_owner_and_file_bindings(tmp_path, monkeypatch, fault):
+    case, full, path = _storage_runtime_context_retained_model(tmp_path, monkeypatch)
+    assert case.validate_runtime_retained(full, tmp_path)
+    row, cell = full["cases"][0], full["cases"][0]["journal"]["snapshots"][0]
+    copy = row["copy"]
+    if fault.startswith("owner_index_"):
+        copy["owner_index"] = False if fault.endswith("bool") else 0.0
+    elif fault in {"identity_bool", "identity_float", "identity_tuple"}:
+        if fault == "identity_tuple":
+            copy["original_identity"] = tuple(copy["original_identity"])
+        else:
+            copy["original_identity"][0] = True if fault.endswith("bool") else float(copy["original_identity"][0])
+    elif fault.startswith("binding_"):
+        if fault == "binding_missing":
+            copy["original_binding"] = None
+        elif fault == "binding_tuple":
+            copy["original_binding"] = tuple(copy["original_binding"])
+        else:
+            index = {"binding_bool": 4, "binding_float": 4, "binding_uid": 2, "binding_links": 4,
+                     "binding_inode": 1, "binding_size": 5}[fault]
+            copy["original_binding"][index] = True if fault == "binding_bool" else 1.0 if fault == "binding_float" else copy["original_binding"][index] + 1
+    elif fault in {"root_bool", "root_float", "root_tuple", "root_identity", "directory_bool", "directory_float", "directory_tuple"}:
+        key = "directory_identity" if fault.startswith("directory") else "root_identity"
+        if fault.endswith("tuple"):
+            cell[key] = tuple(cell[key])
+        else:
+            cell[key][0] = True if fault.endswith("bool") else float(cell[key][0]) if fault.endswith("float") else cell[key][0] + 1
+    elif fault.startswith("file_identity_"):
+        if fault.endswith("tuple"):
+            cell["file_identity"] = tuple(cell["file_identity"])
+        else:
+            cell["file_identity"][0] = True if fault.endswith("bool") else float(cell["file_identity"][0])
+    elif fault.startswith("file_bytes_"):
+        cell["file_bytes"] = True if fault.endswith("bool") else float(cell["file_bytes"])
+    elif fault == "cell_root":
+        cell["root"] = str(tmp_path)
+    elif fault == "original_path":
+        copy["original_path"] = str(path)
+    elif fault == "cell_filepath":
+        cell["filepath"] = str(path)
+    elif fault.startswith("owner_leaf_"):
+        leaf = {"owner_leaf_short": "bcb-storage-a", "owner_leaf_nonhex": "bcb-storage-" + "z" * 32,
+                "owner_leaf_upper": "bcb-storage-" + "A" * 32}[fault]
+        child = Path(row["owned_root"]) / leaf
+        cell["directory"], cell["filepath"] = str(child), str(child / "snapshot.blend")
+        copy["original_path"], row["cleanup"]["directory_leaf"] = cell["filepath"], leaf
+    elif fault == "copy_extra_key":
+        copy["claimed"] = True
+    elif fault == "copy_hash":
+        copy["copy"]["sha256"] = "0" * 64
+    elif fault == "copy_path":
+        copy["copy"]["path"] = str(path.with_name("other.blend"))
+    elif fault in {"copy_bytes_bool", "copy_bytes_float"}:
+        copy["copy"]["bytes"] = True if fault.endswith("bool") else float(copy["copy"]["bytes"])
+    elif fault == "copy_record_extra":
+        copy["copy"]["claimed"] = True
+    elif fault == "parser_tuple":
+        copy["retained_parser"] = tuple(copy["retained_parser"])
+    elif fault == "copy_mode":
+        path.chmod(0o644)
+    elif fault == "copy_hardlink":
+        os.link(path, tmp_path / "foreign-hardlink")
+    elif fault == "copy_symlink":
+        path.rename(tmp_path / "foreign-target")
+        path.symlink_to(tmp_path / "foreign-target")
+    elif fault == "copy_extra_file":
+        path.with_name("extra.blend").write_bytes(b"foreign")
+    elif fault == "root_mode":
+        Path(row["owned_root"]).chmod(0o755)
+    elif fault == "root_nonempty":
+        Path(row["owned_root"], "foreign").write_bytes(b"foreign")
+    elif fault == "cleanup_root":
+        row["cleanup"]["root"] = str(tmp_path)
+    elif fault == "cleanup_leaf":
+        row["cleanup"]["directory_leaf"] = "bcb-storage-" + "b" * 32
+    elif fault == "cleanup_extra_key":
+        row["cleanup"]["new_claim"] = True
+    elif fault == "denial_artifact":
+        Path(full["cases"][1]["evidence_root"], "foreign.blend").write_bytes(b"foreign")
+    elif fault == "projection":
+        row["projections"][0]["storage_fingerprint"] = "0" * 64
+    elif fault == "parser_target":
+        copy["retained_parser"][0]["target"] = dict(full["target_pair"][1])
+    with pytest.raises((ValueError, OSError, TypeError)):
+        case.validate_runtime_retained(full, tmp_path)
+
+
+def test_storage_runtime_context_retained_rehashes_copy_after_second_cold_parse(tmp_path, monkeypatch):
+    import importlib.util
+
+    case, full, path = _storage_runtime_context_retained_model(tmp_path, monkeypatch)
+    original = importlib.util.spec_from_file_location
+    def instrument(name, location, *args, **kwargs):
+        spec = original(name, location, *args, **kwargs)
+        if name != "_bcb_runtime_context_sdna":
+            return spec
+        loader = spec.loader
+        class AfterParse:
+            def create_module(self, _spec):
+                return None
+
+            def exec_module(self, module):
+                loader.exec_module(module)
+                read, count = module.inspect_view_layer_storage, [0]
+                def changed(*args, **kwargs):
+                    result = read(*args, **kwargs)
+                    count[0] += 1
+                    if count[0] == 2:
+                        path.write_bytes(path.read_bytes() + b"X")
+                    return result
+                module.inspect_view_layer_storage = changed
+        spec.loader = AfterParse()
+        return spec
+    monkeypatch.setattr(importlib.util, "spec_from_file_location", instrument)
+    with pytest.raises(ValueError, match="COPY_CHANGED_DURING_PARSE"):
+        case.validate_runtime_retained(full, tmp_path)
+
+
+def _storage_runtime_cached_failure_env():
+    class StoppedInspection:
+        def __getattribute__(self, name):
+            raise AssertionError("Stopped Runtime dependency inspected: " + name)
+
+    typed = {"code": "NOT_IMPLEMENTED", "context": {"reason": "OBSERVED_NATIVE_REASON"}}
+    primary = {"type": "AssertionError", "message": "original owned failure"}
+    return NS(worker_error=primary, worker_close_error={"type": "OSError", "message": "secondary close"},
+        rows={"success": {"name": "success", "copy": {"original_sha256": "a" * 64}}},
+        sent=[{"id": "owned", "action": "capture", "case": "success"}],
+        wire=[{"id": "owned", "response": {"ok": False, "error": typed}}], dispatch=[{"id": "owned"}],
+        counts={"owned": {"provider": 1, "domain": 1, "writer_entered": 1, "writer_returned": 0}},
+        runtime=StoppedInspection(), bpy=StoppedInspection(), owners=StoppedInspection(), active_operation=StoppedInspection())
+
+
+def test_storage_runtime_context_failure_retains_cached_wire_counts_and_partial_rows_without_inspection(monkeypatch):
+    from scripts import blender_storage_snapshot_adapter_smoke as case
+
+    env = _storage_runtime_cached_failure_env()
+    monkeypatch.setattr(case, "exception_receipt", lambda *_args, **_kwargs: pytest.fail("Cached primary was reformatted"))
+    monkeypatch.setattr(case, "runtime_source_fingerprints", lambda: pytest.fail("Failure inspected current source"))
+    result = case.RuntimeContextDiagnostic.cached_runtime_failure(env)
+    assert result["completed"] is False and result["failure"] is env.worker_error
+    assert result["worker_failure"] is env.worker_error and result["worker_close_failure"] is env.worker_close_error
+    assert result["cases"] == [env.rows["success"]] and result["cases"][0] is env.rows["success"]
+    for key in ("sent", "wire", "dispatch", "counts"):
+        assert result[key] is getattr(env, key)
+    assert result["wire"][0]["response"]["error"]["context"]["reason"] == "OBSERVED_NATIVE_REASON"
+
+
+def test_storage_runtime_context_failure_without_worker_keeps_typed_original():
+    from scripts import blender_storage_snapshot_adapter_smoke as case
+
+    env = _storage_runtime_cached_failure_env()
+    env.worker_error = None
+    class OriginalFailure(Exception):
+        def __str__(self):
+            raise AssertionError("Do not format failure")
+    error = OriginalFailure("original strict refusal")
+    error.code, error.context = "NOT_IMPLEMENTED", {"reason": "SOURCE_REFUSAL"}
+    result = case.RuntimeContextDiagnostic.cached_runtime_failure(env, error)
+    assert result["failure"]["type"] == "OriginalFailure" and result["failure"]["message"] == "original strict refusal"
+    assert result["failure"]["code"] == "NOT_IMPLEMENTED" and result["failure"]["reason"] == "SOURCE_REFUSAL"
+
+
+def test_storage_runtime_context_failure_persists_cached_diagnostics_before_owned_exit(monkeypatch):
+    from types import MethodType
+
+    from scripts import blender_storage_snapshot_adapter_smoke as case
+
+    env = _storage_runtime_cached_failure_env()
+    env.runtime, env.original, env.data = None, None, {}
+    env.cached_runtime_failure = MethodType(case.RuntimeContextDiagnostic.cached_runtime_failure, env)
+    events = []
+    env.flush = lambda: events.append(("flush", env.data["failure"], env.data["wire"], env.data["counts"]))
+    isolation = ModuleType("scripts.blender_artist_sidebar_smoke")
+    isolation.owned_process_exit = lambda status: events.append(("exit", status))
+    monkeypatch.setitem(sys.modules, isolation.__name__, isolation)
+    monkeypatch.setattr(case, "exception_receipt", lambda *_args, **_kwargs: pytest.fail("Primary failure was reformatted"))
+    case.RuntimeContextDiagnostic.fail_runtime(env)
+    assert events == [("flush", env.worker_error, env.wire, env.counts), ("exit", 1)]
+    assert env.data["worker_close_failure"] is env.worker_close_error and env.data["fixture_cleanup_errors"] == []
+
+
+def test_storage_runtime_context_worker_preserves_primary_and_attempts_each_owned_close(monkeypatch):
+    from scripts import blender_storage_snapshot_adapter_smoke as case
+
+    events = []
+    class Stream:
+        def close(self):
+            events.append("stream_close")
+            raise OSError("secondary stream close")
+    class Client:
+        def makefile(self, mode):
+            assert mode == "rb"
+            return Stream()
+
+        def shutdown(self, how):
+            assert how == socket.SHUT_RDWR
+            events.append("shutdown")
+            raise OSError("secondary shutdown")
+
+        def close(self):
+            events.append("socket_close")
+            raise OSError("secondary socket close")
+    def original(*_args):
+        raise RuntimeError("original owned fixture failure")
+    monkeypatch.setattr(socket, "create_connection", lambda *_args, **_kwargs: Client())
+    env = NS(control=original, worker_error=None, worker_close_error=None, done=threading.Event())
+    case.RuntimeContextDiagnostic.worker_runtime(env, 12345)
+    assert env.done.is_set() and events == ["shutdown", "stream_close", "socket_close"]
+    assert env.worker_error["type"] == "RuntimeError" and env.worker_error["message"] == "original owned fixture failure"
+    assert env.worker_close_error["type"] == "OSError" and env.worker_close_error["message"] == "secondary shutdown"

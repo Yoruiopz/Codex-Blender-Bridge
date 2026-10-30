@@ -245,3 +245,76 @@ def test_call_return_is_retained_when_later_bookkeeping_fails(effects):
     assert native_changes == ["frame changed"]
     assert result["counts_by_operation"]["frame_set"] == {"entered": 1, "returned": 1}
     assert result["last_verified"] is None
+
+
+def test_cloth_operations_require_explicit_profile_and_preserve_legacy_snapshot_shape(effects):
+    call = effects.NativeCallPlan("ptcache_bake_exec")
+    plan = effects.NativePhasePlan("bake", (call,))
+    with pytest.raises(effects.BridgeError):
+        effects.SceneNativeEffects((plan,))
+    legacy = effects.snapshot_native_effects(effects.SceneNativeEffects((phase(effects),)))
+    assert "profile" not in legacy and "deferred_native_effects" not in legacy
+    assert tuple(legacy["counts_by_operation"]) == effects.OPERATIONS
+    cloth = effects.snapshot_native_effects(effects.SceneNativeEffects((plan,), profile=effects.CLOTH_PROFILE))
+    assert cloth["counts_by_operation"]["ptcache_bake_exec"] == {"entered": 0, "returned": 0}
+
+
+def test_cloth_last_verified_uses_typed_exact_call_cell(effects):
+    calls = (effects.NativeCallPlan("depsgraph_get"), effects.NativeCallPlan("evaluated_get", "Cloth"),
+             effects.NativeCallPlan("geometry_capture", "Cloth"))
+    journal = effects.SceneNativeEffects((effects.NativePhasePlan("sample", calls),), profile=effects.CLOTH_PROFILE)
+    row = journal.rows[0]
+    for bits in row.calls:
+        bits.entered = bits.returned = True
+    row.last_verified.call_index, row.verified = 2, True
+    assert effects.snapshot_native_effects(journal)["last_verified"]["operation"] == "geometry_capture"
+    row.last_verified = object()
+    with pytest.raises(effects.BridgeError):
+        effects.snapshot_native_effects(journal)
+
+
+def test_stopped_queued_workspace_effect_remains_unknown_without_native_read_or_inverse(effects):
+    call = effects.NativeCallPlan("window_workspace_set", target=(12, 13), completion_deferred=True)
+    journal = effects.SceneNativeEffects((effects.NativePhasePlan("workspace_request", (call,)),), profile=effects.CLOTH_PROFILE)
+    bits = journal.rows[0].calls[0]
+    bits.entered = bits.returned = True
+    journal.status.sealed = True
+    result = effects.snapshot_native_effects(journal)
+    assert result["deferred_native_effects"] == {"entered": 1, "completion_verified": 0,
+        "completion_unknown": 1, "automatic_inverse_or_cleanup_attempted": False}
+    bits.completion_verified = True
+    assert effects.snapshot_native_effects(journal)["deferred_native_effects"]["completion_unknown"] == 0
+
+
+@pytest.mark.parametrize("operation", ["frame_set", "ptcache_bake_exec"])
+def test_deferred_bit_is_only_reviewed_for_workspace_request(effects, operation):
+    with pytest.raises(effects.BridgeError):
+        effects.SceneNativeEffects((effects.NativePhasePlan("bad", (
+            effects.NativeCallPlan(operation, completion_deferred=True),)),), profile=effects.CLOTH_PROFILE)
+
+
+def test_cloth_unreturned_call_cannot_be_verified(effects):
+    journal = effects.SceneNativeEffects((effects.NativePhasePlan("bake", (
+        effects.NativeCallPlan("ptcache_bake_exec"),)),), profile=effects.CLOTH_PROFILE)
+    row = journal.rows[0]
+    row.calls[0].entered, row.verified, row.last_verified.call_index = True, True, 0
+    with pytest.raises(effects.BridgeError):
+        effects.snapshot_native_effects(journal)
+
+
+@pytest.mark.parametrize("operation,target", [
+    ("scene_frame_current_set", 1048574), ("scene_frame_subframe_set", .0312500037252903),
+    ("scene_frame_float_set", -.625),
+])
+def test_raw_time_setter_evidence_requires_cloth_profile_and_retains_an_unverified_prefix(effects, operation, target):
+    plan = phase(effects, "restore_raw_time", operation=operation, target=target)
+    with pytest.raises(effects.BridgeError):
+        effects.SceneNativeEffects((plan,))
+    journal = effects.SceneNativeEffects((plan,), profile=effects.CLOTH_PROFILE)
+    journal.rows[0].calls[0].entered = journal.rows[0].calls[0].returned = True
+    journal.status.sealed = True
+    snapshot = effects.snapshot_native_effects(journal)
+    assert snapshot["last_entered"]["operation"] == snapshot["last_returned"]["operation"] == operation
+    assert snapshot["last_returned"]["target"] == target
+    assert snapshot["last_verified"] is None
+    assert operation not in effects.OPERATIONS

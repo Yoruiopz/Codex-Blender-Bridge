@@ -1,6 +1,6 @@
 # Full artist implementation checklist
 
-Current direction, **2026-10-26**: finish the entire agreed artist workflow through
+Current direction, **2026-10-29**: finish the entire agreed artist workflow through
 structured tools. The 29 items below define the remaining implementation work;
 they are not a tool-count target, a scope reduction or release acceptance.
 All fourteen [release requirements](release-1.0-ledger.json) remain **OPEN**.
@@ -35,10 +35,14 @@ beyond that profile. All 29 items and fourteen gates stay **OPEN**. Meaningful
 tested prereleases are authorized, but elapsed time does not require publication,
 and stable 1.0 criteria remain unchanged.
 
-Current private work has three prerequisites: detached stored-setting snapshots
-for cloth/render observation; bounded Mesh-storage preparation with retained
-ownership/recovery; and GLB Runtime observation/creation/publication. Their native
-integration and installed acceptance remain unqualified. Mesh-storage handlers
+The [2026-10-29 development checkpoint](development-checkpoint-2026-10-29.md)
+separates qualified private prerequisites from unfinished product integration.
+Owned snapshot cleanup passed its source and native fixture checks on both Linux
+builds. The fixture uses a source-qualified request-closure replica; actual
+product dispatch, durable backup and installed acceptance remain unqualified.
+The private Mesh-storage reader passed source checks, but its latest untraced
+native preview still times out before job start. GLB Runtime integration also
+remains unqualified. Mesh-storage handlers
 and current-pixel lifecycle controllers are not public registered tools. The
 proposed paired 4K 640 MiB packed / 1 GiB saved-file profile remains private and
 unqualified; preserve accepted public save limits until new evidence qualifies

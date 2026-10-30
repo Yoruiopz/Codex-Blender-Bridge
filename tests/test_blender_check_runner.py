@@ -3635,3 +3635,1051 @@ def test_bulk_probe_runner_uses_owned_background_profile_and_actual_child_pid(ru
     assert result["status"] == "passed" and result["process_id"] == 77
     assert result["retained_evidence_valid"] is True
     assert result["qualification_scope"]["product_adoption"] is False
+
+
+def system_storage_source_model(runner, monkeypatch, tmp_path, version):
+    """Self-contained miniature DNA, explicitly not a native Blender result."""
+    import ast
+
+    from test_blend_storage_sdna import BlendModel
+
+    from scripts.blender_system_storage_snapshot_smoke import SOURCES
+    root = tmp_path / "source"
+    for name in SOURCES:
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes((ROOT / name).read_bytes())
+    model = BlendModel(version)
+    path = root / "addon/blender_codex_bridge/blend_storage_sdna.py"
+    text = path.read_text()
+    node = next(node for node in ast.parse(text).body if isinstance(node, ast.Assign)
+                and any(isinstance(target, ast.Name) and target.id == "LAYOUT_PINS" for target in node.targets))
+    lines = text.splitlines(keepends=True)
+    # A private copied model program changes only its literal miniature layout
+    # pin. The shipping reader has no mode/argument for bypassing native pins.
+    lines[node.lineno - 1:node.end_lineno] = ["LAYOUT_PINS = " + repr((model.pin(),)) + "\n"]
+    path.write_text("".join(lines))
+    monkeypatch.setattr(runner, "ROOT", root)
+    binary = tmp_path / "modeled blender binary"
+    binary.write_bytes(b"never execute this modeled binary")
+    output = tmp_path / "output"
+    output.mkdir()
+    return binary, output
+
+
+def system_storage_receipt_model(runner, temporary, binary, instance, version):
+    import copy
+    import sys
+
+    from test_blend_storage_sdna import BlendModel, complete_model
+
+    from scripts import blender_system_storage_snapshot_smoke as helper
+    spec = importlib.util.spec_from_file_location("_system_storage_reader_model", runner.ROOT / "addon/blender_codex_bridge/blend_storage_sdna.py")
+    reader = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = reader
+    try:
+        spec.loader.exec_module(reader)
+    finally:
+        sys.modules.pop(spec.name, None)
+    names = helper.NAMES if version == 405 else helper.NAMES + helper.EXTRA_NAMES
+    native_version = [4, 5, 14] if version == 405 else [5, 2, 2]
+    inputs = runner._system_storage_inputs(binary)
+    full = {"schema": helper.SCHEMA, "profile": helper.PROFILE, "completed": True, "process_instance": instance,
+            "process_id": 12345, "version": native_version, "build_hash": helper.BUILDS[tuple(native_version)],
+            "blender_version": ".".join(map(str, native_version)), **inputs, "declared_names": list(names),
+            "target": {"scene_name": "Scene", "view_layer_name": "Layer"}, "cases": [],
+            "canonical_runtime_qualified": False, "durable_backup_qualified": False,
+            "dirty_current_pixel_backup_qualified": False, "hidden_Main_passivity_claimed": False,
+            "native_memory_cap_claimed": False, "native_calls_preemptible": False, "windows_qualified": False,
+            "constrained_memory_native_qualified": False, "source_unchanged": True, "one_use_no_yield_proof": True,
+            "peak_memory": {"metric": "ru_maxrss", "units": "KiB", "value": 500000}, "elapsed_seconds": 1.5}
+    for case in helper.CASES:
+        image = {"size": [2, 2], "channels": 4, "has_data": True, "dirty": True,
+                 "pixels_sha256_float32": "1" * 64, "packed_sha256": "2" * 64}
+        raw_values = [[name, "str" if case == "malformed_scalar" and name == "use_denoising" else "bool",
+                       "wrong scalar storage" if case == "malformed_scalar" and name == "use_denoising" else bool(index % 2)]
+                      for index, name in enumerate(names)]
+        snapshot = {"ids": {family: [[family, 1000 + index, 1 + index, 1, False]] for index, family in enumerate(helper.FAMILIES)},
+                    "filepath": "", "dirty": True, "context": ["OBJECT", 1000, "Layer", 1001, [1001], 1, 0., case != "absent"],
+                    "mesh": {"vertices": [[0, 0, 0]] * 3, "polygons": [[0, 1, 2]]}, "materials": [["modeled"]],
+                    "image": image, "raw_settings": {"present": case != "absent", "values": [] if case == "absent" else raw_values}}
+        resources = {"available_memory_bytes": 12 * 1024**3, "host_available_memory_bytes": 16 * 1024**3,
+                     "visible_cgroup_levels": 1, "disk_free_bytes": 4 * 1024**3, "measurement_is_reservation": False}
+        row = {"case": case, "native_entries": 0, "parser_entries": 0, "getter_entries": 0,
+               "calls_after_stop": 0, "bridge_cleanup_performed": False, "storage": None, "getter_value": None,
+               "error": None, "before": snapshot, "after": copy.deepcopy(snapshot), "fresh_controller_inspection": True,
+               "source_preserved": True, "native_seconds": 0., "file_receipt": None,
+               "resources_before": resources, "resources_after": copy.deepcopy(resources)}
+        if case in {"absent", "valid", "malformed_scalar", "stop_after"}:
+            children = tuple((name, 0 if case == "malformed_scalar" and name == "use_denoising" else 10, index % 2, 0)
+                             for index, name in enumerate(names))
+            model = complete_model(BlendModel(version), target=case != "absent", children=children)
+            path = temporary / (case + ".blend")
+            path.write_bytes(model.output())
+            row["file_receipt"] = {"path": str(path), "bytes": path.stat().st_size, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+            row["native_entries"] = 1
+            if case != "stop_after":
+                row["parser_entries"] = 1
+                try:
+                    row["storage"] = reader.inspect_view_layer_storage(str(path), "Scene", "Layer", allowed_names=names)
+                except reader.StorageSnapshotError as error:
+                    row["error"] = {"type": "StorageSnapshotError", "reason": error.reason}
+            if case == "valid":
+                row["getter_entries"], row["getter_value"] = 1, False
+            if case == "malformed_scalar":
+                row["raw_wrong_scalar_retained"] = True
+            row["status"] = "REFUSED" if case == "malformed_scalar" else "STOPPED_AFTER" if case == "stop_after" else "INSPECTED"
+        elif case == "writer_failure":
+            row.update(native_entries=1, status="WRITER_FAILED", error={"type": "OSError"})
+        else:
+            row["status"] = "DENIED" if case == "permission_denial" else "STOPPED_BEFORE"
+        full["cases"].append(row)
+    assert helper.validate_full(full, process_instance=instance, sources=inputs["source_sha256"], binary=inputs["binary"])
+    return full, inputs
+
+
+def write_system_storage_receipt(temporary, full):
+    from scripts.blender_system_storage_snapshot_smoke import REPORT
+    raw = json.dumps(full).encode()
+    path = temporary / REPORT
+    path.write_bytes(raw)
+    marker = {key: full[key] for key in ("schema", "profile", "completed", "blender_version", "version", "build_hash",
+                                        "process_instance", "process_id", "source_sha256", "binary")}
+    marker["full_receipt"] = {"path": str(path), "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}
+    return marker
+
+
+@pytest.mark.parametrize("version", [405, 502])
+def test_system_storage_runner_binds_owned_child_and_independently_replays_files(runner, monkeypatch, tmp_path, version):
+    binary, output = system_storage_source_model(runner, monkeypatch, tmp_path, version)
+    monkeypatch.setattr(runner.sys, "platform", "linux")
+    monkeypatch.setenv("UNRELATED_STORAGE_SECRET", "model-do-not-inherit")
+    monkeypatch.setenv("PYTHONPATH", "/unrelated/model")
+    monkeypatch.setenv("BRIDGE_TEST_PRIVATE_UI_MANIFEST", "/owned/display.json")
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/owned/runtime")
+
+    def launch(command, **kwargs):
+        assert "--background" not in command and command.count("--disable-autoexec") == 1
+        environment = kwargs["env"]
+        assert "UNRELATED_STORAGE_SECRET" not in environment and "PYTHONPATH" not in environment
+        assert environment["BRIDGE_TEST_PRIVATE_UI_MANIFEST"] == "/owned/display.json"
+        temporary = Path(environment["TEMP"])
+        assert temporary.stat().st_mode & 0o777 == 0o700 and kwargs["cwd"] == temporary / "working"
+        full, _inputs = system_storage_receipt_model(runner, temporary, binary, environment["BRIDGE_TEST_PROCESS_TOKEN"], version)
+        marker = write_system_storage_receipt(temporary, full)
+        kwargs["stdout"].write((runner.CASES["system_storage_snapshot"][1] + json.dumps(marker)).encode())
+        return SimpleNamespace(pid=12345, returncode=0, wait=lambda timeout: 0)
+
+    monkeypatch.setattr(runner.subprocess, "Popen", launch)
+    assert "system_storage_snapshot" in runner.OPT_IN_CASES & runner.INTERACTIVE_CASES
+    row = runner.run_case(binary, "system_storage_snapshot", output, 1200)
+    assert row["status"] == "passed" and row["retained_evidence_validation"]["passed"] is True
+    assert row["qualification_scope"]["durable_backup_qualified"] is False
+
+
+@pytest.mark.parametrize("fault", ["missing_case", "empty_baseline", "counter_bool", "post_stop", "wrong_value", "missing_native",
+                                    "changed_native", "unauthorized_file", "claimed_backup", "low_resource", "wrong_pid"])
+def test_system_storage_runner_refuses_forged_or_incomplete_retained_evidence(runner, monkeypatch, tmp_path, fault):
+    binary, _output = system_storage_source_model(runner, monkeypatch, tmp_path, 502)
+    temporary = tmp_path / "private"
+    temporary.mkdir()
+    full, inputs = system_storage_receipt_model(runner, temporary, binary, "a" * 32, 502)
+    if fault == "missing_case":
+        full["cases"].pop()
+    elif fault == "empty_baseline":
+        full["cases"][1]["before"] = full["cases"][1]["after"] = {}
+    elif fault == "counter_bool":
+        full["cases"][1]["native_entries"] = True
+    elif fault == "post_stop":
+        full["cases"][-1]["calls_after_stop"] = 1
+    elif fault == "wrong_value":
+        full["cases"][1]["storage"]["storage"]["children"][0]["value"] = 42
+    elif fault == "missing_native":
+        (temporary / "valid.blend").unlink()
+    elif fault == "changed_native":
+        (temporary / "valid.blend").write_bytes(b"not a blend")
+    elif fault == "unauthorized_file":
+        (temporary / "stop_before.blend").write_bytes(b"unauthorized")
+    elif fault == "claimed_backup":
+        full["durable_backup_qualified"] = True
+    elif fault == "low_resource":
+        full["cases"][1]["resources_before"]["available_memory_bytes"] = 1
+    elif fault == "wrong_pid":
+        full["process_id"] = 9999
+    marker = write_system_storage_receipt(temporary, full)
+    assert runner._system_storage_validate(marker, temporary, "a" * 32, inputs, 12345)["passed"] is False
+
+
+def storage_adapter_model(runner, monkeypatch, tmp_path, version=(5, 2, 2)):
+    """Runner-boundary countermodel; never evidence of a native adapter pass."""
+    import hashlib
+    import sys
+    from types import ModuleType
+
+    import scripts
+
+    source = tmp_path / "adapter source with spaces"
+    names = ("scripts/blender_storage_snapshot_adapter_smoke.py", "scripts/run_blender_checks.py",
+             "scripts/blender_artist_sidebar_smoke.py", "addon/blender_codex_bridge/blend_storage_sdna.py")
+    for name in names:
+        path = source / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes((ROOT / name).read_bytes() if name.endswith("blend_storage_sdna.py") else b"# synthetic input\n")
+    binary = source / "Blender executable with spaces"
+    binary.write_bytes(b"countermodel executable not launched")
+    monkeypatch.setitem(runner.STORAGE_ADAPTER_BINARY_HASHES, version, hashlib.sha256(binary.read_bytes()).hexdigest())
+    monkeypatch.setattr(runner, "ROOT", source)
+    monkeypatch.setattr(runner.sys, "platform", "linux")
+    fixture = ModuleType("scripts.blender_storage_snapshot_adapter_smoke")
+    fixture.SCHEMA = "storage_snapshot_actual_adapter_v1"
+    fixture.PROFILE = "STOCK_VIEW_LAYER_STORAGE_ADAPTER_V1"
+    fixture.MARKERS = {phase: "BLENDER_STORAGE_ADAPTER_" + phase.upper() + "_OK " for phase in runner.STORAGE_ADAPTER_PHASES}
+    fixture.source_names = lambda root: names
+    # Product and fixture invariants are covered elsewhere; this model isolates
+    # the independent runner's binding/file/phase checks from that validator.
+    fixture.validate_full = lambda *args, **kwargs: True
+    monkeypatch.setitem(sys.modules, fixture.__name__, fixture)
+    monkeypatch.setattr(scripts, "blender_storage_snapshot_adapter_smoke", fixture, raising=False)
+    output = tmp_path / "adapter evidence with spaces"
+    output.mkdir()
+    return SimpleNamespace(binary=binary, output=output, fixture=fixture, version=version)
+
+
+def storage_adapter_report(runner, model, command, environment, pid):
+    import hashlib
+    phase = command[command.index("--bridge-phase") + 1]
+    bundle = Path(command[command.index("--bridge-bundle") + 1])
+    root = bundle / (phase + "-modeled-owned")
+    root.mkdir(mode=0o700)
+    full = {"schema": model.fixture.SCHEMA, "profile": model.fixture.PROFILE, "phase": phase, "completed": True,
+            "process_instance": environment["BRIDGE_TEST_PROCESS_TOKEN"], "process_id": pid,
+            "version": list(model.version), "blender_version": ".".join(map(str, model.version)) + " LTS",
+            "build_hash": runner.STORAGE_ADAPTER_BUILDS[model.version], **runner._storage_adapter_inputs(model.binary),
+            "native_adapter_qualified": True, "source_unchanged": True,
+            "cases": [{"name": "modeled", "owned_root": str(root), "native_file": None, "retained_parser": [],
+                       "journal": {"snapshots": []},
+                       "raw_targets": [{"scene_name": "SceneA", "view_layer_name": "ViewLayer"},
+                                       {"scene_name": "SceneB", "view_layer_name": "ViewLayer"}]}]}
+    for flag in ("runtime_retention_qualified", "full_authored_preservation_qualified", "durable_backup_qualified",
+                 "cache_pairing_qualified", "native_calls_preemptible", "windows_qualified",
+                 "installed_package_qualified", "cleanup_qualified", "native_memory_cap_claimed",
+                 "hidden_Main_passivity_claimed"):
+        full[flag] = False
+    marker = {key: full[key] for key in ("schema", "profile", "phase", "completed", "process_instance", "process_id",
+              "version", "blender_version", "build_hash", "source_fingerprints", "binary")}
+    path = bundle / (phase + ".json")
+    raw = (json.dumps(full) + "\n").encode()
+    path.write_bytes(raw)
+    marker["full_receipt"] = {"path": str(path), "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}
+    return full, marker, path
+
+
+def install_storage_adapter_process(runner, monkeypatch, model, fault=None, after=None):
+    seen = []
+    class Process:
+        returncode = 0
+        def __init__(self, command, **kwargs):
+            self.pid = 900 + len(seen)
+            assert "--background" not in command and command.count("--disable-autoexec") == 1
+            assert kwargs["cwd"].name == "working"
+            assert "PYTHONPATH" not in kwargs["env"] and "ADAPTER_UNWANTED_TEST_VALUE" not in kwargs["env"]
+            full, marker, path = storage_adapter_report(runner, model, command, kwargs["env"], self.pid)
+            if fault is not None:
+                fault(full, marker, path)
+            seen.append((full["phase"], full["process_instance"], self.pid, kwargs["env"]["BLENDER_USER_CONFIG"]))
+            kwargs["stdout"].write((model.fixture.MARKERS[full["phase"]] + json.dumps(marker) + "\n").encode())
+            if after is not None:
+                after(full, marker, path)
+        def __enter__(self):
+            return self
+        def __exit__(self, *_args):
+            return None
+        def wait(self, timeout=None):
+            assert timeout is not None and timeout <= 300
+            return 0
+    monkeypatch.setattr(runner.subprocess, "Popen", Process)
+    return seen
+
+
+@pytest.mark.parametrize("version", [(4, 5, 14), (5, 2, 2)])
+def test_storage_adapter_runner_requires_seven_fresh_processes(runner, monkeypatch, tmp_path, version):
+    model = storage_adapter_model(runner, monkeypatch, tmp_path, version)
+    monkeypatch.setenv("PYTHONPATH", "/unrelated/python")
+    monkeypatch.setenv("ADAPTER_UNWANTED_TEST_VALUE", "nonsecret")
+    seen = install_storage_adapter_process(runner, monkeypatch, model)
+    result = runner.run_case(model.binary, runner.STORAGE_ADAPTER_CASE, model.output, 1200)
+    assert result["status"] == "passed" and result["fresh_process_verified"]
+    assert result["retained_files_independently_reparsed"]
+    assert result["phase_sequence"] == list(runner.STORAGE_ADAPTER_PHASES)
+    assert len(seen) == len({row[1] for row in seen}) == len({row[2] for row in seen}) == len({row[3] for row in seen}) == 7
+    assert runner.STORAGE_ADAPTER_CASE in runner.OPT_IN_CASES & runner.INTERACTIVE_CASES
+    assert result["full_artist_target"] == "OPEN" and result["windows_testing_deferred"] is True
+
+
+@pytest.mark.parametrize("fault", ["wrong_pid", "bool_pid", "token", "wrong_build", "wrong_patch", "float_version",
+    "alpha_version", "binary", "source", "full_hash", "missing", "symlink", "nonobject", "duplicate", "nonfinite",
+    "broad_claim", "incomplete", "source_changed", "overbudget"])
+def test_storage_adapter_counterfeit_receipts_stop_first_phase(runner, monkeypatch, tmp_path, fault):
+    import hashlib
+    model = storage_adapter_model(runner, monkeypatch, tmp_path)
+    def change(full, marker, path):
+        if fault in {"wrong_pid", "bool_pid", "token", "wrong_build", "wrong_patch", "float_version", "alpha_version", "binary", "source"}:
+            key, value = {"wrong_pid": ("process_id", 999), "bool_pid": ("process_id", True),
+                "token": ("process_instance", "0" * 32), "wrong_build": ("build_hash", "62c1db4208e8"),
+                "wrong_patch": ("version", [5, 2, 3]), "float_version": ("version", [5, 2, 2.]),
+                "alpha_version": ("blender_version", "5.2.2 Alpha"), "binary": ("binary", {}),
+                "source": ("source_fingerprints", {})}[fault]
+            marker[key] = value
+        elif fault == "full_hash":
+            path.write_bytes(path.read_bytes() + b" ")
+        elif fault == "missing":
+            path.unlink()
+        elif fault == "symlink":
+            saved = path.with_suffix(".saved")
+            path.rename(saved)
+            path.symlink_to(saved)
+        elif fault == "source_changed":
+            (runner.ROOT / "scripts/run_blender_checks.py").write_text("# changed after captured inputs\n")
+        elif fault == "overbudget":
+            marker["full_receipt"]["bytes"] = runner.STORAGE_ADAPTER_MAX_REPORT + 1
+        else:
+            if fault == "broad_claim":
+                full["durable_backup_qualified"] = True
+            elif fault == "incomplete":
+                full["native_adapter_qualified"] = False
+            raw = ({"nonobject": b"[]", "duplicate": b'{"phase":"absent","phase":"absent"}',
+                    "nonfinite": b'{"number":NaN}'}[fault] if fault in {"nonobject", "duplicate", "nonfinite"}
+                   else json.dumps(full).encode())
+            path.write_bytes(raw)
+            marker["full_receipt"].update(bytes=len(raw), sha256=hashlib.sha256(raw).hexdigest())
+    seen = install_storage_adapter_process(runner, monkeypatch, model, change)
+    result = runner.run_case(model.binary, runner.STORAGE_ADAPTER_CASE, model.output, 10)
+    assert result["status"] == "failed" and len(seen) == 1
+    assert result["phase_sequence"] == ["absent"]
+
+
+@pytest.mark.parametrize("fault", ["prior_bytes", "reused_token", "reused_pid", "cross_version"])
+def test_storage_adapter_prior_phase_binding_never_rebases(runner, monkeypatch, tmp_path, fault):
+    import hashlib
+    model = storage_adapter_model(runner, monkeypatch, tmp_path)
+    first = []
+    def change(full, marker, path):
+        if full["phase"] == "absent":
+            first.append((full["process_instance"], full["process_id"]))
+        if full["phase"] != "valid":
+            return
+        if fault == "prior_bytes":
+            earlier = path.parent / "absent.json"
+            earlier.write_bytes(earlier.read_bytes() + b" ")
+            return
+        key, value = {"reused_token": ("process_instance", first[0][0]), "reused_pid": ("process_id", first[0][1]),
+                      "cross_version": ("blender_version", "5.2.2")}[fault]
+        full[key] = marker[key] = value
+        raw = json.dumps(full).encode()
+        path.write_bytes(raw)
+        marker["full_receipt"].update(bytes=len(raw), sha256=hashlib.sha256(raw).hexdigest())
+    seen = install_storage_adapter_process(runner, monkeypatch, model, change)
+    result = runner.run_case(model.binary, runner.STORAGE_ADAPTER_CASE, model.output, 10)
+    assert result["status"] == "failed" and len(seen) == 2
+
+
+@pytest.mark.parametrize("fault", ["projection", "file_hash", "file_size", "path", "symlink", "target", "unreported",
+    "journal_path", "journal_directory", "journal_root", "journal_file_identity", "float_identity"])
+def test_storage_adapter_independent_reader_rejects_forged_native_evidence(runner, monkeypatch, tmp_path, fault):
+    import hashlib
+    model = storage_adapter_model(runner, monkeypatch, tmp_path)
+    bundle = model.output / "bundle"
+    bundle.mkdir()
+    command = ["--bridge-phase", "malformed", "--bridge-bundle", str(bundle)]
+    full, _marker, _path = storage_adapter_report(runner, model, command, {"BRIDGE_TEST_PROCESS_TOKEN": "a" * 32}, 900)
+    row = full["cases"][0]
+    child = Path(row["owned_root"]) / ("bcb-storage-" + "b" * 32)
+    child.mkdir(mode=0o700)
+    native = child / "snapshot.blend"
+    native.write_bytes(b"not a native Blender file")
+    row["native_file"] = {"path": str(native), "bytes": native.stat().st_size,
+                          "sha256": hashlib.sha256(native.read_bytes()).hexdigest()}
+    root_stat, child_stat, file_stat = Path(row["owned_root"]).stat(), child.stat(), native.stat()
+    row["journal"]["snapshots"] = [{"root": row["owned_root"], "directory": str(child), "filepath": str(native),
+        "root_identity": [root_stat.st_dev, root_stat.st_ino], "directory_identity": [child_stat.st_dev, child_stat.st_ino],
+        "file_identity": [file_stat.st_dev, file_stat.st_ino, file_stat.st_size, file_stat.st_mtime_ns],
+        "file_bytes": file_stat.st_size, "file_sha256": row["native_file"]["sha256"]}]
+    row["retained_parser"] = [{"target": target, "error": {"type": "StorageSnapshotError", "reason": "BLEND_HEADER_UNQUALIFIED"}}
+                              for target in row["raw_targets"]]
+    # The cold parser really reads these bytes and confirms the malformed header.
+    runner._storage_adapter_retained(full, bundle)
+    if fault == "projection":
+        row["retained_parser"][0] = {"target": row["raw_targets"][0], "result": {"state": "forged"}}
+    elif fault == "file_hash":
+        row["native_file"]["sha256"] = "0" * 64
+    elif fault == "file_size":
+        row["native_file"]["bytes"] += 1
+    elif fault == "path":
+        row["native_file"]["path"] = str(child / "other.blend")
+    elif fault == "symlink":
+        target = bundle / "outside.blend"
+        native.rename(target)
+        native.symlink_to(target)
+    elif fault == "target":
+        row["raw_targets"][1] = dict(row["raw_targets"][0])
+    elif fault == "journal_path":
+        row["journal"]["snapshots"][0]["filepath"] = str(child / "other.blend")
+    elif fault == "journal_directory":
+        row["journal"]["snapshots"][0]["directory_identity"][1] += 1
+    elif fault == "journal_root":
+        row["journal"]["snapshots"][0]["root_identity"][1] += 1
+    elif fault == "journal_file_identity":
+        row["journal"]["snapshots"][0]["file_identity"][2] += 1
+    elif fault == "float_identity":
+        row["journal"]["snapshots"][0]["file_identity"][2] = float(file_stat.st_size)
+    else:
+        row["native_file"], row["retained_parser"] = None, []
+    with pytest.raises((ValueError, OSError)):
+        runner._storage_adapter_retained(full, bundle)
+
+
+def test_storage_adapter_windows_deferral_never_launches(runner, monkeypatch, tmp_path):
+    model = storage_adapter_model(runner, monkeypatch, tmp_path)
+    monkeypatch.setattr(runner.sys, "platform", "win32")
+    monkeypatch.setattr(runner.subprocess, "Popen", lambda *_args, **_kwargs: pytest.fail("Windows testing is deferred"))
+    result = runner.run_case(model.binary, runner.STORAGE_ADAPTER_CASE, model.output, 10)
+    assert result["status"] == "failed" and result["phases"] == []
+    assert result["phase_binding_error"] == "STORAGE_ADAPTER_WINDOWS_TESTING_DEFERRED"
+
+
+def storage_cleanup_model(runner, monkeypatch, tmp_path, version=(5, 2, 2)):
+    """Synthetic runner/parser model, never native cleanup qualification."""
+    import hashlib
+    import sys
+    from types import ModuleType
+
+    from test_blend_storage_sdna import BlendModel
+
+    import scripts
+
+    source = tmp_path / "cleanup source with spaces"
+    names = ("scripts/blender_storage_snapshot_cleanup_smoke.py", "scripts/blender_storage_snapshot_adapter_smoke.py",
+             "scripts/run_blender_checks.py", "scripts/blender_artist_sidebar_smoke.py",
+             "addon/blender_codex_bridge/blend_storage_sdna.py")
+    blob = BlendModel(405 if version[0] == 4 else 502)
+    for index, label in enumerate(("A", "B")):
+        address = 0x1000 + index * 0x1000
+        scene, identifier, layer = blob.record("Scene"), blob.record("ID"), blob.record("ViewLayer")
+        blob.put(identifier, "ID", "name", "SCScene" + label)
+        blob.embed(scene, "Scene", "id", identifier)
+        blob.embed(scene, "Scene", "view_layers", blob.linked(address + 0x100, address + 0x100))
+        blob.put(layer, "ViewLayer", "name", "Layer" + label)
+        blob.add("Scene", address, scene, b"SC\0\0")
+        blob.add("ViewLayer", address + 0x100, layer)
+    for name in names:
+        path = source / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if name.endswith("blend_storage_sdna.py"):
+            # Explicit miniature SDNA model pin only in this synthetic input
+            # tree. The real qualification source and pins remain unchanged.
+            raw = (ROOT / name).read_bytes() + ("\nLAYOUT_PINS = (" + repr(blob.pin()) + ",)\n").encode()
+        else:
+            raw = b"# synthetic cleanup runner source\n"
+        path.write_bytes(raw)
+    binary = source / "Blender executable with spaces"
+    binary.write_bytes(b"synthetic executable never launched")
+    monkeypatch.setitem(runner.STORAGE_ADAPTER_BINARY_HASHES, version, hashlib.sha256(binary.read_bytes()).hexdigest())
+    monkeypatch.setattr(runner, "ROOT", source)
+    monkeypatch.setattr(runner.sys, "platform", "linux")
+    fixture = ModuleType("scripts.blender_storage_snapshot_cleanup_smoke")
+    fixture.SCHEMA, fixture.PROFILE = "storage_snapshot_owned_cleanup_v1", "STOCK_OWNED_STORAGE_CLEANUP_V1"
+    fixture.MARKERS = {phase: "BLENDER_STORAGE_CLEANUP_" + phase.upper() + "_OK " for phase in runner.STORAGE_CLEANUP_PHASES}
+    fixture.source_names = lambda root: names
+    fixture.validate_full = lambda *args, **kwargs: True
+    monkeypatch.setitem(sys.modules, fixture.__name__, fixture)
+    monkeypatch.setattr(scripts, "blender_storage_snapshot_cleanup_smoke", fixture, raising=False)
+    output = tmp_path / "cleanup evidence with spaces"
+    output.mkdir()
+    return SimpleNamespace(binary=binary, output=output, fixture=fixture, version=version, native_bytes=blob.output())
+
+
+def storage_cleanup_write_report(full, bundle):
+    import hashlib
+    marker = {key: full[key] for key in ("schema", "profile", "phase", "completed", "process_instance", "process_id",
+              "version", "blender_version", "build_hash", "source_fingerprints", "binary")}
+    path = bundle / (full["phase"] + ".json")
+    raw = (json.dumps(full) + "\n").encode()
+    path.write_bytes(raw)
+    marker["full_receipt"] = {"path": str(path), "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}
+    return marker, path
+
+
+def storage_cleanup_report(runner, model, command, environment, pid):
+    import hashlib
+    import os
+
+    phase = command[command.index("--bridge-phase") + 1]
+    bundle = Path(command[command.index("--bridge-bundle") + 1])
+    root = bundle / (phase + "-modeled-owned")
+    root.mkdir(mode=0o700)
+    sentinel = bundle / (phase + "-modeled-sentinel.bin")
+    sentinel.write_bytes(b"independent sentinel retained")
+    copy_root = bundle / (phase + "-modeled-evidence")
+    copy_root.mkdir(mode=0o700)
+    targets = [{"scene_name": "SceneA", "view_layer_name": "LayerA"}, {"scene_name": "SceneB", "view_layer_name": "LayerB"}]
+    spec = importlib.util.spec_from_file_location("_cleanup_model_cold_reader", runner.ROOT / "addon/blender_codex_bridge/blend_storage_sdna.py")
+    parser = importlib.util.module_from_spec(spec)
+    import sys
+    sys.modules[spec.name] = parser
+    try:
+        spec.loader.exec_module(parser)
+    finally:
+        sys.modules.pop(spec.name, None)
+    cells, copies = [], []
+    for index in range(16 if phase == "sixteen_captures" else 1):
+        child = root / ("bcb-storage-" + format(index + 1, "032x"))
+        child.mkdir(mode=0o700)
+        native, evidence = child / "snapshot.blend", copy_root / (str(index) + ".blend")
+        native.write_bytes(model.native_bytes)
+        evidence.write_bytes(model.native_bytes)
+        os.chmod(native, 0o600)
+        os.chmod(evidence, 0o600)
+        info, parent, initial = native.stat(), child.stat(), root.stat()
+        identity = [info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns]
+        checksum = hashlib.sha256(model.native_bytes).hexdigest()
+        cell = {"root": str(root), "directory": str(child), "filepath": str(native),
+                "root_identity": [initial.st_dev, initial.st_ino], "directory_identity": [parent.st_dev, parent.st_ino],
+                "file_identity": identity, "file_bytes": info.st_size, "file_sha256": checksum}
+        cells.append(cell)
+        copies.append({"owner_index": index, "original_path": str(native), "original_identity": identity,
+            "original_binding": [info.st_dev, info.st_ino, info.st_uid, 0o600, 1, info.st_size, info.st_mtime_ns, info.st_ctime_ns],
+            "original_sha256": checksum, "copy": {"path": str(evidence), "bytes": info.st_size, "sha256": checksum},
+            "retained_parser": [{"target": target, "result": parser.inspect_view_layer_storage(str(evidence),
+                target["scene_name"], target["view_layer_name"], allowed_names=parser.CYCLES_NAMES if model.version[0] == 4 else parser.CYCLES_502_NAMES)}
+                for target in targets]})
+    full = {"schema": model.fixture.SCHEMA, "profile": model.fixture.PROFILE, "phase": phase, "completed": True,
+        "process_instance": environment["BRIDGE_TEST_PROCESS_TOKEN"], "process_id": pid,
+        "version": list(model.version), "blender_version": ".".join(map(str, model.version)) + " LTS",
+        "build_hash": runner.STORAGE_ADAPTER_BUILDS[model.version], **runner._storage_cleanup_inputs(model.binary),
+        "cleanup_qualified": True, "source_unchanged": True,
+        "request_binding_kind": "SOURCE_QUALIFIED_REPLICA_FRESH_QUEUED_REQUEST",
+        "cases": [{"name": "modeled", "owned_root": str(root), "raw_targets": targets,
+            "sentinel": {"path": str(sentinel), "bytes": sentinel.stat().st_size, "sha256": hashlib.sha256(sentinel.read_bytes()).hexdigest()},
+            "journal_before": {"snapshots": cells}, "journal_after": {"snapshots": cells}, "evidence_copies": copies,
+            "actor": {"request_ids": ["a" * 32], "contexts_created": 1, "retry_with_fresh_context": False}}]}
+    for flag in ("runtime_retention_qualified", "full_authored_preservation_qualified", "durable_backup_qualified",
+                 "cache_pairing_qualified", "native_calls_preemptible", "windows_qualified", "installed_package_qualified",
+                 "native_memory_cap_claimed", "hidden_Main_passivity_claimed", "current_pixels_backup_qualified",
+                 "canonical_dispatch_qualified", "transport_qualified"):
+        full[flag] = False
+    marker, path = storage_cleanup_write_report(full, bundle)
+    return full, marker, path
+
+
+def install_storage_cleanup_process(runner, monkeypatch, model, fault=None, after=None):
+    seen = []
+    class Process:
+        returncode = 0
+        def __init__(self, command, **kwargs):
+            self.pid = 1900 + len(seen)
+            assert "--background" not in command and command.count("--disable-autoexec") == 1
+            assert kwargs["cwd"].name == "working" and "PYTHONPATH" not in kwargs["env"]
+            full, marker, path = storage_cleanup_report(runner, model, command, kwargs["env"], self.pid)
+            if fault is not None:
+                fault(full, marker, path)
+            seen.append((full["phase"], full["process_instance"], self.pid, kwargs["env"]["BLENDER_USER_CONFIG"]))
+            kwargs["stdout"].write((model.fixture.MARKERS[full["phase"]] + json.dumps(marker) + "\n").encode())
+            if after is not None:
+                after(full, marker, path)
+        def __enter__(self):
+            return self
+        def __exit__(self, *_args):
+            return None
+        def wait(self, timeout=None):
+            assert timeout is not None and timeout <= 300
+            return 0
+    monkeypatch.setattr(runner.subprocess, "Popen", Process)
+    return seen
+
+
+@pytest.mark.parametrize("version", [(4, 5, 14), (5, 2, 2)])
+def test_storage_cleanup_runner_binds_six_fresh_processes_and_cold_native_copies(runner, monkeypatch, tmp_path, version):
+    model = storage_cleanup_model(runner, monkeypatch, tmp_path, version)
+    seen = install_storage_cleanup_process(runner, monkeypatch, model)
+    result = runner.run_case(model.binary, runner.STORAGE_CLEANUP_CASE, model.output, 1200)
+    assert result["status"] == "passed" and result["fresh_process_verified"] and result["retained_copies_independently_reparsed"]
+    assert result["phase_sequence"] == list(runner.STORAGE_CLEANUP_PHASES)
+    assert len(seen) == len({row[1] for row in seen}) == len({row[2] for row in seen}) == len({row[3] for row in seen}) == 6
+    assert runner.STORAGE_CLEANUP_CASE in runner.OPT_IN_CASES & runner.INTERACTIVE_CASES
+    assert result["full_artist_target"] == "OPEN" and result["windows_testing_deferred"] is True
+
+
+@pytest.mark.parametrize("fault", ["wrong_pid", "bool_pid", "nonce", "build", "binary", "source", "version", "float_version",
+    "report_hash", "missing", "symlink", "duplicate", "nonfinite", "nonobject", "broad_claim", "incomplete", "overbudget"])
+def test_storage_cleanup_counterfeit_process_reports_never_reach_second_phase(runner, monkeypatch, tmp_path, fault):
+    import hashlib
+    model = storage_cleanup_model(runner, monkeypatch, tmp_path)
+    def change(full, marker, path):
+        if fault in {"wrong_pid", "bool_pid", "nonce", "build", "binary", "source", "version", "float_version"}:
+            key, value = {"wrong_pid": ("process_id", 99999), "bool_pid": ("process_id", True),
+                "nonce": ("process_instance", "0" * 32), "build": ("build_hash", "0" * 12),
+                "binary": ("binary", {"path": str(model.binary), "sha256": "0" * 64}),
+                "source": ("source_fingerprints", {}), "version": ("version", [5, 2, 3]),
+                "float_version": ("version", [5., 2, 2])}[fault]
+            full[key] = marker[key] = value
+        elif fault == "report_hash":
+            marker["full_receipt"]["sha256"] = "0" * 64
+            return
+        elif fault == "missing":
+            path.unlink()
+            return
+        elif fault == "symlink":
+            other = path.with_suffix(".other")
+            path.rename(other)
+            path.symlink_to(other)
+            return
+        elif fault == "overbudget":
+            marker["full_receipt"]["bytes"] = runner.STORAGE_CLEANUP_MAX_REPORT + 1
+            return
+        elif fault == "broad_claim":
+            full["durable_backup_qualified"] = True
+        elif fault == "incomplete":
+            full["cleanup_qualified"] = False
+        if fault in {"duplicate", "nonfinite", "nonobject"}:
+            raw = {"duplicate": b'{"phase":"success","phase":"success"}', "nonfinite": b'{"x":NaN}', "nonobject": b"[]"}[fault]
+            path.write_bytes(raw)
+            marker["full_receipt"].update(bytes=len(raw), sha256=hashlib.sha256(raw).hexdigest())
+        else:
+            changed, _path = storage_cleanup_write_report(full, path.parent)
+            marker.update(changed)
+    seen = install_storage_cleanup_process(runner, monkeypatch, model, change)
+    result = runner.run_case(model.binary, runner.STORAGE_CLEANUP_CASE, model.output, 10)
+    assert result["status"] == "failed" and len(seen) == 1 and result["phase_sequence"] == ["success"]
+
+
+@pytest.mark.parametrize("fault", ["prior_bytes", "reused_nonce", "reused_pid", "cross_version"])
+def test_storage_cleanup_prior_phase_cannot_be_rebased(runner, monkeypatch, tmp_path, fault):
+    model = storage_cleanup_model(runner, monkeypatch, tmp_path)
+    first = []
+    def change(full, marker, path):
+        if full["phase"] == "success":
+            first.append((full["process_instance"], full["process_id"]))
+        elif full["phase"] == "permission_denial":
+            if fault == "prior_bytes":
+                previous = path.parent / "success.json"
+                previous.write_bytes(previous.read_bytes() + b" ")
+            else:
+                key, value = {"reused_nonce": ("process_instance", first[0][0]), "reused_pid": ("process_id", first[0][1]),
+                              "cross_version": ("blender_version", "5.2.2")}[fault]
+                full[key] = marker[key] = value
+                marker.update(storage_cleanup_write_report(full, path.parent)[0])
+    seen = install_storage_cleanup_process(runner, monkeypatch, model, change)
+    result = runner.run_case(model.binary, runner.STORAGE_CLEANUP_CASE, model.output, 10)
+    assert result["status"] == "failed" and len(seen) == 2
+
+
+@pytest.mark.parametrize("fault", ["hash", "size", "path", "symlink", "hardlink", "mode", "extra_copy", "missing_copy",
+    "projection", "target", "original_identity", "float_identity", "original_binding", "journal_path", "journal_changed",
+    "sentinel", "fresh_ids", "retry_same_request"])
+def test_storage_cleanup_independent_copy_reader_rejects_forged_or_changed_artifacts(runner, monkeypatch, tmp_path, fault):
+    import os
+    model = storage_cleanup_model(runner, monkeypatch, tmp_path)
+    bundle = model.output / "bundle"
+    bundle.mkdir()
+    full, _marker, _path = storage_cleanup_report(runner, model, ["--bridge-phase", "success", "--bridge-bundle", str(bundle)],
+                                              {"BRIDGE_TEST_PROCESS_TOKEN": "b" * 32}, 1900)
+    runner._storage_cleanup_retained(full, bundle)
+    row, record = full["cases"][0], full["cases"][0]["evidence_copies"][0]
+    path = Path(record["copy"]["path"])
+    if fault == "hash":
+        record["copy"]["sha256"] = "0" * 64
+    elif fault == "size":
+        record["copy"]["bytes"] += 1
+    elif fault == "path":
+        record["copy"]["path"] = str(path.with_name("foreign.blend"))
+    elif fault == "symlink":
+        other = path.with_name("foreign.blend")
+        path.rename(other)
+        path.symlink_to(other)
+    elif fault == "hardlink":
+        os.link(path, model.output / "another-link")
+    elif fault == "mode":
+        os.chmod(path, 0o644)
+    elif fault == "extra_copy":
+        path.with_name("extra.blend").write_bytes(b"foreign")
+    elif fault == "missing_copy":
+        path.unlink()
+    elif fault == "projection":
+        record["retained_parser"][0]["result"]["storage_fingerprint"] = "0" * 64
+    elif fault == "target":
+        row["raw_targets"][1] = dict(row["raw_targets"][0])
+    elif fault == "original_identity":
+        record["original_identity"][0] += 1
+    elif fault == "float_identity":
+        record["original_identity"][0] = float(record["original_identity"][0])
+    elif fault == "original_binding":
+        record["original_binding"][1] += 1
+    elif fault == "journal_path":
+        row["journal_before"]["snapshots"][0]["filepath"] = str(path)
+    elif fault == "journal_changed":
+        row["journal_after"] = {"snapshots": [dict(row["journal_before"]["snapshots"][0], root="/foreign")]}
+    elif fault == "sentinel":
+        Path(row["sentinel"]["path"]).write_bytes(b"changed")
+    elif fault == "fresh_ids":
+        row["actor"]["request_ids"] = ["a" * 32, "a" * 32]
+        row["actor"]["contexts_created"] = 2
+    else:
+        row["actor"]["retry_with_fresh_context"] = True
+    with pytest.raises((ValueError, OSError)):
+        runner._storage_cleanup_retained(full, bundle)
+
+
+def test_storage_cleanup_windows_deferral_never_launches(runner, monkeypatch, tmp_path):
+    model = storage_cleanup_model(runner, monkeypatch, tmp_path)
+    monkeypatch.setattr(runner.sys, "platform", "win32")
+    monkeypatch.setattr(runner.subprocess, "Popen", lambda *_args, **_kwargs: pytest.fail("Windows testing is deferred"))
+    result = runner.run_case(model.binary, runner.STORAGE_CLEANUP_CASE, model.output, 10)
+    assert result["status"] == "failed" and result["phases"] == []
+    assert result["phase_binding_error"] == "STORAGE_CLEANUP_WINDOWS_TESTING_DEFERRED"
+
+
+def storage_dispatch_model(runner, monkeypatch, tmp_path, version=(5, 2, 2)):
+    """Runner-only counterfeit-report model; no native dispatch evidence."""
+    import hashlib
+    import sys
+    from types import ModuleType
+
+    import scripts
+
+    source = tmp_path / "dispatch source with spaces"
+    names = ("scripts/blender_storage_snapshot_dispatch_smoke.py", "scripts/blender_storage_snapshot_cleanup_smoke.py",
+             "scripts/blender_storage_snapshot_adapter_smoke.py", "scripts/run_blender_checks.py",
+             "scripts/blender_artist_sidebar_smoke.py", "addon/blender_codex_bridge/blend_storage_sdna.py")
+    for name in names:
+        path = source / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# synthetic dispatch runner input " + name + "\n")
+    binary = source / "Blender executable with spaces"
+    binary.write_bytes(b"synthetic dispatch executable never launched")
+    monkeypatch.setitem(runner.STORAGE_ADAPTER_BINARY_HASHES, version, hashlib.sha256(binary.read_bytes()).hexdigest())
+    monkeypatch.setattr(runner, "ROOT", source)
+    monkeypatch.setattr(runner.sys, "platform", "linux")
+    fixture = ModuleType("scripts.blender_storage_snapshot_dispatch_smoke")
+    fixture.SCHEMA, fixture.PROFILE = "storage_snapshot_actual_dispatch_v1", "STOCK_OWNED_STORAGE_ACTUAL_DISPATCH_V1"
+    fixture.MARKERS = {phase: "BLENDER_STORAGE_DISPATCH_" + phase.upper() + "_OK " for phase in runner.STORAGE_DISPATCH_PHASES}
+    fixture.source_names = lambda root: names
+    fixture.validate_full = lambda *args, **kwargs: True
+    retained = []
+    def validate_retained(full, bundle):
+        retained.append((full["phase"], bundle))
+        return True
+    fixture.validate_retained = validate_retained
+    monkeypatch.setitem(sys.modules, fixture.__name__, fixture)
+    monkeypatch.setattr(scripts, "blender_storage_snapshot_dispatch_smoke", fixture, raising=False)
+    output = tmp_path / "dispatch evidence with spaces"
+    output.mkdir()
+    return SimpleNamespace(binary=binary, output=output, fixture=fixture, version=version, retained=retained)
+
+
+def storage_dispatch_report(runner, model, command, environment, pid):
+    phase = command[command.index("--bridge-phase") + 1]
+    bundle = Path(command[command.index("--bridge-bundle") + 1])
+    full = {"schema": model.fixture.SCHEMA, "profile": model.fixture.PROFILE, "phase": phase, "completed": True,
+        "process_instance": environment["BRIDGE_TEST_PROCESS_TOKEN"], "process_id": pid,
+        "version": list(model.version), "blender_version": ".".join(map(str, model.version)) + " LTS",
+        "build_hash": runner.STORAGE_ADAPTER_BUILDS[model.version], **runner._storage_dispatch_inputs(model.binary),
+        "actual_dispatch_qualified": True, "transport_qualified": True, "source_unchanged": True,
+        "request_binding_kind": "ACTUAL_QUEUED_EXECUTOR_LOOPBACK_REQUEST"}
+    for flag in ("runtime_retention_qualified", "full_authored_preservation_qualified", "durable_backup_qualified",
+                 "cache_pairing_qualified", "native_calls_preemptible", "windows_qualified", "installed_package_qualified",
+                 "native_memory_cap_claimed", "hidden_Main_passivity_claimed", "current_pixels_backup_qualified",
+                 "shipping_caller_qualified"):
+        full[flag] = False
+    marker, path = storage_cleanup_write_report(full, bundle)
+    return full, marker, path
+
+
+def install_storage_dispatch_process(runner, monkeypatch, model, fault=None, after=None):
+    seen = []
+    class Process:
+        returncode = 0
+        def __init__(self, command, **kwargs):
+            self.pid = 2900 + len(seen)
+            assert "--background" not in command and command.count("--disable-autoexec") == 1
+            assert kwargs["cwd"].name == "working" and "PYTHONPATH" not in kwargs["env"]
+            assert kwargs["env"]["TEMP"] == kwargs["env"]["TMP"] == kwargs["env"]["TMPDIR"]
+            full, marker, path = storage_dispatch_report(runner, model, command, kwargs["env"], self.pid)
+            if fault is not None:
+                fault(full, marker, path)
+            seen.append((full["phase"], full["process_instance"], self.pid, kwargs["env"]["BLENDER_USER_CONFIG"]))
+            kwargs["stdout"].write((model.fixture.MARKERS[full["phase"]] + json.dumps(marker) + "\n").encode())
+            if after is not None:
+                after(full, marker, path)
+        def __enter__(self):
+            return self
+        def __exit__(self, *_args):
+            return None
+        def wait(self, timeout=None):
+            assert timeout is not None and timeout <= 300
+            return 0
+    monkeypatch.setattr(runner.subprocess, "Popen", Process)
+    return seen
+
+
+@pytest.mark.parametrize("version", [(4, 5, 14), (5, 2, 2)])
+def test_storage_dispatch_runner_binds_three_fresh_phases_and_rechecks_retained_evidence(runner, monkeypatch, tmp_path, version):
+    model = storage_dispatch_model(runner, monkeypatch, tmp_path, version)
+    seen = install_storage_dispatch_process(runner, monkeypatch, model)
+    result = runner.run_case(model.binary, runner.STORAGE_DISPATCH_CASE, model.output, 1200)
+    assert result["status"] == "passed" and result["fresh_process_verified"] and result["retained_copies_independently_reparsed"]
+    assert result["phase_sequence"] == list(runner.STORAGE_DISPATCH_PHASES)
+    assert len(seen) == len({row[1] for row in seen}) == len({row[2] for row in seen}) == len({row[3] for row in seen}) == 3
+    assert runner.STORAGE_DISPATCH_CASE in runner.OPT_IN_CASES & runner.INTERACTIVE_CASES
+    assert result["full_artist_target"] == "OPEN" and result["windows_testing_deferred"] is True
+    assert [phase for phase, _ in model.retained].count("success_denial") >= 3
+
+
+@pytest.mark.parametrize("fault", ["wrong_pid", "bool_pid", "nonce", "build", "binary", "source", "version", "float_version",
+    "report_hash", "missing", "symlink", "duplicate", "nonfinite", "nonobject", "broad_claim", "incomplete", "transport",
+    "binding", "overbudget", "fixture_validation", "retained_validation"])
+def test_storage_dispatch_counterfeit_reports_fail_before_second_phase(runner, monkeypatch, tmp_path, fault):
+    import hashlib
+    model = storage_dispatch_model(runner, monkeypatch, tmp_path)
+    def change(full, marker, path):
+        if fault in {"wrong_pid", "bool_pid", "nonce", "build", "binary", "source", "version", "float_version"}:
+            key, value = {"wrong_pid": ("process_id", 99999), "bool_pid": ("process_id", True),
+                "nonce": ("process_instance", "0" * 32), "build": ("build_hash", "0" * 12),
+                "binary": ("binary", {"path": str(model.binary), "sha256": "0" * 64}),
+                "source": ("source_fingerprints", {}), "version": ("version", [5, 2, 3]),
+                "float_version": ("version", [5., 2, 2])}[fault]
+            full[key] = marker[key] = value
+        elif fault == "report_hash":
+            marker["full_receipt"]["sha256"] = "0" * 64
+            return
+        elif fault == "missing":
+            path.unlink()
+            return
+        elif fault == "symlink":
+            other = path.with_suffix(".other")
+            path.rename(other)
+            path.symlink_to(other)
+            return
+        elif fault == "overbudget":
+            marker["full_receipt"]["bytes"] = runner.STORAGE_DISPATCH_MAX_REPORT + 1
+            return
+        elif fault == "broad_claim":
+            full["shipping_caller_qualified"] = True
+        elif fault == "incomplete":
+            full["actual_dispatch_qualified"] = False
+        elif fault == "transport":
+            full["transport_qualified"] = False
+        elif fault == "binding":
+            full["request_binding_kind"] = "SOURCE_QUALIFIED_REPLICA_FRESH_QUEUED_REQUEST"
+        elif fault == "fixture_validation":
+            model.fixture.validate_full = lambda *args, **kwargs: False
+        elif fault == "retained_validation":
+            model.fixture.validate_retained = lambda *args, **kwargs: False
+        if fault in {"duplicate", "nonfinite", "nonobject"}:
+            raw = {"duplicate": b'{"phase":"success_denial","phase":"success_denial"}',
+                "nonfinite": b'{"x":NaN}', "nonobject": b"[]"}[fault]
+            path.write_bytes(raw)
+            marker["full_receipt"].update(bytes=len(raw), sha256=hashlib.sha256(raw).hexdigest())
+        else:
+            marker.update(storage_cleanup_write_report(full, path.parent)[0])
+    seen = install_storage_dispatch_process(runner, monkeypatch, model, change)
+    result = runner.run_case(model.binary, runner.STORAGE_DISPATCH_CASE, model.output, 10)
+    assert result["status"] == "failed" and len(seen) == 1 and result["phase_sequence"] == ["success_denial"]
+
+
+@pytest.mark.parametrize("fault", ["prior_bytes", "reused_nonce", "reused_pid", "cross_version", "source_drift", "binary_drift"])
+def test_storage_dispatch_prior_evidence_cannot_be_rebased(runner, monkeypatch, tmp_path, fault):
+    model = storage_dispatch_model(runner, monkeypatch, tmp_path)
+    first = []
+    def change(full, marker, path):
+        if full["phase"] == "success_denial":
+            first.append((full["process_instance"], full["process_id"]))
+        elif full["phase"] == "stops":
+            if fault == "prior_bytes":
+                prior = path.parent / "success_denial.json"
+                prior.write_bytes(prior.read_bytes() + b" ")
+            elif fault in {"source_drift", "binary_drift"}:
+                target = model.binary if fault == "binary_drift" else runner.ROOT / "scripts/blender_storage_snapshot_dispatch_smoke.py"
+                target.write_bytes(target.read_bytes() + b" changed")
+            else:
+                key, value = {"reused_nonce": ("process_instance", first[0][0]), "reused_pid": ("process_id", first[0][1]),
+                              "cross_version": ("blender_version", "5.2.2")}[fault]
+                full[key] = marker[key] = value
+                marker.update(storage_cleanup_write_report(full, path.parent)[0])
+    seen = install_storage_dispatch_process(runner, monkeypatch, model, change)
+    result = runner.run_case(model.binary, runner.STORAGE_DISPATCH_CASE, model.output, 10)
+    assert result["status"] == "failed" and len(seen) == 2
+
+
+def test_storage_dispatch_windows_deferral_never_launches(runner, monkeypatch, tmp_path):
+    model = storage_dispatch_model(runner, monkeypatch, tmp_path)
+    seen = install_storage_dispatch_process(runner, monkeypatch, model)
+    monkeypatch.setattr(runner.sys, "platform", "win32")
+    result = runner.run_case(model.binary, runner.STORAGE_DISPATCH_CASE, model.output, 10)
+    assert result["status"] == "failed" and not seen
+    assert result["phase_binding_error"] == "STORAGE_DISPATCH_WINDOWS_TESTING_DEFERRED"
+
+
+def storage_runtime_context_model(runner, monkeypatch, tmp_path, version=(5, 2, 2)):
+    """Runner receipt model only; no Blender or Runtime qualification."""
+    import sys
+    from types import ModuleType
+
+    import scripts
+    from scripts import blender_storage_snapshot_adapter_smoke as original
+
+    source = tmp_path / "runtime context source with spaces"
+    names = ("scripts/blender_storage_snapshot_adapter_smoke.py", "scripts/blender_storage_snapshot_cleanup_smoke.py",
+        "scripts/run_blender_checks.py", "scripts/blender_artist_sidebar_smoke.py", "addon/blender_codex_bridge/__init__.py")
+    for name in names:
+        path = source / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# synthetic runtime context runner input\n")
+    binary = source / "Blender executable with spaces"
+    binary.write_bytes(b"synthetic executable never launched")
+    monkeypatch.setitem(runner.STORAGE_ADAPTER_BINARY_HASHES, version, hashlib.sha256(binary.read_bytes()).hexdigest())
+    monkeypatch.setattr(runner, "ROOT", source)
+    monkeypatch.setattr(runner.sys, "platform", "linux")
+    display = {"path": "/owned/private-display.json", "bytes": 42, "sha256": "d" * 64}
+    monkeypatch.setattr(runner, "_domain_display", lambda: dict(display))
+    fixture = ModuleType("scripts.blender_storage_snapshot_adapter_smoke")
+    fixture.RUNTIME_SCHEMA, fixture.RUNTIME_PROFILE, fixture.RUNTIME_MARKER = original.RUNTIME_SCHEMA, original.RUNTIME_PROFILE, original.RUNTIME_MARKER
+    fixture.runtime_source_names = lambda root: names
+    checked = []
+    def validate_runtime_context(full, **kwargs):
+        checked.append(("full", full["phase"], kwargs))
+        return True
+    def validate_runtime_retained(full, bundle):
+        checked.append(("retained", full["phase"], bundle))
+        return True
+    fixture.validate_runtime_context, fixture.validate_runtime_retained = validate_runtime_context, validate_runtime_retained
+    monkeypatch.setitem(sys.modules, fixture.__name__, fixture)
+    monkeypatch.setattr(scripts, "blender_storage_snapshot_adapter_smoke", fixture, raising=False)
+    output = tmp_path / "runtime context evidence with spaces"
+    output.mkdir()
+    return SimpleNamespace(binary=binary, output=output, fixture=fixture, version=version, checked=checked)
+
+
+def storage_runtime_context_write_report(full, bundle):
+    marker, path = storage_cleanup_write_report(full, bundle)
+    marker["private_display_binding"] = full["private_display_binding"]
+    return marker, path
+
+
+def install_storage_runtime_context_process(runner, monkeypatch, model, fault=None, after=None):
+    seen = []
+    class Process:
+        returncode = 0
+        def __init__(self, command, **kwargs):
+            self.pid = 3900 + len(seen)
+            assert "--background" not in command and command.count("--disable-autoexec") == 1
+            assert command.count("--bridge-runtime-context") == 1
+            assert kwargs["cwd"].name == "working" and "PYTHONPATH" not in kwargs["env"]
+            phase = command[command.index("--bridge-phase") + 1]
+            bundle = Path(command[command.index("--bridge-bundle") + 1])
+            full = {"schema": model.fixture.RUNTIME_SCHEMA, "profile": model.fixture.RUNTIME_PROFILE,
+                "phase": phase, "completed": True, "process_instance": kwargs["env"]["BRIDGE_TEST_PROCESS_TOKEN"],
+                "process_id": self.pid, "version": list(model.version), "blender_version": ".".join(map(str, model.version)) + " LTS",
+                "build_hash": runner.STORAGE_ADAPTER_BUILDS[model.version], **runner._storage_runtime_context_inputs(model.binary)}
+            marker, path = storage_runtime_context_write_report(full, bundle)
+            if fault is not None:
+                fault(full, marker, path)
+            seen.append((phase, full["process_instance"], self.pid, command))
+            kwargs["stdout"].write((model.fixture.RUNTIME_MARKER + json.dumps(marker) + "\n").encode())
+            if after is not None:
+                after(full, marker, path)
+        def __enter__(self):
+            return self
+        def __exit__(self, *_args):
+            return None
+        def wait(self, timeout=None):
+            assert timeout is not None and timeout <= 300
+            return 0
+    monkeypatch.setattr(runner.subprocess, "Popen", Process)
+    return seen
+
+
+@pytest.mark.parametrize("version", [(4, 5, 14), (5, 2, 2)])
+def test_storage_runtime_context_runner_binds_original_process_inputs_and_separate_opt_in(runner, monkeypatch, tmp_path, version):
+    model = storage_runtime_context_model(runner, monkeypatch, tmp_path, version)
+    seen = install_storage_runtime_context_process(runner, monkeypatch, model)
+    result = runner.run_case(model.binary, runner.STORAGE_RUNTIME_CONTEXT_CASE, model.output, 1200)
+    assert result["status"] == "passed" and len(seen) == 1 and seen[0][0] == "runtime_context"
+    assert runner.STORAGE_RUNTIME_CONTEXT_CASE in runner.OPT_IN_CASES & runner.INTERACTIVE_CASES
+    validation = result["retained_evidence_validation"]
+    assert validation["cold_SDNa_target_parses"] == 2 and validation["genuine_Runtime_jobs_context"] is True
+    assert validation["canonical_job_resumption_qualified"] is False and validation["shipping_caller_qualified"] is False
+    assert [row[0] for row in model.checked] == ["full", "retained"]
+    assert model.checked[0][2]["process_id"] == seen[0][2]
+
+
+@pytest.mark.parametrize("fault", ("pid_bool", "pid_other", "nonce", "phase", "profile", "build", "version_bool",
+    "display", "report_hash", "report_size_bool", "missing", "symlink", "overbudget", "duplicate", "nonfinite", "nonobject",
+    "extra_marker", "full_disagreement", "fixture_validation", "retained_validation", "source_drift", "binary_drift", "display_drift"))
+def test_storage_runtime_context_runner_rejects_unbound_or_changed_evidence(runner, monkeypatch, tmp_path, fault):
+    model = storage_runtime_context_model(runner, monkeypatch, tmp_path)
+    def change(full, marker, path):
+        if fault in {"pid_bool", "pid_other", "nonce", "phase", "profile", "build", "version_bool", "display"}:
+            key, value = {"pid_bool": ("process_id", True), "pid_other": ("process_id", 77), "nonce": ("process_instance", "a" * 32),
+                "phase": ("phase", "success"), "profile": ("profile", "other"), "build": ("build_hash", "other"),
+                "version_bool": ("version", [True, 2, 2]), "display": ("private_display_binding", {"path": "/foreign"})}[fault]
+            full[key] = marker[key] = value
+        elif fault == "report_hash":
+            marker["full_receipt"]["sha256"] = "0" * 64
+            return
+        elif fault == "report_size_bool":
+            marker["full_receipt"]["bytes"] = True
+            return
+        elif fault == "missing":
+            path.unlink()
+            return
+        elif fault == "symlink":
+            other = path.with_suffix(".other")
+            path.rename(other)
+            path.symlink_to(other)
+            return
+        elif fault == "overbudget":
+            marker["full_receipt"]["bytes"] = runner.STORAGE_ADAPTER_MAX_REPORT + 1
+            return
+        elif fault in {"duplicate", "nonfinite", "nonobject"}:
+            raw = {"duplicate": b'{"phase":"runtime_context","phase":"runtime_context"}', "nonfinite": b'{"x":NaN}', "nonobject": b"[]"}[fault]
+            path.write_bytes(raw)
+            marker["full_receipt"].update(bytes=len(raw), sha256=hashlib.sha256(raw).hexdigest())
+            return
+        elif fault == "extra_marker":
+            marker["additional_claim"] = True
+            return
+        elif fault == "full_disagreement":
+            full["process_id"] += 1
+            raw = (json.dumps(full) + "\n").encode()
+            path.write_bytes(raw)
+            marker["full_receipt"].update(bytes=len(raw), sha256=hashlib.sha256(raw).hexdigest())
+            return
+        elif fault == "fixture_validation":
+            model.fixture.validate_runtime_context = lambda *args, **kwargs: False
+        elif fault == "retained_validation":
+            model.fixture.validate_runtime_retained = lambda *args, **kwargs: False
+        elif fault in {"source_drift", "binary_drift"}:
+            target = model.binary if fault == "binary_drift" else runner.ROOT / "scripts/blender_storage_snapshot_adapter_smoke.py"
+            target.write_bytes(target.read_bytes() + b" changed")
+            return
+        elif fault == "display_drift":
+            monkeypatch.setattr(runner, "_domain_display", lambda: {"path": "/changed"})
+            return
+        marker.update(storage_runtime_context_write_report(full, path.parent)[0])
+    seen = install_storage_runtime_context_process(runner, monkeypatch, model, change)
+    result = runner.run_case(model.binary, runner.STORAGE_RUNTIME_CONTEXT_CASE, model.output, 10)
+    assert result["status"] == "failed" and len(seen) == 1
+
+
+@pytest.mark.parametrize("fault", ("source_inventory", "binary_pin", "windows"))
+def test_storage_runtime_context_preflight_refuses_before_launch(runner, monkeypatch, tmp_path, fault):
+    model = storage_runtime_context_model(runner, monkeypatch, tmp_path)
+    seen = install_storage_runtime_context_process(runner, monkeypatch, model)
+    if fault == "source_inventory":
+        model.fixture.runtime_source_names = lambda root: ("../foreign.py",)
+    elif fault == "binary_pin":
+        model.binary.write_bytes(b"unqualified executable")
+    else:
+        monkeypatch.setattr(runner.sys, "platform", "win32")
+    result = runner.run_case(model.binary, runner.STORAGE_RUNTIME_CONTEXT_CASE, model.output, 10)
+    assert result["status"] == "failed" and not seen and "preflight_error" in result

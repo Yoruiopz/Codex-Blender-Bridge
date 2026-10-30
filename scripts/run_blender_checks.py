@@ -95,6 +95,11 @@ RUNTIME_BULK_BUILDS = {
 }
 
 CASES = {
+    "storage_snapshot_runtime_context": ("blender_storage_snapshot_adapter_smoke.py", "BLENDER_STORAGE_RUNTIME_JOBS_CONTEXT_OK "),
+    "system_storage_snapshot": ("blender_system_storage_snapshot_smoke.py", "BLENDER_SYSTEM_STORAGE_SNAPSHOT_OK "),
+    "storage_snapshot_adapter": ("blender_storage_snapshot_adapter_smoke.py", "BLENDER_STORAGE_ADAPTER_OK "),
+    "storage_snapshot_cleanup": ("blender_storage_snapshot_cleanup_smoke.py", "BLENDER_STORAGE_CLEANUP_OK "),
+    "storage_snapshot_dispatch": ("blender_storage_snapshot_dispatch_smoke.py", "BLENDER_STORAGE_DISPATCH_OK "),
     RUNTIME_BULK_CASE: ("blender_runtime_metadata_bulk_probe_smoke.py", "BLENDER_RUNTIME_METADATA_BULK_PROBE_OK "),
     MESH_STORAGE_CASE: ("blender_mesh_storage_job_smoke.py", MESH_STORAGE_MARKER),
     MESH_STORAGE_CONTROL_CASE: ("blender_mesh_storage_job_smoke.py", MESH_STORAGE_CONTROL_MARKER),
@@ -402,6 +407,797 @@ GLB_STAGE_SOURCES = (
 )
 GLB_STAGE_BUILDS = {(4, 5, 14): "62c1db4208e8", (5, 2, 2): "d13f752e3b9c"}
 GLB_STAGE_MAX_EVIDENCE = 8 * 1024**2
+
+
+
+
+STORAGE_ADAPTER_CASE = "storage_snapshot_adapter"
+
+STORAGE_ADAPTER_PHASES = ("absent", "valid", "malformed", "permission_controls", "stop_controls", "writer_failure", "turn_binding")
+
+STORAGE_ADAPTER_MAX_REPORT = 8 * 1024 * 1024
+
+STORAGE_ADAPTER_BUILDS = {(4, 5, 14): "62c1db4208e8", (5, 2, 2): "d13f752e3b9c"}
+
+STORAGE_ADAPTER_BINARY_HASHES = {
+    (4, 5, 14): "050c02562f81fe80ba616a80198fa02d381e60f8b61b8d39add881f4bca0d7d8",
+    (5, 2, 2): "bafec183e960819c76fe213c000cdb2284c53a87ef6791812f8728b51f07145b",
+}
+
+STORAGE_CLEANUP_CASE = "storage_snapshot_cleanup"
+
+STORAGE_CLEANUP_PHASES = ("success", "permission_denial", "ownership_tamper", "stop_retry", "partial_failure", "sixteen_captures")
+
+STORAGE_CLEANUP_MAX_REPORT = 8 * 1024 * 1024
+
+STORAGE_DISPATCH_CASE = "storage_snapshot_dispatch"
+
+STORAGE_DISPATCH_PHASES = ("success_denial", "stops", "failures")
+
+STORAGE_DISPATCH_MAX_REPORT = 8 * 1024 * 1024
+STORAGE_RUNTIME_CONTEXT_CASE = "storage_snapshot_runtime_context"
+OPT_IN_CASES.add(STORAGE_RUNTIME_CONTEXT_CASE)
+INTERACTIVE_CASES.add(STORAGE_RUNTIME_CONTEXT_CASE)
+
+
+OPT_IN_CASES.update({"system_storage_snapshot", STORAGE_ADAPTER_CASE, STORAGE_CLEANUP_CASE, STORAGE_DISPATCH_CASE, STORAGE_RUNTIME_CONTEXT_CASE})
+INTERACTIVE_CASES.update({"system_storage_snapshot", STORAGE_ADAPTER_CASE, STORAGE_CLEANUP_CASE, STORAGE_DISPATCH_CASE, STORAGE_RUNTIME_CONTEXT_CASE})
+
+def _cloth_file(path: Path, maximum: int, *, content: bool = False) -> tuple[str, bytes]:
+    before = path.lstat()
+    if not stat.S_ISREG(before.st_mode) or not 0 < before.st_size <= maximum:
+        raise ValueError("CLOTH_FILE_SHAPE")
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+
+    def identity(item):
+        return item.st_dev, item.st_ino, item.st_size, item.st_mtime_ns
+
+    checksum, count, pieces = hashlib.sha256(), 0, []
+    try:
+        if identity(os.fstat(descriptor)) != identity(before):
+            raise ValueError("CLOTH_FILE_CHANGED")
+        while True:
+            raw = os.read(descriptor, min(65536, maximum + 1 - count))
+            if not raw:
+                break
+            count += len(raw)
+            if count > maximum:
+                raise ValueError("CLOTH_FILE_BUDGET")
+            checksum.update(raw)
+            if content:
+                pieces.append(raw)
+        if (count != before.st_size or identity(os.fstat(descriptor)) != identity(before)
+                or identity(path.lstat()) != identity(before)):
+            raise ValueError("CLOTH_FILE_CHANGED")
+    finally:
+        os.close(descriptor)
+    return checksum.hexdigest(), b"".join(pieces)
+
+
+def _cloth_unique(pairs):
+    result = {}
+    for name, value in pairs:
+        if name in result:
+            raise ValueError("CLOTH_DUPLICATE_KEY")
+        result[name] = value
+    return result
+
+
+def _cloth_nonfinite(_value):
+    raise ValueError("CLOTH_NONFINITE_JSON")
+
+
+def _storage_adapter_inputs(blender):
+    from scripts import blender_storage_snapshot_adapter_smoke as fixture
+    names = fixture.source_names(ROOT)
+    required = {"scripts/blender_storage_snapshot_adapter_smoke.py", "scripts/run_blender_checks.py",
+                "scripts/blender_artist_sidebar_smoke.py"}
+    required.update(str(path.relative_to(ROOT)) for path in (ROOT / "addon/blender_codex_bridge").rglob("*.py"))
+    if (type(names) not in (tuple, list) or any(type(name) is not str or not name
+            or Path(name).is_absolute() or ".." in Path(name).parts for name in names)
+            or len(set(names)) != len(names) or set(names) != required):
+        raise ValueError("STORAGE_ADAPTER_SOURCE_INVENTORY")
+    binary = {"path": str(blender.resolve()), "sha256": _cloth_file(blender, 1024**3)[0]}
+    if binary["sha256"] not in STORAGE_ADAPTER_BINARY_HASHES.values():
+        raise ValueError("STORAGE_ADAPTER_BINARY_NOT_PINNED")
+    return {"source_fingerprints": {name: _cloth_file(ROOT / name, 1024**2)[0] for name in names}, "binary": binary}
+
+
+def _storage_adapter_retained(full, bundle):
+    """Reparse actual owned native bytes independently of fixture assertions."""
+    import importlib.util
+    module_name = "_bcb_storage_adapter_evidence_reader"
+    spec = importlib.util.spec_from_file_location(module_name, ROOT / "addon/blender_codex_bridge/blend_storage_sdna.py")
+    if spec is None or spec.loader is None:
+        raise ValueError("STORAGE_ADAPTER_READER_REQUIRED")
+    module = importlib.util.module_from_spec(spec)
+    previous = sys.modules.get(module_name)
+    sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        if previous is None:
+            sys.modules.pop(module_name, None)
+        else:
+            sys.modules[module_name] = previous
+    names = module.CYCLES_NAMES if full["version"][0] == 4 else module.CYCLES_502_NAMES
+    def owned_leaf(name):
+        return (name.startswith("bcb-storage-") and len(name) == 44
+                and all(char in "0123456789abcdef" for char in name[12:]))
+    for row in full["cases"]:
+        root = bundle / (full["phase"] + "-" + row["name"] + "-owned")
+        root_stat = root.lstat()
+        if (row["owned_root"] != str(root) or not stat.S_ISDIR(root_stat.st_mode)
+                or stat.S_IMODE(root_stat.st_mode) != 0o700):
+            raise ValueError("STORAGE_ADAPTER_OWNED_ROOT")
+        cells = row["journal"]["snapshots"]
+        if type(cells) is not list or len(cells) > 1:
+            raise ValueError("STORAGE_ADAPTER_JOURNAL_SHAPE")
+        for cell in cells:
+            directory = Path(cell["directory"])
+            if (cell["root"] != str(root) or cell["root_identity"] != [root_stat.st_dev, root_stat.st_ino]
+                    or type(cell["root_identity"]) is not list or any(type(value) is not int for value in cell["root_identity"])
+                    or type(cell["directory_identity"]) is not list
+                    or any(type(value) is not int for value in cell["directory_identity"])
+                    or directory.parent != root or not owned_leaf(directory.name)
+                    or cell["filepath"] != str(directory / "snapshot.blend")):
+                raise ValueError("STORAGE_ADAPTER_JOURNAL_PATH_BINDING")
+        record, retained, targets = row["native_file"], row["retained_parser"], row["raw_targets"]
+        if (type(targets) is not list or len(targets) != 2 or any(type(target) is not dict
+                or set(target) != {"scene_name", "view_layer_name"}
+                or any(type(value) is not str or not value or len(value) > 128 for value in target.values()) for target in targets)
+                or targets[0] == targets[1]):
+            raise ValueError("STORAGE_ADAPTER_RAW_TARGETS")
+        if record is None:
+            if retained != []:
+                raise ValueError("STORAGE_ADAPTER_UNEXPECTED_PARSER_PROOF")
+            # No extra child or hidden positive file may escape the receipt.
+            children = list(root.iterdir())
+            if len(children) > 1:
+                raise ValueError("STORAGE_ADAPTER_UNEXPECTED_OWNED_CHILD")
+            for child in children:
+                info = child.lstat()
+                if (not stat.S_ISDIR(info.st_mode) or not owned_leaf(child.name) or len(cells) != 1
+                        or cells[0]["directory"] != str(child)
+                        or cells[0]["directory_identity"] != [info.st_dev, info.st_ino]
+                        or stat.S_IMODE(info.st_mode) != (0o500 if row["name"] == "writer_failure" else 0o700)):
+                    raise ValueError("STORAGE_ADAPTER_UNEXPECTED_OWNED_CHILD")
+                files = list(child.iterdir())
+                if len(files) > 1 or any(path.name != "snapshot.blend" or not stat.S_ISREG(path.lstat().st_mode)
+                                       or path.stat().st_size != 0 for path in files):
+                    raise ValueError("STORAGE_ADAPTER_UNREPORTED_NATIVE_FILE")
+            continue
+        if type(record) is not dict or set(record) != {"path", "bytes", "sha256"}:
+            raise ValueError("STORAGE_ADAPTER_NATIVE_RECEIPT")
+        path = Path(record["path"])
+        leaf = path.parent.name
+        parent_stat = path.parent.lstat()
+        if (path.parent.parent != root or path.name != "snapshot.blend" or not owned_leaf(leaf)
+                or not stat.S_ISDIR(parent_stat.st_mode) or stat.S_IMODE(parent_stat.st_mode) != 0o700
+                or len(cells) != 1 or cells[0]["directory"] != str(path.parent)
+                or cells[0]["directory_identity"] != [parent_stat.st_dev, parent_stat.st_ino]
+                or cells[0]["filepath"] != str(path) or list(root.iterdir()) != [path.parent]
+                or list(path.parent.iterdir()) != [path]):
+            raise ValueError("STORAGE_ADAPTER_NATIVE_PATH")
+        checksum, _ = _cloth_file(path, 1024**3)
+        expected = {"path": str(path), "bytes": path.stat().st_size, "sha256": checksum}
+        if record != expected or type(record["bytes"]) is not int or type(retained) is not list or len(retained) != 2:
+            raise ValueError("STORAGE_ADAPTER_NATIVE_FILE_CHANGED")
+        info = path.lstat()
+        identity = [info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns]
+        if (cells[0]["file_identity"] not in ([], identity)
+                or type(cells[0]["file_identity"]) is not list
+                or any(type(value) is not int for value in cells[0]["file_identity"])
+                or (cells[0]["file_bytes"] is not None and type(cells[0]["file_bytes"]) is not int)
+                or cells[0]["file_bytes"] not in (None, info.st_size)
+                or cells[0]["file_sha256"] not in (None, checksum)):
+            raise ValueError("STORAGE_ADAPTER_JOURNAL_FILE_BINDING")
+        for target, proof in zip(targets, retained, strict=True):
+            if type(proof) is not dict or proof.get("target") != target:
+                raise ValueError("STORAGE_ADAPTER_RETAINED_TARGET")
+            try:
+                actual = module.inspect_view_layer_storage(str(path), target["scene_name"], target["view_layer_name"], allowed_names=names)
+            except module.StorageSnapshotError as error:
+                if proof != {"target": target, "error": {"type": "StorageSnapshotError", "reason": error.reason}}:
+                    raise ValueError("STORAGE_ADAPTER_INDEPENDENT_REFUSAL") from error
+            else:
+                if proof != {"target": target, "result": actual}:
+                    raise ValueError("STORAGE_ADAPTER_INDEPENDENT_PROJECTION")
+        if _cloth_file(path, 1024**3)[0] != checksum:
+            raise ValueError("STORAGE_ADAPTER_NATIVE_CHANGED_DURING_PARSE")
+
+
+def _storage_adapter_validate(payload, phase, bundle, process_instance, process_id, inputs):
+    from scripts import blender_storage_snapshot_adapter_smoke as fixture
+    try:
+        expected = {"schema": fixture.SCHEMA, "profile": fixture.PROFILE, "phase": phase, "completed": True,
+                    "process_instance": process_instance, "process_id": process_id, **inputs}
+        if (type(payload) is not dict or type(process_id) is not int or process_id <= 0
+                or any(type(payload.get(key)) is not type(value) or payload.get(key) != value for key, value in expected.items())):
+            raise ValueError("STORAGE_ADAPTER_MARKER_BINDING")
+        version = payload.get("version")
+        if (type(version) is not list or len(version) != 3 or any(type(part) is not int for part in version)
+                or tuple(version) not in STORAGE_ADAPTER_BUILDS
+                or type(payload.get("build_hash")) is not str
+                or payload["build_hash"] != STORAGE_ADAPTER_BUILDS[tuple(version)]
+                or inputs["binary"]["sha256"] != STORAGE_ADAPTER_BINARY_HASHES[tuple(version)]
+                or type(payload.get("blender_version")) is not str
+                or payload["blender_version"] not in {".".join(map(str, version)), ".".join(map(str, version)) + " LTS"}):
+            raise ValueError("STORAGE_ADAPTER_OFFICIAL_BUILD_REQUIRED")
+        path, record = bundle / (phase + ".json"), payload.get("full_receipt")
+        if (type(record) is not dict or set(record) != {"path", "bytes", "sha256"}
+                or record["path"] != str(path) or type(record["bytes"]) is not int
+                or not 0 < record["bytes"] <= STORAGE_ADAPTER_MAX_REPORT):
+            raise ValueError("STORAGE_ADAPTER_REPORT_RECEIPT")
+        checksum, raw = _cloth_file(path, STORAGE_ADAPTER_MAX_REPORT, content=True)
+        if checksum != record["sha256"] or len(raw) != record["bytes"]:
+            raise ValueError("STORAGE_ADAPTER_REPORT_CHANGED")
+        full = json.loads(raw, object_pairs_hook=_cloth_unique, parse_constant=_cloth_nonfinite)
+        if (type(full) is not dict or any(type(full.get(key)) is not type(payload.get(key))
+                or full.get(key) != payload.get(key) for key in (*expected, "version", "build_hash", "blender_version"))
+                or fixture.validate_full(full, phase=phase, process_instance=process_instance,
+                    sources=inputs["source_fingerprints"], binary=inputs["binary"], process_id=process_id) is not True):
+            raise ValueError("STORAGE_ADAPTER_FULL_REPORT_INVALID")
+        for flag in ("runtime_retention_qualified", "full_authored_preservation_qualified", "durable_backup_qualified",
+                     "cache_pairing_qualified", "native_calls_preemptible", "windows_qualified",
+                     "installed_package_qualified", "cleanup_qualified", "native_memory_cap_claimed",
+                     "hidden_Main_passivity_claimed"):
+            if full.get(flag) is not False:
+                raise ValueError("STORAGE_ADAPTER_BROAD_QUALIFICATION_FORBIDDEN")
+        if full.get("native_adapter_qualified") is not True or full.get("source_unchanged") is not True:
+            raise ValueError("STORAGE_ADAPTER_COMPLETION_REQUIRED")
+        _storage_adapter_retained(full, bundle)
+        if _storage_adapter_inputs(Path(inputs["binary"]["path"])) != inputs:
+            raise ValueError("STORAGE_ADAPTER_LIVE_INPUT_CHANGED")
+        return {"passed": True, "path": str(path), "sha256": checksum, "native_files_independently_reparsed": True}
+    except (OSError, ValueError, TypeError, KeyError, AttributeError, RecursionError, AssertionError) as error:
+        return {"passed": False, "reason": str(error)[:256] or "STORAGE_ADAPTER_EVIDENCE_INVALID"}
+
+
+def _storage_adapter_bind(rows, bundle, inputs):
+    reports = []
+    for index, row in enumerate(rows):
+        validation = _storage_adapter_validate(row.get("evidence"), STORAGE_ADAPTER_PHASES[index], bundle,
+            row["process_instance"], row.get("launched_process_id"), inputs)
+        if not validation["passed"] or validation != row["retained_evidence_validation"]:
+            raise ValueError("STORAGE_ADAPTER_PRIOR_RECEIPT_CHANGED")
+        reports.append(row["evidence"])
+    if (len({row["process_instance"] for row in rows}) != len(rows)
+            or len({row["launched_process_id"] for row in rows}) != len(rows)):
+        raise ValueError("STORAGE_ADAPTER_REUSED_PROCESS")
+    if any(any(report[key] != reports[0][key] for key in ("version", "build_hash", "blender_version")) for report in reports):
+        raise ValueError("STORAGE_ADAPTER_CROSS_PHASE_BUILD_CHANGED")
+    if _storage_adapter_inputs(Path(inputs["binary"]["path"])) != inputs:
+        raise ValueError("STORAGE_ADAPTER_INPUT_CHANGED_BEFORE_NEXT_LAUNCH")
+    return reports
+
+
+def _run_storage_adapter_case(blender, output, timeout):
+    from scripts import blender_storage_snapshot_adapter_smoke as fixture
+    bundle = output / (STORAGE_ADAPTER_CASE + "-bundle")
+    bundle.mkdir(mode=0o700)
+    phases, reports, error = [], [], None
+    started = time.monotonic()
+    try:
+        inputs = _storage_adapter_inputs(blender) if sys.platform != "win32" else None
+        if inputs is None:
+            raise ValueError("STORAGE_ADAPTER_WINDOWS_TESTING_DEFERRED")
+        for phase in STORAGE_ADAPTER_PHASES:
+            _storage_adapter_bind(phases, bundle, inputs)
+            row = _run_process(blender, STORAGE_ADAPTER_CASE, output, min(timeout, 300), phase=phase,
+                               bundle=bundle, phase_marker=fixture.MARKERS[phase])
+            phases.append(row)
+            if row["status"] != "passed":
+                break
+            reports = _storage_adapter_bind(phases, bundle, inputs)
+    except (OSError, ValueError, TypeError, KeyError, RecursionError) as cause:
+        error = str(cause)[:256]
+        if phases:
+            phases[-1]["status"], phases[-1]["phase_binding_error"] = "failed", error
+    complete = len(phases) == len(STORAGE_ADAPTER_PHASES) and len(reports) == len(phases) and all(row["status"] == "passed" for row in phases)
+    return {"case": STORAGE_ADAPTER_CASE, "script": CASES[STORAGE_ADAPTER_CASE][0],
+            "status": "passed" if complete else "failed", "phase_sequence": [row["phase"] for row in phases],
+            "phases": phases, "fresh_process_verified": complete, "retained_files_independently_reparsed": complete,
+            "phase_binding_error": error, "shared_bundle": str(bundle), "qualification_scope": fixture.PROFILE,
+            "execution_mode": phases[0]["execution_mode"] if phases else "interactive_display",
+            "blender_version": phases[-1].get("blender_version") if phases else None,
+            "duration_seconds": time.monotonic() - started, "full_artist_target": "OPEN", "windows_testing_deferred": True}
+
+
+def _storage_cleanup_inputs(blender):
+    from scripts import blender_storage_snapshot_cleanup_smoke as fixture
+    names = fixture.source_names(ROOT)
+    required = {"scripts/blender_storage_snapshot_cleanup_smoke.py", "scripts/blender_storage_snapshot_adapter_smoke.py",
+                "scripts/run_blender_checks.py", "scripts/blender_artist_sidebar_smoke.py"}
+    required.update(str(path.relative_to(ROOT)) for path in (ROOT / "addon/blender_codex_bridge").rglob("*.py"))
+    if (type(names) not in (tuple, list) or any(type(name) is not str or not name or Path(name).is_absolute()
+            or ".." in Path(name).parts for name in names) or len(set(names)) != len(names) or set(names) != required):
+        raise ValueError("STORAGE_CLEANUP_SOURCE_INVENTORY")
+    binary = {"path": str(blender.resolve()), "sha256": _cloth_file(blender, 1024**3)[0]}
+    if binary["sha256"] not in STORAGE_ADAPTER_BINARY_HASHES.values():
+        raise ValueError("STORAGE_CLEANUP_BINARY_NOT_PINNED")
+    return {"source_fingerprints": {name: _cloth_file(ROOT / name, 1024**2)[0] for name in names}, "binary": binary}
+
+
+def _storage_dispatch_inputs(blender):
+    from scripts import blender_storage_snapshot_dispatch_smoke as fixture
+    names = fixture.source_names(ROOT)
+    required = {"scripts/blender_storage_snapshot_dispatch_smoke.py", "scripts/blender_storage_snapshot_cleanup_smoke.py", "scripts/blender_storage_snapshot_adapter_smoke.py",
+                "scripts/run_blender_checks.py", "scripts/blender_artist_sidebar_smoke.py"}
+    required.update(str(path.relative_to(ROOT)) for path in (ROOT / "addon/blender_codex_bridge").rglob("*.py"))
+    if (type(names) not in (tuple, list) or any(type(name) is not str or not name or Path(name).is_absolute()
+            or ".." in Path(name).parts for name in names) or len(set(names)) != len(names) or set(names) != required):
+        raise ValueError("STORAGE_DISPATCH_SOURCE_INVENTORY")
+    binary = {"path": str(blender.resolve()), "sha256": _cloth_file(blender, 1024**3)[0]}
+    if binary["sha256"] not in STORAGE_ADAPTER_BINARY_HASHES.values():
+        raise ValueError("STORAGE_DISPATCH_BINARY_NOT_PINNED")
+    return {"source_fingerprints": {name: _cloth_file(ROOT / name, 1024**2)[0] for name in names}, "binary": binary}
+
+
+def _storage_dispatch_validate(payload, phase, bundle, process_instance, process_id, inputs):
+    from scripts import blender_storage_snapshot_dispatch_smoke as fixture
+    try:
+        expected = {"schema": fixture.SCHEMA, "profile": fixture.PROFILE, "phase": phase, "completed": True,
+                    "process_instance": process_instance, "process_id": process_id, **inputs}
+        if (type(payload) is not dict or type(process_id) is not int or process_id <= 0
+                or any(type(payload.get(key)) is not type(value) or payload.get(key) != value for key, value in expected.items())):
+            raise ValueError("STORAGE_DISPATCH_MARKER_BINDING")
+        version = payload.get("version")
+        if (type(version) is not list or len(version) != 3 or any(type(part) is not int for part in version)
+                or tuple(version) not in STORAGE_ADAPTER_BUILDS or payload.get("build_hash") != STORAGE_ADAPTER_BUILDS[tuple(version)]
+                or inputs["binary"]["sha256"] != STORAGE_ADAPTER_BINARY_HASHES[tuple(version)]
+                or payload.get("blender_version") not in {".".join(map(str, version)), ".".join(map(str, version)) + " LTS"}):
+            raise ValueError("STORAGE_DISPATCH_OFFICIAL_BUILD_REQUIRED")
+        path, record = bundle / (phase + ".json"), payload.get("full_receipt")
+        if (type(record) is not dict or set(record) != {"path", "bytes", "sha256"} or record["path"] != str(path)
+                or type(record["bytes"]) is not int or not 0 < record["bytes"] <= STORAGE_DISPATCH_MAX_REPORT):
+            raise ValueError("STORAGE_DISPATCH_REPORT_RECEIPT")
+        checksum, raw = _cloth_file(path, STORAGE_DISPATCH_MAX_REPORT, content=True)
+        if checksum != record["sha256"] or len(raw) != record["bytes"]:
+            raise ValueError("STORAGE_DISPATCH_REPORT_CHANGED")
+        full = json.loads(raw, object_pairs_hook=_cloth_unique, parse_constant=_cloth_nonfinite)
+        if (type(full) is not dict or any(type(full.get(key)) is not type(payload.get(key)) or full.get(key) != payload.get(key)
+                for key in (*expected, "version", "build_hash", "blender_version"))
+                or fixture.validate_full(full, phase=phase, process_instance=process_instance,
+                    sources=inputs["source_fingerprints"], binary=inputs["binary"], process_id=process_id) is not True):
+            raise ValueError("STORAGE_DISPATCH_FULL_REPORT_INVALID")
+        for flag in ("runtime_retention_qualified", "full_authored_preservation_qualified", "durable_backup_qualified",
+                     "cache_pairing_qualified", "native_calls_preemptible", "windows_qualified", "installed_package_qualified",
+                     "native_memory_cap_claimed", "hidden_Main_passivity_claimed", "current_pixels_backup_qualified",
+                     "shipping_caller_qualified"):
+            if full.get(flag) is not False:
+                raise ValueError("STORAGE_DISPATCH_BROAD_QUALIFICATION_FORBIDDEN")
+        if (full.get("actual_dispatch_qualified") is not True or full.get("transport_qualified") is not True
+                or full.get("source_unchanged") is not True
+                or full.get("request_binding_kind") != "ACTUAL_QUEUED_EXECUTOR_LOOPBACK_REQUEST"):
+            raise ValueError("STORAGE_DISPATCH_COMPLETION_REQUIRED")
+        if fixture.validate_retained(full, bundle) is not True:
+            raise ValueError("STORAGE_DISPATCH_RETAINED_ARTIFACTS_INVALID")
+        if _storage_dispatch_inputs(Path(inputs["binary"]["path"])) != inputs:
+            raise ValueError("STORAGE_DISPATCH_LIVE_INPUT_CHANGED")
+        return {"passed": True, "path": str(path), "sha256": checksum, "native_copies_independently_reparsed": True}
+    except (OSError, ValueError, TypeError, KeyError, AttributeError, RecursionError, AssertionError) as error:
+        return {"passed": False, "reason": str(error)[:256] or "STORAGE_DISPATCH_EVIDENCE_INVALID"}
+
+
+def _storage_dispatch_bind(rows, bundle, inputs):
+    reports = []
+    for index, row in enumerate(rows):
+        validation = _storage_dispatch_validate(row.get("evidence"), STORAGE_DISPATCH_PHASES[index], bundle,
+            row["process_instance"], row.get("launched_process_id"), inputs)
+        if not validation["passed"] or validation != row["retained_evidence_validation"]:
+            raise ValueError("STORAGE_DISPATCH_PRIOR_RECEIPT_CHANGED")
+        reports.append(row["evidence"])
+    if len({row["process_instance"] for row in rows}) != len(rows) or len({row["launched_process_id"] for row in rows}) != len(rows):
+        raise ValueError("STORAGE_DISPATCH_REUSED_PROCESS")
+    if any(any(report[key] != reports[0][key] for key in ("version", "build_hash", "blender_version")) for report in reports):
+        raise ValueError("STORAGE_DISPATCH_CROSS_PHASE_BUILD_CHANGED")
+    if _storage_dispatch_inputs(Path(inputs["binary"]["path"])) != inputs:
+        raise ValueError("STORAGE_DISPATCH_INPUT_CHANGED_BEFORE_NEXT_LAUNCH")
+    return reports
+
+
+def _run_storage_dispatch_case(blender, output, timeout):
+    from scripts import blender_storage_snapshot_dispatch_smoke as fixture
+    bundle = output / (STORAGE_DISPATCH_CASE + "-bundle")
+    bundle.mkdir(mode=0o700)
+    phases, reports, error = [], [], None
+    started = time.monotonic()
+    try:
+        inputs = _storage_dispatch_inputs(blender) if sys.platform != "win32" else None
+        if inputs is None:
+            raise ValueError("STORAGE_DISPATCH_WINDOWS_TESTING_DEFERRED")
+        for phase in STORAGE_DISPATCH_PHASES:
+            _storage_dispatch_bind(phases, bundle, inputs)
+            row = _run_process(blender, STORAGE_DISPATCH_CASE, output, min(timeout, 300), phase=phase,
+                               bundle=bundle, phase_marker=fixture.MARKERS[phase])
+            phases.append(row)
+            if row["status"] != "passed":
+                break
+            reports = _storage_dispatch_bind(phases, bundle, inputs)
+    except (OSError, ValueError, TypeError, KeyError, RecursionError) as cause:
+        error = str(cause)[:256]
+        if phases:
+            phases[-1]["status"], phases[-1]["phase_binding_error"] = "failed", error
+    complete = len(phases) == len(STORAGE_DISPATCH_PHASES) and len(reports) == len(phases) and all(row["status"] == "passed" for row in phases)
+    return {"case": STORAGE_DISPATCH_CASE, "script": CASES[STORAGE_DISPATCH_CASE][0],
+            "status": "passed" if complete else "failed", "phase_sequence": [row["phase"] for row in phases],
+            "phases": phases, "fresh_process_verified": complete, "retained_copies_independently_reparsed": complete,
+            "phase_binding_error": error, "shared_bundle": str(bundle), "qualification_scope": fixture.PROFILE,
+            "execution_mode": phases[0]["execution_mode"] if phases else "interactive_display",
+            "blender_version": phases[-1].get("blender_version") if phases else None,
+            "duration_seconds": time.monotonic() - started, "full_artist_target": "OPEN", "windows_testing_deferred": True}
+
+
+def _storage_cleanup_retained(full, bundle):
+    """Reparse create-only native evidence copies after originals are deleted."""
+    import importlib.util
+    module_name = "_bcb_storage_cleanup_evidence_reader"
+    spec = importlib.util.spec_from_file_location(module_name, ROOT / "addon/blender_codex_bridge/blend_storage_sdna.py")
+    if spec is None or spec.loader is None:
+        raise ValueError("STORAGE_CLEANUP_READER_REQUIRED")
+    module = importlib.util.module_from_spec(spec)
+    previous = sys.modules.get(module_name)
+    sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        if previous is None:
+            sys.modules.pop(module_name, None)
+        else:
+            sys.modules[module_name] = previous
+    names = module.CYCLES_NAMES if full["version"][0] == 4 else module.CYCLES_502_NAMES
+    for row in full["cases"]:
+        prefix = full["phase"] + "-" + row["name"]
+        root = bundle / (prefix + "-owned")
+        sentinel = bundle / (prefix + "-sentinel.bin")
+        sentinel_record = row["sentinel"]
+        if (type(sentinel_record) is not dict or set(sentinel_record) != {"path", "bytes", "sha256"}
+                or sentinel_record["path"] != str(sentinel) or type(sentinel_record["bytes"]) is not int):
+            raise ValueError("STORAGE_CLEANUP_SENTINEL_BINDING")
+        sentinel_sha, _ = _cloth_file(sentinel, 65536)
+        if (sentinel_record["sha256"] != sentinel_sha or sentinel_record["bytes"] != sentinel.stat().st_size
+                or sentinel.lstat().st_nlink != 1):
+            raise ValueError("STORAGE_CLEANUP_SENTINEL_CHANGED")
+        before, after = row["journal_before"]["snapshots"], row["journal_after"]["snapshots"]
+        copies, targets = row["evidence_copies"], row["raw_targets"]
+        actor = row["actor"]
+        request_ids = actor.get("request_ids") if type(actor) is dict else None
+        if (type(request_ids) is not list or not 1 <= len(request_ids) <= 128
+                or any(type(value) is not str or len(value) != 32 or any(character not in "0123456789abcdef" for character in value)
+                       for value in request_ids) or len(set(request_ids)) != len(request_ids)
+                or type(actor.get("contexts_created")) is not int or actor["contexts_created"] != len(request_ids)
+                or (actor.get("retry_with_fresh_context") is True and len(request_ids) < 2)):
+            raise ValueError("STORAGE_CLEANUP_FRESH_CONTEXT_BINDING")
+        if (row["owned_root"] != str(root) or type(before) is not list or not 1 <= len(before) <= 16
+                or type(after) is not list or len(after) != len(before) or type(copies) is not list
+                or len(copies) != len(before) or type(targets) is not list or len(targets) != 2
+                or any(type(target) is not dict or set(target) != {"scene_name", "view_layer_name"}
+                    or any(type(value) is not str or not value or len(value) > 128 for value in target.values()) for target in targets)
+                or targets[0] == targets[1]):
+            raise ValueError("STORAGE_CLEANUP_ARTIFACT_INVENTORY")
+        copy_root = bundle / (prefix + "-evidence")
+        directory_stat = copy_root.lstat()
+        if (not stat.S_ISDIR(directory_stat.st_mode) or stat.S_IMODE(directory_stat.st_mode) != 0o700
+                or directory_stat.st_uid != os.geteuid()
+                or {path.name for path in copy_root.iterdir()} != {str(index) + ".blend" for index in range(len(copies))}):
+            raise ValueError("STORAGE_CLEANUP_COPY_DIRECTORY")
+        for index, (cell, final, record) in enumerate(zip(before, after, copies, strict=True)):
+            unchanged = ("root", "directory", "filepath", "root_identity", "directory_identity", "file_identity", "file_sha256", "file_bytes")
+            if (type(cell) is not dict or type(final) is not dict or any(cell.get(key) != final.get(key) for key in unchanged)
+                    or type(record) is not dict or set(record) != {"owner_index", "original_path", "original_identity", "original_binding", "original_sha256", "copy", "retained_parser"}
+                    or type(record["owner_index"]) is not int or record["owner_index"] != index):
+                raise ValueError("STORAGE_CLEANUP_ORIGINAL_RECEIPT")
+            child = Path(cell["directory"])
+            leaf = child.name
+            if (cell["root"] != str(root) or child.parent != root or len(leaf) != 44 or not leaf.startswith("bcb-storage-")
+                    or any(character not in "0123456789abcdef" for character in leaf[12:])
+                    or cell["filepath"] != str(child / "snapshot.blend") or record["original_path"] != cell["filepath"]):
+                raise ValueError("STORAGE_CLEANUP_ORIGINAL_PATH")
+            for key in ("root_identity", "directory_identity"):
+                if type(cell[key]) is not list or len(cell[key]) != 2 or any(type(value) is not int or value < 0 for value in cell[key]):
+                    raise ValueError("STORAGE_CLEANUP_ORIGINAL_DIRECTORY_IDENTITY")
+            identity, binding = record["original_identity"], record["original_binding"]
+            unknown = full["phase"] == "stop_retry" and row["name"] == "unknown_after_writer_stop"
+            if (type(identity) is not list or len(identity) != 4 or any(type(value) is not int or value < 0 for value in identity)
+                    or not 0 < identity[2] <= 1024**3 or type(cell["file_identity"]) is not list
+                    or any(type(value) is not int or value < 0 for value in cell["file_identity"])
+                    or (cell["file_identity"] != identity and not (unknown and cell["file_identity"] == []))):
+                raise ValueError("STORAGE_CLEANUP_ORIGINAL_FILE_IDENTITY")
+            if unknown:
+                if binding is not None:
+                    raise ValueError("STORAGE_CLEANUP_UNKNOWN_OWNER_ADOPTED")
+            elif (type(binding) is not list or len(binding) != 8 or any(type(value) is not int or value < 0 for value in binding)
+                    or binding[:2] != identity[:2] or binding[2] != os.geteuid() or binding[4] != 1
+                    or binding[5:7] != identity[2:]):
+                raise ValueError("STORAGE_CLEANUP_ORIGINAL_FILE_BINDING")
+            copy = record["copy"]
+            path = copy_root / (str(index) + ".blend")
+            if type(copy) is not dict or set(copy) != {"path", "bytes", "sha256"} or copy["path"] != str(path):
+                raise ValueError("STORAGE_CLEANUP_COPY_BINDING")
+            info = path.lstat()
+            if (not stat.S_ISREG(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o600 or info.st_uid != os.geteuid()
+                    or info.st_nlink != 1 or type(copy["bytes"]) is not int or copy["bytes"] != info.st_size
+                    or copy["bytes"] != identity[2]):
+                raise ValueError("STORAGE_CLEANUP_COPY_METADATA")
+            checksum, _ = _cloth_file(path, 1024**3)
+            if (copy["sha256"] != checksum or record["original_sha256"] != checksum
+                    or (cell["file_sha256"] != checksum and not (cell["file_sha256"] is None
+                        and (unknown or row["name"] == "malformed_cleanup")))
+                    or (cell["file_bytes"] is not None and type(cell["file_bytes"]) is not int)
+                    or cell["file_bytes"] not in (None, identity[2])):
+                raise ValueError("STORAGE_CLEANUP_COPY_CHANGED")
+            proofs = record["retained_parser"]
+            if type(proofs) is not list or len(proofs) != 2:
+                raise ValueError("STORAGE_CLEANUP_COPY_PROJECTIONS")
+            for target_index, (target, proof) in enumerate(zip(targets, proofs, strict=True)):
+                if type(proof) is not dict or proof.get("target") != target:
+                    raise ValueError("STORAGE_CLEANUP_COPY_TARGET")
+                try:
+                    actual = module.inspect_view_layer_storage(str(path), target["scene_name"], target["view_layer_name"], allowed_names=names)
+                except module.StorageSnapshotError as error:
+                    if (row["name"] != "malformed_cleanup" or target_index != 1 or error.reason != "RAW_PROPERTY_TYPE_UNQUALIFIED"
+                            or proof != {"target": target, "error": {"type": "StorageSnapshotError", "reason": error.reason}}):
+                        raise ValueError("STORAGE_CLEANUP_COPY_REFUSAL") from error
+                else:
+                    if proof != {"target": target, "result": actual}:
+                        raise ValueError("STORAGE_CLEANUP_COPY_PROJECTION")
+            if _cloth_file(path, 1024**3)[0] != checksum:
+                raise ValueError("STORAGE_CLEANUP_COPY_CHANGED_DURING_PARSE")
+
+
+def _storage_cleanup_validate(payload, phase, bundle, process_instance, process_id, inputs):
+    from scripts import blender_storage_snapshot_cleanup_smoke as fixture
+    try:
+        expected = {"schema": fixture.SCHEMA, "profile": fixture.PROFILE, "phase": phase, "completed": True,
+                    "process_instance": process_instance, "process_id": process_id, **inputs}
+        if (type(payload) is not dict or type(process_id) is not int or process_id <= 0
+                or any(type(payload.get(key)) is not type(value) or payload.get(key) != value for key, value in expected.items())):
+            raise ValueError("STORAGE_CLEANUP_MARKER_BINDING")
+        version = payload.get("version")
+        if (type(version) is not list or len(version) != 3 or any(type(part) is not int for part in version)
+                or tuple(version) not in STORAGE_ADAPTER_BUILDS or payload.get("build_hash") != STORAGE_ADAPTER_BUILDS[tuple(version)]
+                or inputs["binary"]["sha256"] != STORAGE_ADAPTER_BINARY_HASHES[tuple(version)]
+                or payload.get("blender_version") not in {".".join(map(str, version)), ".".join(map(str, version)) + " LTS"}):
+            raise ValueError("STORAGE_CLEANUP_OFFICIAL_BUILD_REQUIRED")
+        path, record = bundle / (phase + ".json"), payload.get("full_receipt")
+        if (type(record) is not dict or set(record) != {"path", "bytes", "sha256"} or record["path"] != str(path)
+                or type(record["bytes"]) is not int or not 0 < record["bytes"] <= STORAGE_CLEANUP_MAX_REPORT):
+            raise ValueError("STORAGE_CLEANUP_REPORT_RECEIPT")
+        checksum, raw = _cloth_file(path, STORAGE_CLEANUP_MAX_REPORT, content=True)
+        if checksum != record["sha256"] or len(raw) != record["bytes"]:
+            raise ValueError("STORAGE_CLEANUP_REPORT_CHANGED")
+        full = json.loads(raw, object_pairs_hook=_cloth_unique, parse_constant=_cloth_nonfinite)
+        if (type(full) is not dict or any(type(full.get(key)) is not type(payload.get(key)) or full.get(key) != payload.get(key)
+                for key in (*expected, "version", "build_hash", "blender_version"))
+                or fixture.validate_full(full, phase=phase, process_instance=process_instance,
+                    sources=inputs["source_fingerprints"], binary=inputs["binary"], process_id=process_id) is not True):
+            raise ValueError("STORAGE_CLEANUP_FULL_REPORT_INVALID")
+        for flag in ("runtime_retention_qualified", "full_authored_preservation_qualified", "durable_backup_qualified",
+                     "cache_pairing_qualified", "native_calls_preemptible", "windows_qualified", "installed_package_qualified",
+                     "native_memory_cap_claimed", "hidden_Main_passivity_claimed", "current_pixels_backup_qualified",
+                     "canonical_dispatch_qualified", "transport_qualified"):
+            if full.get(flag) is not False:
+                raise ValueError("STORAGE_CLEANUP_BROAD_QUALIFICATION_FORBIDDEN")
+        if (full.get("cleanup_qualified") is not True or full.get("source_unchanged") is not True
+                or full.get("request_binding_kind") != "SOURCE_QUALIFIED_REPLICA_FRESH_QUEUED_REQUEST"):
+            raise ValueError("STORAGE_CLEANUP_COMPLETION_REQUIRED")
+        _storage_cleanup_retained(full, bundle)
+        if _storage_cleanup_inputs(Path(inputs["binary"]["path"])) != inputs:
+            raise ValueError("STORAGE_CLEANUP_LIVE_INPUT_CHANGED")
+        return {"passed": True, "path": str(path), "sha256": checksum, "native_copies_independently_reparsed": True}
+    except (OSError, ValueError, TypeError, KeyError, AttributeError, RecursionError, AssertionError) as error:
+        return {"passed": False, "reason": str(error)[:256] or "STORAGE_CLEANUP_EVIDENCE_INVALID"}
+
+
+def _storage_cleanup_bind(rows, bundle, inputs):
+    reports = []
+    for index, row in enumerate(rows):
+        validation = _storage_cleanup_validate(row.get("evidence"), STORAGE_CLEANUP_PHASES[index], bundle,
+            row["process_instance"], row.get("launched_process_id"), inputs)
+        if not validation["passed"] or validation != row["retained_evidence_validation"]:
+            raise ValueError("STORAGE_CLEANUP_PRIOR_RECEIPT_CHANGED")
+        reports.append(row["evidence"])
+    if len({row["process_instance"] for row in rows}) != len(rows) or len({row["launched_process_id"] for row in rows}) != len(rows):
+        raise ValueError("STORAGE_CLEANUP_REUSED_PROCESS")
+    if any(any(report[key] != reports[0][key] for key in ("version", "build_hash", "blender_version")) for report in reports):
+        raise ValueError("STORAGE_CLEANUP_CROSS_PHASE_BUILD_CHANGED")
+    if _storage_cleanup_inputs(Path(inputs["binary"]["path"])) != inputs:
+        raise ValueError("STORAGE_CLEANUP_INPUT_CHANGED_BEFORE_NEXT_LAUNCH")
+    return reports
+
+
+def _run_storage_cleanup_case(blender, output, timeout):
+    from scripts import blender_storage_snapshot_cleanup_smoke as fixture
+    bundle = output / (STORAGE_CLEANUP_CASE + "-bundle")
+    bundle.mkdir(mode=0o700)
+    phases, reports, error = [], [], None
+    started = time.monotonic()
+    try:
+        inputs = _storage_cleanup_inputs(blender) if sys.platform != "win32" else None
+        if inputs is None:
+            raise ValueError("STORAGE_CLEANUP_WINDOWS_TESTING_DEFERRED")
+        for phase in STORAGE_CLEANUP_PHASES:
+            _storage_cleanup_bind(phases, bundle, inputs)
+            row = _run_process(blender, STORAGE_CLEANUP_CASE, output, min(timeout, 300), phase=phase,
+                               bundle=bundle, phase_marker=fixture.MARKERS[phase])
+            phases.append(row)
+            if row["status"] != "passed":
+                break
+            reports = _storage_cleanup_bind(phases, bundle, inputs)
+    except (OSError, ValueError, TypeError, KeyError, RecursionError) as cause:
+        error = str(cause)[:256]
+        if phases:
+            phases[-1]["status"], phases[-1]["phase_binding_error"] = "failed", error
+    complete = len(phases) == len(STORAGE_CLEANUP_PHASES) and len(reports) == len(phases) and all(row["status"] == "passed" for row in phases)
+    return {"case": STORAGE_CLEANUP_CASE, "script": CASES[STORAGE_CLEANUP_CASE][0],
+            "status": "passed" if complete else "failed", "phase_sequence": [row["phase"] for row in phases],
+            "phases": phases, "fresh_process_verified": complete, "retained_copies_independently_reparsed": complete,
+            "phase_binding_error": error, "shared_bundle": str(bundle), "qualification_scope": fixture.PROFILE,
+            "execution_mode": phases[0]["execution_mode"] if phases else "interactive_display",
+            "blender_version": phases[-1].get("blender_version") if phases else None,
+            "duration_seconds": time.monotonic() - started, "full_artist_target": "OPEN", "windows_testing_deferred": True}
+
+
+def _public_cloth_payload(output, marker):
+    rows = [line[len(marker):] for line in output.splitlines() if line.startswith(marker)]
+    if len(rows) != 1:
+        return None
+    try:
+        value = json.loads(rows[0], object_pairs_hook=_cloth_unique, parse_constant=_cloth_nonfinite)
+        return value if type(value) is dict else None
+    except (ValueError, TypeError, RecursionError):
+        return None
+
+
+def _system_storage_inputs(blender: Path) -> dict:
+    from scripts.blender_system_storage_snapshot_smoke import SOURCES
+    return {"source_sha256": {name: _glb_stage_file(ROOT / name, 1024**2)[0] for name in SOURCES},
+            "binary": {"path": str(blender.resolve()), "sha256": _glb_stage_file(blender, 1024**3)[0]}}
+
+
+def _system_storage_validate(payload, temporary, process_instance, inputs, process_id):
+    from scripts.blender_system_storage_snapshot_smoke import (
+        MAX_REPORT,
+        PROFILE,
+        REPORT,
+        SCHEMA,
+        validate_full,
+    )
+    try:
+        expected = {"schema": SCHEMA, "profile": PROFILE, "completed": True, "process_instance": process_instance,
+                    "process_id": process_id, "source_sha256": inputs["source_sha256"], "binary": inputs["binary"]}
+        if (type(payload) is not dict or type(process_id) is not int or process_id <= 0
+                or any(type(payload.get(key)) is not type(value) or payload.get(key) != value for key, value in expected.items())):
+            raise ValueError("SYSTEM_STORAGE_MARKER_BINDING")
+        report = temporary / REPORT
+        binding = payload["full_receipt"]
+        if (type(binding) is not dict or set(binding) != {"path", "bytes", "sha256"}
+                or binding["path"] != str(report) or type(binding["bytes"]) is not int
+                or not 0 < binding["bytes"] <= MAX_REPORT):
+            raise ValueError("SYSTEM_STORAGE_REPORT_BINDING")
+        report_checksum, raw = _glb_stage_file(report, MAX_REPORT, retain=True)
+        if report_checksum != binding["sha256"] or len(raw) != binding["bytes"]:
+            raise ValueError("SYSTEM_STORAGE_REPORT_CHANGED")
+        full = json.loads(raw, object_pairs_hook=_glb_stage_unique, parse_constant=_glb_stage_reject_constant)
+        if (any(type(full.get(key)) is not type(payload.get(key)) or full.get(key) != payload.get(key)
+                for key in (*expected, "blender_version", "version", "build_hash"))
+                or not validate_full(full, process_instance=process_instance, sources=inputs["source_sha256"], binary=inputs["binary"])
+                or _system_storage_inputs(Path(inputs["binary"]["path"])) != inputs):
+            raise ValueError("SYSTEM_STORAGE_EVIDENCE_INCOMPLETE")
+        # Independently replay the detached parser against retained native bytes;
+        # a self-reported storage dictionary alone is not native evidence.
+        import importlib.util
+        module_name = "_bcb_system_storage_evidence_reader"
+        spec = importlib.util.spec_from_file_location(module_name, ROOT / "addon/blender_codex_bridge/blend_storage_sdna.py")
+        module = importlib.util.module_from_spec(spec)
+        previous = sys.modules.get(module_name)
+        sys.modules[module_name] = module
+        try:
+            spec.loader.exec_module(module)
+        finally:
+            if previous is None:
+                sys.modules.pop(module_name, None)
+            else:
+                sys.modules[module_name] = previous
+        target = full["target"]
+        if (type(target) is not dict or set(target) != {"scene_name", "view_layer_name"}
+                or any(type(value) is not str or not value for value in target.values())):
+            raise ValueError("SYSTEM_STORAGE_TARGET_REQUIRED")
+        for row in full["cases"]:
+            record = row["file_receipt"]
+            if row["case"] in {"absent", "valid", "malformed_scalar", "stop_after"}:
+                native_path = temporary / (row["case"] + ".blend")
+                checksum, _ = _glb_stage_file(native_path, 1024**3)
+                if record != {"path": str(native_path), "bytes": native_path.stat().st_size, "sha256": checksum}:
+                    raise ValueError("SYSTEM_STORAGE_NATIVE_FILE_CHANGED")
+                if row["case"] in {"absent", "valid"}:
+                    independent = module.inspect_view_layer_storage(str(native_path), target["scene_name"], target["view_layer_name"],
+                                                                  allowed_names=tuple(full["declared_names"]))
+                    if independent != row["storage"]:
+                        raise ValueError("SYSTEM_STORAGE_INDEPENDENT_PROJECTION_CHANGED")
+                elif row["case"] == "malformed_scalar":
+                    try:
+                        module.inspect_view_layer_storage(str(native_path), target["scene_name"], target["view_layer_name"],
+                                                          allowed_names=tuple(full["declared_names"]))
+                    except module.StorageSnapshotError as error:
+                        if error.reason != row["error"]["reason"]:
+                            raise ValueError("SYSTEM_STORAGE_INDEPENDENT_REFUSAL_CHANGED") from error
+                    else:
+                        raise ValueError("SYSTEM_STORAGE_MALFORMED_NATIVE_FILE_ACCEPTED")
+            elif record is not None:
+                raise ValueError("SYSTEM_STORAGE_UNEXPECTED_FILE")
+            elif row["case"] in {"permission_denial", "stop_before"} and list(temporary.glob(row["case"] + ".blend*")):
+                raise ValueError("SYSTEM_STORAGE_UNAUTHORIZED_FILE")
+        return {"passed": True, "path": str(report), "sha256": report_checksum,
+                "durable_backup_qualified": False, "canonical_runtime_qualified": False}
+    except (OSError, ValueError, TypeError, KeyError, RecursionError, AttributeError):
+        return {"passed": False, "reason": "SYSTEM_STORAGE_EVIDENCE_INVALID"}
+
+
+
+def _storage_runtime_context_inputs(blender):
+    from scripts import blender_storage_snapshot_adapter_smoke as fixture
+    names = fixture.runtime_source_names(ROOT)
+    required = {"scripts/blender_storage_snapshot_adapter_smoke.py", "scripts/blender_storage_snapshot_cleanup_smoke.py",
+                "scripts/run_blender_checks.py", "scripts/blender_artist_sidebar_smoke.py"}
+    required.update(str(path.relative_to(ROOT)) for path in (ROOT / "addon/blender_codex_bridge").rglob("*.py"))
+    if (type(names) not in (tuple, list) or any(type(name) is not str or not name or Path(name).is_absolute()
+            or ".." in Path(name).parts for name in names) or len(set(names)) != len(names) or set(names) != required):
+        raise ValueError("STORAGE_RUNTIME_CONTEXT_SOURCE_INVENTORY")
+    binary = {"path": str(blender.resolve()), "sha256": _cloth_file(blender, 1024**3)[0]}
+    if binary["sha256"] not in STORAGE_ADAPTER_BINARY_HASHES.values():
+        raise ValueError("STORAGE_RUNTIME_CONTEXT_BINARY_NOT_PINNED")
+    return {"source_fingerprints": {name: _cloth_file(ROOT / name, 1024**2)[0] for name in names}, "binary": binary, "private_display_binding": _domain_display()}
+
+
+def _storage_runtime_context_validate(payload, phase, bundle, process_instance, process_id, inputs):
+    from scripts import blender_storage_snapshot_adapter_smoke as fixture
+    try:
+        if phase != "runtime_context":
+            raise ValueError("STORAGE_RUNTIME_CONTEXT_PHASE")
+        expected = {"schema": fixture.RUNTIME_SCHEMA, "profile": fixture.RUNTIME_PROFILE, "phase": phase, "completed": True,
+                    "process_instance": process_instance, "process_id": process_id, **inputs}
+        if (type(payload) is not dict or type(process_id) is not int or process_id <= 0
+                or set(payload) != {*expected, "version", "build_hash", "blender_version", "full_receipt"}
+                or any(type(payload.get(key)) is not type(value) or payload.get(key) != value for key, value in expected.items())):
+            raise ValueError("STORAGE_RUNTIME_CONTEXT_MARKER_BINDING")
+        version = payload["version"]
+        if (type(version) is not list or len(version) != 3 or any(type(x) is not int for x in version)
+                or tuple(version) not in STORAGE_ADAPTER_BUILDS or payload["build_hash"] != STORAGE_ADAPTER_BUILDS[tuple(version)]
+                or inputs["binary"]["sha256"] != STORAGE_ADAPTER_BINARY_HASHES[tuple(version)]
+                or payload["blender_version"] not in {".".join(map(str, version)), ".".join(map(str, version)) + " LTS"}):
+            raise ValueError("STORAGE_RUNTIME_CONTEXT_OFFICIAL_BUILD")
+        path, binding = bundle / "runtime_context.json", payload["full_receipt"]
+        if (type(binding) is not dict or set(binding) != {"path", "bytes", "sha256"} or binding["path"] != str(path)
+                or type(binding["bytes"]) is not int or not 0 < binding["bytes"] <= STORAGE_ADAPTER_MAX_REPORT):
+            raise ValueError("STORAGE_RUNTIME_CONTEXT_REPORT_BINDING")
+        checksum, raw = _cloth_file(path, STORAGE_ADAPTER_MAX_REPORT, content=True)
+        if len(raw) != binding["bytes"] or checksum != binding["sha256"]:
+            raise ValueError("STORAGE_RUNTIME_CONTEXT_REPORT_CHANGED")
+        full = json.loads(raw, object_pairs_hook=_cloth_unique, parse_constant=_cloth_nonfinite)
+        if (type(full) is not dict or any(type(full.get(k)) is not type(payload[k]) or full.get(k) != payload[k]
+                for k in (*expected, "version", "build_hash", "blender_version"))
+                or fixture.validate_runtime_context(full, process_instance=process_instance, process_id=process_id,
+                    sources=inputs["source_fingerprints"], binary=inputs["binary"]) is not True):
+            raise ValueError("STORAGE_RUNTIME_CONTEXT_FULL_REPORT_INVALID")
+        if fixture.validate_runtime_retained(full, bundle) is not True:
+            raise ValueError("STORAGE_RUNTIME_CONTEXT_RETAINED_ARTIFACTS_INVALID")
+        if _storage_runtime_context_inputs(Path(inputs["binary"]["path"])) != inputs:
+            raise ValueError("STORAGE_RUNTIME_CONTEXT_INPUT_CHANGED")
+        return {"passed": True, "path": str(path), "sha256": checksum, "cold_SDNa_target_parses": 2,
+                "genuine_Runtime_jobs_context": True, "canonical_job_resumption_qualified": False,
+                "shipping_caller_qualified": False}
+    except (OSError, ValueError, TypeError, KeyError, AttributeError, RecursionError, AssertionError):
+        return {"passed": False, "reason": "STORAGE_RUNTIME_CONTEXT_EVIDENCE_INVALID"}
+
+
+def _run_storage_runtime_context_case(blender, output, timeout):
+    from scripts import blender_storage_snapshot_adapter_smoke as fixture
+    bundle = output / (STORAGE_RUNTIME_CONTEXT_CASE + "-bundle")
+    bundle.mkdir(mode=0o700)
+    return _run_process(blender, STORAGE_RUNTIME_CONTEXT_CASE, output, min(timeout, 300), phase="runtime_context",
+                        bundle=bundle, phase_marker=fixture.RUNTIME_MARKER)
 
 
 def _glb_stage_file(path: Path, maximum: int, *, retain: bool = False) -> tuple[str, bytes]:
@@ -1977,6 +2773,22 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
                  phase_marker: str | None = None, domain_binary: dict | None = None,
                  domain_sources: dict | None = None, domain_display: dict | None = None) -> dict:
     filename, marker = CASES[case]
+    if case == STORAGE_RUNTIME_CONTEXT_CASE:
+        if phase != "runtime_context" or bundle is None:
+            raise ValueError("Runtime context diagnostic requires its owned phase")
+        timeout = min(timeout, 300)
+    if case == STORAGE_ADAPTER_CASE:
+        if phase not in STORAGE_ADAPTER_PHASES or bundle is None:
+            raise ValueError("Storage adapter requires one explicit isolated phase")
+        timeout = min(timeout, 300)
+    if case == STORAGE_CLEANUP_CASE:
+        if phase not in STORAGE_CLEANUP_PHASES or bundle is None:
+            raise ValueError("Storage cleanup requires one explicit isolated phase")
+        timeout = min(timeout, 300)
+    if case == STORAGE_DISPATCH_CASE:
+        if phase not in STORAGE_DISPATCH_PHASES or bundle is None:
+            raise ValueError("Storage dispatch requires one explicit isolated phase")
+        timeout = min(timeout, 300)
     script = ROOT / "scripts" / filename
     command = [
         str(blender),
@@ -2006,6 +2818,8 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
         if case == "shader_remove_loaded_probe":
             command.append("--bridge-loaded-fixture")
         marker = phase_marker
+    if case == STORAGE_RUNTIME_CONTEXT_CASE:
+        command.append("--bridge-runtime-context")
     if case in PAIRED_RECOVERY_PROFILES:
         if phase not in {"writer", "reader"}:
             raise ValueError("Paired recovery requires an isolated writer or reader phase")
@@ -2026,7 +2840,7 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
         command.extend(["--", "--bridge-populated-protection"])
     # Blender writes quit.blend on normal UI exit. Keep it outside the user's temp recovery.
     temporary = output / f"{label}-temp"
-    temporary.mkdir(mode=0o700 if case in CURRENT_PIXELS_READ_CASES or case in GLB_STAGE_CASES or case in {"native_project_saving_large", MESH_STORAGE_CASE, MESH_STORAGE_CONTROL_CASE} else 0o777)
+    temporary.mkdir(mode=0o700 if case in CURRENT_PIXELS_READ_CASES or case in GLB_STAGE_CASES or case in {"native_project_saving_large", MESH_STORAGE_CASE, MESH_STORAGE_CONTROL_CASE, "system_storage_snapshot", STORAGE_ADAPTER_CASE, STORAGE_CLEANUP_CASE, STORAGE_DISPATCH_CASE, STORAGE_RUNTIME_CONTEXT_CASE} else 0o777)
     if case == MESH_STORAGE_CASE:
         command.extend(["--bridge-report", str(temporary / "mesh-storage-job.json")])
     if case == MESH_STORAGE_CONTROL_CASE:
@@ -2051,7 +2865,7 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
         environment[key] = str(directory)
     launch_cwd = ROOT
     if (case in PORTABLE_BLEND_RESEARCH_PHASES or case in PAIRED_RECOVERY_PROFILES
-            or case in {"isolated_asset_preview_probe", "native_project_saving", "native_project_saving_large", MESH_STORAGE_CASE, MESH_STORAGE_CONTROL_CASE, *CURRENT_PIXELS_READ_CASES, *GLB_STAGE_CASES}):
+            or case in {"isolated_asset_preview_probe", "native_project_saving", "native_project_saving_large", MESH_STORAGE_CASE, MESH_STORAGE_CONTROL_CASE, *CURRENT_PIXELS_READ_CASES, *GLB_STAGE_CASES, "system_storage_snapshot", STORAGE_ADAPTER_CASE, STORAGE_CLEANUP_CASE, STORAGE_DISPATCH_CASE, STORAGE_RUNTIME_CONTEXT_CASE}):
         # Research-only operational profile. This is not an OS/network sandbox.
         # Do not inherit credential variables or arbitrary Python/Blender paths.
         environment = {key: os.environ[key] for key in (
@@ -2097,6 +2911,56 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
             else "interactive_display" if interactive else "background"
         ),
     }
+    adapter_inputs = cleanup_inputs = dispatch_inputs = runtime_context_inputs = None
+    if case == STORAGE_RUNTIME_CONTEXT_CASE:
+        result["qualification_scope"] = {"profile": "STOCK_RUNTIME_JOBS_CONTEXT_QUEUED_REQUEST_DIAGNOSTIC_V1",
+            "fixture_only_registration": True, "genuine_Runtime_jobs_context": True,
+            "canonical_job_resumption_qualified": False, "shipping_caller_qualified": False,
+            "full_artist_target": "OPEN", "windows_testing_deferred": True}
+        if sys.platform == "win32":
+            result["preflight_error"] = "STORAGE_RUNTIME_CONTEXT_WINDOWS_TESTING_DEFERRED"
+            return result
+        try:
+            runtime_context_inputs = _storage_runtime_context_inputs(blender)
+        except (OSError, ValueError) as error:
+            result["preflight_error"] = str(error)[:256]
+            return result
+    if case == STORAGE_DISPATCH_CASE:
+        result["qualification_scope"] = {"profile": "STOCK_OWNED_STORAGE_ACTUAL_DISPATCH_V1",
+            "fixture_only_actual_dispatch": True, "shipping_caller_qualified": False,
+            "full_artist_target": "OPEN", "windows_testing_deferred": True}
+        if sys.platform == "win32":
+            result["preflight_error"] = "STORAGE_DISPATCH_WINDOWS_TESTING_DEFERRED"
+            return result
+        try:
+            dispatch_inputs = _storage_dispatch_inputs(blender)
+        except (OSError, ValueError) as error:
+            result["preflight_error"] = str(error)[:256]
+            return result
+    if case == STORAGE_CLEANUP_CASE:
+        result["qualification_scope"] = {"profile": "STOCK_OWNED_STORAGE_CLEANUP_V1",
+            "actual_cleanup_only": True, "runtime_retention_qualified": False, "cache_pairing_qualified": False,
+            "full_artist_target": "OPEN", "windows_testing_deferred": True}
+        if sys.platform == "win32":
+            result["preflight_error"] = "STORAGE_CLEANUP_WINDOWS_TESTING_DEFERRED"
+            return result
+        try:
+            cleanup_inputs = _storage_cleanup_inputs(blender)
+        except (OSError, ValueError) as error:
+            result["preflight_error"] = str(error)[:256]
+            return result
+    if case == STORAGE_ADAPTER_CASE:
+        result["qualification_scope"] = {"profile": "STOCK_VIEW_LAYER_STORAGE_ADAPTER_V1",
+            "actual_adapter_only": True, "runtime_retention_qualified": False, "cache_pairing_qualified": False,
+            "full_artist_target": "OPEN", "windows_testing_deferred": True}
+        if sys.platform == "win32":
+            result["preflight_error"] = "STORAGE_ADAPTER_WINDOWS_TESTING_DEFERRED"
+            return result
+        try:
+            adapter_inputs = _storage_adapter_inputs(blender)
+        except (OSError, ValueError) as error:
+            result["preflight_error"] = str(error)[:256]
+            return result
     if case == "animation_intent":
         result["qualification_scope"] = {
             "authored_profile": "RAW_FREE_POINT_V1",
@@ -2159,12 +3023,30 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
         large_sources = _native_save_sources()
         binary_path = blender.resolve(strict=True)
         large_binary = {"path": str(binary_path), "sha256": _native_save_file(binary_path, 1024**3)[0]}
+    if case == "system_storage_snapshot":
+        result["qualification_scope"] = {"profile": "STOCK_VIEW_LAYER_RAW_CYCLES_V1", "private_prerequisite_only": True,
+            "canonical_runtime_qualified": False, "durable_backup_qualified": False,
+            "dirty_current_pixel_backup_qualified": False, "native_memory_cap_claimed": False, "windows_qualified": False}
+        timeout = min(timeout, 300)
+    system_inputs = None
     glb_inputs = None
     with log.open("wb") as stream:
         try:
             if case in GLB_STAGE_CASES:
                 glb_inputs = _glb_stage_inputs(blender, runtime=case == "glb_stage_runtime")
-            if interactive and sys.platform == "win32":
+            if case == "system_storage_snapshot":
+                system_inputs = _system_storage_inputs(blender)
+            if case in {STORAGE_ADAPTER_CASE, STORAGE_CLEANUP_CASE, STORAGE_DISPATCH_CASE, STORAGE_RUNTIME_CONTEXT_CASE}:
+                with subprocess.Popen(command, cwd=launch_cwd, stdout=stream,
+                                      stderr=subprocess.STDOUT, env=environment) as process:
+                    result["launched_process_id"] = process.pid
+                    try:
+                        process.wait(timeout=timeout)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait()
+                        raise
+            elif interactive and sys.platform == "win32":
                 from scripts.windows_test_process import run_isolated
 
                 process = run_isolated(command, cwd=launch_cwd, stdout=stream,
@@ -2180,7 +3062,7 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
                         os.killpg(process.pid, signal.SIGKILL)
                     process.wait(timeout=10)
                     raise
-            elif case in {"glb_stage_structure", "glb_stage_runtime"}:
+            elif case in {"glb_stage_structure", "glb_stage_runtime", "system_storage_snapshot"}:
                 # Capture the actual owned child PID; a positive marker PID alone
                 # cannot attest which process produced the structural receipt.
                 process = subprocess.Popen(command, cwd=launch_cwd, stdout=stream,
@@ -2202,10 +3084,14 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
                 result["exit_code"] = process.returncode
         except subprocess.TimeoutExpired:
             result["status"] = "timeout"
+            if case in {STORAGE_ADAPTER_CASE, STORAGE_CLEANUP_CASE, STORAGE_DISPATCH_CASE, STORAGE_RUNTIME_CONTEXT_CASE}:
+                result.update(process_timeout=True, timeout_seconds=timeout,
+                              native_terminal_outcome="UNKNOWN", owned_process_terminated=True,
+                              native_call_preemption_qualified=False)
         except OSError as exc:
             result["launch_error"] = str(exc)
         except ValueError as exc:
-            if case not in GLB_STAGE_CASES:
+            if case not in {*GLB_STAGE_CASES, "system_storage_snapshot"}:
                 raise
             result["input_validation_error"] = str(exc)
     if case == MESH_STORAGE_CONTROL_CASE:
@@ -2245,7 +3131,9 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
                 with suppress(ValueError, TypeError, RecursionError):
                     payload = _native_save_json(candidates[0].encode())
         else:
-            payload = success_payload(log_text, marker)
+            payload = (_public_cloth_payload(log_text, marker)
+                       if case in {"system_storage_snapshot", STORAGE_ADAPTER_CASE, STORAGE_CLEANUP_CASE, STORAGE_DISPATCH_CASE, STORAGE_RUNTIME_CONTEXT_CASE}
+                       else success_payload(log_text, marker))
     result["evidence"] = payload
     version = (
         next(
@@ -2285,6 +3173,10 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
             result["status"] = "diagnostic_completed"
     if case == "native_project_saving_large":
         phase_evidence = _native_save_large_receipt_matches(payload, temporary, process_instance, large_sources, large_binary)
+    if case == "system_storage_snapshot":
+        validation = _system_storage_validate(payload, temporary, process_instance, system_inputs, result.get("process_id"))
+        result["retained_evidence_validation"] = validation
+        phase_evidence = validation["passed"]
     if case == "glb_stage_runtime":
         validation = _glb_runtime_validate(payload, temporary, process_instance, blender, glb_inputs, result.get("process_id"))
         result["retained_evidence_validation"] = validation
@@ -2296,9 +3188,34 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
         phase_evidence = validation["passed"]
     if result["exit_code"] == 0 and payload is not None and version and phase_evidence:
         result["status"] = "passed"
+    if case == STORAGE_DISPATCH_CASE:
+        validation = _storage_dispatch_validate(payload, phase, bundle, process_instance,
+            result.get("launched_process_id"), dispatch_inputs)
+        result["retained_evidence_validation"] = validation
+        if not validation["passed"] and result["status"] != "timeout":
+            result["status"] = "failed"
+    if case == STORAGE_CLEANUP_CASE:
+        validation = _storage_cleanup_validate(payload, phase, bundle, process_instance,
+            result.get("launched_process_id"), cleanup_inputs)
+        result["retained_evidence_validation"] = validation
+        if not validation["passed"] and result["status"] != "timeout":
+            result["status"] = "failed"
+    if case == STORAGE_ADAPTER_CASE:
+        validation = _storage_adapter_validate(payload, phase, bundle, process_instance,
+            result.get("launched_process_id"), adapter_inputs)
+        result["retained_evidence_validation"] = validation
+        if not validation["passed"] and result["status"] != "timeout":
+            result["status"] = "failed"
+    if case == STORAGE_RUNTIME_CONTEXT_CASE:
+        validation = _storage_runtime_context_validate(payload, phase, bundle, process_instance,
+            result.get("launched_process_id"), runtime_context_inputs)
+        result["retained_evidence_validation"] = validation
+        if not validation["passed"] and result["status"] != "timeout":
+            result["status"] = "failed"
     result["completed_at"] = datetime.now(timezone.utc).isoformat()
     result["duration_seconds"] = round(time.monotonic() - start, 3)
     return result
+
 
 
 
@@ -2455,6 +3372,14 @@ def _run_runtime_bulk_probe(blender: Path, output: Path, timeout: int) -> dict:
 
 
 def run_case(blender: Path, case: str, output: Path, timeout: int) -> dict:
+    if case == STORAGE_RUNTIME_CONTEXT_CASE:
+        return _run_storage_runtime_context_case(blender, output, timeout)
+    if case == STORAGE_DISPATCH_CASE:
+        return _run_storage_dispatch_case(blender, output, timeout)
+    if case == STORAGE_CLEANUP_CASE:
+        return _run_storage_cleanup_case(blender, output, timeout)
+    if case == STORAGE_ADAPTER_CASE:
+        return _run_storage_adapter_case(blender, output, timeout)
     if case == RUNTIME_BULK_CASE:
         return _run_runtime_bulk_probe(blender, output, timeout)
     if case == MESH_STORAGE_CASE:
