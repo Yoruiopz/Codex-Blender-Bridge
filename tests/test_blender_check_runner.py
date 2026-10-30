@@ -3637,6 +3637,24 @@ def test_bulk_probe_runner_uses_owned_background_profile_and_actual_child_pid(ru
     assert result["qualification_scope"]["product_adoption"] is False
 
 
+def mesh_storage_atomic_cached_roles(full):
+    """Use the actual inert producer helper, rather than a hand-maintained shape."""
+    from scripts.blender_mesh_storage_job_smoke import cached_checkpoint_roles
+    def role():
+        return {"profile": "B2_EXACT_CHECKPOINT_WEAK_ROLE_V1", "initial_roles": [1, None],
+                "before_readback": {"scene_self_references": 0}, "after_readback": None,
+                "native_push_completed": False, "after_readback_measured": False, "protected_scope_sha256": "a" * 64,
+                "foreign_previous_owner_supported": False, "physical_cache_passivity_claimed": False}
+    preview = full["requests"][0]["response"]
+    result = preview["result"] if preview["ok"] is True else None
+    if result is not None:
+        result["checkpoint_roles"] = role()
+    terminal = full["terminal"]
+    if terminal is not None:
+        terminal.setdefault("result", {})["checkpoint_roles"] = role()
+    return cached_checkpoint_roles(result, terminal)
+
+
 def mesh_storage_atomic_model(runner):
     return {"backend": "sys.monitoring.local_START_RETURN", "tool_id": 4, "global_event_mask": 0,
         "local_event_mask": 5, "restored": True, "callbacks_restored": True, "local_events_restored": True,
@@ -3648,8 +3666,9 @@ def mesh_storage_atomic_model(runner):
                    "duration_seconds": .5, "depth": 0, "end": "RETURN_COMPLETED", "ambiguous_recursion": False}]}
 
 
+@pytest.mark.parametrize("outcome", ["success", "failed", "preview_refused", "start_refused"])
 @pytest.mark.parametrize("fault", [None, "source", "binary", "pid", "wire_deadline"])
-def test_atomic_timing_runner_keeps_original_RPC_factory_setup_and_diagnostic_scope(runner, monkeypatch, tmp_path, fault):
+def test_atomic_timing_runner_keeps_original_RPC_factory_setup_and_diagnostic_scope(runner, monkeypatch, tmp_path, fault, outcome):
     expected_catalog = runner._mesh_storage_atomic_catalog()
     output, binary = mesh_storage_runner_root(runner, monkeypatch, tmp_path)
     monkeypatch.setattr(runner, "_mesh_storage_atomic_catalog", lambda: expected_catalog)
@@ -3660,9 +3679,10 @@ def test_atomic_timing_runner_keeps_original_RPC_factory_setup_and_diagnostic_sc
             calls.append(command)
             assert "--bridge-atomic-phase-timing" in command and "--bridge-untraced-control" not in command
             assert "--background" not in command and "--factory-startup" in command and "--disable-autoexec" in command
-            report, full = mesh_storage_control_model(runner, command, kwargs["env"], self.pid)
+            report, full = mesh_storage_control_model(runner, command, kwargs["env"], self.pid, outcome)
             full["schema"] = runner.MESH_STORAGE_TIMING_PROFILE
             full["atomic_timing"] = mesh_storage_atomic_model(runner)
+            full["checkpoint_roles"] = mesh_storage_atomic_cached_roles(full)
             if fault == "source":
                 (runner.ROOT / "scripts/run_blender_checks.py").write_text("# drift after frozen source snapshot\n")
             elif fault == "binary":
@@ -3740,3 +3760,68 @@ def test_atomic_timing_cold_validator_accepts_honest_unknown_open_upper_bound(ru
     observed = mesh_storage_atomic_model(runner)
     observed["spans"][0].update(end="OPEN_AT_CUTOFF_OR_UNWOUND_UNKNOWN", duration_seconds=None, elapsed_upper_bound_seconds=.5)
     assert runner._mesh_storage_atomic_spans(observed, 1.)
+
+
+@pytest.mark.parametrize("fault", [None, "missing", "extra", "source", "reads_bool", "reads_nonzero", "retained_integer", "retained",
+    "preview_mismatch", "terminal_mismatch", "nested_bool_integer", "role_missing", "role_extra", "profile", "native_push_integer",
+    "after_measured_integer", "foreign_owner", "passivity", "scope", "float", "negative", "huge", "string", "width", "key", "depth"])
+def test_atomic_cached_roles_matches_delivered_wire_with_exact_types_and_literal_bounds(runner, monkeypatch, tmp_path, fault):
+    expected_catalog = runner._mesh_storage_atomic_catalog()
+    output, binary = mesh_storage_runner_root(runner, monkeypatch, tmp_path)
+    monkeypatch.setattr(runner, "_mesh_storage_atomic_catalog", lambda: expected_catalog)
+    temporary = output / "owned-temp"
+    temporary.mkdir()
+    bundle = output / "bundle"
+    bundle.mkdir()
+    command = ["--bridge-phase", "success", "--bridge-bundle", str(bundle), "--bridge-report",
+               str(temporary / runner.MESH_STORAGE_TIMING_REPORT)]
+    token = "a" * 32
+    report, full = mesh_storage_control_model(runner, command, {"BRIDGE_TEST_PROCESS_TOKEN": token}, 77)
+    full["schema"] = runner.MESH_STORAGE_TIMING_PROFILE
+    full["atomic_timing"] = mesh_storage_atomic_model(runner)
+    full["checkpoint_roles"] = mesh_storage_atomic_cached_roles(full)
+    cached = full["checkpoint_roles"]
+    if fault == "missing":
+        full.pop("checkpoint_roles")
+    elif fault == "extra":
+        cached["fresh_readback"] = {}
+    elif fault == "source":
+        cached["source"] = "fresh_RNA_read"
+    elif fault == "reads_bool":
+        cached["additional_RNA_reads"] = False
+    elif fault == "reads_nonzero":
+        cached["additional_RNA_reads"] = 1
+    elif fault in {"retained_integer", "retained"}:
+        cached["failed_terminal_after_readback_retained"] = 0 if fault == "retained_integer" else True
+    elif fault in {"preview_mismatch", "terminal_mismatch"}:
+        cached["preview" if fault.startswith("preview") else "terminal"]["initial_roles"][0] = 2
+    elif fault == "nested_bool_integer":
+        cached["preview"]["initial_roles"][0] = True  # True == 1; canonical typed comparison must still refuse.
+    elif fault == "role_missing":
+        cached["preview"].pop("before_readback")
+    elif fault == "role_extra":
+        cached["preview"]["new_claim"] = True
+    elif fault == "profile":
+        cached["preview"]["profile"] = "foreign"
+    elif fault == "native_push_integer":
+        cached["preview"]["native_push_completed"] = 0
+    elif fault == "after_measured_integer":
+        cached["preview"]["after_readback_measured"] = 0
+    elif fault in {"foreign_owner", "passivity"}:
+        cached["preview"]["foreign_previous_owner_supported" if fault == "foreign_owner" else "physical_cache_passivity_claimed"] = True
+    elif fault == "scope":
+        cached["preview"]["protected_scope_sha256"] = None
+    elif fault is not None:
+        value = {"float": 1., "negative": -1, "huge": 2**64, "string": "x" * 257,
+                 "width": [None] * 33, "key": {"x" * 129: None}, "depth": None}[fault]
+        if fault == "depth":
+            for _index in range(9):
+                value = [value]
+        cached["preview"]["before_readback"] = value
+        full["requests"][0]["response"]["result"]["checkpoint_roles"]["before_readback"] = value
+    compact = mesh_storage_control_write(runner, report, full)
+    _raw, binding = runner._domain_regular(binary, binary.parent, 1024**3)
+    result = runner._mesh_storage_timing_matches(compact, temporary, token, 77, binding,
+                                                full["source_fingerprints"], full["private_display"])
+    assert result["diagnostic_completed"] is (fault is None), result
+    assert result["qualified"] is False

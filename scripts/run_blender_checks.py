@@ -2054,7 +2054,7 @@ def _mesh_storage_timing_matches(payload: object, temporary: Path, process_insta
         extras = {"phase", "runtime_nonce", "runtime_identity", "helper_sha256", "source_fingerprints", "private_display",
                   "transport", "flags", "hooks", "requests", "timings", "before", "after", "setup_oracle_values",
                   "terminal", "outcome", "selected_values_match", "protected_sample_equal", "identities_sample_equal",
-                  "settled", "seconds", "atomic_timing"}
+                  "settled", "seconds", "atomic_timing", "checkpoint_roles"}
         if (set(full) != common | extras
                 or any(type(full[key]) is not type(payload[key]) or full[key] != payload[key] for key in common)
                 or full["phase"] != "success"):
@@ -2099,6 +2099,57 @@ def _mesh_storage_timing_matches(payload: object, temporary: Path, process_insta
                 or any(not _mesh_storage_values(value, name, nonzero=True) for name, value in full["setup_oracle_values"].items())
                 or not _mesh_storage_control_transcript(full)):
             raise ValueError("CONTROL_SNAPSHOT_OR_TRANSCRIPT")
+        cached = full["checkpoint_roles"]
+        if (type(cached) is not dict or set(cached) != {"preview", "terminal", "source", "additional_RNA_reads",
+                "failed_terminal_after_readback_retained"}
+                or cached["source"] != "product_cached_literal_reports_only"
+                or type(cached["source"]) is not str or type(cached["additional_RNA_reads"]) is not int
+                or cached["additional_RNA_reads"] != 0 or cached["failed_terminal_after_readback_retained"] is not False):
+            raise ValueError("ATOMIC_CACHED_ROLES_SHAPE")
+
+        def role_literal(value, depth=0):
+            if depth > 8:
+                raise ValueError("ATOMIC_CACHED_ROLE_LITERAL")
+            kind = type(value)
+            if value is None or kind is bool:
+                return value
+            if kind is int and 0 <= value < 2**64:
+                return value
+            if kind is str and len(value) <= 256:
+                return value
+            if kind is list and len(value) <= 32:
+                return [role_literal(item, depth + 1) for item in value]
+            if (kind is dict and len(value) <= 32
+                    and all(type(key) is str and len(key) <= 128 for key in value)):
+                return {key: role_literal(item, depth + 1) for key, item in value.items()}
+            raise ValueError("ATOMIC_CACHED_ROLE_LITERAL")
+
+        def role_bytes(value):
+            if value is not None:
+                fields = {"profile", "initial_roles", "before_readback", "after_readback", "native_push_completed",
+                          "after_readback_measured", "protected_scope_sha256", "foreign_previous_owner_supported",
+                          "physical_cache_passivity_claimed"}
+                if (type(value) is not dict or set(value) != fields
+                        or value["profile"] != "B2_EXACT_CHECKPOINT_WEAK_ROLE_V1"
+                        or type(value["profile"]) is not str
+                        or any(value[name] is not False for name in ("foreign_previous_owner_supported", "physical_cache_passivity_claimed"))
+                        or any(type(value[name]) is not bool for name in ("native_push_completed", "after_readback_measured"))
+                        or value["after_readback_measured"] is not (value["after_readback"] is not None)
+                        or not _domain_hex(value["protected_scope_sha256"])):
+                    raise ValueError("ATOMIC_CACHED_ROLE_PROFILE")
+            # Canonical JSON keeps nested bool/int distinct; ordinary dict== does not.
+            return json.dumps(role_literal(value), sort_keys=True, ensure_ascii=True, allow_nan=False,
+                              separators=(",", ":")).encode("ascii")
+
+        preview_reply = full["requests"][0]["response"]
+        delivered_preview = preview_reply["result"] if preview_reply["ok"] is True else None
+        delivered_terminal = None if full["terminal"] is None else full["terminal"].get("result")
+        for name, container in (("preview", delivered_preview), ("terminal", delivered_terminal)):
+            if container is not None and type(container) is not dict:
+                raise ValueError("ATOMIC_CACHED_ROLE_CONTAINER")
+            delivered = None if container is None else container.get("checkpoint_roles")
+            if role_bytes(cached[name]) != role_bytes(delivered):
+                raise ValueError("ATOMIC_CACHED_ROLE_WIRE_MISMATCH")
         if not _mesh_storage_atomic_spans(full["atomic_timing"], full["seconds"]):
             raise ValueError("ATOMIC_TIMING_INVALID")
         selected = after["selected_values"] == oracle
