@@ -101,6 +101,36 @@ class SourceSeal(tuple):
                 functions.append((fn, fn.__code__, fn.__globals__, fn.__defaults__, keywords,
                                   () if keywords is None else tuple(keywords.items()),
                                   tuple((cell, cell.cell_contents) for cell in fn.__closure__ or ())))
+        # Namespace rows above retain every alias. Repeated aliases need only
+        # one owner fact, but inconsistent snapshots must still refuse capture.
+        unique_classes, unique_functions = {}, {}
+        for row in class_rows:
+            previous = unique_classes.get(id(row[0]))
+            if previous is None:
+                unique_classes[id(row[0])] = row
+                continue
+            fields = dict(previous[2])
+            if (row[0] is not previous[0] or row[1] is not previous[1]
+                    or len(row[2]) != len(fields)
+                    or any(type(key) is not str or key not in fields or fields[key] is not value
+                           for key, value in row[2])):
+                raise contract.refused("STORAGE_SOURCE_CHANGED")
+        for row in functions:
+            previous = unique_functions.get(id(row[0]))
+            if previous is None:
+                unique_functions[id(row[0])] = row
+                continue
+            if (any(row[index] is not previous[index] for index in range(5))
+                    or len(row[5]) != len(previous[5]) or len(row[6]) != len(previous[6])
+                    or any(type(key) is not str for key, _ in previous[5])):
+                raise contract.refused("STORAGE_SOURCE_CHANGED")
+            keywords = dict(previous[5])
+            if (any(type(key) is not str or key not in keywords or keywords[key] is not value
+                    for key, value in row[5])
+                    or any(cell is not old_cell or value is not old_value
+                           for (cell, value), (old_cell, old_value) in zip(row[6], previous[6], strict=True))):
+                raise contract.refused("STORAGE_SOURCE_CHANGED")
+        class_rows, functions = list(unique_classes.values()), list(unique_functions.values())
         failure = contract.refused("STORAGE_SOURCE_CHANGED")
         native = (type, len, dict, str, FunctionType, ModuleType.__getattribute__,
                   type.__dict__["__dict__"].__get__, type.__dict__["__mro__"].__get__, failure)

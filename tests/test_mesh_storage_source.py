@@ -2,7 +2,7 @@
 import importlib
 import warnings
 from dataclasses import replace
-from types import ModuleType
+from types import FunctionType, ModuleType
 from types import SimpleNamespace as NS
 
 import pytest
@@ -867,6 +867,134 @@ def test_source_seal_refuses_before_foreign_callback(source, monkeypatch, change
     with pytest.raises(source.contract.BridgeError):
         seal.verify()
     assert calls == []
+
+
+@pytest.mark.parametrize("inspection", [False, True])
+def test_source_capture_deduplicates_fact_rows_but_retains_every_alias(source, monkeypatch, inspection):
+    before = source.SourceSeal.capture(inspection=inspection)
+    function_ids = {id(row[0]) for row in before[2]}
+    class_ids = {id(row[0]) for row in before[1]}
+    function, owner, method = source.metadata_matches, source.Gate, source.Gate.pure
+    monkeypatch.setattr(source, "_capture_function_alias", function, raising=False)
+    monkeypatch.setattr(source.contract, "_capture_imported_function_alias", function, raising=False)
+    monkeypatch.setattr(source, "_capture_class_alias", owner, raising=False)
+    monkeypatch.setattr(source.contract, "_capture_imported_class_alias", owner, raising=False)
+    method_aliases = {
+        "_capture_method_alias": method,
+        "_capture_static_alias": staticmethod(method),
+        "_capture_classmethod_alias": classmethod(method),
+        "_capture_property_alias": property(method),
+    }
+    for name, value in method_aliases.items():
+        monkeypatch.setattr(owner, name, value, raising=False)
+
+    seal = source.SourceSeal.capture(inspection=inspection)
+    source.verify_seal(seal)
+    assert len(seal[2]) == len({id(row[0]) for row in seal[2]})
+    assert len(seal[1]) == len({id(row[0]) for row in seal[1]})
+    assert {id(row[0]) for row in seal[2]} == function_ids
+    assert {id(row[0]) for row in seal[1]} == class_ids
+    assert {id(row[0]) for row in seal[0]} == {id(row[0]) for row in before[0]}
+    for module, fields in seal[0]:
+        namespace = vars(module)
+        assert len(fields) == len(namespace)
+        assert all(namespace[name] is value for name, value in fields)
+    source_fields = dict(next(fields for module, fields in seal[0] if module is source))
+    imported_fields = dict(next(fields for module, fields in seal[0] if module is source.contract))
+    assert source_fields["_capture_function_alias"] is function
+    assert source_fields["_capture_class_alias"] is owner
+    assert imported_fields["_capture_imported_function_alias"] is function
+    assert imported_fields["_capture_imported_class_alias"] is owner
+    owner_fields = dict(next(fields for kind, _mro, fields in seal[1] if kind is owner))
+    assert all(owner_fields[name] is value for name, value in method_aliases.items())
+
+
+def _source_capture_alias_probe(source, monkeypatch):
+    marker, default, keyword_default = object(), object(), object()
+    def template(value=default, *, keyword=keyword_default):
+        return marker, value, keyword, importlib
+    function = FunctionType(template.__code__, vars(source), "_capture_probe",
+                            template.__defaults__, template.__closure__)
+    function.__kwdefaults__ = dict(template.__kwdefaults__)
+    monkeypatch.setattr(source, "_capture_probe", function, raising=False)
+    monkeypatch.setattr(source.contract, "_capture_probe_alias", function, raising=False)
+    base = type("CaptureBase", (), {"__module__": source.__name__})
+    other_base = type("CaptureOtherBase", (), {"__module__": source.__name__})
+    owner = type("CaptureOwner", (base,), {"__module__": source.__name__, "method": function})
+    monkeypatch.setattr(source, "_capture_probe_owner", owner, raising=False)
+    monkeypatch.setattr(source, "_capture_probe_owner_alias", owner, raising=False)
+    return function, owner, other_base
+
+
+@pytest.mark.parametrize("change", [
+    "module_alias", "imported_alias", "function_code", "function_defaults", "keyword_binding",
+    "keyword_value", "closure_value", "empty_closure", "globals_binding", "class_alias",
+    "class_namespace", "class_mro",
+])
+def test_source_deduplicated_facts_keep_alias_and_metadata_drift_refusals(source, monkeypatch, change):
+    function, owner, other_base = _source_capture_alias_probe(source, monkeypatch)
+    seal = source.SourceSeal.capture()
+    source.verify_seal(seal)
+    function_rows = [row for row in seal[2] if row[0] is function]
+    owner_rows = [row for row in seal[1] if row[0] is owner]
+    assert len(function_rows) == len(owner_rows) == 1
+    assert function_rows[0][2] is vars(source)
+    calls = []
+    def foreign(*_args, **_kwargs):
+        calls.append("call")
+        raise AssertionError("Foreign alias or metadata executed")
+    if change == "module_alias":
+        monkeypatch.setattr(source, "_capture_probe", foreign)
+    elif change == "imported_alias":
+        monkeypatch.setattr(source.contract, "_capture_probe_alias", foreign)
+    elif change == "function_code":
+        monkeypatch.setattr(function, "__code__", function.__code__.replace(co_name="changed"))
+    elif change == "function_defaults":
+        monkeypatch.setattr(function, "__defaults__", (foreign,))
+    elif change == "keyword_binding":
+        monkeypatch.setattr(function, "__kwdefaults__", dict(function.__kwdefaults__))
+    elif change == "keyword_value":
+        monkeypatch.setitem(function.__kwdefaults__, "keyword", foreign)
+    elif change == "closure_value":
+        monkeypatch.setattr(function.__closure__[0], "cell_contents", foreign)
+    elif change == "empty_closure":
+        monkeypatch.delattr(function.__closure__[0], "cell_contents")
+    elif change == "globals_binding":
+        monkeypatch.setattr(source, "importlib", foreign)
+    elif change == "class_alias":
+        monkeypatch.setattr(source, "_capture_probe_owner_alias", object())
+    elif change == "class_namespace":
+        monkeypatch.setattr(owner, "method", property(foreign))
+    else:
+        original_bases = owner.__bases__
+        owner.__bases__ = (other_base,)
+    try:
+        with pytest.raises(source.contract.BridgeError) as caught:
+            source.verify_seal(seal)
+        assert caught.value.context["reason"] == "STORAGE_SOURCE_CHANGED"
+        assert calls == []
+    finally:
+        if change == "class_mro":
+            owner.__bases__ = original_bases
+
+
+def test_source_capture_keeps_distinct_functions_with_shared_code(source, monkeypatch):
+    function, _owner, _base = _source_capture_alias_probe(source, monkeypatch)
+    clone = FunctionType(function.__code__, function.__globals__, "_capture_clone",
+                         function.__defaults__, function.__closure__)
+    clone.__kwdefaults__ = dict(function.__kwdefaults__)
+    monkeypatch.setattr(source, "_capture_probe_clone", clone, raising=False)
+    seal = source.SourceSeal.capture()
+    source.verify_seal(seal)
+    rows = [row for row in seal[2] if row[0] is function or row[0] is clone]
+    assert len(rows) == 2
+    assert {id(row[0]) for row in rows} == {id(function), id(clone)}
+    assert rows[0][1] is rows[1][1]
+    assert rows[0][2] is rows[1][2]
+    monkeypatch.setattr(clone, "__kwdefaults__", {"keyword": object()})
+    with pytest.raises(source.contract.BridgeError) as caught:
+        source.verify_seal(seal)
+    assert caught.value.context["reason"] == "STORAGE_SOURCE_CHANGED"
 
 
 def test_source_fingerprint_binds_code_even_when_function_identity_is_retained(source, monkeypatch):
