@@ -14,6 +14,7 @@ from types import (
     FunctionType,
     GetSetDescriptorType,
     MappingProxyType,
+    MemberDescriptorType,
     MethodDescriptorType,
     MethodType,
     ModuleType,
@@ -24,9 +25,10 @@ from . import current_pixels_graph as graph
 from . import mesh_storage_contract as contract
 from . import mesh_storage_prepare as primitive
 from .native_save_profile import available_memory_facts
+from .request_lifecycle import ConnectionLifetime, RequestLifetime
 from .scene_job_reservations import TURN_METHOD
 from .task_plans import get_task_plans
-from .tool_registry import ToolContext, check_final_mutation
+from .tool_registry import CheckpointAdmissionBinding, ToolContext, check_final_mutation
 from .tools import _scene_checkpoint_roles as checkpoint_roles
 from .tools import _scene_mutation as checkpoint_proof
 
@@ -342,6 +344,17 @@ _BINDING_FIELDS = ("context", "method", "params", "call_id", "callback", "frozen
                    "native_push_callback", "registry", "spec", "enclosing", "active", "stopped", "marker_write_callback")
 
 
+def _context_slot(owner, kind, name):
+    """Read one canonical Python slot without a user attribute callback."""
+    if type(owner) is not kind:
+        raise contract.refused("STORAGE_CONTEXT_CHANGED")
+    descriptor = type.__dict__["__dict__"].__get__(kind).get(name)
+    if (type(descriptor) is not MemberDescriptorType or descriptor.__objclass__ is not kind
+            or descriptor.__name__ != name):
+        raise contract.refused("STORAGE_CONTEXT_CHANGED")
+    return descriptor.__get__(owner, kind)
+
+
 def capture_context(context, seal):
     """Capture scheduler-owned identities BEFORE any permission provider.
 
@@ -358,26 +371,23 @@ def capture_context(context, seal):
     binding = fields.get("checkpoint_admission")
     binding_rows, binding_callbacks = (), ()
     if binding is not None:
-        from .tool_registry import CheckpointAdmissionBinding
         if type(binding) is not CheckpointAdmissionBinding:
             raise contract.refused("STORAGE_CONTEXT_CHANGED")
-        binding_rows = tuple((name, getattr(binding, name)) for name in _BINDING_FIELDS)
-        binding_callbacks = tuple((name, _callback_fact(getattr(binding, name), seal, internal=True))
+        binding_rows = tuple((name, _context_slot(binding, CheckpointAdmissionBinding, name)) for name in _BINDING_FIELDS)
+        binding_callbacks = tuple((name, _callback_fact(_context_slot(binding, CheckpointAdmissionBinding, name), seal, internal=True))
                                   for name in ("readonly_callback", "native_push_callback", "marker_write_callback"))
-    from .request_lifecycle import RequestLifetime
     lifetime, lifetime_rows, connection_rows, event_rows = fields.get("request_lifecycle"), (), (), []
     if lifetime is not None:
         if type(lifetime) is not RequestLifetime:
             raise contract.refused("STORAGE_CONTEXT_CHANGED")
-        lifetime_rows = tuple((name, getattr(lifetime, name)) for name in ("connection", "deadline", "delivered", "rejected"))
-        connection = lifetime.connection
-        events = [lifetime.delivered, lifetime.rejected]
+        lifetime_rows = tuple((name, _context_slot(lifetime, RequestLifetime, name)) for name in ("connection", "deadline", "delivered", "rejected"))
+        connection = _context_slot(lifetime, RequestLifetime, "connection")
+        events = [_context_slot(lifetime, RequestLifetime, name) for name in ("delivered", "rejected")]
         if connection is not None:
-            from .request_lifecycle import ConnectionLifetime
             if type(connection) is not ConnectionLifetime:
                 raise contract.refused("STORAGE_CONTEXT_CHANGED")
-            connection_rows = tuple((name, getattr(connection, name)) for name in ("disconnected", "background_active"))
-            events += [connection.disconnected, connection.background_active]
+            connection_rows = tuple((name, _context_slot(connection, ConnectionLifetime, name)) for name in ("disconnected", "background_active"))
+            events += [_context_slot(connection, ConnectionLifetime, name) for name in ("disconnected", "background_active")]
         for event in events:
             event_kind = type(event)
             if event_kind is not tuple.__getitem__(seal, 4)[10]:
@@ -421,9 +431,14 @@ def capture_context(context, seal):
 
 
 def verify_context(context, proof):
-    (original, seal, rows, callbacks, binding, binding_rows, binding_callbacks, lifetime, lifetime_rows,
+    verify_seal(tuple.__getitem__(proof, 1))
+    _verify_context_fields(context, proof)
+
+
+def _verify_context_fields(context, proof):
+    """Callback-free fields only; callers hold a freshly verified source seal."""
+    (original, _seal, rows, callbacks, binding, binding_rows, binding_callbacks, lifetime, lifetime_rows,
      connection_rows, events, permissions) = proof
-    verify_seal(seal)
     if context is not original or type(context) is not ToolContext:
         raise contract.refused("STORAGE_CONTEXT_CHANGED")
     fields = {name: ToolContext.__dict__[name].__get__(context, ToolContext) for name in _CONTEXT_FIELDS}
@@ -432,15 +447,15 @@ def verify_context(context, proof):
     for name, fact in callbacks:
         _check_callback(fields.get(name), fact)
     if binding is not None:
-        if any(getattr(binding, name) is not value for name, value in binding_rows):
+        if any(_context_slot(binding, CheckpointAdmissionBinding, name) is not value for name, value in binding_rows):
             raise contract.refused("STORAGE_CONTEXT_CHANGED")
         for name, fact in binding_callbacks:
-            _check_callback(getattr(binding, name), fact)
+            _check_callback(_context_slot(binding, CheckpointAdmissionBinding, name), fact)
     if lifetime is not None:
-        if any(getattr(lifetime, name) is not value for name, value in lifetime_rows):
+        if any(_context_slot(lifetime, RequestLifetime, name) is not value for name, value in lifetime_rows):
             raise contract.refused("STORAGE_CONTEXT_CHANGED")
-        connection = lifetime.connection
-        if any(getattr(connection, name) is not value for name, value in connection_rows):
+        connection = _context_slot(lifetime, RequestLifetime, "connection")
+        if any(_context_slot(connection, ConnectionLifetime, name) is not value for name, value in connection_rows):
             raise contract.refused("STORAGE_CONTEXT_CHANGED")
     for event, event_kind, saved, methods, descriptor, data_rows in events:
         namespace = type.__dict__["__dict__"].__get__(event_kind)

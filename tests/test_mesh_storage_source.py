@@ -997,6 +997,57 @@ def test_source_capture_keeps_distinct_functions_with_shared_code(source, monkey
     assert caught.value.context["reason"] == "STORAGE_SOURCE_CHANGED"
 
 
+def _source_context_objects(source):
+    package = source.__package__
+    tools = importlib.import_module(package + ".tool_registry")
+    permissions = importlib.import_module(package + ".permissions")
+    states = importlib.import_module(package + ".state")
+    lifecycle = importlib.import_module(package + ".request_lifecycle")
+    context = tools.ToolContext(states.BridgeState(), permissions.PermissionManager(lambda: {}),
+                                tools.ToolRegistry(), None)
+    connection = lifecycle.ConnectionLifetime()
+    lifetime = lifecycle.RequestLifetime(connection)
+    binding = tools.CheckpointAdmissionBinding(context, "fixture.context", {}, object(), lambda: None)
+    context.request_lifecycle, context.checkpoint_admission = lifetime, binding
+    return context, {"binding": binding, "lifetime": lifetime, "connection": connection}
+
+
+@pytest.mark.parametrize("boundary", ["capture", "verify"])
+@pytest.mark.parametrize("target", ["binding", "lifetime", "connection"])
+def test_context_owner_class_drift_refuses_before_foreign_access(source, boundary, target):
+    context, owners = _source_context_objects(source)
+    seal = source.SourceSeal.capture()
+    proof = source.capture_context(context, seal)
+    owner, calls = owners[target], []
+    original = type(owner)
+    class Foreign(original):
+        __slots__ = ()
+
+        def __getattribute__(self, name):
+            calls.append(name)
+            raise AssertionError("Foreign context owner was accessed")
+
+        def __hash__(self):
+            calls.append("hash")
+            raise AssertionError("Foreign context owner was hashed")
+
+        def __eq__(self, _other):
+            calls.append("equality")
+            raise AssertionError("Foreign context owner was compared")
+
+    object.__setattr__(owner, "__class__", Foreign)
+    try:
+        with pytest.raises(source.contract.BridgeError) as caught:
+            if boundary == "capture":
+                source.capture_context(context, seal)
+            else:
+                source.verify_context(context, proof)
+        assert caught.value.context["reason"] == "STORAGE_CONTEXT_CHANGED"
+        assert calls == []
+    finally:
+        object.__setattr__(owner, "__class__", original)
+
+
 def test_source_fingerprint_binds_code_even_when_function_identity_is_retained(source, monkeypatch):
     before = source.SourceSeal.capture().fingerprint()
     fn = source.metadata_matches

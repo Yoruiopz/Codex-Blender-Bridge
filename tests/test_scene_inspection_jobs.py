@@ -28,7 +28,13 @@ def inspection_runtime(addon_package, monkeypatch, request):
     reservations = importlib.import_module(addon_package + ".scene_job_reservations")
     native = environment(primitive, monkeypatch)
     env = NS(provider_calls=0, provider_hook=None, scope_reads=0, scope_hook=None,
-             binds=0, protected={"pixels": "a" * 64, "material": "original"})
+             binds=0, protected={"pixels": "a" * 64, "material": "original"}, source_walks=0)
+    if getattr(request, "param", None) == "count_source_walks":
+        original_verify = source.SourceSeal.verify
+        def counted_verify(seal):
+            env.source_walks += 1
+            return original_verify(seal)
+        monkeypatch.setattr(source.SourceSeal, "verify", counted_verify)
     if getattr(request, "param", None) == "controlled_clock":
         env.clock = [time.monotonic()]
         monkeypatch.setattr(reservations, "time", NS(monotonic=lambda: env.clock[0]))
@@ -673,3 +679,202 @@ def test_native_table_or_row_substitution_calls_no_foreign_accessor(inspection_r
     terminal = e.drain()
     assert terminal["state"] == "FAILED" and terminal["ready"] is False
     assert calls == [] and e.scope_reads == 1 and e.binds == e.native.writes == 0
+
+
+@pytest.mark.parametrize("inspection_runtime", ["count_source_walks"], indirect=True)
+@pytest.mark.parametrize("boundary", ["start", "turn", "record"])
+def test_inspection_guard_consolidates_only_its_own_complete_source_walk(inspection_runtime, boundary):
+    e, counts = inspection_runtime, []
+
+    def count_entry():
+        entry = e.owner.registry._mutation_interlock._entries[-1]
+        callback = entry.context.checkpoint_admission.callback
+        before = e.source_walks
+        callback.entry_guard()
+        counts.append(e.source_walks - before)
+
+    if boundary == "start":
+        e.provider_hook = count_entry
+    accepted = e.call()
+    assert accepted.response.ok, accepted.response.error
+    if boundary == "turn":
+        e.provider_hook = count_entry
+        assert e.owner.jobs.tick()
+    elif boundary == "record":
+        before = e.source_walks
+        record = e.owner.jobs._inspection_record(accepted.job)
+        counts.append(e.source_walks - before)
+        assert record[0] is accepted.job
+    assert counts == [1]
+    assert e.native.writes == 0 and e.scope_reads == 0
+
+
+@pytest.mark.parametrize("target", ["turn", "owner"])
+def test_checked_turn_rejects_owner_class_drift_before_foreign_access(inspection_runtime, target):
+    e = inspection_runtime
+    assert e.call().response.ok
+    assert e.owner.jobs.tick()
+    calls, failures = [], []
+
+    def poison():
+        row = next(iter(e.owner.jobs.reservations._inspection_turns.values()))
+        callback = row.context.checkpoint_admission.callback
+        value = row if target == "turn" else row.owner
+        original = type(value)
+        class Foreign(original):
+            __slots__ = ()
+
+            def __getattribute__(self, name):
+                calls.append(name)
+                raise AssertionError("Foreign turn owner was accessed")
+
+            def __hash__(self):
+                calls.append("hash")
+                raise AssertionError("Foreign turn owner was hashed")
+
+            def __eq__(self, _other):
+                calls.append("equality")
+                raise AssertionError("Foreign turn owner was compared")
+
+        object.__setattr__(value, "__class__", Foreign)
+        try:
+            with pytest.raises(e.runtime.BridgeError) as caught:
+                callback.entry_guard()
+            failures.append(caught.value)
+            assert calls == []
+        finally:
+            object.__setattr__(value, "__class__", original)
+        raise failures[-1]
+
+    e.scope_hook = poison
+    terminal = e.drain()
+    assert len(failures) == 1 and calls == []
+    assert terminal["state"] == "FAILED" and terminal["ready"] is False
+    assert e.scope_reads == 1 and e.binds == e.native.writes == 0
+
+
+@pytest.mark.parametrize("target", ["registry", "jobs", "glb_stage"])
+def test_standalone_record_refuses_owned_method_shadow_before_dispatch(inspection_runtime, target):
+    e = inspection_runtime
+    accepted = e.call()
+    assert accepted.response.ok, accepted.response.error
+    jobs, calls = e.owner.jobs, []
+    record = type(jobs)._inspection_record
+    owner, name = {
+        "registry": (e.owner.registry, "get"),
+        "jobs": (jobs, "_inspection_record"),
+        "glb_stage": (e.owner.glb_stage, "check_context_factory"),
+    }[target]
+    setattr(owner, name, lambda *_args, **_kwargs: calls.append("foreign method"))
+    try:
+        with pytest.raises(e.runtime.BridgeError):
+            record(jobs, accepted.job)
+        assert calls == []
+        assert e.native.snapshot_reads == e.scope_reads == e.native.writes == 0
+    finally:
+        delattr(owner, name)
+
+
+@pytest.mark.parametrize("leaf", ["context", "driver", "factory", "record"])
+@pytest.mark.parametrize("change", ["identity", "code"])
+@pytest.mark.parametrize("boundary", ["provider", "native"])
+def test_held_inspection_leaf_drift_refuses_before_dispatch(inspection_runtime, monkeypatch, leaf, change, boundary):
+    e, calls = inspection_runtime, []
+    core = importlib.import_module(e.runtime.__package__ + ".scene_jobs")
+    module, name = {
+        "context": (e.source, "_verify_context_fields"),
+        "driver": (core, "_inspection_driver_fields"),
+        "factory": (core, "_inspection_context_factory_fields"),
+        "record": (core.SceneJobs, "_inspection_record_fields"),
+    }[leaf]
+    original = getattr(module, name)
+
+    def foreign(*_args, **_kwargs):
+        calls.append("foreign leaf")
+        raise AssertionError("Foreign inspection leaf executed")
+
+    def poison():
+        if change == "identity":
+            monkeypatch.setattr(module, name, foreign)
+        else:
+            monkeypatch.setattr(original, "__code__", original.__code__.replace(co_name="changed"))
+
+    if boundary == "provider":
+        e.provider_hook = poison
+        result = e.call()
+        assert not result.response.ok and result.job is None
+        assert e.native.snapshot_reads == e.scope_reads == 0
+    else:
+        assert e.call().response.ok
+        assert e.owner.jobs.tick()
+        e.scope_hook = poison
+        terminal = e.drain()
+        assert terminal["state"] == "FAILED" and terminal["ready"] is False
+        assert e.scope_reads == 1 and e.binds == 0
+    assert calls == [] and e.native.writes == 0
+
+
+def test_standalone_record_rejects_service_class_before_foreign_access(inspection_runtime):
+    e = inspection_runtime
+    accepted = e.call()
+    assert accepted.response.ok, accepted.response.error
+    jobs, calls = e.owner.jobs, []
+    original = type(jobs)
+    record = original._inspection_record
+    class Foreign(original):
+        __slots__ = ()
+
+        def __getattribute__(self, name):
+            calls.append(name)
+            raise AssertionError("Foreign job service was accessed")
+
+        def __hash__(self):
+            calls.append("hash")
+            raise AssertionError("Foreign job service was hashed")
+
+        def __eq__(self, _other):
+            calls.append("equality")
+            raise AssertionError("Foreign job service was compared")
+
+    object.__setattr__(jobs, "__class__", Foreign)
+    try:
+        with pytest.raises(e.runtime.BridgeError):
+            record(jobs, accepted.job)
+        assert calls == []
+        assert e.native.snapshot_reads == e.scope_reads == e.native.writes == 0
+    finally:
+        object.__setattr__(jobs, "__class__", original)
+
+
+@pytest.mark.parametrize("target", ["records", "tools"])
+def test_standalone_record_rejects_foreign_table_key_before_collision(inspection_runtime, target):
+    e = inspection_runtime
+    accepted = e.call()
+    assert accepted.response.ok, accepted.response.error
+    jobs, calls = e.owner.jobs, []
+    record = type(jobs)._inspection_record
+    core = importlib.import_module(e.runtime.__package__ + ".scene_jobs")
+    table, key = ((jobs._inspection_records, id(accepted.job)) if target == "records"
+                  else (e.owner.registry._tools, core.INSPECTION_TURN_METHOD))
+    original = dict(table)
+    value = table.pop(key)
+    collision_hash = hash(key)
+    class ForeignKey:
+        def __hash__(self):
+            calls.append("hash")
+            return collision_hash
+
+        def __eq__(self, _other):
+            calls.append("equality")
+            raise AssertionError("Foreign lookup key was compared")
+
+    table[ForeignKey()] = value
+    calls.clear()  # Dictionary construction hashes the intentionally bad key.
+    try:
+        with pytest.raises(e.runtime.BridgeError):
+            record(jobs, accepted.job)
+        assert calls == []
+        assert e.native.snapshot_reads == e.scope_reads == e.native.writes == 0
+    finally:
+        table.clear()
+        table.update(original)

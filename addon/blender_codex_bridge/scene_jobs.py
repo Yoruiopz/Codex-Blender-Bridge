@@ -10,12 +10,12 @@ import time
 import uuid
 from collections import deque
 from dataclasses import dataclass, field
-from types import CodeType, FunctionType, GetSetDescriptorType, ModuleType
+from types import CodeType, FunctionType, GetSetDescriptorType, MemberDescriptorType, ModuleType
 from typing import Any
 
 from .checkpoint_completion import claim_native_push_completion
 from .errors import BridgeError, ErrorCode, invalid_argument
-from .job_controller import TERMINAL
+from .job_controller import TERMINAL, CooperativeJobController
 from .jobs import PaintJobs
 from .mesh_storage_effects import MeshStorageJournal, snapshot_storage_effects
 from .protocol import utc_timestamp
@@ -25,9 +25,15 @@ from .scene_job_effects import EffectsStatus, SceneNativeEffects, snapshot_nativ
 from .scene_job_evidence import phase as phase_report
 from .scene_job_evidence import plain
 from .scene_job_evidence import progress as progress_report
-from .scene_job_reservations import INSPECTION_TURN_METHOD, TURN_METHOD, refused
+from .scene_job_reservations import (
+    INSPECTION_TURN_METHOD,
+    TURN_METHOD,
+    _Reservation,
+    _Turn,
+    refused,
+)
 from .task_plans import get_task_plans
-from .tool_registry import check_final_mutation
+from .tool_registry import ToolSpec, check_final_mutation
 
 
 def _storage_function_fact(function):
@@ -494,8 +500,13 @@ def _inspection_driver(driver):
 
 
 def _inspection_driver_check(proof, *, instance=True):
+    _inspection_source(proof[4])
+    return _inspection_driver_fields(proof, instance=instance)
+
+
+def _inspection_driver_fields(proof, *, instance=True):
+    """Source-closed Python fields; no provider, native read or callback."""
     driver, kind, classes, descriptor, seal, owned, methods = proof
-    _inspection_source(seal)
     for base, mro, saved, functions in classes:
         fields = type.__dict__["__dict__"].__get__(base)
         if (type.__dict__["__mro__"].__get__(base) is not mro or len(fields) != len(saved)
@@ -600,8 +611,13 @@ def _inspection_context_factory(context, seal):
 
 
 def _inspection_context_factory_check(proof):
-    seal, runtime_module, runtime, _factory, fact, helper_module, namespace, functions, objects = proof
-    _inspection_source(seal)
+    _inspection_source(proof[0])
+    _inspection_context_factory_fields(proof)
+
+
+def _inspection_context_factory_fields(proof):
+    """Source-closed Python fields; callers verify the whole source first."""
+    _seal, runtime_module, runtime, _factory, fact, helper_module, namespace, functions, objects = proof
     if vars(runtime_module).get("_RUNTIME") is not runtime:
         raise refused("INSPECTION_CONTEXT_FACTORY_CHANGED")
     current = vars(helper_module)
@@ -626,26 +642,56 @@ def _inspection_context_factory_check(proof):
             raise refused("INSPECTION_CONTEXT_FACTORY_CHANGED")
 
 
+def _inspection_slot(owner, kind, name):
+    if type(owner) is not kind:
+        raise refused("INSPECTION_ADMISSION_CHANGED")
+    descriptor = type.__dict__["__dict__"].__get__(kind).get(name)
+    if (type(descriptor) is not MemberDescriptorType or descriptor.__objclass__ is not kind
+            or descriptor.__name__ != name):
+        raise refused("INSPECTION_ADMISSION_CHANGED")
+    return descriptor.__get__(owner, kind)
+
+
 def _inspection_bind(admission):
-    from .mesh_storage_source import capture_context, verify_context
+    from .mesh_storage_source import _verify_context_fields, capture_context
+    admission_type = type(admission)
+    if admission_type is not _InspectionAdmission and admission_type is not _InspectionTurnAdmission:
+        raise refused("INSPECTION_ADMISSION_CHANGED")
     context, proof = admission.context, admission.driver_proof
     _inspection_driver_check(proof)
     factory_proof = admission.factory_proof
     _inspection_context_factory_check(factory_proof)
     captured = capture_context(context, proof[4])
     object.__setattr__(admission, "inspection_context_proof", captured)
-    admission_type = type(admission)
-    owned = tuple((name, getattr(admission, name)) for name in admission_type.__slots__
+    owned = tuple((name, _inspection_slot(admission, admission_type, name)) for name in admission_type.__slots__
                   if name not in {"entry_guard", "entry_proof"})
-    turn = admission.turn if type(admission) is _InspectionTurnAdmission else None
-    turn_rows = () if turn is None else tuple((name, getattr(turn, name)) for name in type(turn).__slots__
+    turn = _inspection_slot(admission, admission_type, "turn") if admission_type is _InspectionTurnAdmission else None
+    if turn is not None and type(turn) is not _Turn:
+        raise refused("INSPECTION_ADMISSION_CHANGED")
+    turn_rows = () if turn is None else tuple((name, _inspection_slot(turn, _Turn, name)) for name in _Turn.__slots__
                                              if name not in {"inspection_entry_proof", "permission_denial"})
-    owner = None if turn is None else turn.owner
-    owner_rows = () if owner is None else tuple((name, getattr(owner, name)) for name in type(owner).__slots__
+    owner = None if turn is None else _inspection_slot(turn, _Turn, "owner")
+    if owner is not None and type(owner) is not _Reservation:
+        raise refused("INSPECTION_ADMISSION_CHANGED")
+    owner_rows = () if owner is None else tuple((name, _inspection_slot(owner, _Reservation, name)) for name in _Reservation.__slots__
                                                if name != "stopped")
+    driver_fields, factory_fields, context_fields = (_inspection_driver_fields,
+        _inspection_context_factory_fields, _verify_context_fields)
+    record_fields = SceneJobs.__dict__["_inspection_record_fields"]
+    leaf_facts = tuple(_storage_function_fact(function)
+                       for function in (driver_fields, factory_fields, context_fields, record_fields))
+    record = None
+    if turn is not None:
+        service = context.jobs
+        row = next(item for item in factory_proof[8] if item[0] is service)
+        service_fields = row[2].__get__(service, row[1])
+        records = dict.get(service_fields, "_inspection_records")
+        if type(records) is not dict or any(type(key) is not int for key in records):
+            raise refused("INSPECTION_RECORD_LOST")
+        record = dict.get(records, id(admission.job))
 
     def checked():
-        # The held verifier is proved before resolving any mutable callback.
+        # One held full verification covers only this callback-free field chain.
         raw = tuple.__getitem__
         seal = raw(proof, 4)
         function, code, namespace, defaults, keywords, closure = raw(seal, 7)
@@ -654,24 +700,27 @@ def _inspection_bind(admission):
                 or function.__defaults__ is not defaults or function.__kwdefaults__ is not keywords or function.__closure__ is not closure):
             raise raw(native, 8)
         function(seal)
-        if (type(admission) is not admission_type or any(getattr(admission, name) is not value for name, value in owned)
-                or any(getattr(turn, name) is not value for name, value in turn_rows)
-                or any(getattr(owner, name) is not value for name, value in owner_rows)
+        for leaf_fact in leaf_facts:
+            _inspection_function(leaf_fact)
+        if (type(admission) is not admission_type
+                or any(_inspection_slot(admission, admission_type, name) is not value for name, value in owned)
+                or any(_inspection_slot(turn, _Turn, name) is not value for name, value in turn_rows)
+                or any(_inspection_slot(owner, _Reservation, name) is not value for name, value in owner_rows)
                 or admission.entry_guard is not checked or type(admission.entry_proof) is not tuple
                 or len(admission.entry_proof) != 7 or admission.entry_proof[0] is not checked
                 or admission.driver_proof is not proof or admission.factory_proof is not factory_proof
                 or admission.inspection_context_proof is not captured):
             raise refused("INSPECTION_ADMISSION_CHANGED")
-        _inspection_driver_check(proof)
-        _inspection_context_factory_check(factory_proof)
-        verify_context(context, captured)
+        driver_fields(proof)
+        factory_fields(factory_proof)
+        context_fields(context, captured)
         for manager, kind, descriptor, rows, _provider in captured[11]:
             data = descriptor.__get__(manager, kind)
             if (type(data) is not dict or len(data) != len(rows) or any(type(name) is not str for name in data)
                     or any(data.get(name) is not value for name, value in rows)):
                 raise refused("INSPECTION_PERMISSION_INSTANCE_CHANGED")
-        if type(admission) is _InspectionTurnAdmission:
-            context.jobs._inspection_record(admission.job)
+        if admission_type is _InspectionTurnAdmission:
+            record_fields(context.jobs, admission.job, record)
 
     object.__setattr__(admission, "entry_guard", checked)
     object.__setattr__(admission, "entry_proof", (checked, checked.__code__, checked.__globals__, checked.__defaults__,
@@ -921,9 +970,19 @@ class SceneJobs(PaintJobs):
     def _inspection(self, job, _type=type, _job_type=InspectionJob):
         return _type(job) is _job_type
 
-    def _inspection_record(self, job, _type=type, _job_type=InspectionJob, _id=id, _get=dict.get, _tuple=tuple):
-        record = _get(self._inspection_records, _id(job))
-        if (_type(job) is not _job_type or _type(record) is not _tuple or record[0] is not job or self.active is not job):
+    def _inspection_record(self, job, _type=type, _job_type=InspectionJob, _id=id, _get=dict.get, _tuple=tuple,
+                           _dictionary=CooperativeJobController.__dict__["__dict__"].__get__):
+        # The original native dictionary descriptor cannot invoke a substituted
+        # service's Python attribute hook while locating its retained proof.
+        data = _dictionary(self, _type(self))
+        if _type(data) is not dict or any(_type(key) is not str for key in data):
+            raise refused("INSPECTION_RECORD_LOST")
+        records = _get(data, "_inspection_records")
+        if _type(records) is not dict or any(_type(key) is not int for key in records):
+            raise refused("INSPECTION_RECORD_LOST")
+        record = _get(records, _id(job))
+        if (_type(job) is not _job_type or _type(record) is not _tuple or len(record) != 7
+                or record[0] is not job or _get(data, "active") is not job):
             raise refused("INSPECTION_RECORD_LOST")
         raw = ().__class__.__getitem__
         seal = raw(raw(record, 1), 4)
@@ -934,14 +993,37 @@ class SceneJobs(PaintJobs):
                 or function.__kwdefaults__ is not keywords or function.__closure__ is not closure):
             raise raw(native, 8)
         function(seal)
+        return SceneJobs.__dict__["_inspection_record_fields"](self, job, record)
+
+    def _inspection_record_fields(self, job, record, _type=type, _job_type=InspectionJob,
+                                  _id=id, _get=dict.get, _tuple=tuple):
+        """One callback-free record chain under a freshly verified source seal."""
+        if (_type(job) is not _job_type or _type(record) is not _tuple or len(record) != 7 or record[0] is not job):
+            raise refused("INSPECTION_RECORD_LOST")
+        # Prove service/registry exact classes and method-shadow absence before
+        # reading service fields or dispatching the original registry get().
+        _inspection_context_factory_fields(record[2])
+        service_row = next(row for row in record[2][8] if row[0] is self)
+        data = service_row[2].__get__(self, service_row[1])
+        records = _get(data, "_inspection_records")
+        if (_type(records) is not dict or any(_type(key) is not int for key in records)
+                or _get(data, "active") is not job or _get(records, _id(job)) is not record):
+            raise refused("INSPECTION_RECORD_LOST")
         if (job.driver is not record[1][0]
                 or any(getattr(job, name) is not value for name, value in record[3])):
             raise refused("INSPECTION_RECORD_LOST")
-        if (self.registry.get(INSPECTION_TURN_METHOD) is not self._inspection_spec
-                or any(getattr(self._inspection_spec, name) is not value for name, value in self._inspection_spec_origin)):
+        registry = _get(data, "registry")
+        registry_row = next(row for row in record[2][8] if row[0] is registry)
+        registry_fields = registry_row[2].__get__(registry, registry_row[1])
+        tools = _get(registry_fields, "_tools")
+        if _type(tools) is not dict or any(_type(key) is not str for key in tools):
             raise refused("INSPECTION_TURN_SPEC_CHANGED")
-        _inspection_driver_check(record[1])
-        _inspection_context_factory_check(record[2])
+        spec = _get(data, "_inspection_spec")
+        if (_type(spec) is not ToolSpec or registry.get(INSPECTION_TURN_METHOD) is not spec
+                or any(_inspection_slot(spec, ToolSpec, name) is not value
+                       for name, value in _get(data, "_inspection_spec_origin"))):
+            raise refused("INSPECTION_TURN_SPEC_CHANGED")
+        _inspection_driver_fields(record[1])
         return record
 
     def start_inspection(self, context, params, *, time_limit=60.):
