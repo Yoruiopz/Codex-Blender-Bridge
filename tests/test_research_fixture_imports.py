@@ -6321,6 +6321,8 @@ def _storage_runtime_context_report_model():
                     "context": {} if name == "permission_denial" else {"reason": "GLB_CANONICAL_CONTEXT_COMPONENT_CHANGED"}}
             else:
                 response["result"] = {"captured": True} if action == "capture" else {"healthy": True}
+                response["result"]["operation"] = {"operation_id": "op_" + format(ordinal * 2 + index + 1, "010x"),
+                    "undo_boundary_created": False, "undo_boundary_finalized": False}
             sent = {"id": identifier, "action": action, "case": name}
             full["sent"].append(sent)
             full["wire"].append({"id": identifier, "response": response,
@@ -6356,6 +6358,80 @@ def test_storage_runtime_context_finite_model_requires_actual_queue_and_jobs_evi
     assert _runtime_context_model_valid(case, full)
     assert len(full["sent"]) == len(full["terminal"]) == len(full["wire"]) == 6
     assert len(full["dispatch"]) == 4 and all(value is False for value in full["limitations"].values())
+
+
+def test_storage_runtime_context_model_retains_original_modifying_executor_operation_metadata():
+    case, full = _storage_runtime_context_report_model()
+    assert _runtime_context_model_valid(case, full)
+    operations = []
+    for index in (0, 1, 3, 5):
+        response = full["wire"][index]["response"]
+        expected = {"captured" if index == 0 else "healthy": True,
+            "operation": {"operation_id": "op_" + format(index + 1, "010x"),
+                "undo_boundary_created": False, "undo_boundary_finalized": False}}
+        assert response["result"] == expected
+        assert case.canonical(full["terminal"][index]["response"]) == case.canonical(response)
+        operations.append(expected["operation"]["operation_id"])
+    assert len(set(operations)) == 4
+    assert full["wire"][2]["response"]["error"]["code"] == "PERMISSION_DENIED"
+    assert full["wire"][4]["response"]["error"]["context"] == {"reason": "GLB_CANONICAL_CONTEXT_COMPONENT_CHANGED"}
+
+
+@pytest.mark.parametrize("response_index", (0, 1, 3, 5))
+@pytest.mark.parametrize("fault", ("operation_missing", "operation_none", "operation_list", "operation_extra", "id_missing",
+    "id_none", "id_bool", "id_integer", "id_float", "id_list", "id_empty", "id_short", "id_long", "id_uppercase",
+    "id_nonhex", "id_prefix", "id_duplicate", "created_missing", "created_integer", "created_float", "created_true",
+    "created_none", "created_string", "finalized_missing", "finalized_integer", "finalized_float", "finalized_true",
+    "finalized_none", "finalized_string", "outcome_missing", "outcome_integer", "outcome_float", "result_extra"))
+def test_storage_runtime_context_operation_metadata_refuses_coherent_wire_terminal_counterfeits(response_index, fault):
+    from copy import deepcopy
+
+    case, full = _storage_runtime_context_report_model()
+    response = full["wire"][response_index]["response"]
+    result = response["result"]
+    operation = result["operation"]
+    outcome = "captured" if response_index == 0 else "healthy"
+    if fault.startswith("operation_"):
+        if fault == "operation_missing":
+            del result["operation"]
+        elif fault == "operation_extra":
+            operation["new_claim"] = True
+        else:
+            result["operation"] = None if fault == "operation_none" else []
+    elif fault.startswith("id_"):
+        if fault == "id_missing":
+            del operation["operation_id"]
+        elif fault == "id_duplicate":
+            other_index = 1 if response_index == 0 else 0
+            operation["operation_id"] = full["wire"][other_index]["response"]["result"]["operation"]["operation_id"]
+        else:
+            operation["operation_id"] = {"id_none": None, "id_bool": True, "id_integer": 1, "id_float": 1.0,
+                "id_list": [], "id_empty": "", "id_short": "op_" + "a" * 9, "id_long": "op_" + "a" * 11,
+                "id_uppercase": "op_" + "A" * 10, "id_nonhex": "op_" + "z" * 10, "id_prefix": "xx_" + "a" * 10}[fault]
+    elif fault.startswith(("created_", "finalized_")):
+        label, value = fault.split("_", 1)
+        key = "undo_boundary_" + label
+        if value == "missing":
+            del operation[key]
+        else:
+            operation[key] = {"integer": 0, "float": 0.0, "true": True, "none": None, "string": "False"}[value]
+    elif fault == "outcome_missing":
+        del result[outcome]
+    elif fault.startswith("outcome_"):
+        result[outcome] = 1 if fault == "outcome_integer" else 1.0
+    else:
+        result["new_claim"] = True
+    full["wire"][response_index]["sha256"] = hashlib.sha256(case.canonical(response)).hexdigest()
+    full["terminal"][response_index]["response"] = deepcopy(response)
+    assert not _runtime_context_model_valid(case, full)
+
+
+@pytest.mark.parametrize("field", ("undo_boundary_created", "undo_boundary_finalized"))
+@pytest.mark.parametrize("counterfeit", (0, 0.0))
+def test_storage_runtime_context_terminal_operation_retains_exact_wire_false_types(field, counterfeit):
+    case, full = _storage_runtime_context_report_model()
+    full["terminal"][0]["response"]["result"]["operation"][field] = counterfeit
+    assert not _runtime_context_model_valid(case, full)
 
 
 @pytest.mark.parametrize("fault", ("extra_top_key", "missing_case", "duplicate_id", "nonhex_id", "wire_digest", "wire_error",

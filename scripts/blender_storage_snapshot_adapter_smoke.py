@@ -840,6 +840,18 @@ def runtime_projection_matches(projection, raw, target):
     return canonical(projection) == canonical(expected)
 
 
+def runtime_success_result(value, outcome):
+    if (type(value) is not dict or set(value) != {outcome, "operation"} or value[outcome] is not True
+            or type(value["operation"]) is not dict
+            or set(value["operation"]) != {"operation_id", "undo_boundary_created", "undo_boundary_finalized"}):
+        return False
+    operation = value["operation"]
+    identifier = operation["operation_id"]
+    return (type(identifier) is str and len(identifier) == 13 and identifier.startswith("op_")
+        and all(char in "0123456789abcdef" for char in identifier[3:])
+        and operation["undo_boundary_created"] is False and operation["undo_boundary_finalized"] is False)
+
+
 def runtime_journal(value):
     if (type(value) is not dict or set(value) != {"schema", "capacity", "snapshots", "runtime_retention_qualified",
             "durable_backup_qualified", "full_source_preservation_qualified", "native_calls_preemptible"}
@@ -974,13 +986,13 @@ def validate_runtime_context(full, *, process_instance, process_id, sources, bin
             inspect_counts = terminal_by_id[row["requests"][1]]["counts"]
             if (sent[2*index] != {"id": ids[2*index], "action": "capture", "case": row["name"]}
                     or sent[2*index+1] != {"id": ids[2*index+1], "action": "inspect", "case": row["name"]}
-                    or inspect.get("ok") is not True or canonical(inspect["result"]) != canonical({"healthy": True})
+                    or inspect.get("ok") is not True or not runtime_success_result(inspect["result"], "healthy")
                     or inspect_counts["domain"] != 0 or inspect_counts["writer_entered"] != 0 or inspect_counts["writer_returned"] != 0
                     or inspect_counts["provider"] < 1):
                 return False
             if row["name"] == "success":
                 cleanup = row["cleanup"]
-                if (capture.get("ok") is not True or canonical(capture["result"]) != canonical({"captured": True})
+                if (capture.get("ok") is not True or not runtime_success_result(capture["result"], "captured")
                         or row["witness_consumed"] is not True or capture_counts["domain"] != 1
                         or capture_counts["writer_entered"] != 1 or capture_counts["writer_returned"] != 1 or capture_counts["provider"] < 1
                         or not runtime_journal(row["journal"])
@@ -1008,7 +1020,8 @@ def validate_runtime_context(full, *, process_instance, process_id, sources, bin
                         or row["journal"] is not None or row["copy"] is not None or row["cleanup"] is not None
                         or row["witness_consumed"] is not False or row["projections"] != []):
                     return False
-        return True
+        operation_ids = [response["result"]["operation"]["operation_id"] for response in responses.values() if response["ok"]]
+        return len(operation_ids) == len(set(operation_ids)) == 4
     except (KeyError, TypeError, ValueError, AttributeError, OverflowError, RecursionError):
         return False
 
