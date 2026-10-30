@@ -582,6 +582,7 @@ class Fixture(gateway.Fixture):
         status = 1
         try:
             self.setup()
+            gateway.register_legacy_replica_entry(self.runtime)
             self.data["target_pair"] = self.complete_snapshot()["targets"]
             for name in CASES[self.options.bridge_phase]:
                 assert time.monotonic() - self.started < 270

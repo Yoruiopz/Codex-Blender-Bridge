@@ -6840,3 +6840,140 @@ def test_storage_runtime_context_worker_preserves_primary_and_attempts_each_owne
     assert env.done.is_set() and events == ["shutdown", "stream_close", "socket_close"]
     assert env.worker_error["type"] == "RuntimeError" and env.worker_error["message"] == "original owned fixture failure"
     assert env.worker_close_error["type"] == "OSError" and env.worker_close_error["message"] == "secondary shutdown"
+
+
+def _legacy_snapshot_replica_entry_model(addon_package, monkeypatch):
+    """Real control/permission gates in a Blender-free fixture-entry model."""
+    from scripts import blender_storage_snapshot_adapter_smoke as fixture
+
+    modules = {name: importlib.import_module(addon_package + "." + name)
+               for name in ("errors", "permissions", "state", "tool_registry", "storage_snapshot")}
+    for name in ("errors", "permissions"):
+        monkeypatch.setitem(sys.modules, "blender_codex_bridge." + name, modules[name])
+    registry = modules["tool_registry"].ToolRegistry(enabled_toolsets=("simulation",))
+    grants = {permission.value: True for permission in modules["permissions"].Permission}
+    events = []
+    def provider():
+        events.append("provider")
+        return grants
+    state = modules["state"].BridgeState()
+    state.paused = state.emergency_stopped = False
+    context = modules["tool_registry"].ToolContext(
+        state, modules["permissions"].PermissionManager(provider), registry, None)
+    context.checkpoint_method = fixture.LEGACY_REPLICA_METHOD
+    operation = object.__new__(modules["storage_snapshot"].SnapshotOperation)
+    operation.context = context
+    return NS(fixture=fixture, modules=modules, runtime=NS(registry=registry, _registered=True),
+              context=context, operation=operation, events=events, grants=grants)
+
+
+def test_legacy_snapshot_fixture_entry_registers_only_exact_donor_control_metadata(addon_package, monkeypatch):
+    env = _legacy_snapshot_replica_entry_model(addon_package, monkeypatch)
+    errors, permissions = env.modules["errors"], env.modules["permissions"]
+    with pytest.raises(errors.BridgeError) as missing:
+        env.runtime.registry.get(env.fixture.LEGACY_REPLICA_METHOD)
+    assert missing.value.code == "METHOD_NOT_FOUND"
+    spec = env.fixture.register_legacy_replica_entry(env.runtime)
+    assert env.runtime.registry.get(env.fixture.LEGACY_REPLICA_METHOD) is spec
+    assert set(env.runtime.registry._tools) == {"simulation.cache_preview"}
+    assert spec.handler is env.fixture.legacy_replica_entry_never_dispatch
+    assert spec.permissions == frozenset((permissions.Permission.INSPECT_SCENE,))
+    assert spec.toolset == "simulation" and spec.modifies is False
+    assert spec.automatic_checkpoint is True and spec.remote is True
+    assert spec.batchable is True and spec.record_history is True
+    assert spec.protected_scope_resolver is None and spec.checkpoint_admission_factory is None
+    assert spec.checkpoint_parameter_scope is None and spec.checkpoint_parameter_dependencies is None
+    assert spec.checkpoint_owns_finalization is False and spec.checkpoint_batch_reviewed is False
+    assert spec.exclusive_mutation is False and env.events == []
+
+
+def test_legacy_snapshot_fixture_entry_refuses_preexisting_handler_without_replacement(addon_package, monkeypatch):
+    env = _legacy_snapshot_replica_entry_model(addon_package, monkeypatch)
+    def existing(*_args):
+        pytest.fail("Registration must not dispatch an existing handler")
+    spec = env.runtime.registry.register(env.fixture.LEGACY_REPLICA_METHOD, existing)
+    before = dict(env.runtime.registry._tools)
+    with pytest.raises(AssertionError):
+        env.fixture.register_legacy_replica_entry(env.runtime)
+    assert env.runtime.registry._tools == before
+    assert env.runtime.registry.get(env.fixture.LEGACY_REPLICA_METHOD) is spec
+    assert spec.handler is existing and env.events == []
+
+
+def test_legacy_snapshot_fixture_entry_preserves_other_lookup_failure(addon_package, monkeypatch):
+    env = _legacy_snapshot_replica_entry_model(addon_package, monkeypatch)
+    failure = env.modules["errors"].BridgeError("PERMISSION_DENIED", "Original registry refusal")
+    def refused(_name):
+        raise failure
+    monkeypatch.setattr(env.runtime.registry, "get", refused)
+    with pytest.raises(env.modules["errors"].BridgeError) as caught:
+        env.fixture.register_legacy_replica_entry(env.runtime)
+    assert caught.value is failure and not env.runtime.registry._tools and env.events == []
+
+
+def test_legacy_snapshot_fixture_entry_stub_fails_closed_if_dispatched(addon_package, monkeypatch):
+    env = _legacy_snapshot_replica_entry_model(addon_package, monkeypatch)
+    spec = env.fixture.register_legacy_replica_entry(env.runtime)
+    with pytest.raises(AssertionError):
+        spec.handler(env.context, {})
+    assert env.events == [] and env.context.handler_entries == 0
+
+
+def test_legacy_snapshot_missing_entry_is_refused_before_original_permission_provider(addon_package, monkeypatch):
+    env = _legacy_snapshot_replica_entry_model(addon_package, monkeypatch)
+    with pytest.raises(env.modules["errors"].BridgeError) as caught:
+        env.operation._authorize(lambda: env.events.append("source_guard"))
+    assert caught.value.code == "METHOD_NOT_FOUND"
+    assert env.events == ["source_guard"] and env.context.handler_entries == 0
+
+
+def test_legacy_snapshot_registered_entry_keeps_original_gates_without_handler_dispatch(addon_package, monkeypatch):
+    env = _legacy_snapshot_replica_entry_model(addon_package, monkeypatch)
+    env.fixture.register_legacy_replica_entry(env.runtime)
+    env.modules["tool_registry"].check_final_mutation(env.context, env.fixture.LEGACY_REPLICA_METHOD)
+    assert env.events == []
+    env.operation._authorize(lambda: env.events.append("source_guard"))
+    assert env.events == ["source_guard", "provider", "source_guard"]
+    assert env.context.handler_entries == 0
+
+
+@pytest.mark.parametrize("denied", ("INSPECT_SCENE", "SAVE_PROJECT", "ACCESS_EXTERNAL_FILES"))
+def test_legacy_snapshot_registered_entry_preserves_original_permission_denial(addon_package, monkeypatch, denied):
+    env = _legacy_snapshot_replica_entry_model(addon_package, monkeypatch)
+    env.fixture.register_legacy_replica_entry(env.runtime)
+    env.grants[denied] = False
+    with pytest.raises(env.modules["errors"].BridgeError) as caught:
+        env.operation._authorize(lambda: env.events.append("source_guard"))
+    assert caught.value.code == "PERMISSION_DENIED"
+    assert caught.value.context["missing_permissions"] == [denied]
+    assert set(caught.value.context["required"]) == {"INSPECT_SCENE", "SAVE_PROJECT", "ACCESS_EXTERNAL_FILES"}
+    assert env.events == ["source_guard", "provider"] and env.context.handler_entries == 0
+
+
+@pytest.mark.parametrize("flag,code", (("paused", "AGENT_PAUSED"), ("emergency_stopped", "EMERGENCY_STOPPED")))
+def test_legacy_snapshot_registered_entry_preserves_preprovider_stop_gates(addon_package, monkeypatch, flag, code):
+    env = _legacy_snapshot_replica_entry_model(addon_package, monkeypatch)
+    env.fixture.register_legacy_replica_entry(env.runtime)
+    setattr(env.context.state, flag, True)
+    with pytest.raises(env.modules["errors"].BridgeError) as caught:
+        env.operation._authorize(lambda: env.events.append("source_guard"))
+    assert caught.value.code == code
+    assert env.events == ["source_guard"] and env.context.handler_entries == 0
+
+
+def test_legacy_snapshot_fixture_entry_hooks_precede_only_legacy_direct_replica_scopes():
+    from scripts import blender_storage_snapshot_adapter_smoke as adapter
+    from scripts import blender_storage_snapshot_cleanup_smoke as cleanup
+
+    for fixture in (adapter.Fixture, cleanup.Fixture):
+        tree = ast.parse(inspect.getsource(fixture.run).lstrip())
+        calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)]
+        setup = [node.lineno for node in calls if isinstance(node.func, ast.Attribute) and node.func.attr == "setup"]
+        entry = [node.lineno for node in calls if (isinstance(node.func, ast.Name) and node.func.id == "register_legacy_replica_entry")
+                 or (isinstance(node.func, ast.Attribute) and node.func.attr == "register_legacy_replica_entry")]
+        scopes = [node.lineno for node in calls if isinstance(node.func, ast.Attribute) and node.func.attr == "run_case"]
+        assert len(setup) == len(entry) == 1 and scopes and setup[0] < entry[0] < min(scopes)
+    for method in (adapter.Fixture.setup, adapter.RuntimeContextDiagnostic.setup_runtime,
+                   adapter.RuntimeContextDiagnostic.run_runtime):
+        assert "register_legacy_replica_entry" not in inspect.getsource(method)
+    assert cleanup.REQUEST_BINDING == "SOURCE_QUALIFIED_REPLICA_FRESH_QUEUED_REQUEST"

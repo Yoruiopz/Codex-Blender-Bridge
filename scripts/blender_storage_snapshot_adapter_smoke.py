@@ -42,6 +42,7 @@ FALSE_FLAGS = ("runtime_retention_qualified", "full_authored_preservation_qualif
                "cache_pairing_qualified", "native_calls_preemptible", "windows_qualified", "installed_package_qualified",
                "cleanup_qualified", "native_memory_cap_claimed", "hidden_Main_passivity_claimed")
 COUNTERS = ("provider", "writer_entered", "writer_returned", "parser", "native_reads")
+LEGACY_REPLICA_METHOD = "simulation.cache_preview"
 _EXCEPTION_ARGS = BaseException.__dict__["args"]
 _EXCEPTION_DICT = BaseException.__dict__["__dict__"]
 _EXCEPTION_TRACEBACK = BaseException.__dict__["__traceback__"]
@@ -158,6 +159,28 @@ def source_names(root=ROOT):
 
 def source_fingerprints():
     return {name: ordinary_file(ROOT / name, 1024**2)["sha256"] for name in source_names()}
+
+
+def legacy_replica_entry_never_dispatch(context, params):
+    raise AssertionError("Fixture-only legacy storage entry must never be dispatched; no shipping caller.")
+
+
+def register_legacy_replica_entry(runtime):
+    """Supply only historical direct/replica metadata in the owned factory Runtime."""
+    from blender_codex_bridge.errors import BridgeError
+    from blender_codex_bridge.permissions import Permission
+
+    try:
+        runtime.registry.get(LEGACY_REPLICA_METHOD)
+    except BridgeError as error:
+        if error.code != "METHOD_NOT_FOUND":
+            raise
+    else:
+        raise AssertionError("Legacy fixture entry already registered; refusing replacement")
+    return runtime.registry.register(LEGACY_REPLICA_METHOD, legacy_replica_entry_never_dispatch,
+        toolset="simulation", permissions=(Permission.INSPECT_SCENE,), modifies=False,
+        automatic_checkpoint=True, remote=True, batchable=True, record_history=True,
+        description="Fixture-only legacy storage direct/replica entry; never dispatch; no shipping caller.")
 
 
 def read_report(path):
@@ -729,6 +752,7 @@ class Fixture(SourceOracle):
         status = 1
         try:
             self.setup()
+            register_legacy_replica_entry(self.runtime)
             self.flush()
             for name in CASES[self.options.bridge_phase]:
                 assert time.monotonic() - self.started < 270
