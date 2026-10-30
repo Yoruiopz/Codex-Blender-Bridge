@@ -3491,3 +3491,147 @@ def test_mesh_storage_control_preserves_original_five_phase_validator_bodies(run
     observed = {node.name: hashlib.sha256(b"".join(lines[node.lineno - 1:node.end_lineno])).hexdigest()
         for node in ast.walk(ast.parse(source)) if isinstance(node, ast.FunctionDef) and node.name in expected}
     assert observed == expected
+
+
+def bulk_model_receipt(runner, monkeypatch, tmp_path):
+    from scripts.blender_runtime_metadata_bulk_probe_smoke import OWNERS, PROFILE, SCENARIOS
+    sources = {"owned_source": "a" * 64}
+    monkeypatch.setattr(runner, "_runtime_bulk_sources", lambda: sources)
+    binary = {"sha256": next(iter(runner.RUNTIME_BULK_BUILDS))}
+    version, build = runner.RUNTIME_BULK_BUILDS[binary["sha256"]]
+    field = "bcb_owned_metadata_bulk_runtime_probe"
+    rows = [{"owner": name, "count": 1, "metadata": [[format(index + 1, "x"), field if index == 0 else "static", "BOOLEAN", index == 0]],
+             "flags": [index == 0], "after_metadata": [[format(index + 1, "x"), field if index == 0 else "static", "BOOLEAN", index == 0]],
+             "interval": {"wall_seconds": 0.001, "cpu_seconds": 0.001}, "exact_native_collection": True,
+             "original_method_descriptor": True, "owned_exact_list": True} for index, name in enumerate(OWNERS)]
+    full = {"profile": PROFILE, "completed": True, "process_instance": "a" * 32, "process_id": 77,
+            "blender_version": version, "source_build": build, "source_fingerprints": sources,
+            "payload_getter_calls": 0, "runtime_field": field, "runtime_field_removed": True,
+            "rows": rows, "scenarios": {name: {"bulk_calls": int(name.endswith("after")),
+                "reason": "TIMEOUT" if name.startswith("stop") else "STORAGE_SOURCE_CHANGED", "flags_consumed": False,
+                "later_inspection_attempts": 0, "injected_probe_callback": name.endswith("after")} for name in SCENARIOS},
+            "limitations": {"product_adoption": False, "speedup_qualified": False, "mid_C_cancel": False,
+                "all_native_callbacks_observed": False, "full_workflow": False, "windows": False,
+                "probe_guard_source_stop_only": True, "post_C_faults_injected_by_probe": True},
+            "sentinel_before_sha256": "b" * 64, "sentinel_after_sha256": "b" * 64,
+            "schema_before_sha256": "c" * 64, "schema_after_sha256": "c" * 64}
+    payload = {key: full[key] for key in ("profile", "process_instance", "process_id", "blender_version")}
+    def write():
+        path = tmp_path / "runtime-metadata-bulk.json"
+        raw = json.dumps(full).encode()
+        path.write_bytes(raw)
+        payload["full_receipt"] = {"path": str(path), "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}
+    write()
+    return full, payload, binary, sources, write
+
+
+def test_bulk_API_probe_strict_receipt_accepts_complete_owned_model(runner, monkeypatch, tmp_path):
+    _full, payload, binary, sources, _write = bulk_model_receipt(runner, monkeypatch, tmp_path)
+    assert runner._runtime_bulk_receipt(payload, tmp_path, "a" * 32, 77, binary, sources)
+    assert runner.RUNTIME_BULK_CASE in runner.OPT_IN_CASES
+    assert runner.RUNTIME_BULK_CASE not in runner.INTERACTIVE_CASES | set(runner.PHASED_CASES)
+
+
+@pytest.mark.parametrize("fault", ["pid_bool", "token", "version", "build", "build_type", "source", "payload_callback",
+    "cleanup", "schema", "sentinel", "product", "windows", "row_missing", "count_bool", "count_bound",
+    "flag_integer", "flag_mismatch", "membership", "method", "collection", "foreign_list", "runtime_missing",
+    "interval_bool", "interval_nan", "interval_deadline", "scenario_missing", "late", "calls", "reason", "path", "hash", "extra_full", "extra_row", "after_integer"])
+def test_bulk_API_probe_strict_receipt_refuses_incomplete_forged_or_unsafe_model(runner, monkeypatch, tmp_path, fault):
+    full, payload, binary, sources, write = bulk_model_receipt(runner, monkeypatch, tmp_path)
+    if fault == "pid_bool":
+        payload["process_id"] = True
+    elif fault == "token":
+        full["process_instance"] = "b" * 32
+    elif fault == "version":
+        full["blender_version"] = "5.0.0"
+    elif fault == "build":
+        full["source_build"] = "foreign"
+    elif fault == "build_type":
+        full["source_build"] = 3
+    elif fault == "source":
+        full["source_fingerprints"] = {}
+    elif fault == "payload_callback":
+        full["payload_getter_calls"] = 1
+    elif fault == "cleanup":
+        full["runtime_field_removed"] = False
+    elif fault in {"schema", "sentinel"}:
+        full[fault + "_after_sha256"] = "d" * 64
+    elif fault in {"product", "windows"}:
+        full["limitations"]["product_adoption" if fault == "product" else "windows"] = True
+    elif fault == "extra_full":
+        full["release_acceptance"] = True
+    elif fault == "extra_row":
+        full["rows"][0]["release_acceptance"] = True
+    elif fault == "row_missing":
+        full["rows"].pop()
+    elif fault == "count_bool":
+        full["rows"][0]["count"] = True
+    elif fault == "count_bound":
+        full["rows"][0]["count"] = 513
+    elif fault == "flag_integer":
+        full["rows"][0]["flags"][0] = 1
+    elif fault == "flag_mismatch":
+        full["rows"][0]["flags"][0] = False
+    elif fault == "after_integer":
+        full["rows"][0]["after_metadata"][0][3] = 1
+    elif fault == "membership":
+        full["rows"][0]["after_metadata"][0][0] = "999"
+    elif fault in {"method", "collection", "foreign_list"}:
+        full["rows"][0][{"method": "original_method_descriptor", "collection": "exact_native_collection", "foreign_list": "owned_exact_list"}[fault]] = False
+    elif fault == "runtime_missing":
+        full["rows"][0]["metadata"][0][1] = "different"
+        full["rows"][0]["after_metadata"][0][1] = "different"
+    elif fault.startswith("interval"):
+        full["rows"][0]["interval"]["wall_seconds"] = {"interval_bool": True, "interval_nan": float("nan"), "interval_deadline": 61}[fault]
+    elif fault == "scenario_missing":
+        full["scenarios"].pop("stop_before")
+    elif fault in {"late", "calls", "reason"}:
+        full["scenarios"]["stop_before"][{"late": "later_inspection_attempts", "calls": "bulk_calls", "reason": "reason"}[fault]] = 1
+    write()
+    if fault == "path":
+        payload["full_receipt"]["path"] = str(tmp_path.parent / "foreign.json")
+    elif fault == "hash":
+        payload["full_receipt"]["sha256"] = "f" * 64
+    assert not runner._runtime_bulk_receipt(payload, tmp_path, "a" * 32, 77, binary, sources)
+
+
+def test_bulk_probe_runner_uses_owned_background_profile_and_actual_child_pid(runner, monkeypatch, tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    monkeypatch.setattr(runner, "ROOT", source)
+    monkeypatch.setattr(runner, "_domain_display", lambda: {"private": True})
+    monkeypatch.setenv("BULK_UNWANTED", "not-a-secret")
+    monkeypatch.setenv("PYTHONPATH", "/unrelated/path")
+    sources = {"owned_source": "a" * 64}
+    monkeypatch.setattr(runner, "_runtime_bulk_sources", lambda: sources)
+    executable = tmp_path / "blender"
+    executable.write_bytes(b"not an executable, never launched")
+    binary_hash = hashlib.sha256(executable.read_bytes()).hexdigest()
+    monkeypatch.setattr(runner, "RUNTIME_BULK_BUILDS", {binary_hash: ("4.5.14 LTS", "62c1db4208e8")})
+    output = tmp_path / "output"
+    output.mkdir()
+    class Process:
+        pid = 77
+        def __init__(self, command, **kwargs):
+            environment = kwargs["env"]
+            assert "BULK_UNWANTED" not in environment and "PYTHONPATH" not in environment
+            assert command.count("--background") == command.count("--factory-startup") == command.count("--disable-autoexec") == 1
+            temporary = Path(environment["TEMP"])
+            assert temporary.stat().st_mode & 0o777 == 0o700
+            assert kwargs["cwd"] == temporary / "working" and kwargs["start_new_session"] is True
+            assert all(Path(environment[key]).is_relative_to(temporary) for key in ("HOME", "BLENDER_USER_CONFIG", "XDG_RUNTIME_DIR"))
+            _full, payload, _binary, _sources, _write = bulk_model_receipt(runner, monkeypatch, temporary)
+            # Bind the marker to the runner-generated nonce, rather than model default.
+            path = temporary / "runtime-metadata-bulk.json"
+            _full["process_instance"] = payload["process_instance"] = environment["BRIDGE_TEST_PROCESS_TOKEN"]
+            _write()
+            assert path == Path(command[command.index("--bridge-report") + 1])
+            kwargs["stdout"].write((runner.CASES[runner.RUNTIME_BULK_CASE][1] + json.dumps(payload) + "\n").encode())
+        def wait(self, timeout):
+            assert timeout == 300
+            return 0
+    monkeypatch.setattr(runner.subprocess, "Popen", Process)
+    result = runner.run_case(executable, runner.RUNTIME_BULK_CASE, output, 1200)
+    assert result["status"] == "passed" and result["process_id"] == 77
+    assert result["retained_evidence_valid"] is True
+    assert result["qualification_scope"]["product_adoption"] is False

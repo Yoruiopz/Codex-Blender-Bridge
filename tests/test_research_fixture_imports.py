@@ -21,6 +21,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 HELPERS = (
+    "scripts.blender_runtime_metadata_bulk_probe_smoke",
     "scripts.blender_current_pixels_lifecycle_smoke",
     "scripts.blender_mesh_storage_job_smoke",
     "scripts.blender_glb_stage_runtime_smoke",
@@ -123,6 +124,7 @@ def fixture_imports(addon_package, monkeypatch):
 
 
 @pytest.mark.parametrize("name,helper", [
+    ("scripts.blender_runtime_metadata_bulk_probe_smoke", "main"),
     ("scripts.blender_current_pixels_lifecycle_smoke", "main"),
     ("scripts.blender_mesh_storage_job_smoke", "main"),
     ("scripts.blender_glb_stage_smoke", "main"),
@@ -4771,3 +4773,72 @@ def test_mesh_storage_cached_roles_refuse_foreign_values_without_dispatch():
     with pytest.raises(AssertionError):
         script.cached_checkpoint_roles({"checkpoint_roles": role}, None)
     assert calls == []
+
+
+@pytest.mark.parametrize("count", [0, -1, 513, True, None])
+def test_metadata_bulk_probe_rejects_bounds_before_preflight_or_native(count):
+    from scripts.blender_runtime_metadata_bulk_probe_smoke import checked_batch
+    events = []
+    with pytest.raises(ValueError, match="BULK_METADATA_BOUND"):
+        checked_batch(lambda *_: events.append("call"), None, None, count, lambda: events.append("preflight"))
+    assert events == []
+
+
+@pytest.mark.parametrize("fault", ["foreign_container", "foreign_item", "integer", "short"])
+def test_metadata_bulk_probe_flags_refuse_foreign_dispatch(fault):
+    from scripts.blender_runtime_metadata_bulk_probe_smoke import validate_flags
+    events = []
+    class Foreign:
+        def __len__(self):
+            events.append("len")
+            return 1
+        def __iter__(self):
+            events.append("iter")
+            return iter(())
+        def __bool__(self):
+            events.append("bool")
+            return True
+    flags = {"foreign_container": Foreign(), "foreign_item": [Foreign()], "integer": [1], "short": []}[fault]
+    with pytest.raises(ValueError, match="BULK_FLAGS_MALFORMED"):
+        validate_flags(flags, 1)
+    assert events == []
+
+
+@pytest.mark.parametrize("stage", ["preflight", "before", "native", "after", "postflight"])
+def test_metadata_bulk_probe_failure_keeps_primary_and_stops_prefix(stage):
+    from scripts.blender_runtime_metadata_bulk_probe_smoke import checked_batch
+    events = []
+    primary = MemoryError("owned probe failure")
+    def note(name):
+        events.append(name)
+        if name == stage:
+            raise primary
+    def preflight():
+        note("preflight" if not events else "postflight")
+    def call(callback):
+        note("before")
+        callback()
+        note("after")
+    def method(_owner, attr, flags):
+        note("native")
+        assert attr == "is_runtime" and type(flags) is list and flags == [False]
+        flags[0] = True
+    with pytest.raises(MemoryError) as caught:
+        checked_batch(call, method, object(), 1, preflight)
+    assert caught.value is primary
+    expected = ["preflight", "before", "native", "after", "postflight"]
+    assert events == expected[:expected.index(stage) + 1]
+
+
+def test_metadata_bulk_probe_success_keeps_exact_builtin_bool_sequence():
+    from scripts.blender_runtime_metadata_bulk_probe_smoke import checked_batch
+    events = []
+    owner = object()
+    def method(collection, attr, flags):
+        assert collection is owner and attr == "is_runtime" and type(flags) is list
+        assert flags == [False, False]
+        flags[:] = [True, False]
+    result, interval = checked_batch(lambda callback: callback(), method, owner, 2,
+                                    lambda: events.append("pureflight"))
+    assert result == (True, False) and events == ["pureflight", "pureflight"]
+    assert all(type(value) is float and value >= 0 for value in interval.values())

@@ -88,7 +88,14 @@ NATIVE_SAVE_LARGE_SOURCES = (
 )
 NATIVE_SAVE_LARGE_CASES = frozenset({"success_copy", "save_as", "save_current", "replace", "permission_denial",
     "cancel", "revoke", "disconnect", "manual_drift", "reader_failure"})
+RUNTIME_BULK_CASE = "runtime_metadata_bulk_probe"
+RUNTIME_BULK_BUILDS = {
+    "050c02562f81fe80ba616a80198fa02d381e60f8b61b8d39add881f4bca0d7d8": ("4.5.14 LTS", "62c1db4208e8"),
+    "bafec183e960819c76fe213c000cdb2284c53a87ef6791812f8728b51f07145b": ("5.2.2 LTS", "d13f752e3b9c"),
+}
+
 CASES = {
+    RUNTIME_BULK_CASE: ("blender_runtime_metadata_bulk_probe_smoke.py", "BLENDER_RUNTIME_METADATA_BULK_PROBE_OK "),
     MESH_STORAGE_CASE: ("blender_mesh_storage_job_smoke.py", MESH_STORAGE_MARKER),
     MESH_STORAGE_CONTROL_CASE: ("blender_mesh_storage_job_smoke.py", MESH_STORAGE_CONTROL_MARKER),
     "current_pixels_lifecycle_census": ("blender_current_pixels_lifecycle_smoke.py", "BLENDER_CURRENT_PIXELS_LIFECYCLE_CENSUS_OK "),
@@ -378,6 +385,7 @@ INTERACTIVE_CASES.add(MESH_STORAGE_CASE)
 OPT_IN_CASES.add(MESH_STORAGE_CASE)
 INTERACTIVE_CASES.add(MESH_STORAGE_CONTROL_CASE)
 OPT_IN_CASES.add(MESH_STORAGE_CONTROL_CASE)
+OPT_IN_CASES.add(RUNTIME_BULK_CASE)
 
 GLB_STAGE_CASES = frozenset({"glb_stage_constructor", "glb_stage_structure", "glb_stage_runtime"})
 
@@ -2293,7 +2301,162 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
     return result
 
 
+
+def _runtime_bulk_sources() -> dict[str, str]:
+    from scripts.blender_runtime_metadata_bulk_probe_smoke import SOURCES
+    return {name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest() for name in SOURCES}
+
+
+def _runtime_bulk_receipt(payload, temporary, token, pid, binary, sources):
+    """Validate API feasibility only; neither product adoption nor speed proof."""
+    from scripts.blender_runtime_metadata_bulk_probe_smoke import OWNERS, PROFILE, SCENARIOS
+    try:
+        expected_version, expected_build = RUNTIME_BULK_BUILDS[binary["sha256"]]
+        if (type(payload) is not dict or set(payload) != {"profile", "process_instance", "process_id", "blender_version", "full_receipt"}
+                or payload["profile"] != PROFILE or payload["process_instance"] != token
+                or type(payload["process_id"]) is not int or payload["process_id"] != pid
+                or payload["blender_version"] != expected_version
+                or payload["full_receipt"]["path"] != str(temporary / "runtime-metadata-bulk.json")):
+            return False
+        raw = _domain_binding(payload["full_receipt"], temporary, 512 * 1024, capture=True)
+        full = _native_save_json(raw)
+        if (type(full) is not dict or set(full) != {"profile", "completed", "process_instance", "process_id", "blender_version",
+                "source_build", "source_fingerprints", "rows", "scenarios", "payload_getter_calls", "runtime_field",
+                "runtime_field_removed", "sentinel_before_sha256", "sentinel_after_sha256", "schema_before_sha256",
+                "schema_after_sha256", "limitations"} or full.get("completed") is not True
+                or any(full.get(key) != payload[key] for key in ("profile", "process_instance", "process_id", "blender_version"))
+                or type(full.get("process_id")) is not int or type(full.get("source_build")) is not str
+                or not full["source_build"].startswith(expected_build)
+                or full.get("source_fingerprints") != sources or _runtime_bulk_sources() != sources
+                or type(full.get("payload_getter_calls")) is not int or full["payload_getter_calls"] != 0
+                or full.get("runtime_field") != "bcb_owned_metadata_bulk_runtime_probe"
+                or full.get("runtime_field_removed") is not True):
+            return False
+        limits = full.get("limitations")
+        if (type(limits) is not dict or set(limits) != {"product_adoption", "speedup_qualified", "mid_C_cancel",
+                "all_native_callbacks_observed", "full_workflow", "windows", "probe_guard_source_stop_only", "post_C_faults_injected_by_probe"}
+                or any(limits[name] is not False for name in ("product_adoption", "speedup_qualified", "mid_C_cancel",
+                    "all_native_callbacks_observed", "full_workflow", "windows"))
+                or limits["probe_guard_source_stop_only"] is not True or limits["post_C_faults_injected_by_probe"] is not True):
+            return False
+        for name in ("sentinel", "schema"):
+            before, after = full.get(name + "_before_sha256"), full.get(name + "_after_sha256")
+            if not _domain_hex(before) or before != after:
+                return False
+        rows = full.get("rows")
+        if type(rows) is not list or len(rows) != len(OWNERS):
+            return False
+        for row, owner in zip(rows, OWNERS, strict=True):
+            if (type(row) is not dict or set(row) != {"owner", "count", "metadata", "flags", "after_metadata", "interval",
+                    "exact_native_collection", "original_method_descriptor", "owned_exact_list"} or row.get("owner") != owner
+                    or type(row.get("count")) is not int or not 1 <= row["count"] <= 512
+                    or any(row.get(name) is not True for name in ("exact_native_collection", "original_method_descriptor", "owned_exact_list"))):
+                return False
+            metadata, flags = row.get("metadata"), row.get("flags")
+            if (type(metadata) is not list or len(metadata) != row["count"] or row.get("after_metadata") != metadata
+                    or type(flags) is not list or len(flags) != row["count"] or any(type(flag) is not bool for flag in flags)):
+                return False
+            after_metadata = row.get("after_metadata")
+            if type(after_metadata) is not list or len(after_metadata) != len(metadata):
+                return False
+            seen = set()
+            for entry, flag, after_entry in zip(metadata, flags, after_metadata, strict=True):
+                if (type(entry) is not list or len(entry) != 4 or type(after_entry) is not list or len(after_entry) != 4
+                        or any(type(left) is not type(right) for left, right in zip(entry, after_entry, strict=True))
+                        or not _domain_hex(entry[0], len(entry[0]))
+                        or not 1 <= len(entry[0]) <= 16 or int(entry[0], 16) == 0
+                        or type(entry[1]) is not str or not 1 <= len(entry[1]) <= 256
+                        or type(entry[2]) is not str or not 1 <= len(entry[2]) <= 32
+                        or type(entry[3]) is not bool or entry[3] is not flag or entry[0] in seen):
+                    return False
+                seen.add(entry[0])
+            interval = row.get("interval")
+            if (type(interval) is not dict or set(interval) != {"wall_seconds", "cpu_seconds"}
+                    or any(type(value) not in (int, float) or not math.isfinite(value) or not 0 <= value <= 60
+                           for value in interval.values())):
+                return False
+        if not any(entry[1] == full["runtime_field"] and entry[3] is True for entry in rows[0]["metadata"]):
+            return False
+        scenarios = full.get("scenarios")
+        if type(scenarios) is not dict or set(scenarios) != set(SCENARIOS):
+            return False
+        for name, row in scenarios.items():
+            if (type(row) is not dict or set(row) != {"bulk_calls", "reason", "flags_consumed", "later_inspection_attempts", "injected_probe_callback"}
+                    or type(row["bulk_calls"]) is not int or row["bulk_calls"] != int(name.endswith("after"))
+                    or row["reason"] != ("TIMEOUT" if name.startswith("stop") else "STORAGE_SOURCE_CHANGED")
+                    or row["flags_consumed"] is not False or type(row["later_inspection_attempts"]) is not int
+                    or row["later_inspection_attempts"] != 0 or row["injected_probe_callback"] is not name.endswith("after")):
+                return False
+        return True
+    except (OSError, ValueError, TypeError, KeyError, IndexError, OverflowError, RecursionError, UnicodeError):
+        return False
+
+
+def _run_runtime_bulk_probe(blender: Path, output: Path, timeout: int) -> dict:
+    started = time.monotonic()
+    result = {"case": RUNTIME_BULK_CASE, "status": "failed", "exit_code": None,
+              "execution_mode": "background", "qualification_scope": {"private_API_feasibility_only": True,
+                  "product_adoption": False, "speedup_qualified": False, "full_workflow": False, "windows": False}}
+    try:
+        display = _domain_display()
+        executable = blender.resolve(strict=True)
+        _raw, binary = _domain_regular(executable, executable.parent, 1024**3)
+        if binary["sha256"] not in RUNTIME_BULK_BUILDS:
+            raise ValueError("BULK_PROBE_BINARY_UNSUPPORTED")
+        sources = _runtime_bulk_sources()
+        temporary = output / (RUNTIME_BULK_CASE + "-temp")
+        temporary.mkdir(mode=0o700)
+        report = temporary / "runtime-metadata-bulk.json"
+        token = uuid.uuid4().hex
+        environment = {key: os.environ[key] for key in ("PATH", "LANG", "LC_ALL", "DISPLAY", "XAUTHORITY",
+            "LD_LIBRARY_PATH", "LIBGL_ALWAYS_SOFTWARE", "GALLIUM_DRIVER", "MESA_LOADER_DRIVER_OVERRIDE", "LP_NUM_THREADS")
+            if key in os.environ}
+        for key in ("HOME", "BLENDER_USER_CONFIG", "BLENDER_USER_SCRIPTS", "BLENDER_USER_DATAFILES",
+                    "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_RUNTIME_DIR"):
+            directory = temporary / ("worker-" + key.lower())
+            directory.mkdir(mode=0o700)
+            environment[key] = str(directory)
+        working = temporary / "working"
+        working.mkdir(mode=0o700)
+        environment.update(TEMP=str(temporary), TMP=str(temporary), TMPDIR=str(temporary),
+            BRIDGE_TEST_PROCESS_TOKEN=token, GSETTINGS_BACKEND="memory", NO_AT_BRIDGE="1")
+        command = [str(executable), "--background", "--factory-startup", "--disable-autoexec", "--python-exit-code", "1",
+            "--python-expr", "import sys; sys.dont_write_bytecode = True", "--python",
+            str(ROOT / "scripts" / CASES[RUNTIME_BULK_CASE][0]), "--", "--bridge-report", str(report)]
+        log = output / (RUNTIME_BULK_CASE + ".log")
+        result.update(command=command, log=str(log), binary=binary, source_fingerprints=sources)
+        with log.open("wb") as stream:
+            process = subprocess.Popen(command, cwd=working, env=environment, stdout=stream,
+                                       stderr=subprocess.STDOUT, start_new_session=True)
+            result["process_id"] = process.pid
+            try:
+                result["exit_code"] = process.wait(timeout=min(timeout, 300))
+            except subprocess.TimeoutExpired:
+                with suppress(ProcessLookupError):
+                    os.killpg(process.pid, signal.SIGKILL)
+                process.wait(timeout=10)
+                result["status"] = "timeout"
+        _domain_binding(binary, executable.parent, 1024**3)
+        if _runtime_bulk_sources() != sources or _domain_display() != display:
+            raise ValueError("BULK_PROBE_SOURCE_OR_DISPLAY_CHANGED")
+        raw, _binding = _domain_regular(log, output, 1024**2, capture=True)
+        marker = CASES[RUNTIME_BULK_CASE][1]
+        candidates = [line[len(marker):] for line in raw.decode("utf-8", errors="strict").splitlines() if line.startswith(marker)]
+        payload = _native_save_json(candidates[0].encode()) if len(candidates) == 1 else None
+        result["evidence"] = payload
+        accepted = _runtime_bulk_receipt(payload, temporary, token, process.pid, binary, sources)
+        result["retained_evidence_valid"] = accepted
+        if result["exit_code"] == 0 and accepted:
+            result["status"] = "passed"
+    except (OSError, ValueError, TypeError, KeyError, IndexError, UnicodeError, RecursionError):
+        result["admission_error"] = "Runtime metadata bulk API probe refused; inspect owned log/evidence"
+    result["duration_seconds"] = round(time.monotonic() - started, 3)
+    return result
+
+
 def run_case(blender: Path, case: str, output: Path, timeout: int) -> dict:
+    if case == RUNTIME_BULK_CASE:
+        return _run_runtime_bulk_probe(blender, output, timeout)
     if case == MESH_STORAGE_CASE:
         return _run_mesh_storage_case(blender, output, timeout)
     if case == MESH_STORAGE_CONTROL_CASE:
