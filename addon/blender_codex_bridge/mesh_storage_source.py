@@ -46,7 +46,7 @@ class SourceSeal(tuple):
     __slots__ = ()
 
     @classmethod
-    def capture(cls):
+    def capture(cls, *, inspection=False):
         names = ("mesh_storage_source", "mesh_storage_contract", "mesh_storage_effects", "tools._mesh_storage_job",
                  # check_affected keeps its defining globals even when imported
                  # into tools.mesh_storage. Pin its directly reached helpers
@@ -56,6 +56,8 @@ class SourceSeal(tuple):
                  "native_save_profile", "state", "permissions", "task_plans", "tool_registry",
                  "request_lifecycle", "scene_jobs", "scene_job_authority", "executor", "command_queue",
                  "checkpoints", "checkpoint_completion", "current_pixels_graph", "mesh_storage_prepare", "uv_edit_guard")
+        if inspection:
+            names += ("tools._mesh_storage_inspection", "scene_job_reservations", "runtime", "glb_stage_runtime")
         modules = tuple(importlib.import_module(__package__ + "." + name) for name in names)
         module_rows, class_rows, functions, builtins = [], [], [], []
         for module in modules:
@@ -456,11 +458,21 @@ class Gate(tuple):
     def context(self, context):
         seal = tuple.__getitem__(self, 1)
         verify_seal(seal)
-        from .scene_jobs import _StartAdmission, _TurnAdmission
+        from .scene_jobs import (
+            _InspectionAdmission,
+            _InspectionTurnAdmission,
+            _StartAdmission,
+            _TurnAdmission,
+        )
         binding = context.checkpoint_admission
         callback = None if binding is None else binding.callback
         if type(callback) is _StartAdmission or type(callback) is _TurnAdmission:
             proof = callback.storage_context_proof
+            if proof is None:
+                raise contract.refused("STORAGE_CANONICAL_CONTEXT_REQUIRED")
+            verify_context(context, proof)
+        elif type(callback) is _InspectionAdmission or type(callback) is _InspectionTurnAdmission:
+            proof = callback.inspection_context_proof
             if proof is None:
                 raise contract.refused("STORAGE_CANONICAL_CONTEXT_REQUIRED")
             verify_context(context, proof)

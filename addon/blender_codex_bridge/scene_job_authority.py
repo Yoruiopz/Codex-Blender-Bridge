@@ -29,6 +29,7 @@ class SceneJobAuthority:
     required_permissions: tuple[Permission, ...]
     permission_manager: Any
     permission_source: Any
+    inspection_spec: tuple = ()
 
     @classmethod
     def capture(cls, context, params):
@@ -52,10 +53,23 @@ class SceneJobAuthority:
     def include_driver_permissions(self, values):
         return replace(self, required_permissions=_permissions((*self.required_permissions, *values)))
 
+    @classmethod
+    def capture_inspection(cls, context, params):
+        """The private read starter cannot inherit a modifying tool's authority."""
+        authority = cls.capture(context, params)
+        from .mesh_storage_contract import INSPECTION_START, PERMISSIONS
+        spec = authority.spec
+        if (authority.method != INSPECTION_START or spec.modifies or spec.automatic_checkpoint
+                or spec.permissions != frozenset(PERMISSIONS) or spec.checkpoint_owns_finalization):
+            raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Inspection has no canonical readonly starter.",
+                              {"reason": "INSPECTION_START_SPEC_INVALID", "execution_started": False})
+        return replace(authority, inspection_spec=tuple((name, getattr(spec, name)) for name in type(spec).__slots__))
+
     def check(self):
         """Provider-free proof; no native reads or re-registration adoption."""
         if (self.registry._tools.get(self.method) is not self.spec or self.spec.name != self.method
-                or self.spec.toolset != self.toolset or self.spec.permissions != self.declared_permissions):
+                or self.spec.toolset != self.toolset or self.spec.permissions != self.declared_permissions
+                or any(getattr(self.spec, name) is not value for name, value in self.inspection_spec)):
             raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "The accepted Scene-job starter was replaced or removed.",
                               {"reason": "SCENE_START_SPEC_CHANGED", "tool": self.method, "execution_started": False})
         if self.toolset not in self.registry.enabled_toolsets:
@@ -121,7 +135,7 @@ class SceneJobPermissions:
         values = self._values(turn, enforce)
         self._require_snapshot(required, values)
         if enforce:
-            self.service.check_turn(turn.token)
+            self.service.check_permission_turn(turn.token)
 
     def snapshot(self):
         turn, enforce = self._scope()
@@ -129,7 +143,7 @@ class SceneJobPermissions:
             return self.base.snapshot()
         values = self._values(turn, enforce)
         if enforce:
-            self.service.check_turn(turn.token)
+            self.service.check_permission_turn(turn.token)
         return values
 
     def is_allowed(self, permission):
@@ -138,7 +152,7 @@ class SceneJobPermissions:
             return self.base.is_allowed(permission)
         values = self._values(turn, enforce)
         if enforce:
-            self.service.check_turn(turn.token)
+            self.service.check_permission_turn(turn.token)
         key = permission.value if isinstance(permission, Permission) else str(permission)
         return bool(values.get(key, False))
 

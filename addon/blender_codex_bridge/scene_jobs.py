@@ -8,8 +8,9 @@ from __future__ import annotations
 
 import time
 import uuid
+from collections import deque
 from dataclasses import dataclass, field
-from types import FunctionType, GetSetDescriptorType, ModuleType
+from types import CodeType, FunctionType, GetSetDescriptorType, ModuleType
 from typing import Any
 
 from .checkpoint_completion import claim_native_push_completion
@@ -24,7 +25,7 @@ from .scene_job_effects import EffectsStatus, SceneNativeEffects, snapshot_nativ
 from .scene_job_evidence import phase as phase_report
 from .scene_job_evidence import plain
 from .scene_job_evidence import progress as progress_report
-from .scene_job_reservations import TURN_METHOD, refused
+from .scene_job_reservations import INSPECTION_TURN_METHOD, TURN_METHOD, refused
 from .task_plans import get_task_plans
 from .tool_registry import check_final_mutation
 
@@ -341,6 +342,477 @@ class _TurnAdmission:
         self.job.driver.after_native_push()
 
 
+def _inspection_source(seal):
+    raw = tuple.__getitem__
+    function, code, namespace, defaults, keywords, closure = raw(seal, 7)
+    native = raw(seal, 4)
+    if (type(function) is not FunctionType or function.__code__ is not code or function.__globals__ is not namespace
+            or function.__defaults__ is not defaults or function.__kwdefaults__ is not keywords or function.__closure__ is not closure):
+        raise raw(native, 8)
+    function(seal)
+
+
+def _inspection_function(fact):
+    function, code, namespace, defaults, keywords, rows, cells = fact
+    if (type(function) is not FunctionType or function.__code__ is not code or function.__globals__ is not namespace
+            or function.__defaults__ is not defaults or function.__kwdefaults__ is not keywords
+            or (keywords is not None and (type(keywords) is not dict or len(keywords) != len(rows)
+                or any(type(k) is not str for k in keywords)
+                or any(k not in keywords or keywords[k] is not v for k, v in rows)))
+            or len(function.__closure__ or ()) != len(cells)
+            or any(actual is not cell or actual.cell_contents is not value
+                   for actual, (cell, value) in zip(function.__closure__ or (), cells, strict=True))):
+        raise refused("INSPECTION_CALLBACK_SOURCE_CHANGED")
+
+
+def _inspection_error(error, _type=type, _object=object, _len=len, _all=all,
+                      _bool=bool, _str=str, _int=int, _float=float, _list=list, _tuple=tuple, _dict=dict, _failure=ValueError,
+                      _error_dict=BaseException.__dict__["__dict__"]):
+    """Copy stopped-job diagnostics without dynamic exception serializers."""
+    fields = _error_dict.__get__(error, _type(error))
+    code, message, raw = fields.get("code"), fields.get("message"), fields.get("context")
+    remaining = [256, 1536]
+
+    def copy(value, depth=0):
+        remaining[0] -= 1
+        if remaining[0] < 0 or depth > 8:
+            raise _failure
+        if value is None or _type(value) is _bool:
+            return value
+        if _type(value) is _str and _len(value) <= 2048:
+            remaining[1] -= _len(value)
+            if remaining[1] < 0:
+                raise _failure
+            return value
+        if _type(value) is _int and value.bit_length() <= 64:
+            return value
+        if _type(value) is _float and -1e300 <= value <= 1e300:
+            return value
+        if _type(value) is _list or _type(value) is _tuple:
+            return [copy(item, depth+1) for item in value]
+        if _type(value) is _dict and _all(_type(key) is _str and _len(key) <= 128 for key in value):
+            return {copy(key, depth+1): copy(item, depth+1) for key, item in value.items()}
+        raise _failure
+
+    try:
+        context = copy(raw)
+    except _failure:
+        context = {"original_error_context_invalid": True}
+    if _type(context) is not _dict:
+        context = {"original_error_context_invalid": True}
+    reason = context.get("reason")
+    stale = _type(reason) is _str and reason in (
+        "SCENE_RUNTIME_RESET", "SCENE_START_SPEC_CHANGED", "SCENE_START_PERMISSION_SOURCE_CHANGED",
+        "STORAGE_SOURCE_CHANGED", "INSPECTION_DRIVER_STATE_CHANGED", "INSPECTION_DRIVER_SOURCE_CHANGED",
+        "INSPECTION_CONTEXT_FACTORY_CHANGED", "INSPECTION_PHASE_COMMIT_CHANGED", "INSPECTION_ADMISSION_CHANGED",
+        "INSPECTION_TURN_SPEC_CHANGED", "INSPECTION_ENTRY_PROVENANCE_CHANGED")
+    context.setdefault("inspection_status", "STALE" if stale else "INCOMPLETE")
+    context.update(ready=False, logical_write_capability=False, undo_boundary_created=False, undo_boundary_finalized=False)
+    return {"code": code[:64] if _type(code) is _str else "OPERATION_FAILED",
+            "message": message[:512] if _type(message) is _str else "Inspection stopped.", "context": context}
+
+
+def _inspection_event_data(row, _type=type, _len=len, _any=any, _str=str, _dict=dict, _bool=bool):
+    event, kind, _namespace, _methods, descriptor, saved = row
+    if _type(event) is not kind:
+        return None
+    data = descriptor.__get__(event, kind)
+    if (_type(data) is not _dict or _len(data) != _len(saved)+1 or _any(_type(name) is not _str for name in data)
+            or _type(data.get("_flag")) is not _bool or _any(data.get(name) is not item for name, item in saved)):
+        return None
+    return data
+
+
+def _inspection_ready_check(proof):
+    seal, factory, authority, authority_rows, state_origin, lifetime, lifetime_rows, connection_rows, events, permissions, deadline = proof
+    raw = ().__class__.__getitem__
+    function, code, namespace, defaults, keywords, closure = raw(seal, 7)
+    native = raw(seal, 4)
+    if (raw(native, 0)(function) is not raw(native, 4) or function.__code__ is not code
+            or function.__globals__ is not namespace or function.__defaults__ is not defaults
+            or function.__kwdefaults__ is not keywords or function.__closure__ is not closure):
+        raise raw(native, 8)
+    function(seal)
+    _inspection_context_factory_check(factory)
+    if any(getattr(authority, name) is not value for name, value in authority_rows):
+        raise refused("INSPECTION_READY_AUTHORITY_CHANGED")
+    authority.check()
+    state, store, epoch = state_origin
+    if getattr(state, "_artist_task_plans", None) is not store or store.evidence_epoch != epoch:
+        raise refused("SCENE_RUNTIME_RESET")
+    controls = state.snapshot()
+    if controls["emergency_stopped"] or controls["paused"]:
+        raise refused("INSPECTION_READY_CONTROL_STOP")
+    if any(getattr(lifetime, name) is not value for name, value in lifetime_rows):
+        raise refused("INSPECTION_READY_LIFETIME_CHANGED")
+    connection = lifetime.connection
+    if any(getattr(connection, name) is not value for name, value in connection_rows):
+        raise refused("INSPECTION_READY_CONNECTION_CHANGED")
+    flags = {}
+    for row in events:
+        data = _inspection_event_data(row)
+        if data is None:
+            raise refused("INSPECTION_READY_EVENT_CHANGED")
+        flags[id(row[0])] = data["_flag"]
+    if (flags.get(id(lifetime.rejected)) or (connection is not None and flags.get(id(connection.disconnected)))
+            or not flags.get(id(lifetime.delivered)) or time.monotonic() >= deadline):
+        raise BridgeError(ErrorCode.TIMEOUT, "Inspection owner or deadline no longer permits readiness.",
+                          {"inspection_status": "INCOMPLETE"})
+    from .mesh_storage_source import _check_callback
+    for manager, kind, descriptor, rows, provider in permissions:
+        if type(manager) is not kind:
+            raise refused("INSPECTION_READY_PERMISSION_SOURCE_CHANGED")
+        data = descriptor.__get__(manager, kind)
+        if (type(data) is not dict or len(data) != len(rows) or any(type(name) is not str for name in data)
+                or any(data.get(name) is not value for name, value in rows)):
+            raise refused("INSPECTION_READY_PERMISSION_SOURCE_CHANGED")
+        if provider is not None:
+            _check_callback(data.get("_source"), provider)
+
+
+def _inspection_driver(driver):
+    import sys
+    kind = type(driver)
+    module = sys.modules.get(__package__ + ".tools._mesh_storage_inspection")
+    if type(module) is not ModuleType or vars(module).get("MeshStorageInspectionDriver") is not kind:
+        raise refused("INSPECTION_DRIVER_ORIGIN_CHANGED")
+    classes = _storage_class_facts(kind)
+    descriptor = next((value for _base, _mro, fields, _functions in classes for name, value in fields if name == "__dict__"), None)
+    if type(descriptor) is not GetSetDescriptorType:
+        raise refused("INSPECTION_DRIVER_ORIGIN_CHANGED")
+    fields = descriptor.__get__(driver, kind)
+    if type(fields) is not dict or any(type(key) is not str for key in fields):
+        raise refused("INSPECTION_DRIVER_ORIGIN_CHANGED")
+    seal = fields.get("source_seal")
+    _inspection_source(seal)
+    methods = {name: next(value for _base, _mro, rows, _functions in classes for key, value in rows if key == name)
+               for name in ("check_after_read", "advance")}
+    proof = (driver, kind, classes, descriptor, seal, tuple(fields.items()),
+             tuple((name, _storage_function_fact(function)) for name, function in methods.items()))
+    _inspection_driver_check(proof)
+    return proof
+
+
+def _inspection_driver_check(proof, *, instance=True):
+    driver, kind, classes, descriptor, seal, owned, methods = proof
+    _inspection_source(seal)
+    for base, mro, saved, functions in classes:
+        fields = type.__dict__["__dict__"].__get__(base)
+        if (type.__dict__["__mro__"].__get__(base) is not mro or len(fields) != len(saved)
+                or any(type(key) is not str for key in fields)
+                or any(name not in fields or fields[name] is not value for name, value in saved)):
+            raise refused("INSPECTION_DRIVER_SOURCE_CHANGED")
+        for fact in functions:
+            _inspection_function(fact)
+    fields = descriptor.__get__(driver, kind)
+    if (type(driver) is not kind or type(fields) is not dict or any(type(key) is not str for key in fields)
+            or any(name in fields for name in ("check_after_read", "advance")) or fields.get("source_seal") is not seal
+            or (instance and (len(fields) != len(owned) or any(name not in fields or fields[name] is not value for name, value in owned)))):
+        raise refused("INSPECTION_DRIVER_STATE_CHANGED")
+    for _name, fact in methods:
+        _inspection_function(fact)
+    return fields
+
+
+def _inspection_fields(value, kind):
+    """Read owned fields through native descriptors, without access hooks."""
+    classes = _storage_class_facts(kind)
+    merged = {name: item for _base, _mro, rows, _functions in reversed(classes) for name, item in rows}
+    if (type(value) is not kind or merged.get("__getattribute__") is not object.__getattribute__
+            or merged.get("__setattr__") is not object.__setattr__ or "__getattr__" in merged):
+        raise refused("INSPECTION_CONTEXT_FACTORY_CHANGED")
+    descriptor = merged.get("__dict__")
+    if type(descriptor) is not GetSetDescriptorType:
+        raise refused("INSPECTION_CONTEXT_FACTORY_CHANGED")
+    fields = descriptor.__get__(value, kind)
+    if type(fields) is not dict or any(type(key) is not str for key in fields):
+        raise refused("INSPECTION_CONTEXT_FACTORY_CHANGED")
+    return fields, descriptor, classes
+
+
+def _inspection_context_factory(context, seal):
+    """Pin the actual Runtime constructor's queued-resumption factory."""
+    import sys
+    _inspection_source(seal)
+    runtime_module = sys.modules.get(__package__ + ".runtime")
+    helper_module = sys.modules.get(__package__ + ".glb_stage_runtime")
+    if type(runtime_module) is not ModuleType or type(helper_module) is not ModuleType:
+        raise refused("INSPECTION_CONTEXT_FACTORY_CHANGED")
+    runtime = vars(runtime_module).get("_RUNTIME")
+    kind = vars(runtime_module).get("_CANONICAL_RUNTIME_CLASS")
+    fields, descriptor, classes = _inspection_fields(runtime, kind)
+    constructor = type.__dict__["__dict__"].__get__(kind).get("__init__")
+    if (type(constructor) is not FunctionType or constructor.__globals__ is not vars(runtime_module)
+            or constructor.__code__ is not vars(runtime_module).get("_RUNTIME_CONSTRUCTOR_CODE")):
+        raise refused("INSPECTION_CONTEXT_FACTORY_CHANGED")
+    jobs, executor, service = fields.get("jobs"), fields.get("executor"), fields.get("glb_stage")
+    job_fields, job_descriptor, job_classes = _inspection_fields(jobs, type(jobs))
+    execution, executor_descriptor, executor_classes = _inspection_fields(executor, vars(runtime_module).get("MainThreadExecutor"))
+    service_fields, service_descriptor, service_classes = _inspection_fields(service, vars(helper_module).get("GLBStageService"))
+    registry_fields, registry_descriptor, registry_classes = _inspection_fields(fields.get("registry"), vars(runtime_module).get("ToolRegistry"))
+    permission_fields, permission_descriptor, permission_classes = _inspection_fields(fields.get("permissions"), vars(runtime_module).get("PermissionManager"))
+    state_fields, state_descriptor, state_classes = _inspection_fields(fields.get("state"), vars(runtime_module).get("BridgeState"))
+    reservations = job_fields.get("reservations")
+    reservation_fields, reservation_descriptor, reservation_classes = _inspection_fields(reservations, type(reservations))
+    factory = job_fields.get("context_factory")
+    if (type(factory) is not FunctionType or factory.__globals__ is not vars(runtime_module)
+            or not any(factory.__code__ is code for code in constructor.__code__.co_consts if type(code) is CodeType)
+            or factory.__code__.co_names != ("checked_executor_context", "executor")
+            or factory.__code__.co_freevars != ("self",) or len(factory.__closure__ or ()) != 1
+            or factory.__closure__[0].cell_contents is not runtime or factory.__defaults__ is not None
+            or factory.__kwdefaults__ is not None or context.jobs is not jobs
+            or context.registry is not fields.get("registry") or context.state is not fields.get("state")
+            or context.permissions is not fields.get("permissions") or context.checkpoints is not fields.get("checkpoints")
+            or context.glb_stage is not service or service_fields.get("runtime") is not runtime
+            or job_fields.get("registry") is not fields.get("registry")
+            or reservations is not registry_fields.get("_scene_reservations")
+            or reservation_fields.get("registry") is not fields.get("registry")
+            or service_fields.get("_executor_origin") is not executor
+            or any(execution.get(name) is not fields.get(name) for name in ("jobs", "registry", "state", "permissions", "checkpoints", "glb_stage"))):
+        raise refused("INSPECTION_CONTEXT_FACTORY_CHANGED")
+    provider = permission_fields.get("_source")
+    if (type(provider) is not FunctionType or provider.__globals__ is not vars(runtime_module)
+            or not any(provider.__code__ is code for code in constructor.__code__.co_consts if type(code) is CodeType)
+            or provider.__code__.co_names != ("permission_snapshot", "_preferences")
+            or provider.__closure__ is not None or provider.__defaults__ is not None or provider.__kwdefaults__ is not None):
+        raise refused("INSPECTION_PERMISSION_PROVIDER_ORIGIN_CHANGED")
+    helper = vars(runtime_module).get("checked_executor_context")
+    if helper is not vars(helper_module).get("checked_executor_context"):
+        raise refused("INSPECTION_CONTEXT_FACTORY_CHANGED")
+    objects = tuple((value, type(value), desc, class_rows, tuple((name, data.get(name)) for name in names))
+        for value, data, desc, class_rows, names in (
+            (runtime, fields, descriptor, classes, ("jobs", "executor", "glb_stage", "registry", "state", "permissions", "checkpoints")),
+            (jobs, job_fields, job_descriptor, job_classes, ("context_factory", "registry", "reservations", "history", "_main_thread",
+                "_inspection_spec", "_inspection_spec_origin", "_inspection_records", "_inspection_ready")),
+            (executor, execution, executor_descriptor, executor_classes, ("jobs", "registry", "state", "permissions", "checkpoints", "glb_stage", "evidence")),
+            (service, service_fields, service_descriptor, service_classes, ("runtime", "_executor_origin", "jobs", "registry", "state", "checkpoints")),
+            (fields["registry"], registry_fields, registry_descriptor, registry_classes,
+                ("_tools", "_mutation_interlock", "_scene_reservations", "_enabled_toolsets")),
+            (fields["permissions"], permission_fields, permission_descriptor, permission_classes, ("_source",)),
+            (fields["state"], state_fields, state_descriptor, state_classes, ("_lock",)),
+            (reservations, reservation_fields, reservation_descriptor, reservation_classes,
+                ("registry", "_retained", "_turns", "_inspection_turns", "_inspection_proofs"))))
+    functions = tuple(_storage_function_fact(value) for value in vars(helper_module).values() if type(value) is FunctionType)
+    proof = (seal, runtime_module, runtime, factory, _storage_function_fact(factory), helper_module,
+             tuple(vars(helper_module).items()), (*functions, _storage_function_fact(provider)), objects)
+    _inspection_context_factory_check(proof)
+    return proof
+
+
+def _inspection_context_factory_check(proof):
+    seal, runtime_module, runtime, _factory, fact, helper_module, namespace, functions, objects = proof
+    _inspection_source(seal)
+    if vars(runtime_module).get("_RUNTIME") is not runtime:
+        raise refused("INSPECTION_CONTEXT_FACTORY_CHANGED")
+    current = vars(helper_module)
+    if (len(current) != len(namespace) or any(type(name) is not str for name in current)
+            or any(name not in current or current[name] is not value for name, value in namespace)):
+        raise refused("INSPECTION_CONTEXT_FACTORY_CHANGED")
+    for function in (fact, *functions):
+        _inspection_function(function)
+    for value, kind, descriptor, classes, rows in objects:
+        for base, mro, saved, methods in classes:
+            current = type.__dict__["__dict__"].__get__(base)
+            if (type.__dict__["__mro__"].__get__(base) is not mro or len(current) != len(saved)
+                    or any(name not in current or current[name] is not item for name, item in saved)):
+                raise refused("INSPECTION_CONTEXT_FACTORY_CHANGED")
+            for method in methods:
+                _inspection_function(method)
+        current = descriptor.__get__(value, kind)
+        if (type(value) is not kind or type(current) is not dict or any(type(name) is not str for name in current)
+                or any(name not in current or current[name] is not item for name, item in rows)
+                or any(name in current for _base, _mro, _saved, methods in classes for method in methods
+                       for name in (method[0].__name__,))):
+            raise refused("INSPECTION_CONTEXT_FACTORY_CHANGED")
+
+
+def _inspection_bind(admission):
+    from .mesh_storage_source import capture_context, verify_context
+    context, proof = admission.context, admission.driver_proof
+    _inspection_driver_check(proof)
+    factory_proof = admission.factory_proof
+    _inspection_context_factory_check(factory_proof)
+    captured = capture_context(context, proof[4])
+    object.__setattr__(admission, "inspection_context_proof", captured)
+    admission_type = type(admission)
+    owned = tuple((name, getattr(admission, name)) for name in admission_type.__slots__
+                  if name not in {"entry_guard", "entry_proof"})
+    turn = admission.turn if type(admission) is _InspectionTurnAdmission else None
+    turn_rows = () if turn is None else tuple((name, getattr(turn, name)) for name in type(turn).__slots__
+                                             if name not in {"inspection_entry_proof", "permission_denial"})
+    owner = None if turn is None else turn.owner
+    owner_rows = () if owner is None else tuple((name, getattr(owner, name)) for name in type(owner).__slots__
+                                               if name != "stopped")
+
+    def checked():
+        # The held verifier is proved before resolving any mutable callback.
+        raw = tuple.__getitem__
+        seal = raw(proof, 4)
+        function, code, namespace, defaults, keywords, closure = raw(seal, 7)
+        native = raw(seal, 4)
+        if (type(function) is not FunctionType or function.__code__ is not code or function.__globals__ is not namespace
+                or function.__defaults__ is not defaults or function.__kwdefaults__ is not keywords or function.__closure__ is not closure):
+            raise raw(native, 8)
+        function(seal)
+        if (type(admission) is not admission_type or any(getattr(admission, name) is not value for name, value in owned)
+                or any(getattr(turn, name) is not value for name, value in turn_rows)
+                or any(getattr(owner, name) is not value for name, value in owner_rows)
+                or admission.entry_guard is not checked or type(admission.entry_proof) is not tuple
+                or len(admission.entry_proof) != 7 or admission.entry_proof[0] is not checked
+                or admission.driver_proof is not proof or admission.factory_proof is not factory_proof
+                or admission.inspection_context_proof is not captured):
+            raise refused("INSPECTION_ADMISSION_CHANGED")
+        _inspection_driver_check(proof)
+        _inspection_context_factory_check(factory_proof)
+        verify_context(context, captured)
+        for manager, kind, descriptor, rows, _provider in captured[11]:
+            data = descriptor.__get__(manager, kind)
+            if (type(data) is not dict or len(data) != len(rows) or any(type(name) is not str for name in data)
+                    or any(data.get(name) is not value for name, value in rows)):
+                raise refused("INSPECTION_PERMISSION_INSTANCE_CHANGED")
+        if type(admission) is _InspectionTurnAdmission:
+            context.jobs._inspection_record(admission.job)
+
+    object.__setattr__(admission, "entry_guard", checked)
+    object.__setattr__(admission, "entry_proof", (checked, checked.__code__, checked.__globals__, checked.__defaults__,
+        checked.__kwdefaults__, checked.__closure__, tuple((cell, cell.cell_contents) for cell in checked.__closure__ or ())))
+
+
+@dataclass(frozen=True, slots=True, eq=False)
+class _InspectionAdmission:
+    context: Any
+    params: Any
+    authority: Any
+    allowlist: tuple
+    state_origin: tuple
+    driver: Any
+    driver_proof: tuple
+    inspection_context_proof: Any = None
+    entry_guard: Any = None
+    entry_proof: Any = None
+    factory_proof: Any = None
+
+    def __init__(self, context, params, factory):
+        authority = SceneJobAuthority.capture_inspection(context, params)
+        allowlist = context.registry._scene_reservations.capture_allowlist()
+        store = get_task_plans(context.state)
+        driver = factory(context, params)  # Cheap Python capture only; no native reads.
+        proof = _inspection_driver(driver)
+        context.jobs._ensure_inspection_spec()
+        factory_proof = _inspection_context_factory(context, proof[4])
+        authority = authority.include_driver_permissions(tuple(driver.required_permissions))
+        for name, value in (("context", context), ("params", params), ("authority", authority), ("allowlist", allowlist),
+                ("state_origin", (context.state, store, store.evidence_epoch)), ("driver", driver), ("driver_proof", proof),
+                ("inspection_context_proof", None), ("entry_guard", None), ("entry_proof", None), ("factory_proof", factory_proof)):
+            object.__setattr__(self, name, value)
+
+    def bind_checkpoint(self, _binding):
+        _inspection_bind(self)
+
+    def __call__(self):
+        self.check_after_read()
+
+    def check_after_read(self):
+        self.entry_guard()
+        self.driver_proof[6][0][1][0](self.driver, self.context)
+        self.authority.check()
+        state, store, epoch = self.state_origin
+        if self.context.state is not state or getattr(state, "_artist_task_plans", None) is not store or store.evidence_epoch != epoch:
+            raise refused("SCENE_RUNTIME_RESET")
+        self.context.registry._scene_reservations.check_allowlist(self.allowlist)
+        check_final_mutation(self.context, self.authority.method)
+
+
+def inspection_admission(factory):
+    """A held registered factory, never a client-selected callback or token."""
+    fact = _storage_function_fact(factory)
+    function_check, admission_type = _inspection_function, _InspectionAdmission
+    def make(context, params):
+        function_check(fact)
+        return admission_type(context, params, factory)
+    return make
+
+
+@dataclass(frozen=True, slots=True, eq=False)
+class _InspectionTurnAdmission:
+    context: Any
+    turn: Any
+    job: Any
+    driver_proof: tuple
+    inspection_context_proof: Any = None
+    entry_guard: Any = None
+    entry_proof: Any = None
+    factory_proof: Any = None
+
+    def __init__(self, context):
+        turn = context.registry._scene_reservations.current_inspection(context)
+        job = turn.owner.job
+        record = context.jobs._inspection_record(job)
+        proof, factory_proof = record[1], record[2]
+        for name, value in (("context", context), ("turn", turn), ("job", job), ("driver_proof", proof),
+                            ("inspection_context_proof", None), ("entry_guard", None), ("entry_proof", None), ("factory_proof", factory_proof)):
+            object.__setattr__(self, name, value)
+
+    def bind_checkpoint(self, _binding):
+        self.turn.binding = _binding
+        _inspection_bind(self)
+        self.context.registry._scene_reservations.bind_inspection_proof(self.turn.token, _binding, self.entry_proof)
+
+    def __call__(self):
+        self.entry_guard()
+        self.context.require(*self.turn.owner.authority.required_permissions)
+        self.check_after_read()
+
+    def check_after_read(self):
+        self.entry_guard()
+        self.driver_proof[6][0][1][0](self.job.driver, self.context)
+        self.context.registry._scene_reservations.check_inspection_turn(self.turn.token)
+        check_final_mutation(self.context, INSPECTION_TURN_METHOD)
+
+
+@dataclass(slots=True, eq=False)
+class InspectionJob:
+    job_id: str
+    request_id: str
+    lifetime: Any
+    deadline: float
+    driver: Any
+    authority: Any
+    state_origin: tuple
+    phase: str
+    kind: str
+    label: str
+    method: str = INSPECTION_TURN_METHOD
+    pending: Any = None
+    reservation: Any = None
+    revision: int = 1
+    state: str = "QUEUED"
+    cancel_reason: str = ""
+    in_tick: bool = False
+    in_commit: bool = False
+    work: Any = None
+    result: Any = None
+    error: Any = None
+    ready_valid: bool = False
+    invalidated_reason: str = ""
+    native_reads_started: bool = False
+    progress: dict = field(default_factory=lambda: {"phase": "awaiting_start_delivery", "completed": 0, "total": 3})
+    created_at: str = field(default_factory=utc_timestamp)
+
+    def summary(self):
+        return plain({"job_id": self.job_id, "kind": self.kind, "label": self.label, "request_id": self.request_id,
+                      "state": self.state, "terminal": self.state in TERMINAL, "phase": self.phase,
+                      "revision": self.revision, "progress": self.progress, "result": self.result, "error": self.error,
+                      "inspection_only": True, "ready": self.state == "SUCCEEDED" and self.ready_valid,
+                      "invalidated_reason": self.invalidated_reason, "logical_write_capability": False,
+                      "native_reads_started": self.native_reads_started,
+                      "physical_read_effects": {"ARRAY_COW_or_tagging_possible": self.native_reads_started,
+                                                "image_buffer_cache_changes_possible": self.native_reads_started},
+                      "undo_boundary_created": False, "undo_boundary_finalized": False, "checkpoint": {},
+                      "created_at": self.created_at, "verification_required": True, "durable": False},
+                     field="inspection_summary", byte_limit=262144, item_limit=16384, depth_limit=16)
+
+
 @dataclass(slots=True)
 class SceneJob:
     job_id: str
@@ -420,10 +892,111 @@ class SceneJobs(PaintJobs):
         self.recovery_limit = recovery_limit
         self.recovery_ledger: dict[str, dict] = {}
         self._scene_records: dict[int, SceneJob] = {}
+        self._inspection_records: dict[int, tuple] = {}
+        self._inspection_ready: dict[int, tuple] = {}
         self._turn_spec = registry.register(TURN_METHOD, self._advance, modifies=True, remote=False,
             batchable=False, record_history=False, automatic_checkpoint=False, exclusive_mutation=True,
             protected_scope_resolver=_storage_turn_scope,
             checkpoint_owns_finalization=True, checkpoint_admission_factory=lambda context, params: _TurnAdmission(context))
+        self._inspection_spec = None
+        self._inspection_spec_origin = ()
+
+    def _ensure_inspection_spec(self):
+        # Ordinary Runtime metadata stays unchanged. Only the sealed private
+        # starter enables this local read entry, before its first provider.
+        if self._inspection_spec is not None:
+            if (self.registry.get(INSPECTION_TURN_METHOD) is not self._inspection_spec
+                    or not self._inspection_spec_origin
+                    or any(getattr(self._inspection_spec, name) is not value for name, value in self._inspection_spec_origin)):
+                raise refused("INSPECTION_TURN_SPEC_CHANGED")
+            return
+        if INSPECTION_TURN_METHOD in self.registry._tools:
+            raise refused("INSPECTION_TURN_SPEC_CHANGED")
+        self._inspection_spec = self.registry.register(INSPECTION_TURN_METHOD, self._advance_inspection,
+            modifies=False, remote=False, batchable=False, record_history=False, automatic_checkpoint=False,
+            checkpoint_admission_factory=lambda context, params: _InspectionTurnAdmission(context))
+        self._inspection_spec_origin = tuple((name, getattr(self._inspection_spec, name))
+                                             for name in type(self._inspection_spec).__slots__)
+
+    def _inspection(self, job, _type=type, _job_type=InspectionJob):
+        return _type(job) is _job_type
+
+    def _inspection_record(self, job, _type=type, _job_type=InspectionJob, _id=id, _get=dict.get, _tuple=tuple):
+        record = _get(self._inspection_records, _id(job))
+        if (_type(job) is not _job_type or _type(record) is not _tuple or record[0] is not job or self.active is not job):
+            raise refused("INSPECTION_RECORD_LOST")
+        raw = ().__class__.__getitem__
+        seal = raw(raw(record, 1), 4)
+        function, code, namespace, defaults, keywords, closure = raw(seal, 7)
+        native = raw(seal, 4)
+        if (raw(native, 0)(function) is not raw(native, 4) or function.__code__ is not code
+                or function.__globals__ is not namespace or function.__defaults__ is not defaults
+                or function.__kwdefaults__ is not keywords or function.__closure__ is not closure):
+            raise raw(native, 8)
+        function(seal)
+        if (job.driver is not record[1][0]
+                or any(getattr(job, name) is not value for name, value in record[3])):
+            raise refused("INSPECTION_RECORD_LOST")
+        if (self.registry.get(INSPECTION_TURN_METHOD) is not self._inspection_spec
+                or any(getattr(self._inspection_spec, name) is not value for name, value in self._inspection_spec_origin)):
+            raise refused("INSPECTION_TURN_SPEC_CHANGED")
+        _inspection_driver_check(record[1])
+        _inspection_context_factory_check(record[2])
+        return record
+
+    def start_inspection(self, context, params, *, time_limit=60.):
+        self._main()
+        if self.active is not None:
+            raise refused("SCENE_JOB_BUSY")
+        if type(time_limit) not in {int, float} or not 1. <= time_limit <= 300.:
+            raise invalid_argument("Inspection time limit must be between 1 and 300 seconds.")
+        binding = context.checkpoint_admission
+        admission = None if binding is None else binding.callback
+        if (type(admission) is not _InspectionAdmission or admission.context is not context
+                or admission.params is not params or not binding.active):
+            raise refused("INSPECTION_START_ADMISSION_REQUIRED")
+        binding.check_after_read()
+        driver = admission.driver
+        job = InspectionJob("job_"+uuid.uuid4().hex, context.request_id,
+            context.request_lifecycle or RequestLifetime.local(), time.monotonic()+time_limit,
+            driver, admission.authority, admission.state_origin, phase_report(driver.phase),
+            plain(driver.kind), plain(driver.label))
+        origin = object()
+        job.reservation = self.reservations.reserve(job, origin, allowlist=admission.allowlist, authority=admission.authority)
+        try:
+            anchors = tuple((name, getattr(job, name)) for name in ("job_id", "request_id", "lifetime", "deadline",
+                "driver", "authority", "state_origin", "kind", "label", "method", "pending", "reservation"))
+            import sys
+            from threading import Event
+            service_fields, _descriptor, _classes = _inspection_fields(self.reservations, type(self.reservations))
+            connection = job.lifetime.connection
+            event = None if connection is None else connection.background_active
+            context_proof = admission.inspection_context_proof
+            event_row = next((row for row in context_proof[10] if row[0] is event), None)
+            retirement = (self.reservations, service_fields, self.reservations.owner, self.reservations._retained,
+                vars(sys.modules[__package__ + ".scene_job_reservations"])["_services"], self.history,
+                event, _storage_function_fact(Event.clear), _storage_function_fact(_inspection_error),
+                refused("INSPECTION_RETIREMENT_ORIGIN_CHANGED"), event_row, _storage_function_fact(_inspection_event_data),
+                deque.appendleft, _storage_function_fact(_inspection_ready_check))
+            authority_rows = tuple((name, getattr(admission.authority, name)) for name in type(admission.authority).__slots__)
+            ready_proof = (admission.driver_proof[4], admission.factory_proof, admission.authority, authority_rows,
+                admission.state_origin, job.lifetime, context_proof[8], context_proof[9], context_proof[10], context_proof[11], job.deadline)
+            if type(self.history) is not deque:
+                raise refused("INSPECTION_CONTEXT_FACTORY_CHANGED")
+            self._inspection_records[id(job)] = (job, admission.driver_proof, admission.factory_proof, anchors,
+                                                 retirement, ready_proof, job.deadline)
+            self.active = job
+            self.reservations.activate(job.reservation, origin)
+        except BaseException:
+            self.reservations.discard_unaccepted(job.reservation, origin)
+            self._inspection_records.pop(id(job), None)
+            if self.active is job:
+                self.active = None
+            raise
+        if job.lifetime.connection is not None:
+            job.lifetime.connection.background_active.set()
+        return {"accepted": True, **job.summary(), "job_completed": False, "input_frozen_at_acceptance": True,
+                "native_commit_interruptible": False}
 
     def _scene(self, job):
         if type(job) is not SceneJob:
@@ -494,6 +1067,22 @@ class SceneJobs(PaintJobs):
                 "native_commit_interruptible": False, "input_frozen_at_acceptance": True}
 
     def _context(self, job):
+        if self._inspection(job):
+            record = self._inspection_record(job)
+            factory = record[2][3]
+            context = factory()
+            self._inspection_record(job)
+            runtime_fields = record[2][8][0][2].__get__(record[2][2], type(record[2][2]))
+            if (context.jobs is not self or any(getattr(context, name) is not runtime_fields.get(name)
+                    for name in ("registry", "state", "permissions", "checkpoints", "glb_stage"))):
+                raise refused("INSPECTION_CONTEXT_FACTORY_CHANGED")
+            bind_permissions(context, self.reservations)
+            context.request_lifecycle, context.request_id = job.lifetime, job.request_id
+            context.check_final_request = None
+            context.check_cancelled = lambda: self._check(job, context)
+            context.check_final_job = lambda: (_inspection_context_factory_check(record[2]),
+                                                self.reservations.check_job(job.reservation))
+            return context
         if not self._scene(job):
             return super()._context(job)
         context = self.context_factory()
@@ -505,6 +1094,12 @@ class SceneJobs(PaintJobs):
         return context
 
     def _check(self, job, context):
+        if self._inspection(job):
+            self._inspection_record(job)
+            self.reservations.check_job(job.reservation)
+            if self.registry.get(INSPECTION_TURN_METHOD) is not self._inspection_spec:
+                raise refused("INSPECTION_TURN_SPEC_CHANGED")
+            return
         if not self._scene(job):
             return super()._check(job, context)
         self.reservations.check_job(job.reservation)
@@ -512,10 +1107,10 @@ class SceneJobs(PaintJobs):
             raise refused("SCENE_TURN_SPEC_CHANGED")
 
     def _tick_scope(self, job):
-        return self.reservations.scheduler_scope(job.reservation) if self._scene(job) else super()._tick_scope(job)
+        return self.reservations.scheduler_scope(job.reservation) if self._inspection(job) or self._scene(job) else super()._tick_scope(job)
 
     def _guard_context_creation(self, job):
-        return True if self._scene(job) else super()._guard_context_creation(job)
+        return True if self._inspection(job) or self._scene(job) else super()._guard_context_creation(job)
 
     def _tick_owned(self, job, control):
         if not self._scene(job) or job.terminal_state is None:
@@ -528,6 +1123,20 @@ class SceneJobs(PaintJobs):
         return self.active is not None
 
     def _tick_check(self, job, context, control):
+        if self._inspection(job):
+            self._check(job, context)
+            record = self._inspection_record(job)
+            token = self.reservations.issue_inspection_turn(job.reservation, job.phase, job.revision,
+                                                           origin=control, check_only=True)
+            previous = context.check_final_job
+            context.check_final_job = lambda: (_inspection_context_factory_check(record[2]),
+                                                self.reservations.check_inspection_turn(token))
+            try:
+                self.registry.invoke_inspection_turn(token, {}, context, check_only=True)
+            finally:
+                self.reservations.close_inspection_turn(token)
+                context.check_final_job = previous
+            return
         if not self._scene(job):
             return super()._tick_check(job, context, control)
         self._check(job, context)
@@ -541,22 +1150,51 @@ class SceneJobs(PaintJobs):
             context.check_final_job = previous
 
     def _prepare_step(self, job, context):
+        if self._inspection(job):
+            self._check(job, context)
+            return
         if not self._scene(job):
             return super()._prepare_step(job, context)
         self.reservations.check_job(job.reservation)
 
     def _budget_for(self, job):
-        return 4. if self._scene(job) else super()._budget_for(job)
+        return 4. if self._inspection(job) or self._scene(job) else super()._budget_for(job)
 
     def _work_step_limit(self, job):
-        return 1 if self._scene(job) else super()._work_step_limit(job)
+        return 1 if self._inspection(job) or self._scene(job) else super()._work_step_limit(job)
 
     def _make_work(self, job, context):
+        if self._inspection(job):
+            self._check(job, context)
+            return object()
         if not self._scene(job):
             return super()._make_work(job, context)
         return object()  # No generator can retain a turn capability across yields.
 
     def _advance_work(self, job, context, control):
+        if self._inspection(job):
+            context = self._context(job)
+            record = self._inspection_record(job)
+            token = self.reservations.issue_inspection_turn(job.reservation, job.phase, job.revision, origin=control)
+            context.check_final_job = lambda: (_inspection_context_factory_check(record[2]),
+                                                self.reservations.check_inspection_turn(token))
+            try:
+                progress = self.registry.invoke_inspection_turn(token, {}, context)
+            finally:
+                self.reservations.close_inspection_turn(token)
+            record = self._inspection_record(job)
+            job.phase = phase_report(job.driver.phase)
+            if job.driver.done:
+                job.result = plain(job.driver.result, field="inspection_result")
+                from .mesh_storage_contract import digest
+                job.result["inspection_fingerprint"] = digest({"domain": job.result["inspection_fingerprint"],
+                    "registry": id(self.registry), "state": id(job.state_origin[0]),
+                    "connection": id(job.lifetime.connection), "protection_epoch": job.state_origin[2],
+                    "source": record[1][4].fingerprint()})
+                job.result.update(cached_at_completion=True, native_state_revalidated=False,
+                                  permission_values_revalidated=False, write_authorized=False, writer_handoff_supported=False)
+                raise StopIteration(job.result)
+            return progress
         if not self._scene(job):
             return super()._advance_work(job, context, control)
         context = self._context(job)
@@ -577,6 +1215,55 @@ class SceneJobs(PaintJobs):
         if completed:
             raise StopIteration(job.result)
         return progress
+
+    def _advance_inspection(self, context, params):
+        turn = self.reservations.current_inspection(context)
+        job = turn.owner.job
+        record = self._inspection_record(job)
+        if turn.check_only or turn.phase != job.driver.phase or job.driver.done:
+            raise refused("INSPECTION_PHASE_SEQUENCE_CHANGED")
+        admission = context.checkpoint_admission.callback
+        if type(admission) is not _InspectionTurnAdmission:
+            raise refused("INSPECTION_TURN_ADMISSION_REQUIRED")
+        admission.check_after_read()
+        admission_rows = tuple((name, getattr(admission, name)) for name in type(admission).__slots__)
+        original_context = admission.inspection_context_proof
+        advance = record[1][6][1][1][0]
+        job.native_reads_started = True
+        progress = advance(job.driver, context)
+        # The exact held callback has returned after its last native guard.
+        # Only this point can adopt the domain's committed cached state.
+        _inspection_driver_check(record[1], instance=False)
+        if (self._inspection_records.get(id(job)) is not record or self.active is not job
+                or any(getattr(job, name) is not value for name, value in record[3])
+                or any(getattr(admission, name) is not value for name, value in admission_rows)):
+            raise refused("INSPECTION_ADMISSION_CHANGED")
+        from .mesh_storage_source import verify_context
+        verify_context(context, original_context)
+        old_fields = dict(record[1][5])
+        fields = record[1][3].__get__(job.driver, record[1][1])
+        transitions = {
+            "inspection_plan": ("inspection_capture", {"gate", "origin", "initial", "bindings", "excluded", "checkpoint_roles",
+                "role_stamp", "metadata_stamp", "plan_stamp", "minimum_floor", "context_stamp", "phase"}),
+            "inspection_capture": ("inspection_seal", {"protected_bytes", "role_stamp", "phase"}),
+            "inspection_seal": ("inspection_complete", {"role_stamp", "result", "done", "phase"}),
+        }
+        expected, changed = transitions[turn.phase]
+        if (len(fields) != len(old_fields) or fields.get("phase") != expected
+                or any(name not in fields or (name not in changed and fields[name] is not value)
+                       for name, value in old_fields.items())):
+            raise refused("INSPECTION_PHASE_COMMIT_CHANGED")
+        proof = _inspection_driver(job.driver)
+        deadline = min(job.deadline, turn.inspection_deadline) if job.driver.done else record[6]
+        self._inspection_records[id(job)] = (job, proof, record[2], record[3], record[4], record[5], deadline)
+        object.__setattr__(admission, "driver_proof", proof)
+        _inspection_bind(admission)
+        self.reservations.bind_inspection_proof(turn.token, context.checkpoint_admission, admission.entry_proof)
+        admission.check_after_read()
+        if type(job.driver.done) is not bool:
+            raise refused("INSPECTION_PHASE_SEQUENCE_CHANGED")
+        phase_report(job.driver.phase)
+        return progress_report(progress)
 
     def _advance(self, context, params):
         turn = self.reservations.current(context)
@@ -627,17 +1314,89 @@ class SceneJobs(PaintJobs):
         job.boundary_finalized = turn.phase == "checkpoint_after"
         return {"phase": turn.phase, "completed": 1, "total": 1}
 
-    def _complete_tick(self, job, context, value, control):
+    def _complete_tick(self, job, context, value, control, _type=type, _inspection_kind=InspectionJob):
+        if _type(job) is _inspection_kind:
+            return self._finish(job, "SUCCEEDED", _origin=control)
         if not self._scene(job):
             return super()._complete_tick(job, context, value, control)
         self._finish(job, "SUCCEEDED", _origin=control)
 
-    def _finish_tick(self, job, state, error, control):
+    def _finish_tick(self, job, state, error, control, _type=type, _inspection_kind=InspectionJob):
+        if _type(job) is _inspection_kind:
+            return self._finish(job, state, error, _origin=control)
         if not self._scene(job):
             return super()._finish_tick(job, state, error, control)
         self._finish(job, state, error, _origin=control)
 
-    def _finish(self, job, state, error=None, *, _origin=None):
+    def _finish(self, job, state, error=None, *, _origin=None, _type=type, _id=id, _object=object, _len=len,
+                _tuple=tuple, _str=str, _bridge_error=BridgeError, _error_dict=BaseException.__dict__["__dict__"],
+                _inspection_kind=InspectionJob, _get=dict.get):
+        if _type(job) is _inspection_kind:
+            if _type(job.state) is _str and job.state in ("SUCCEEDED", "FAILED", "CANCELLED"):
+                return
+            if _origin is None:
+                with self.reservations.scheduler_scope(job.reservation) as origin:
+                    return self._finish(job, state, error, _origin=origin)
+            record = _get(self._inspection_records, _id(job))
+            if record is None or record[0] is not job:
+                raise refused("INSPECTION_RECORD_LOST")
+            (_service, service_fields, owner, retained, services, history, event, _clear_fact,
+             error_fact, failure, event_row, event_reader_fact, append_history, ready_fact) = record[4]
+            scheduler = service_fields.get("_scheduler")
+            if (_type(scheduler) is not _tuple or scheduler[0] != _id(_origin) or scheduler[1] is not owner
+                    or service_fields.get("owner") is not owner or owner.turn is not None):
+                raise failure
+            if state == "SUCCEEDED":
+                try:
+                    ready_check, code, namespace, defaults, keywords, _rows, cells = ready_fact
+                    if (ready_check.__code__ is not code or ready_check.__globals__ is not namespace
+                            or ready_check.__defaults__ is not defaults or ready_check.__kwdefaults__ is not keywords
+                            or _len(ready_check.__closure__ or ()) != _len(cells)):
+                        raise failure
+                    ready_check((*record[5][:-1], record[6]))
+                except _bridge_error as stopped:
+                    state, error = "FAILED", stopped
+            job.result = job.result if state == "SUCCEEDED" else None
+            if error is not None:
+                reader, code, namespace, defaults, keywords, _rows, cells = error_fact
+                if (reader.__code__ is code and reader.__globals__ is namespace and reader.__defaults__ is defaults
+                        and reader.__kwdefaults__ is keywords and _len(reader.__closure__ or ()) == _len(cells)):
+                    job.error = reader(error)
+                else:
+                    job.error = {"code": _error_dict.__get__(error, _type(error)).get("code"), "message": "Inspection stopped.",
+                                 "context": {"inspection_status": "INCOMPLETE", "error_context_unknown": True}}
+                job.error["context"].update(native_reads_started=job.native_reads_started,
+                    physical_read_effects={"ARRAY_COW_or_tagging_possible": job.native_reads_started,
+                                           "image_buffer_cache_changes_possible": job.native_reads_started})
+            job.state, job.progress = state, {"phase": state.lower(), "completed": 3 if state == "SUCCEEDED" else 0, "total": 3}
+            job.ready_valid = state == "SUCCEEDED"
+            if job.ready_valid:
+                self._inspection_ready[_id(job)] = record[5]
+            retained.pop(_id(job.reservation), None)
+            services.pop(_id(job.reservation), None)
+            service_fields["owner"] = None
+            job.revision += 1
+            job.work = job.driver = None
+            self._inspection_records.pop(_id(job), None)
+            event_reader, reader_code, _namespace, reader_defaults, _keywords, _rows, _cells = event_reader_fact
+            event_data = None
+            if event is not None and event_reader.__code__ is reader_code and event_reader.__defaults__ is reader_defaults:
+                event_data = event_reader(event_row)
+            if event_data is not None:
+                # background_active is a cached tracking bit. A literal native
+                # dict write avoids stopped Event/Condition callbacks entirely.
+                event_data["_flag"] = False
+            elif event is not None and job.error is not None:
+                job.error["context"]["lifetime_cleanup_unknown"] = True
+            self.history = history
+            append_history(history, job)
+            retained_ids = {_id(item) for item in history}
+            for identifier in _tuple(self._inspection_ready):
+                if identifier not in retained_ids:
+                    self._inspection_ready.pop(identifier, None)
+            if self.active is job:
+                self.active = None
+            return
         if not self._scene(job):
             return super()._finish(job, state, error)
         if job.state in TERMINAL:
@@ -750,6 +1509,9 @@ class SceneJobs(PaintJobs):
         job.storage_driver_proof = job.storage_reader_proof = job.storage_scope = None
 
     def inspect(self, job_id):
+        for job in self.history:
+            if type(job) is InspectionJob and job.job_id == job_id:
+                self._refresh_inspection_ready(job)
         try:
             return super().inspect(job_id)
         except BridgeError as error:
@@ -760,6 +1522,9 @@ class SceneJobs(PaintJobs):
                     item_limit=16384, depth_limit=16)
 
     def list(self, limit=10):
+        for job in self.history:
+            if type(job) is InspectionJob:
+                self._refresh_inspection_ready(job)
         if not self.recovery_ledger:
             return super().list(limit)
         self._main()
@@ -777,6 +1542,35 @@ class SceneJobs(PaintJobs):
             status.update(unresolved_scene_receipts=len(self.recovery_ledger), scene_recovery_limit=self.recovery_limit)
         return status
 
+    def _refresh_inspection_ready(self, job):
+        if not job.ready_valid:
+            return
+        proof = self._inspection_ready.get(id(job))
+        try:
+            if proof is None:
+                raise refused("INSPECTION_READY_RECORD_LOST")
+            # Bootstrap the held seal before any replaceable pure helper.
+            raw = ().__class__.__getitem__
+            seal = raw(proof, 0)
+            function, code, namespace, defaults, keywords, closure = raw(seal, 7)
+            native = raw(seal, 4)
+            if (raw(native, 0)(function) is not raw(native, 4) or function.__code__ is not code or function.__globals__ is not namespace
+                    or function.__defaults__ is not defaults or function.__kwdefaults__ is not keywords or function.__closure__ is not closure):
+                raise raw(native, 8)
+            function(seal)
+            _inspection_ready_check(proof)
+        except Exception:
+            job.ready_valid = False
+            job.invalidated_reason = "cached inspection ownership/source proof changed"
+            job.result = None
+            self._inspection_ready.pop(id(job), None)
+
     def cancel_all(self, reason):
+        for job in self.history:
+            if type(job) is InspectionJob:
+                job.ready_valid = False
+                job.invalidated_reason = reason
+                job.result = None
+        self._inspection_ready.clear()
         self.reservations.invalidate(reason)
         super().cancel_all(reason)

@@ -6,7 +6,7 @@ import logging
 import math
 import sys
 from collections.abc import Callable, Iterable, Iterator, Mapping
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -26,7 +26,7 @@ from .errors import BridgeError, ErrorCode
 from .operation_lease import ExclusiveMutationLease, InvocationPermit, MutationInterlock
 from .permissions import Permission, PermissionManager
 from .request_lifecycle import RequestLifetime
-from .scene_job_reservations import TURN_METHOD, SceneJobReservations
+from .scene_job_reservations import INSPECTION_TURN_METHOD, TURN_METHOD, SceneJobReservations
 from .state import BridgeState
 from .task_plans import get_task_plans
 
@@ -376,6 +376,30 @@ class ToolRegistry:
         self._mutation_interlock.check_owner(self, spec, context)
         if spec.name == TURN_METHOD:
             self._scene_reservations.check_turn(self._scene_reservations.current(context).token)
+        elif spec.name == INSPECTION_TURN_METHOD:
+            turn = self._scene_reservations.current_inspection(context)
+            job = turn.owner.job
+            context.jobs._inspection_record(job)
+            binding = context.checkpoint_admission
+            if binding is not None:
+                # The retained entry guard checks only source/context/top-level
+                # identities. Domain readback caches can change during a phase.
+                if turn.binding is not binding or turn.inspection_entry_proof is None:
+                    raise BridgeError(ErrorCode.OPERATION_FAILED, "Inspection admission ownership changed.")
+                function, code, namespace, defaults, keywords, cells, contents = turn.inspection_entry_proof
+                if (type(function) is not type(lambda: None) or function.__code__ is not code
+                        or function.__globals__ is not namespace or function.__defaults__ is not defaults
+                        or function.__kwdefaults__ is not keywords or function.__closure__ is not cells
+                        or len(cells or ()) != len(contents)
+                        or any(actual is not cell or actual.cell_contents is not value
+                               for actual, (cell, value) in zip(cells or (), contents, strict=True))):
+                    raise BridgeError(ErrorCode.OPERATION_FAILED, "Inspection entry source changed.")
+                function()
+            flags = context.state.snapshot()
+            if flags["emergency_stopped"]:
+                raise BridgeError(ErrorCode.EMERGENCY_STOPPED, "Inspection emergency-stopped before its next read.")
+            if flags["paused"] and not turn.check_only:
+                raise BridgeError(ErrorCode.AGENT_PAUSED, "Inspection paused before its next read.")
 
     @property
     def executing_mutators(self) -> int:
@@ -519,6 +543,17 @@ class ToolRegistry:
                 storage_value_error = ValueError
                 storage_failure = BridgeError(ErrorCode.NOT_IMPLEMENTED, "Storage preview entry source changed.",
                                               {"reason": "STORAGE_CONTEXT_CHANGED"})
+        if context.checkpoint_admission is not None and name in {
+                "mesh.attribute_storage_prepare_inspection_start", INSPECTION_TURN_METHOD}:
+            from .scene_jobs import _InspectionAdmission, _InspectionTurnAdmission
+            callback = context.checkpoint_admission.callback
+            if type(callback) is _InspectionAdmission or type(callback) is _InspectionTurnAdmission:
+                storage_entry = callback.entry_proof
+                storage_type, storage_len, storage_any, storage_zip = type, len, any, zip
+                storage_function_type = type(lambda: None)
+                storage_value_error = ValueError
+                storage_failure = BridgeError(ErrorCode.NOT_IMPLEMENTED, "Inspection entry source changed.",
+                                              {"reason": "INSPECTION_CONTEXT_CHANGED"})
         if storage_entry is not None:
             def checked_storage_entry():
                 function, code, namespace, defaults, keywords, cells, contents = storage_entry
@@ -535,6 +570,8 @@ class ToolRegistry:
                 function()
 
             checked_storage_entry()
+            if name != "mesh.attribute_storage_prepare_preview":
+                context.checkpoint_admission.check_after_read()
         context.permissions.require(spec.permissions)
         if storage_entry is not None:
             checked_storage_entry()
@@ -609,6 +646,10 @@ class ToolRegistry:
         self.check_admission_entry(entry[0], context)
         scope, captured, deferred = self._capture_admission(entry[0], params, context)
         try:
+            if deferred is not None and name == "mesh.attribute_storage_prepare_inspection_start":
+                # A failed private source/context proof cannot safely dispatch
+                # the provider whose original identity it failed to establish.
+                raise deferred
             spec = self.prepare_call(name, params, context)
             self.check_checkpoint_parameter_entry(entry, params)
             if deferred is not None:
@@ -637,6 +678,10 @@ class ToolRegistry:
         try:
             scope.__enter__()
         except BridgeError as error:
+            if spec.name in {"mesh.attribute_storage_prepare_inspection_start", INSPECTION_TURN_METHOD}:
+                # The private read workflow has no safe provider to call after
+                # its canonical source/context capture has failed.
+                raise
             # Readonly factory diagnostics must not bypass coherent live
             # permission/cancellation denial precedence or expose private data.
             return scope, False, error
@@ -724,7 +769,45 @@ class ToolRegistry:
 
     def native_push_completion(self, permit: InvocationPermit, binding: CheckpointAdmissionBinding,
                                manager: Any, *, final_check: Callable[[], None]):
+        if binding is not None and binding.spec.name in {"mesh.attribute_storage_prepare_inspection_start", INSPECTION_TURN_METHOD}:
+            from .scene_jobs import _InspectionAdmission, _InspectionTurnAdmission
+            if (binding.spec.modifies or (type(binding.callback) is not _InspectionAdmission
+                                         and type(binding.callback) is not _InspectionTurnAdmission)):
+                raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Inspection cannot acquire a native checkpoint consumer.")
+            return nullcontext(None)
         return native_push_consumer(self, permit, binding, manager, final_check)
+
+    def invoke_inspection_turn(self, turn: Any, params: Mapping[str, Any], context: ToolContext,
+                               *, check_only: bool = False) -> Any:
+        """Consume a local read turn without a checkpoint or push capability."""
+        spec = self.get(INSPECTION_TURN_METHOD)
+        with self.mutation_entry(spec, params, context, _scene_turn=turn) as permit:
+            record = self._scene_reservations.current_inspection(context)
+            if (record.check_only is not check_only or spec.modifies or spec.automatic_checkpoint
+                    or spec.checkpoint_owns_finalization or spec.remote):
+                raise BridgeError(ErrorCode.OPERATION_FAILED, "Inspection turn has no canonical readonly origin.")
+            entry = self.checkpoint_parameter_entry(spec, params)
+            self.check_admission_entry(spec, context)
+            scope, captured, deferred = self._capture_admission(spec, params, context)
+            try:
+                if deferred is not None:
+                    raise deferred
+                if captured:
+                    record.binding = context.checkpoint_admission
+                    record.inspection_entry_proof = record.binding.callback.entry_proof
+                prepared = self.prepare_call(spec.name, params, context)
+                self.check_checkpoint_parameter_entry(entry, params)
+                context.checkpoint_admission.check_after_read()
+                if check_only:
+                    self._scene_reservations.check_inspection_turn(turn)
+                    return None
+                result = self.invoke(prepared, params, context, _permit=permit)
+                context.checkpoint_admission.check_after_read()
+                check_final_mutation(context, INSPECTION_TURN_METHOD, expected_spec=spec)
+                return result
+            finally:
+                if captured:
+                    scope.__exit__(None, None, None)
 
     def invoke_scene_turn(self, turn: Any, params: Mapping[str, Any], context: ToolContext, manager: Any,
                           *, checkpoint_phase: Any = None, check_only: bool = False) -> Any:

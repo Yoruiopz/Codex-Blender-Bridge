@@ -11,9 +11,17 @@ from .permissions import Permission
 
 PREVIEW = "mesh.attribute_storage_prepare_preview"
 START = "mesh.attribute_storage_prepare_job_start"
+INSPECTION_START = "mesh.attribute_storage_prepare_inspection_start"
 PERMISSIONS = (Permission.INSPECT_SCENE, Permission.EDIT_MESH)
 MAX_SELECTED = 32
 POLICY = "OWNED_SINGLE_TO_ARRAY_ONE_ATTRIBUTE_PER_TURN_V1"
+INSPECTION_POLICY = "B2_PHASED_COHERENT_READ_ONLY_V1"
+
+
+def inspection_refused(reason, *, status="STALE"):
+    return BridgeError(ErrorCode.OPERATION_FAILED, "Mesh storage inspection did not produce coherent evidence.",
+                       {"reason": reason, "inspection_status": status, "write_authorized": False,
+                        "verification_required": True})
 
 
 def refused(reason):

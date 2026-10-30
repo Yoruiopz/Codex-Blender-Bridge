@@ -1017,6 +1017,13 @@ def storage_model(env, monkeypatch):
     from types import ModuleType
 
     effects = importlib.import_module(env.domain.__package__ + ".mesh_storage_effects")
+    # SourceSeal imports this module while the concrete source model below is
+    # installed. Load its genuine class alias first, so teardown cannot leave
+    # an original product factory permanently bound to the modeled driver.
+    storage_tools = importlib.import_module(env.domain.__package__ + ".tools.mesh_storage")
+    storage_driver = importlib.import_module(env.domain.__package__ + ".tools._mesh_storage_job")
+    assert storage_tools.MeshStorageDriver is storage_driver.MeshStorageDriver
+    assert storage_tools.driver_factory.__globals__["MeshStorageDriver"] is storage_driver.MeshStorageDriver
     driver_module = ModuleType(env.domain.__package__ + ".tools._mesh_storage_job")
     original_source = importlib.import_module(env.domain.__package__ + ".mesh_storage_source")
     original_seal = original_source.SourceSeal

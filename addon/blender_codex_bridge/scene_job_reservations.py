@@ -15,6 +15,7 @@ from .errors import BridgeError, ErrorCode
 from .scene_job_authority import bind_permissions
 
 TURN_METHOD = "jobs._scene_turn"
+INSPECTION_TURN_METHOD = "jobs._inspection_turn"
 SAFE_METHODS = ("bridge.status", "jobs.inspect", "jobs.list", "jobs.cancel", "toolsets.list",
                 "toolsets.enable", "toolsets.disable")
 
@@ -30,6 +31,12 @@ class SceneJobReservation:
 
 @dataclass(frozen=True, slots=True, eq=False)
 class SceneTurn:
+    pass
+
+
+@dataclass(frozen=True, slots=True, eq=False)
+class InspectionTurn:
+    """One read-only scheduler entry; never accepted by Scene write turns."""
     pass
 
 
@@ -67,9 +74,13 @@ class _Turn:
     scheduler_id: int | None = None
     check_only: bool = False
     permission_denial: BridgeError | None = None
+    inspection_entry_proof: Any = None
+    inspection_spec: tuple = ()
+    inspection_deadline: float = float("inf")
 
 
 _services: dict[int, tuple[SceneJobReservation, Any]] = {}
+_inspection_origins: dict[int, tuple] = {}
 
 
 def reservation_service(handle: SceneJobReservation):
@@ -86,6 +97,8 @@ class SceneJobReservations:
         self.owner: _Reservation | None = None
         self._retained: dict[int, _Reservation] = {}
         self._turns: dict[int, _Turn] = {}
+        self._inspection_turns: dict[int, _Turn] = {}
+        self._inspection_proofs: dict[int, tuple] = {}
         self._scheduler: tuple[int, Any] | None = None
         self._scheduler_busy = False
 
@@ -180,7 +193,7 @@ class SceneJobReservations:
             raise BridgeError(ErrorCode.TIMEOUT, "Scene job stopped before its next safe action.",
                               {"reason": record.stopped or job.cancel_reason, "job_deadline_expired": time.monotonic() >= job.deadline,
                                "job_cancel_requested": bool(record.stopped or job.cancel_reason), "execution_started": False})
-        turn = self._turns.get(id(record.turn))
+        turn = self._turns.get(id(record.turn)) or self._inspection_turns.get(id(record.turn))
         entries = self.registry._mutation_interlock._entries
         if turn is not None and turn.permission_denial is not None and entries and entries[-1] is turn.invocation:
             raise turn.permission_denial
@@ -213,7 +226,112 @@ class SceneJobReservations:
             raise refused("SCENE_START_NOT_DELIVERED")
         return record
 
+    def issue_inspection_turn(self, handle, phase, revision, *, origin=None, check_only=False):
+        owner = self._owner(handle)
+        self._check_scheduler(origin, owner)
+        self._live(owner)
+        if (owner.job.method != INSPECTION_TURN_METHOD or owner.job.pending is not None
+                or owner.turn is not None or owner.job.phase != phase or owner.job.revision != revision
+                or (not check_only and not owner.job.lifetime.delivered.is_set())):
+            raise refused("INSPECTION_TURN_SEQUENCE_CHANGED")
+        token = InspectionTurn()
+        owner.turn = token
+        row = _Turn(token, owner, phase, revision, scheduler_id=id(origin), check_only=check_only,
+                    inspection_deadline=min(owner.job.deadline, time.monotonic()+60.))
+        self._inspection_turns[id(token)] = row
+        _inspection_origins[id(token)] = (token, self, row, owner, self._inspection_turns,
+                                          self._inspection_proofs, self._scheduler, None)
+        return token
+
+    def _inspection_turn(self, token, _get=dict.get):
+        origin = _get(_inspection_origins, id(token))
+        if (type(token) is not InspectionTurn or type(origin) is not tuple or len(origin) != 8
+                or origin[0] is not token or origin[1] is not self):
+            raise refused("INSPECTION_TURN_LOST")
+        _token, _service, row, owner, turns, proofs, scheduler, entry_proof = origin
+        if (type(row) is not _Turn or type(owner) is not _Reservation or self._inspection_turns is not turns
+                or self._inspection_proofs is not proofs or self._scheduler is not scheduler
+                or _get(turns, id(token)) is not row or row.token is not token or row.owner is not owner
+                or owner.turn is not token):
+            raise refused("INSPECTION_TURN_ORIGIN_CHANGED")
+        if entry_proof is not None:
+            if _get(proofs, id(token)) is not entry_proof or row.inspection_entry_proof is not entry_proof:
+                raise refused("INSPECTION_ENTRY_PROVENANCE_CHANGED")
+            function, code, namespace, defaults, keywords, cells, contents = entry_proof
+            if (type(function) is not type(lambda: None) or function.__code__ is not code
+                    or function.__globals__ is not namespace or function.__defaults__ is not defaults
+                    or function.__kwdefaults__ is not keywords or function.__closure__ is not cells
+                    or len(cells or ()) != len(contents)
+                    or any(actual is not cell or actual.cell_contents is not value
+                           for actual, (cell, value) in zip(cells or (), contents, strict=True))):
+                raise refused("INSPECTION_ENTRY_SOURCE_CHANGED")
+            function()
+        self._live(row.owner)
+        if time.monotonic() >= row.inspection_deadline:
+            raise BridgeError(ErrorCode.TIMEOUT, "Inspection turn exceeded its unchanged 60-second bound.",
+                              {"reason": "INSPECTION_TURN_DEADLINE", "inspection_status": "INCOMPLETE", "ready": False})
+        if not row.check_only and not row.owner.job.lifetime.delivered.is_set():
+            raise refused("SCENE_START_NOT_DELIVERED")
+        return row
+
+    def current_inspection(self, context, _values=dict.values):
+        rows = []
+        for origin in _values(_inspection_origins):
+            if type(origin) is not tuple or len(origin) != 8 or origin[1] is not self:
+                continue
+            row = origin[2]
+            if type(row) is not _Turn:
+                raise refused("INSPECTION_TURN_ORIGIN_CHANGED")
+            if row.context is context:
+                rows.append(row)
+        if len(rows) != 1:
+            raise refused("INSPECTION_TURN_LOST")
+        self.check_inspection_turn(rows[0].token)
+        return rows[0]
+
+    def check_inspection_turn(self, token):
+        row = self._inspection_turn(token)
+        entries = self.registry._mutation_interlock._entries
+        if (not row.used or row.invocation is None or not entries or entries[-1] is not row.invocation
+                or row.owner.job.phase != row.phase or row.owner.job.revision != row.revision
+                or row.spec.modifies or row.spec.name != INSPECTION_TURN_METHOD
+                or any(getattr(row.spec, name) is not value for name, value in row.inspection_spec)):
+            raise refused("INSPECTION_TURN_LOST")
+        self.registry._mutation_interlock.check_owner(self.registry, row.spec, row.context)
+
+    def close_inspection_turn(self, token, _pop=dict.pop):
+        origin = _pop(_inspection_origins, id(token), None)
+        if type(origin) is not tuple or len(origin) != 8 or origin[0] is not token or origin[1] is not self:
+            return
+        _token, _service, row, owner, turns, proofs, _scheduler, _entry = origin
+        _pop(proofs, id(token), None)
+        _pop(turns, id(token), None)
+        if type(row) is _Turn and type(owner) is _Reservation and owner.turn is token:
+            owner.turn = None
+
+    def bind_inspection_proof(self, token, binding, proof, _get=dict.get):
+        origin = _get(_inspection_origins, id(token))
+        if (type(origin) is not tuple or len(origin) != 8 or origin[0] is not token or origin[1] is not self
+                or self._inspection_turns is not origin[4] or self._inspection_proofs is not origin[5]):
+            raise refused("INSPECTION_ENTRY_PROVENANCE_CHANGED")
+        row = _get(origin[4], id(token))
+        if (type(row) is not _Turn or row is not origin[2] or row.token is not token or not row.used or row.binding is not binding
+                or row.context is not binding.context or binding.callback.entry_proof is not proof):
+            raise refused("INSPECTION_ENTRY_PROVENANCE_CHANGED")
+        self._inspection_proofs[id(token)] = proof
+        row.inspection_entry_proof = proof
+        _inspection_origins[id(token)] = (*origin[:7], proof)
+
     def check_entry(self, spec: Any, context: Any, turn: SceneTurn | None = None) -> None:
+        if type(turn) is InspectionTurn:
+            row = self._inspection_turn(turn)
+            if (row.used or spec.name != INSPECTION_TURN_METHOD or spec.modifies or spec.remote
+                    or self.registry._tools.get(INSPECTION_TURN_METHOD) is not spec
+                    or row.owner.job.phase != row.phase or row.owner.job.revision != row.revision):
+                raise refused("INVALID_INSPECTION_TURN_ORIGIN")
+            row.used, row.context, row.spec = True, context, spec
+            row.inspection_spec = tuple((name, getattr(spec, name)) for name in type(spec).__slots__)
+            return
         if turn is not None:
             record = self._turn(turn)
             if (record.used or spec.name != TURN_METHOD or self.registry.get(TURN_METHOD) is not spec
@@ -222,7 +340,7 @@ class SceneJobReservations:
             record.used = True
             record.context, record.spec = context, spec
             return
-        if spec.name == TURN_METHOD:
+        if spec.name in {TURN_METHOD, INSPECTION_TURN_METHOD}:
             raise refused("INVALID_SCENE_TURN_ORIGIN")
         if not self._retained and self.owner is None:
             return
@@ -235,7 +353,7 @@ class SceneJobReservations:
         raise refused("SCENE_JOB_RESERVATION_BLOCKED", "A Scene job owns the current evaluation context; inspect or cancel it first.")
 
     def bind_invocation(self, token: SceneTurn, permit: Any, params: Any) -> None:
-        record = self._turn(token)
+        record = self._inspection_turn(token) if type(token) is InspectionTurn else self._turn(token)
         entries = self.registry._mutation_interlock._entries
         invocation = entries[-1] if entries else None
         if (not record.used or record.invocation is not None or invocation is None
@@ -245,6 +363,12 @@ class SceneJobReservations:
         record.params, record.invocation = params, invocation
 
     def scheduled(self, spec: Any, context: Any) -> bool:
+        if spec.name == INSPECTION_TURN_METHOD:
+            return any(type(origin) is tuple and len(origin) == 8 and origin[1] is self
+                       and type(origin[2]) is _Turn and origin[2].used and origin[2].spec is spec
+                       and origin[2].context is context and origin[2].invocation is not None
+                       and any(item is origin[2].invocation for item in self.registry._mutation_interlock._entries)
+                       for origin in dict.values(_inspection_origins))
         return any(record.used and record.spec is spec and record.context is context
                    and record.invocation is not None and any(item is record.invocation for item in self.registry._mutation_interlock._entries)
                    for record in self._turns.values())
@@ -261,9 +385,9 @@ class SceneJobReservations:
         """Require retained Scene proof only for the exact top TURN entry."""
         entries = self.registry._mutation_interlock._entries
         entry = entries[-1] if entries else None
-        if entry is None or entry.spec.name != TURN_METHOD:
+        if entry is None or entry.spec.name not in {TURN_METHOD, INSPECTION_TURN_METHOD}:
             return None
-        record = self.current(entry.context)
+        record = self.current_inspection(entry.context) if entry.spec.name == INSPECTION_TURN_METHOD else self.current(entry.context)
         if record.invocation is not entry or record.owner.authority is None:
             raise refused("SCENE_START_AUTHORITY_LOST")
         return record
@@ -273,7 +397,7 @@ class SceneJobReservations:
         owner = self.owner
         if owner is None or owner.turn is None:
             return None
-        record = self._turns.get(id(owner.turn))
+        record = self._inspection_turn(owner.turn) if type(owner.turn) is InspectionTurn else self._turns.get(id(owner.turn))
         if (record is None or record.owner is not owner or record.owner.authority is None
                 or not any(item is record.invocation for item in self.registry._mutation_interlock._entries)):
             return None
@@ -290,6 +414,12 @@ class SceneJobReservations:
         if denied:
             self.note_permission_denial(turn, BridgeError(ErrorCode.PERMISSION_DENIED, "Blender-side permission denied.",
                                                          {"required": required, "missing_permissions": denied}))
+
+    def check_permission_turn(self, token):
+        if type(token) is InspectionTurn:
+            self.check_inspection_turn(token)
+        else:
+            self.check_turn(token)
 
     def check_turn(self, token: SceneTurn) -> None:
         record = self._turn(token)
