@@ -109,6 +109,7 @@ NATIVE_SAVE_LARGE_SOURCES = (
 NATIVE_SAVE_LARGE_CASES = frozenset({"success_copy", "save_as", "save_current", "replace", "permission_denial",
     "cancel", "revoke", "disconnect", "manual_drift", "reader_failure"})
 RUNTIME_BULK_CASE = "runtime_metadata_bulk_probe"
+CLOTH_G0_CATALOG_CASE = "cloth_storage_g0_catalog"
 RUNTIME_BULK_BUILDS = {
     "050c02562f81fe80ba616a80198fa02d381e60f8b61b8d39add881f4bca0d7d8": ("4.5.14 LTS", "62c1db4208e8"),
     "bafec183e960819c76fe213c000cdb2284c53a87ef6791812f8728b51f07145b": ("5.2.2 LTS", "d13f752e3b9c"),
@@ -116,6 +117,7 @@ RUNTIME_BULK_BUILDS = {
 
 CASES = {
     "storage_snapshot_root_approval": ("blender_storage_root_approval_smoke.py", "BLENDER_STORAGE_ROOT_APPROVAL_OK "),
+    CLOTH_G0_CATALOG_CASE: ("blender_cloth_storage_g0_catalog_smoke.py", "BLENDER_CLOTH_G0_CATALOG_OK "),
     "storage_snapshot_runtime_context": ("blender_storage_snapshot_adapter_smoke.py", "BLENDER_STORAGE_RUNTIME_JOBS_CONTEXT_OK "),
     "system_storage_snapshot": ("blender_system_storage_snapshot_smoke.py", "BLENDER_SYSTEM_STORAGE_SNAPSHOT_OK "),
     "storage_snapshot_adapter": ("blender_storage_snapshot_adapter_smoke.py", "BLENDER_STORAGE_ADAPTER_OK "),
@@ -304,6 +306,7 @@ PAIRED_RECOVERY_PROFILES = {
 }
 OPT_IN_CASES = set(PHASED_CASES)
 OPT_IN_CASES.add("current_pixels_lifecycle_census")
+OPT_IN_CASES.add(CLOTH_G0_CATALOG_CASE)
 OPT_IN_CASES.add("current_pixels_source_graph")
 OPT_IN_CASES.add("surface_projection_probe")
 OPT_IN_CASES.add("simulation_cache_probe")
@@ -4562,9 +4565,190 @@ def _run_runtime_bulk_probe(blender: Path, output: Path, timeout: int) -> dict:
     return result
 
 
+def _cloth_g0_catalog_validate(payload, temporary, token, pid, binary, sources):
+    """Validate a bounded catalog DIAGNOSTIC, never a complete G0 proof."""
+    from scripts import blender_cloth_storage_g0_catalog_smoke as fixture
+    try:
+        version, build = RUNTIME_BULK_BUILDS[binary["sha256"]]
+        if (type(payload) is not dict or set(payload) != {"profile", "completed", "process_instance", "process_id",
+                "blender_version", "source_build", "source_snapshot_sha256", "full_receipt"}
+                or payload["profile"] != fixture.PROFILE or payload["completed"] is not True
+                or payload["process_instance"] != token or type(payload["process_id"]) is not int or payload["process_id"] != pid
+                or payload["source_build"] != build or payload["blender_version"] not in {version, version.removesuffix(" LTS")}
+                or payload["full_receipt"]["path"] != str(temporary / fixture.REPORT_NAME)):
+            return False
+        raw = _domain_binding(payload["full_receipt"], temporary, fixture.MAX_REPORT, capture=True)
+        full = _native_save_json(raw)
+        if (type(full) is not dict or set(full) != {"schema", "profile", "completed", "process_instance", "process_id",
+                "blender_version", "source_build", "source_fingerprints", "source_snapshot_sha256", "catalogs",
+                "legacy_nodes", "configuration_rows", "refusals", "configuration_attempts", "plan_completed", "coverage", "effects", "seconds"}
+                or full.get("schema") != "cloth_g0_catalog_research_v1"
+                or any(type(full.get(key)) is not type(payload[key]) or full.get(key) != payload[key]
+                       for key in payload if key != "full_receipt")
+                or full.get("source_fingerprints") != sources or fixture.fingerprints(ROOT) != sources
+                or payload["source_snapshot_sha256"] != hashlib.sha256(fixture.canonical(sources)).hexdigest()
+                or full.get("legacy_nodes") != sorted(fixture.LEGACY_NODES)
+                or type(full.get("configuration_attempts")) is not int
+                or not 1 <= full["configuration_attempts"] <= fixture.MAX_CONFIGURATIONS
+                or type(full.get("plan_completed")) is not bool
+                or type(full.get("seconds")) not in {int, float} or not math.isfinite(full["seconds"])
+                or not 0 <= full["seconds"] <= 300):
+            return False
+        coverage = {"method": "DEFAULT_PLUS_ENUM_BOOL_ONE_FIELD_AT_A_TIME", "complete": False,
+            "gaps": list(fixture.GAPS), "instance_getters_qualified": False, "product_qualified": False, "windows_qualified": False}
+        effects = {"owned_nodegroup_authoring": True, "socket_default_values_read": False,
+            "image_pixels_read": False, "frame_evaluation": False, "project_save": False,
+            "preferences_access": False, "runtime_started": False}
+        if (type(full.get("coverage")) is not dict or full["coverage"] != coverage
+                or any(type(full["coverage"].get(key)) is not type(value) for key, value in coverage.items())
+                or type(full.get("effects")) is not dict or full["effects"] != effects
+                or any(full["effects"].get(key) is not value for key, value in effects.items())):
+            return False
+        catalogs, rows, refusals = full.get("catalogs"), full.get("configuration_rows"), full.get("refusals")
+        required = set((*fixture.LEGACY_NODES, *fixture.TREE_TYPES, *fixture.OWNER_TYPES, *fixture.INTERFACE_TYPES, *fixture.SEED_TYPES))
+        if (type(catalogs) is not dict or not required <= set(catalogs) or len(catalogs) > fixture.MAX_CLASSES
+                or type(rows) is not list or not 1 <= len(rows) <= fixture.MAX_CONFIGURATIONS
+                or type(refusals) is not list or len(refusals) > 65536):
+            return False
+        for name, catalog in catalogs.items():
+            if type(name) is not str or not 1 <= len(name) <= 128 or type(catalog) is not dict:
+                return False
+            if catalog == {"present": False} and catalog["present"] is False:
+                continue
+            if (set(catalog) != {"present", "identifier", "base", "properties", "functions", "sha256"}
+                    or catalog["present"] is not True or catalog["identifier"] != name
+                    or type(catalog["properties"]) is not list or len(catalog["properties"]) > fixture.MAX_PROPERTIES
+                    or type(catalog["functions"]) is not list or len(catalog["functions"]) > 128
+                    or any(type(fn) is not str or len(fn) > 128 for fn in catalog["functions"])
+                    or not _domain_hex(catalog["sha256"])):
+                return False
+            plain = {key: value for key, value in catalog.items() if key != "sha256"}
+            if hashlib.sha256(fixture.canonical(plain)).hexdigest() != catalog["sha256"]:
+                return False
+            names = set()
+            for prop in catalog["properties"]:
+                base_keys = {"identifier", "type", "readonly", "runtime", "registered", "array_length", "fixed_type", "srna"}
+                if (type(prop) is not dict or type(prop.get("identifier")) is not str
+                        or not 1 <= len(prop["identifier"]) <= 128 or prop["identifier"] in names
+                        or prop.get("type") not in {"BOOLEAN", "INT", "FLOAT", "STRING", "ENUM", "POINTER", "COLLECTION"}
+                        or any(type(prop.get(key)) is not bool for key in ("readonly", "runtime", "registered"))
+                        or set(prop) != base_keys | ({"enum_flag", "enum_identifiers"} if prop["type"] == "ENUM" else set())
+                        or (prop["array_length"] is not None and
+                            (type(prop["array_length"]) is not int or not 0 <= prop["array_length"] <= 1048576))
+                        or any(prop[key] is not None and (type(prop[key]) is not str or not 1 <= len(prop[key]) <= 128)
+                               for key in ("fixed_type", "srna"))):
+                    return False
+                names.add(prop["identifier"])
+                if prop["type"] == "ENUM" and (type(prop["enum_flag"]) is not bool
+                        or type(prop["enum_identifiers"]) is not list or len(prop["enum_identifiers"]) > fixture.MAX_ENUM_ITEMS
+                        or any(type(value) is not str or not 1 <= len(value) <= 128 for value in prop["enum_identifiers"])
+                        or len(set(prop["enum_identifiers"])) != len(prop["enum_identifiers"])):
+                    return False
+        seen = set()
+        for row in rows:
+            if (type(row) is not dict or set(row) != {"tree", "node", "field", "value", "inputs", "outputs"}
+                    or row["tree"] not in fixture.TREE_TYPES or row["node"] not in fixture.LEGACY_NODES
+                    or catalogs[row["node"]].get("present") is not True or catalogs[row["tree"]].get("present") is not True
+                    or type(row["field"]) not in {str, type(None)} or type(row["value"]) not in {str, bool, type(None)}
+                    or (row["field"] is None) != (row["value"] is None)):
+                return False
+            identity = fixture.canonical([row[key] for key in ("tree", "node", "field", "value")])
+            if identity in seen:
+                return False
+            seen.add(identity)
+            for direction in ("inputs", "outputs"):
+                if type(row[direction]) is not list or len(row[direction]) > fixture.MAX_SOCKETS:
+                    return False
+                for socket in row[direction]:
+                    if (type(socket) is not dict or set(socket) != {"class", "identifier", "name", "default_property", "default_value_read"}
+                            or socket["default_value_read"] is not False or socket["class"] not in catalogs
+                            or catalogs[socket["class"]].get("present") is not True
+                            or any(type(socket[key]) is not str or len(socket[key]) > 256 for key in ("identifier", "name"))):
+                        return False
+                    expected = next((prop for prop in catalogs[socket["class"]]["properties"] if prop["identifier"] == "default_value"), None)
+                    if fixture.canonical(socket["default_property"]) != fixture.canonical(expected):
+                        return False
+        reasons = {"ENUM_FLAG_POWERSET_UNOBSERVED", "DYNAMIC_ENUM_ITEMS_UNOBSERVED", "NODE_CREATE_REFUSED",
+                   "CONFIGURATION_SET_REFUSED", "CONFIGURATION_CAP"}
+        for row in refusals:
+            if (type(row) is not dict or row.get("reason") not in reasons or row.get("tree") not in fixture.TREE_TYPES
+                    or row.get("node") not in fixture.LEGACY_NODES or set(row) - {"tree", "node", "field", "value", "reason", "error_type"}):
+                return False
+        return (full["configuration_attempts"] == len(rows) + sum(row["reason"] == "CONFIGURATION_SET_REFUSED" for row in refusals)
+                and full["plan_completed"] is not any(row["reason"] == "CONFIGURATION_CAP" for row in refusals))
+    except (OSError, ValueError, TypeError, KeyError, IndexError, RecursionError, UnicodeError):
+        return False
+
+
+def _run_cloth_g0_catalog(blender: Path, output: Path, timeout: int) -> dict:
+    from scripts import blender_cloth_storage_g0_catalog_smoke as fixture
+    started = time.monotonic()
+    result = {"case": CLOTH_G0_CATALOG_CASE, "status": "failed", "exit_code": None,
+        "execution_mode": "background", "qualification_scope": {"catalog_diagnostic_only": True,
+            "coverage_complete": False, "product_qualified": False, "instance_getters_qualified": False,
+            "windows_qualified": False}}
+    try:
+        display = _domain_display()
+        executable = blender.resolve(strict=True)
+        _raw, binary = _domain_regular(executable, executable.parent, 1024**3)
+        if binary["sha256"] not in RUNTIME_BULK_BUILDS:
+            raise ValueError("G0_CATALOG_BINARY_UNSUPPORTED")
+        sources = fixture.fingerprints(ROOT)
+        temporary = output / (CLOTH_G0_CATALOG_CASE + "-temp")
+        temporary.mkdir(mode=0o700)
+        report = temporary / fixture.REPORT_NAME
+        token = uuid.uuid4().hex
+        environment = {key: os.environ[key] for key in ("PATH", "LANG", "LC_ALL", "DISPLAY", "XAUTHORITY",
+            "LD_LIBRARY_PATH", "LIBGL_ALWAYS_SOFTWARE", "GALLIUM_DRIVER", "MESA_LOADER_DRIVER_OVERRIDE", "LP_NUM_THREADS")
+            if key in os.environ}
+        for key in ("HOME", "BLENDER_USER_CONFIG", "BLENDER_USER_SCRIPTS", "BLENDER_USER_DATAFILES",
+                    "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_RUNTIME_DIR"):
+            directory = temporary / ("worker-" + key.lower())
+            directory.mkdir(mode=0o700)
+            environment[key] = str(directory)
+        working = temporary / "working"
+        working.mkdir(mode=0o700)
+        environment.update(TEMP=str(temporary), TMP=str(temporary), TMPDIR=str(temporary),
+            BRIDGE_TEST_PROCESS_TOKEN=token, GSETTINGS_BACKEND="memory", NO_AT_BRIDGE="1")
+        command = [str(executable), "--background", "--factory-startup", "--disable-autoexec", "--python-exit-code", "1",
+            "--python-expr", "import sys; sys.dont_write_bytecode = True", "--python",
+            str(ROOT / "scripts" / CASES[CLOTH_G0_CATALOG_CASE][0]), "--", "--bridge-report", str(report)]
+        log = output / (CLOTH_G0_CATALOG_CASE + ".log")
+        result.update(command=command, log=str(log), binary=binary, source_fingerprints=sources)
+        with log.open("wb") as stream:
+            process = subprocess.Popen(command, cwd=working, env=environment, stdout=stream,
+                                       stderr=subprocess.STDOUT, start_new_session=True)
+            result["process_id"] = process.pid
+            try:
+                result["exit_code"] = process.wait(timeout=min(timeout, 300))
+            except subprocess.TimeoutExpired:
+                with suppress(ProcessLookupError):
+                    os.killpg(process.pid, signal.SIGKILL)
+                process.wait(timeout=10)
+                result["status"] = "timeout"
+        _domain_binding(binary, executable.parent, 1024**3)
+        if fixture.fingerprints(ROOT) != sources or _domain_display() != display:
+            raise ValueError("G0_CATALOG_SOURCE_OR_DISPLAY_CHANGED")
+        raw, _binding = _domain_regular(log, output, 1024**2, capture=True)
+        marker = CASES[CLOTH_G0_CATALOG_CASE][1]
+        candidates = [line[len(marker):] for line in raw.decode("utf-8", errors="strict").splitlines() if line.startswith(marker)]
+        payload = _native_save_json(candidates[0].encode()) if len(candidates) == 1 else None
+        result["evidence"] = payload
+        accepted = _cloth_g0_catalog_validate(payload, temporary, token, process.pid, binary, sources)
+        result["retained_evidence_valid"] = accepted
+        if result["exit_code"] == 0 and accepted:
+            result["status"] = "passed"
+    except (OSError, ValueError, TypeError, KeyError, IndexError, UnicodeError, RecursionError):
+        result["admission_error"] = "Cloth G0 catalog diagnostic refused; inspect owned log/evidence"
+    result["duration_seconds"] = round(time.monotonic() - started, 3)
+    return result
+
+
 def run_case(blender: Path, case: str, output: Path, timeout: int) -> dict:
     if case == STORAGE_ROOT_APPROVAL_CASE:
         return _run_storage_root_approval_case(blender, output, timeout)
+    if case == CLOTH_G0_CATALOG_CASE:
+        return _run_cloth_g0_catalog(blender, output, timeout)
     if case == STORAGE_RUNTIME_CONTEXT_CASE:
         return _run_storage_runtime_context_case(blender, output, timeout)
     if case == STORAGE_DISPATCH_CASE:

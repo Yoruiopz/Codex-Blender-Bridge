@@ -12,6 +12,216 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def g0_catalog_model(runner, monkeypatch, tmp_path):
+    from scripts import blender_cloth_storage_g0_catalog_smoke as fixture
+    source = tmp_path / "source"
+    for name in ("scripts/blender_cloth_storage_g0_catalog_smoke.py", "scripts/run_blender_checks.py",
+                 "addon/blender_codex_bridge/current_pixels_graph.py"):
+        path = source / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# bounded catalog runner model\n")
+    monkeypatch.setattr(runner, "ROOT", source)
+    binary = tmp_path / "blender binary"
+    binary.write_bytes(b"modeled binary, never launched")
+    checksum = hashlib.sha256(binary.read_bytes()).hexdigest()
+    monkeypatch.setattr(runner, "RUNTIME_BULK_BUILDS", {checksum: ("5.2.2 LTS", "d13f752e3b9c")})
+    monkeypatch.setattr(runner, "_domain_display", lambda: {"owned_model": True})
+    output = tmp_path / "output"
+    output.mkdir()
+
+    def evidence(command, environment, pid=77):
+        report = Path(command[command.index("--bridge-report") + 1])
+        catalogs = {name: {"present": False} for name in sorted(set((*fixture.LEGACY_NODES,
+            *fixture.SEED_TYPES, *fixture.TREE_TYPES, *fixture.OWNER_TYPES, *fixture.INTERFACE_TYPES)))}
+        default = {"identifier": "default_value", "type": "FLOAT", "readonly": False, "runtime": False,
+                   "registered": False, "array_length": 0, "fixed_type": None, "srna": None}
+        for name, properties in (("ShaderNodeTree", []), ("ShaderNodeMath", []), ("NodeSocketFloat", [default])):
+            row = {"present": True, "identifier": name, "base": None, "properties": properties, "functions": []}
+            catalogs[name] = {**row, "sha256": hashlib.sha256(fixture.canonical(row)).hexdigest()}
+        sources = fixture.fingerprints(source)
+        full = {"schema": "cloth_g0_catalog_research_v1", "profile": fixture.PROFILE, "completed": True,
+            "process_instance": environment["BRIDGE_TEST_PROCESS_TOKEN"], "process_id": pid,
+            "blender_version": "5.2.2", "source_build": "d13f752e3b9c", "source_fingerprints": sources,
+            "source_snapshot_sha256": hashlib.sha256(fixture.canonical(sources)).hexdigest(), "catalogs": catalogs,
+            "legacy_nodes": sorted(fixture.LEGACY_NODES), "configuration_attempts": 1, "plan_completed": True,
+            "configuration_rows": [{"tree": "ShaderNodeTree", "node": "ShaderNodeMath", "field": None, "value": None,
+                "inputs": [{"class": "NodeSocketFloat", "name": "Value", "identifier": "Value",
+                            "default_property": default.copy(), "default_value_read": False}], "outputs": []}],
+            "refusals": [], "coverage": {"method": "DEFAULT_PLUS_ENUM_BOOL_ONE_FIELD_AT_A_TIME", "complete": False,
+                "gaps": list(fixture.GAPS), "instance_getters_qualified": False, "product_qualified": False, "windows_qualified": False},
+            "effects": {"owned_nodegroup_authoring": True, "socket_default_values_read": False, "image_pixels_read": False,
+                "frame_evaluation": False, "project_save": False, "preferences_access": False, "runtime_started": False},
+            "seconds": 1.}
+        compact = {key: full[key] for key in ("profile", "completed", "process_instance", "process_id",
+            "blender_version", "source_build", "source_snapshot_sha256")}
+        return report, full, compact
+    return fixture, binary, output, evidence
+
+
+def g0_catalog_write(fixture, report, full, compact):
+    raw = fixture.canonical(full)
+    report.write_bytes(raw)
+    compact["full_receipt"] = {"path": str(report), "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}
+
+
+@pytest.mark.parametrize("timeout", [10, 1200])
+def test_cloth_g0_catalog_isolated_background_diagnostic_retains_noncoverage(runner, monkeypatch, tmp_path, timeout):
+    fixture, binary, output, evidence = g0_catalog_model(runner, monkeypatch, tmp_path)
+    monkeypatch.setenv("UNRELATED_G0_CREDENTIAL", "not-a-secret")
+    monkeypatch.setenv("PYTHONPATH", "/foreign/python")
+    calls = []
+    def launch(command, **kwargs):
+        calls.append(command)
+        assert command.count("--background") == command.count("--factory-startup") == command.count("--disable-autoexec") == 1
+        environment = kwargs["env"]
+        assert "UNRELATED_G0_CREDENTIAL" not in environment and "PYTHONPATH" not in environment
+        temporary = Path(environment["TEMP"])
+        assert temporary.stat().st_mode & 0o777 == 0o700 and kwargs["cwd"] == temporary / "working"
+        assert all(Path(environment[key]).is_relative_to(temporary) for key in
+                   ("HOME", "BLENDER_USER_CONFIG", "BLENDER_USER_SCRIPTS", "BLENDER_USER_DATAFILES"))
+        report, full, compact = evidence(command, environment)
+        g0_catalog_write(fixture, report, full, compact)
+        kwargs["stdout"].write((fixture.MARKER + json.dumps(compact) + "\n").encode())
+        return SimpleNamespace(pid=77, wait=lambda **kw: 0 if kw["timeout"] == min(timeout, 300) else pytest.fail("wrong timeout"))
+    monkeypatch.setattr(runner.subprocess, "Popen", launch)
+    assert len(fixture.LEGACY_NODES) == 84
+    assert runner.CLOTH_G0_CATALOG_CASE in runner.OPT_IN_CASES
+    assert runner.CLOTH_G0_CATALOG_CASE not in runner.INTERACTIVE_CASES | set(runner.PHASED_CASES)
+    result = runner.run_case(binary, runner.CLOTH_G0_CATALOG_CASE, output, timeout)
+    assert len(calls) == 1 and result["status"] == "passed" and result["retained_evidence_valid"] is True
+    assert result["qualification_scope"] == {"catalog_diagnostic_only": True, "coverage_complete": False,
+        "product_qualified": False, "instance_getters_qualified": False, "windows_qualified": False}
+
+
+@pytest.mark.parametrize("fault", ["complete", "complete_integer", "product", "getter", "gap", "method", "pixels",
+    "default_value_read", "default_property", "default_bool_type", "node_class_absent", "class_digest", "missing_class",
+    "extra_top_claim", "source", "token", "pid", "build", "count", "overcap", "plan_completed", "duplicate_config",
+    "refusal", "report_path", "report_hash", "source_drift", "duplicate_marker", "exit"])
+def test_cloth_g0_catalog_rejects_foreign_incomplete_or_overclaimed_diagnostic(runner, monkeypatch, tmp_path, fault):
+    fixture, binary, output, evidence = g0_catalog_model(runner, monkeypatch, tmp_path)
+    def launch(command, **kwargs):
+        report, full, compact = evidence(command, kwargs["env"])
+        if fault in {"complete", "complete_integer", "product", "getter", "gap", "method"}:
+            key = {"complete_integer": "complete", "product": "product_qualified", "getter": "instance_getters_qualified",
+                   "gap": "gaps"}.get(fault, fault)
+            full["coverage"][key] = 0 if fault == "complete_integer" else [] if fault == "gap" else "foreign" if fault == "method" else True
+        elif fault == "pixels":
+            full["effects"]["image_pixels_read"] = True
+        elif fault == "default_value_read":
+            full["configuration_rows"][0]["inputs"][0]["default_value_read"] = True
+        elif fault == "default_property":
+            full["configuration_rows"][0]["inputs"][0]["default_property"] = None
+        elif fault == "default_bool_type":
+            full["configuration_rows"][0]["inputs"][0]["default_property"]["readonly"] = 0
+        elif fault == "node_class_absent":
+            full["catalogs"]["ShaderNodeMath"] = {"present": False}
+        elif fault == "class_digest":
+            full["catalogs"]["NodeSocketFloat"]["sha256"] = "0" * 64
+        elif fault == "missing_class":
+            full["catalogs"].pop("GeometryNodeTree")
+        elif fault == "extra_top_claim":
+            full["G0_qualified"] = True
+        elif fault == "source":
+            full["source_fingerprints"] = {}
+        elif fault == "count":
+            full["configuration_attempts"] = True
+        elif fault == "overcap":
+            full["configuration_attempts"] = fixture.MAX_CONFIGURATIONS + 1
+        elif fault == "plan_completed":
+            full["plan_completed"] = False
+        elif fault == "duplicate_config":
+            full["configuration_rows"] *= 2
+            full["configuration_attempts"] = 2
+        elif fault == "refusal":
+            full["refusals"] = [{"tree": "ShaderNodeTree", "node": "ShaderNodeMath", "reason": "silently_skipped"}]
+        g0_catalog_write(fixture, report, full, compact)
+        if fault in {"token", "pid", "build"}:
+            compact[{"token": "process_instance", "pid": "process_id", "build": "source_build"}[fault]] = 99 if fault == "pid" else "foreign"
+        elif fault == "report_path":
+            compact["full_receipt"]["path"] = str(report.with_name("foreign.json"))
+        elif fault == "report_hash":
+            compact["full_receipt"]["sha256"] = "0" * 64
+        elif fault == "source_drift":
+            (runner.ROOT / "addon/blender_codex_bridge/current_pixels_graph.py").write_text("# changed\n")
+        line = (fixture.MARKER + json.dumps(compact) + "\n").encode()
+        kwargs["stdout"].write(line * (2 if fault == "duplicate_marker" else 1))
+        return SimpleNamespace(pid=77, wait=lambda **_kwargs: 1 if fault == "exit" else 0)
+    monkeypatch.setattr(runner.subprocess, "Popen", launch)
+    assert runner.run_case(binary, runner.CLOTH_G0_CATALOG_CASE, output, 300)["status"] == "failed"
+
+
+def test_cloth_g0_catalog_configuration_plan_is_explicitly_oat_and_retains_dynamic_gaps():
+    from scripts import blender_cloth_storage_g0_catalog_smoke as fixture
+    def prop(name, kind, *, flags=False, options=()):
+        return SimpleNamespace(identifier=name, type=kind, is_readonly=False, is_runtime=False, array_length=0,
+            is_enum_flag=flags, enum_items=[SimpleNamespace(identifier=value) for value in options])
+    plan, skipped = fixture.configurations([prop("use_clamp", "BOOLEAN"), prop("operation", "ENUM", options=("ADD", "MULTIPLY")),
+        prop("flags", "ENUM", flags=True), prop("dynamic", "ENUM")])
+    assert plan == [(None, None), ("use_clamp", False), ("use_clamp", True), ("operation", "ADD"), ("operation", "MULTIPLY")]
+    assert skipped == [{"field": "flags", "reason": "ENUM_FLAG_POWERSET_UNOBSERVED"},
+                       {"field": "dynamic", "reason": "DYNAMIC_ENUM_ITEMS_UNOBSERVED"}]
+    assert "CONFIGURATION_CARTESIAN_PRODUCT_UNOBSERVED" in fixture.GAPS
+
+
+def test_cloth_g0_catalog_caps_retain_every_omitted_configuration_and_release_owned_groups(monkeypatch):
+    from scripts import blender_cloth_storage_g0_catalog_smoke as fixture
+    kinds = ("ShaderNodeMath", "GeometryNodeSwitch")
+    monkeypatch.setattr(fixture, "LEGACY_NODES", frozenset(kinds))
+    monkeypatch.setattr(fixture, "TREE_TYPES", ("ShaderNodeTree",))
+    for name in ("OWNER_TYPES", "INTERFACE_TYPES", "SEED_TYPES"):
+        monkeypatch.setattr(fixture, name, ())
+    monkeypatch.setattr(fixture, "MAX_CONFIGURATIONS", 1)
+    flag = SimpleNamespace(identifier="use_clamp", type="BOOLEAN", is_readonly=False, is_runtime=False,
+        is_registered=False, array_length=0)
+    classes = {name: type(name, (), {"bl_rna": SimpleNamespace(identifier=name, base=None,
+        properties=[flag] if name in kinds else [], functions=[])}) for name in (*kinds, "ShaderNodeTree")}
+    live_nodes, removed_groups, created_groups = [], [], []
+    def new_node(name):
+        node = classes[name]()
+        node.inputs, node.outputs = [], []
+        live_nodes.append(node)
+        return node
+    def new_group(name, kind):
+        tree = SimpleNamespace(name=name, kind=kind, nodes=SimpleNamespace(new=new_node, remove=live_nodes.remove))
+        created_groups.append(tree)
+        return tree
+    fake = SimpleNamespace(types=SimpleNamespace(**classes), data=SimpleNamespace(node_groups=SimpleNamespace(
+        new=new_group, remove=removed_groups.append)))
+    _catalogs, rows, refusals, attempts, completed = fixture.collect(fake, SimpleNamespace(NODE_TYPES=frozenset(kinds)))
+    assert attempts == len(rows) == 1 and completed is False
+    omitted = [row for row in refusals if row["reason"] == "CONFIGURATION_CAP"]
+    assert len(omitted) == 5
+    assert {row["node"] for row in omitted} == set(kinds)
+    assert {row["value"] for row in omitted} == {None, False, True}
+    assert live_nodes == [] and removed_groups == created_groups
+
+
+def test_cloth_g0_catalog_import_is_inert(monkeypatch):
+    import runpy
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("Catalog fixture import performed an operation")
+    monkeypatch.setattr(subprocess, "Popen", forbidden)
+    monkeypatch.setattr(Path, "mkdir", forbidden)
+    monkeypatch.setattr(Path, "write_bytes", forbidden)
+    monkeypatch.setattr(Path, "write_text", forbidden)
+    namespace = runpy.run_path(str(ROOT / "scripts/blender_cloth_storage_g0_catalog_smoke.py"))
+    assert callable(namespace["main"]) and "bpy" not in namespace
+
+
+def test_cloth_g0_catalog_timeout_kills_only_its_owned_process_group(runner, monkeypatch, tmp_path):
+    _fixture, binary, output, _evidence = g0_catalog_model(runner, monkeypatch, tmp_path)
+    waits, killed = [], []
+    def wait(*, timeout):
+        waits.append(timeout)
+        if len(waits) == 1:
+            raise subprocess.TimeoutExpired("owned catalog model", timeout)
+        return -9
+    monkeypatch.setattr(runner.subprocess, "Popen", lambda *_args, **_kwargs: SimpleNamespace(pid=77, wait=wait))
+    monkeypatch.setattr(runner.os, "killpg", lambda pid, signal: killed.append((pid, signal)))
+    result = runner.run_case(binary, runner.CLOTH_G0_CATALOG_CASE, output, 1200)
+    assert result["status"] == "timeout" and waits == [300, 10] and killed == [(77, runner.signal.SIGKILL)]
+
+
 def native_save_large_root(runner, monkeypatch, tmp_path):
     source = tmp_path / "source"
     for name in runner.NATIVE_SAVE_LARGE_SOURCES:
