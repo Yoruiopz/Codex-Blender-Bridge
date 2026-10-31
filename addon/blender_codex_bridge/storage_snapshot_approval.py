@@ -396,7 +396,7 @@ def _route(bpy, declaration):
     values = (prop.identifier, prop.type, prop.is_readonly, prop.is_runtime, prop.is_registered, prop.subtype)
     if (any(type(values[index]) is not str for index in (0, 1, 5))
             or any(type(values[index]) is not bool for index in (2, 3, 4))
-            or values != ("project_directory", "STRING", False, True, True, "DIR_PATH")):
+            or values != ("project_directory", "STRING", False, True, False, "DIR_PATH")):
         error = refused("ROOT_APPROVAL_REGISTERED_FIELD_CHANGED")
         try:  # noqa: SIM105 - preserve primary without a context-manager dispatch.
             error.context["registered_property_clause"] = _registered_property_clause(prop, values)

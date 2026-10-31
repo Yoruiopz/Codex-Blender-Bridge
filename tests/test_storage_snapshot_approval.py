@@ -324,6 +324,7 @@ def native_route_model(addon_package, monkeypatch):
     rnas["Addon"].properties["preferences"] = metadata("preferences", "Pointer", target="AddonPreferences")
     rnas["BlenderCodexBridgePreferences"].properties["project_directory"] = metadata(
         "project_directory", "String", readonly=False, registered=True)
+    rnas["BlenderCodexBridgePreferences"].properties["project_directory"].is_registered = False
     def pointer(value):
         return id(value)
     def native_get(value, name):
@@ -653,7 +654,8 @@ def test_stock_meta_source_rejects_nonclass_base_with_typed_refusal(approval):
 
 
 @pytest.mark.parametrize("field,value", [("identifier", "foreign"), ("type", "BOOLEAN"), ("is_readonly", True),
-    ("is_runtime", False), ("is_registered", False), ("subtype", "NONE")])
+    ("is_runtime", False), ("is_registered", True), ("is_registered", 0), ("is_registered", 1),
+    ("is_registered", None), ("subtype", "NONE")])
 def test_registered_property_clause_retains_actual_metadata_without_admitting_it(native_route_model, field, value):
     env = native_route_model
     prop = env.rnas["BlenderCodexBridgePreferences"].properties["project_directory"]
@@ -663,7 +665,8 @@ def test_registered_property_clause_retains_actual_metadata_without_admitting_it
     assert failure.value.context["reason"] == "ROOT_APPROVAL_REGISTERED_FIELD_CHANGED"
     clause = failure.value.context["registered_property_clause"]
     assert clause["exact_native_kind"] is True and clause["property_kind"] == "StringProperty"
-    assert clause["fields"][field] == {"value": value, "kind": type(value).__name__, "truncated": False}
+    literal = value if type(value) in (str, bool) else None
+    assert clause["fields"][field] == {"value": literal, "kind": type(value).__name__, "truncated": False}
     assert len(env.calls) == 3  # The root value getter is never reached.
 
 
@@ -681,7 +684,7 @@ def test_registered_property_clause_preserves_refusal_and_never_formats_foreign_
                 pytest.fail("foreign metadata getter")
         prop.is_registered = Foreign()
     else:
-        prop.is_registered = False
+        prop.is_registered = True
         def unavailable(*_args):
             raise MemoryError("diagnostic allocation model")
         monkeypatch.setattr(env.module, "_registered_property_clause", unavailable)
