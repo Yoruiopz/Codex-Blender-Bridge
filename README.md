@@ -4,14 +4,14 @@ Let Codex inspect and edit Blender through local, permission-controlled MCP tool
 Work with objects, meshes, materials, UVs, rigs, animation, lights and renders, with
 status, permissions and recovery controls inside Blender.
 
-**[0.9.1 alpha candidate — qualification pending](docs/releases/0.9.1.md)** ·
+**[0.9.1 alpha — qualification requirements](docs/releases/0.9.1.md)** ·
 [Published 0.9.0 alpha](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.9.0) ·
 [GitHub releases](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases) ·
 [Install](#install--no-source-build-needed) · [Troubleshooting](docs/troubleshooting.md) ·
 [Contribute](CONTRIBUTING.md)
 
 This is **alpha software**. Try it on a disposable scene or a copy of your project.
-The 0.9.1 candidate retains the published **270 MCP tools** and strengthens runtime
+The 0.9.1 alpha retains the published **270 MCP tools** and strengthens runtime
 lifecycle and context checks. Its acceptance target is one installed static asset
 carried through creation, transform, structural inspection, geometry preview,
 approved Copy New save and fresh-reader verification. Exact native, installed,
@@ -22,8 +22,12 @@ excluded from both public registries. Their implementation and explicit developm
 tests remain preserved. The full artist-workflow target is deferred for this
 release pass and remains unfinished.
 
-Use matching accepted [0.9.0 artifacts](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.9.0)
-until 0.9.1 has a published acceptance record. The
+The installation instructions below target **0.9.1**. Use those artifacts only once the
+[0.9.1 release page](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.9.1)
+identifies the accepted commit, package checksums and qualification evidence. Until
+that record is published, 0.9.1 remains a candidate; matching accepted
+[0.9.0 artifacts](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.9.0)
+remain available. The
 [0.9.0 evidence](docs/releases/0.9.0.md) applies to those exact bytes; it does not
 qualify this candidate. Previous releases and their separate evidence remain available.
 
@@ -54,25 +58,29 @@ Windows 11/Blender 4.5 LTS and stable 5.x installed acceptance matrix.
 
 ## Install — no source build needed
 
-Install the matching **0.9.0 alpha** artifacts accepted on the
-[release page](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.9.0).
-Review its recorded qualification and verify the supplied checksums before installing.
+Install matching **0.9.1 alpha** artifacts only after the
+[release page](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.9.1)
+publishes their acceptance record. Review the recorded qualification and verify the
+supplied checksums before installing.
 A development ZIP or source tag alone is not a substitute for that acceptance record.
 
 You need Blender **4.2+**, standalone **Python 3.10+**, and a local Codex client with MCP
 support. Blender's bundled Python does not run the MCP server. The declared minimum is not
 a guarantee that every Blender version or platform is tested; see the
-[0.9.0 qualification record](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.9.0) for its evidence.
+[0.9.1 release page](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.9.1)
+for the exact accepted builds and limits. Windows compatibility and testing remain
+deferred and unverified; platform commands in the installation guide are setup guidance.
 
 ### 1. Download the packages
 
-Get these assets from the [0.9.0 release](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.9.0):
+Once accepted and published, get these assets from the
+[0.9.1 release](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.9.1):
 
 | Asset | Purpose |
 | --- | --- |
-| `blender_codex_bridge-0.9.0.zip` | Required Blender add-on; keep it zipped |
-| `blender_codex_bridge-0.9.0-py3-none-any.whl` | Required standalone MCP server |
-| `blender-codex-bridge-plugin-0.9.0.zip` | Optional Codex plugin and workflow guidance |
+| `blender_codex_bridge-0.9.1.zip` | Required Blender add-on; keep it zipped |
+| `blender_codex_bridge-0.9.1-py3-none-any.whl` | Required standalone MCP server |
+| `blender-codex-bridge-plugin-0.9.1.zip` | Optional Codex plugin and workflow guidance |
 | `SHA256SUMS.txt` | Download checksums |
 
 Verify the three installers against `SHA256SUMS.txt`. Use the release assets

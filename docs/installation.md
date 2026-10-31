@@ -1,25 +1,31 @@
 # Installation and upgrades
 
-These instructions install the **published 0.6.0 alpha**, released on 2026-10-25
-at 14:29:56 UTC from `73cad805903fcd0be9175b49a5ecf78505ecd4a5`.
-Use a disposable scene or project copy for initial checks. Later development
-increments are separate from the [released package evidence](releases/0.6.0.md#verified-evidence).
+These instructions target **0.9.1 alpha**. Install it only after the published
+[0.9.1 release acceptance record](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.9.1)
+identifies the accepted commit, package hashes and retained evidence. Until that
+record is published, 0.9.1 remains a candidate. The previous
+[0.9.0 release](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.9.0)
+remains available with its own separate evidence. Use a disposable scene or project
+copy for initial checks.
 
-You need Blender **4.2+**, standalone **Python 3.10+**, and a local Codex client with MCP support.
+The manifest declares Blender **4.2+**; use the exact builds identified in the
+chosen release's acceptance record. You also need standalone **Python 3.10+** and
+a local Codex client with MCP support.
 Blender's bundled Python is not the Python used for the MCP server.
 Historical 0.3.0 release checks used Blender 4.5.1 and 5.1.2; this is not current-source or
 1.0 qualification. Other versions and platforms are not exhaustively tested.
 
 ## 1. Download the packages
 
-Open the [0.6.0 release](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.6.0)
+After its acceptance record is published, open the
+[0.9.1 release](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.9.1)
 and expand **Assets**:
 
 | Download | Purpose |
 | --- | --- |
-| `blender_codex_bridge-0.6.0.zip` | Required Blender add-on; do not extract it |
-| `blender_codex_bridge-0.6.0-py3-none-any.whl` | Required MCP server; install with pip below |
-| `blender-codex-bridge-plugin-0.6.0.zip` | Optional Codex plugin and Blender Studio guidance |
+| `blender_codex_bridge-0.9.1.zip` | Required Blender add-on; do not extract it |
+| `blender_codex_bridge-0.9.1-py3-none-any.whl` | Required MCP server; install with pip below |
+| `blender-codex-bridge-plugin-0.9.1.zip` | Optional Codex plugin and Blender Studio guidance |
 | `SHA256SUMS.txt` | Checksums for verifying downloads |
 
 GitHub's automatic **Source code** archives are for development, not Blender installation.
@@ -35,9 +41,10 @@ separate development-evidence archive uses `EVIDENCE-SHA256SUMS.txt`.
 
 Leave Blender open. Never expose or tunnel this port to another computer.
 
-### Qualified installation scope
+### Historical 0.6.0 installation evidence
 
-The exact published 0.6.0 ZIP passed fresh candidate installation,
+The historical published 0.6.0 alpha was released on 2026-10-25 at 14:29:56 UTC
+from `73cad805903fcd0be9175b49a5ecf78505ecd4a5`. Its exact ZIP passed fresh candidate installation,
 previous-package replacement, upgrade and rollback separately with published
 0.3.0 and 0.5.0 on Linux Blender 4.5.14 and 5.2.2. Four fresh background processes
 each ran four phases, for sixteen installed observations. Eight candidate previews
@@ -51,9 +58,10 @@ read-only links; the bridge installation and session were new. Exact-commit CI
 covered Python 3.10–3.12 and SDK 2.0.0/2.2.0. All six release assets were downloaded
 and hashed anonymously; see [the release evidence](releases/0.6.0.md#verified-evidence).
 Historical [0.5.0 evidence](releases/0.5.0.md#verified-evidence) remains specific
-to that source. These are bounded alpha checks,
+to that source. These historical results do not qualify 0.9.1. They are bounded alpha checks,
 not complete artist-workflow or stable 1.0 acceptance. Windows compatibility and
 testing remain deferred and unverified; the commands below are setup guidance.
+macOS is also unqualified.
 
 The older published 0.3.0 ZIP has a discovery metadata issue on these two Linux
 builds. Reinstalling that same ZIP does not fix its missing literal version.
@@ -67,7 +75,7 @@ On **Windows**, with the wheel in Downloads, run PowerShell:
 ```powershell
 $bridgeHome = Join-Path $env:LOCALAPPDATA 'BlenderCodexBridge'
 py -3 -m venv "$bridgeHome\.venv"
-& "$bridgeHome\.venv\Scripts\python.exe" -m pip install "$env:USERPROFILE\Downloads\blender_codex_bridge-0.6.0-py3-none-any.whl"
+& "$bridgeHome\.venv\Scripts\python.exe" -m pip install "$env:USERPROFILE\Downloads\blender_codex_bridge-0.9.1-py3-none-any.whl"
 codex mcp add blender_codex_bridge -- "$bridgeHome\.venv\Scripts\blender-codex-mcp.exe"
 codex mcp list
 ```
@@ -79,7 +87,7 @@ On **macOS/Linux**:
 
 ```bash
 python3 -m venv "$HOME/.local/share/blender-codex-bridge/.venv"
-"$HOME/.local/share/blender-codex-bridge/.venv/bin/python" -m pip install "$HOME/Downloads/blender_codex_bridge-0.6.0-py3-none-any.whl"
+"$HOME/.local/share/blender-codex-bridge/.venv/bin/python" -m pip install "$HOME/Downloads/blender_codex_bridge-0.9.1-py3-none-any.whl"
 codex mcp add blender_codex_bridge -- "$HOME/.local/share/blender-codex-bridge/.venv/bin/blender-codex-mcp"
 ```
 
@@ -88,8 +96,11 @@ same absolute executable path as the command, with no arguments.
 See [OpenAI's MCP setup documentation](https://developers.openai.com/codex/mcp/).
 Restart the client if needed and **start a new Codex task** to discover the tools.
 
-**Compatibility:** 0.6.0 is tested with MCP SDK 2.0.0 and 2.2.0; the old SDK pin is no
-longer needed. If deliberately installing historical 0.2.0, follow its
+**Compatibility gate:** before 0.9.1 acceptance, its exact release commit must pass
+the Python 3.10–3.12 and MCP SDK 2.0.0/2.2.0 CI matrix. Consult the published
+acceptance record for the results; these instructions do not establish that gate.
+The historical 0.6.0 SDK checks above remain separate. If deliberately installing
+historical 0.2.0, follow its
 [release-specific instructions](releases/0.2.0.md), including `mcp==2.0.0`.
 
 The optional plugin is an alternative, not a requirement: extract its ZIP and install
@@ -122,20 +133,24 @@ Checksums detect mismatched/corrupt files; they do not independently authenticat
 ## Upgrading
 
 Upgrade the **Blender add-on and MCP server together**, from the same release.
-For 0.1.0, 0.2.0, 0.3.0, 0.4.0 or 0.5.0 → 0.6.0:
+For 0.9.0 or earlier → matching 0.9.1 packages, after 0.9.1 acceptance is published:
 
-1. Save and back up your scene using Blender’s own UI. The alpha’s structured
-   `project.save` is blocked pending its safety replacement. Stop the bridge and finish active tool calls.
-2. Download the new ZIP and matching wheel from [Releases](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases).
+1. Save and back up your scene using Blender’s own UI. Legacy `project.save` remains
+   quarantined. The typed native-save workflow has bounded project scope and requires
+   explicit local consent; its presence does not establish release acceptance or
+   replace your backup. Stop the bridge and finish active tool calls.
+2. Download the accepted ZIP and matching wheel from the
+   [0.9.1 release](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.9.1)
+   and verify their hashes against its acceptance record.
 3. Disable/remove the old add-on, install the new ZIP, and restart Blender to unload old modules.
 4. Upgrade the **same virtual environment** registered with Codex:
 
    ```powershell
-   & "$env:LOCALAPPDATA\BlenderCodexBridge\.venv\Scripts\python.exe" -m pip install --upgrade "$env:USERPROFILE\Downloads\blender_codex_bridge-0.6.0-py3-none-any.whl"
+   & "$env:LOCALAPPDATA\BlenderCodexBridge\.venv\Scripts\python.exe" -m pip install --upgrade "$env:USERPROFILE\Downloads\blender_codex_bridge-0.9.1-py3-none-any.whl"
    ```
 
    Remove any old `mcp==2.0.0` constraint from your install command or requirements file;
-   keeping SDK 2.0.0 installed also works. Do not mix a 0.6.0 server with
+   use the SDK versions identified in the chosen release's evidence. Do not mix a 0.9.1 server with
    an older add-on. If using an editable source install, update that
    environment or re-register the new executable path; do not accidentally update another Python.
 
@@ -149,9 +164,11 @@ No bridge scene-file migration is required. Updating does not intentionally rewr
 project backup if needed. Downgrading software does not undo scene edits.
 
 Use a clean add-on directory for replacement: Blender's overwrite installer can retain obsolete
-files. The accepted 0.6.0 installed probe covers the bounded replacement,
-enablement, preview and upgrade/rollback routes above. Process restart, preference
-migration, installed transport reconnect and complete Windows acceptance remain open.
+files. The historical 0.6.0 installed probe covered its own bounded replacement,
+enablement, preview and upgrade/rollback routes. It does not qualify 0.9.1 installation,
+restart, preference migration or reconnect. Check the 0.9.1 acceptance record for
+which routes were verified against its exact package hashes. Windows compatibility
+and testing remain deferred and unverified; macOS remains unqualified.
 
 
 [Back to README](../README.md) · [Troubleshooting](troubleshooting.md)
