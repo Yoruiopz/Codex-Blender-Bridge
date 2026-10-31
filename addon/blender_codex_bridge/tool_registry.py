@@ -585,8 +585,8 @@ class ToolRegistry:
                 storage_value_error = ValueError
                 storage_failure = BridgeError(ErrorCode.NOT_IMPLEMENTED, "Storage preview entry source changed.",
                                               {"reason": "STORAGE_CONTEXT_CHANGED"})
-        if context.checkpoint_admission is not None and name in {
-                "mesh.attribute_storage_prepare_inspection_start", INSPECTION_TURN_METHOD}:
+        if (name in {"mesh.attribute_storage_prepare_inspection_start", INSPECTION_TURN_METHOD}
+                and context.checkpoint_admission is not None):
             from .scene_jobs import _InspectionAdmission, _InspectionTurnAdmission
             callback = context.checkpoint_admission.callback
             if type(callback) is _InspectionAdmission or type(callback) is _InspectionTurnAdmission:

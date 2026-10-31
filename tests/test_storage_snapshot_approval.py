@@ -27,6 +27,10 @@ def approval(addon_package, monkeypatch):
     stock._RNAMeta, stock.AddonPreferences = Meta, AddonBase
     monkeypatch.setitem(sys.modules, "bpy_types", stock)
     monkeypatch.setattr(module.preferences, "BlenderCodexBridgePreferences", Declared)
+    states = importlib.import_module(addon_package + ".state")
+    # Other models deliberately shadow methods on the shared state singleton.
+    # A positive source-proof fixture needs its own canonical state instance.
+    monkeypatch.setattr(module.runtime, "get_state", states.BridgeState)
     runtime = module.runtime.BridgeRuntime()
     runtime.state.set_paused(False)
     runtime.state.set_emergency_stopped(False)
@@ -698,3 +702,28 @@ def test_registered_property_clause_preserves_refusal_and_never_formats_foreign_
     else:
         assert "registered_property_clause" not in failure.value.context
     assert len(env.calls) == 3
+
+
+def test_approval_fixture_isolates_a_shadowed_shared_state(addon_package, monkeypatch):
+    states = importlib.import_module(addon_package + ".state")
+    shadowed = states.get_state()
+    fields, missing = vars(shadowed), object()
+    original = fields.get("record_operation", missing)
+    # Simulate another model's instance-method patch being restored as a bound
+    # method. Keep the singleton identity intact for the existing source seal.
+    fields["record_operation"] = states.BridgeState.record_operation.__get__(shadowed, states.BridgeState)
+    try:
+        module = importlib.import_module(addon_package + ".storage_snapshot_approval")
+        with pytest.raises(module.BridgeError) as failure:
+            module.sources._instance(shadowed, (states.BridgeState,))
+        assert failure.value.context["reason"] == "CLOTH_SOURCE_SHADOW_ENDPOINT"
+        env = approval.__wrapped__(addon_package, monkeypatch)
+        assert env.runtime.state is not shadowed and env.context.state is env.runtime.state
+        assert "record_operation" not in vars(env.runtime.state)
+        approved = env.module.LocalRootApproval.capture(env.context).authorize()
+        assert approved.read_current() == "/approved/project"
+    finally:
+        if original is missing:
+            fields.pop("record_operation", None)
+        else:
+            fields["record_operation"] = original
