@@ -1076,6 +1076,8 @@ def test_fast_and_generic_paths_preserve_live_failure_priority(inspection_runtim
 
 
 @pytest.mark.parametrize("inspection_runtime", ["nonstock_lifetime_clock"], indirect=True)
+# Coverage includes several fully guarded turns; production deadlines remain separate.
+@pytest.mark.timeout(30)
 def test_nonstock_lifetime_clock_uses_generic_path(inspection_runtime):
     e = inspection_runtime
     assert e.call().response.ok

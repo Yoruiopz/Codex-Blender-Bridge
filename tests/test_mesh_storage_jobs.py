@@ -109,6 +109,8 @@ def one_materialization(storage):
     pytest.fail("No materialization in bounded scheduler turns")
 
 
+# Coverage includes several fully guarded turns; production deadlines remain separate.
+@pytest.mark.timeout(30)
 def test_two_attributes_materialize_in_distinct_real_scene_turns(storage_job):
     s = storage_job
     accepted = s.start()
@@ -190,6 +192,7 @@ def test_native_exception_after_transition_retains_unknown_partial_journal(stora
     assert rows[0]["materialize_returned"] is False
 
 
+@pytest.mark.timeout(30)
 def test_pause_has_no_new_preparation_and_resume_preserves_same_owner(storage_job):
     s = storage_job
     accepted = s.start()
@@ -365,6 +368,7 @@ def test_preview_cancellation_callback_cannot_replace_bind_time_trust_record(sto
     assert calls == [] and s.native.snapshot_reads == s.native.writes == 0
 
 
+@pytest.mark.timeout(30)
 def test_exact_b2_starter_and_turns_resolve_enforced_protected_scope(storage_job):
     s = storage_job
     store = s.source.get_task_plans(s.env.state)
