@@ -21,6 +21,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 HELPERS = (
+    "scripts.blender_storage_root_approval_smoke",
     'scripts.blender_system_storage_snapshot_smoke',
     'scripts.blender_storage_snapshot_adapter_smoke',
     'scripts.blender_storage_snapshot_cleanup_smoke',
@@ -6977,3 +6978,113 @@ def test_legacy_snapshot_fixture_entry_hooks_precede_only_legacy_direct_replica_
                    adapter.RuntimeContextDiagnostic.run_runtime):
         assert "register_legacy_replica_entry" not in inspect.getsource(method)
     assert cleanup.REQUEST_BINDING == "SOURCE_QUALIFIED_REPLICA_FRESH_QUEUED_REQUEST"
+
+
+def _storage_root_approval_report_model():
+    """Finite synthetic schema input, never native registered-route evidence."""
+    from copy import deepcopy
+
+    from scripts import blender_storage_root_approval_smoke as case
+    binding = {"path": "/owned/private-display.json", "bytes": 123, "sha256": "d" * 64}
+    full = {"schema": case.SCHEMA, "profile": case.PROFILE, "phase": case.PHASE, "completed": True,
+        "version": [5, 2, 2], "build_hash": "d13f752e3b9c", "blender_version": "5.2.2",
+        "binary": {"path": "/owned/blender", "sha256": "b" * 64}, "process_instance": "a" * 32,
+        "process_id": 1234, "source_fingerprints": {"source.py": "c" * 64}, "source_unchanged": True,
+        "private_display_binding": binding,
+        "private_display": {"manifest_path": binding["path"], "manifest_sha256": binding["sha256"],
+            "manifest": {"input_disabled": True, "owned_process": True, "tcp_disabled": True}},
+        "cases": [], "sent": [], "wire": [], "terminal": [], "fixture_only_registration": True,
+        "original_preferences_provider": True, "python_disabled": True, "services_stopped": True,
+        "observer_restored": True, "case_deadline_seconds": 300, "limitations": dict.fromkeys(case.LIMITATIONS, False),
+        "capture_scope": "pre-provider native route metadata/preferences-owner getters; project_directory value after helper authorization",
+        "fixture_metadata_permission": "EDIT_SCENE; helper separately requires INSPECT_SCENE,SAVE_PROJECT,ACCESS_EXTERNAL_FILES",
+        "resources": {"available_memory_bytes": 12 * 1024**3, "available_disk_bytes": 4 * 1024**3}}
+    for ordinal, name in enumerate(case.CASES):
+        identifier = format(ordinal + 1, "032x")
+        positive, drift = name == "positive_repeated", name == "manual_root_drift"
+        failure = None if positive else {"code": case.EXPECTED[name], "reason": "ROOT_APPROVAL_VALUE_CHANGED" if drift else None}
+        row = {"name": name, "handler_entered": True, "components": dict.fromkeys(case.COMPONENTS, True), "captured": True,
+            "observations": ["original"] * (3 if positive else 1 if drift else 0),
+            "approved_root_retained": True if positive or drift else None, "failure": failure,
+            "route_entries": 4 if positive else 3 if drift else 1, "root_read_entries": 3 if positive else 2 if drift else 0}
+        response = {"id": identifier, "ok": positive, "protocol_version": "1.0", "timestamp": "2026-10-31T00:00:00+00:00"}
+        if positive:
+            response["result"] = {"observed": True, "operation": {"operation_id": "op_0000000001",
+                "undo_boundary_created": False, "undo_boundary_finalized": False}}
+        else:
+            response["error"] = {"code": case.EXPECTED[name], "message": "Owned fixture refusal.", "context": {}}
+        full["cases"].append(row)
+        full["sent"].append({"id": identifier, "case": name})
+        full["wire"].append({"id": identifier, "response": response, "sha256": hashlib.sha256(case.canonical(response)).hexdigest()})
+        full["terminal"].append({"id": identifier, "response": deepcopy(response), "state": "completed", "completed": True})
+    return case, full
+
+
+def _storage_root_approval_model_valid(case, full):
+    return case.validate(full, sources=full["source_fingerprints"], binary=full["binary"],
+        process_instance=full["process_instance"], process_id=full["process_id"])
+
+
+def test_storage_root_approval_schema_model_keeps_native_scope_explicit():
+    case, full = _storage_root_approval_report_model()
+    assert _storage_root_approval_model_valid(case, full)
+    assert not any(full["limitations"].values())
+
+
+@pytest.mark.parametrize("field", ("completed", "source_unchanged", "fixture_only_registration", "original_preferences_provider",
+    "python_disabled", "services_stopped", "observer_restored", "version", "build_hash", "process_id", "case_deadline_seconds",
+    "limitations", "capture_scope", "resources", "private_display", "cases", "sent", "wire", "terminal"))
+def test_storage_root_approval_schema_rejects_missing_mandatory_evidence(field):
+    case, full = _storage_root_approval_report_model()
+    full.pop(field)
+    assert not _storage_root_approval_model_valid(case, full) if field != "process_id" else not case.validate(
+        full, sources=full["source_fingerprints"], binary=full["binary"], process_instance=full["process_instance"], process_id=1234)
+
+
+@pytest.mark.parametrize("fault", ("component_bool", "limitation_bool", "display_bytes_bool", "memory_floor", "disk_floor",
+    "root_read_count", "route_count", "root_adoption", "denial_getter", "terminal_response", "terminal_state", "wire_hash",
+    "duplicate_request", "observed_bool", "undo_bool", "wrong_error", "false_completed", "wrong_phase"))
+def test_storage_root_approval_schema_rejects_counterfeit_proofs(fault):
+    case, full = _storage_root_approval_report_model()
+    if fault == "component_bool":
+        full["cases"][0]["components"]["storage_service"] = 1
+    elif fault == "limitation_bool":
+        full["limitations"]["cloth_G0_qualified"] = 0
+    elif fault == "display_bytes_bool":
+        full["private_display_binding"]["bytes"] = True
+    elif fault == "memory_floor":
+        full["resources"]["available_memory_bytes"] = 8 * 1024**3 - 1
+    elif fault == "disk_floor":
+        full["resources"]["available_disk_bytes"] = 2 * 1024**3 - 1
+    elif fault == "root_read_count":
+        full["cases"][0]["root_read_entries"] = 2
+    elif fault == "route_count":
+        full["cases"][0]["route_entries"] = 3
+    elif fault == "root_adoption":
+        full["cases"][1]["approved_root_retained"] = False
+    elif fault == "denial_getter":
+        full["cases"][2]["root_read_entries"] = 1
+    elif fault == "terminal_response":
+        full["terminal"][0]["response"]["ok"] = False
+    elif fault == "terminal_state":
+        full["terminal"][0]["state"] = "running"
+    elif fault == "wire_hash":
+        full["wire"][0]["sha256"] = "0" * 64
+    elif fault == "duplicate_request":
+        full["sent"][1] = full["sent"][0]
+    elif fault in {"observed_bool", "undo_bool", "wrong_error"}:
+        index = 2 if fault == "wrong_error" else 0
+        response = full["wire"][index]["response"]
+        if fault == "observed_bool":
+            response["result"]["observed"] = 1
+        elif fault == "undo_bool":
+            response["result"]["operation"]["undo_boundary_created"] = 0
+        else:
+            response["error"]["code"] = "INTERNAL_ERROR"
+        full["terminal"][index]["response"] = json.loads(json.dumps(response))
+        full["wire"][index]["sha256"] = hashlib.sha256(case.canonical(response)).hexdigest()
+    elif fault == "false_completed":
+        full["completed"] = 1
+    else:
+        full["phase"] = "other"
+    assert not _storage_root_approval_model_valid(case, full)

@@ -95,6 +95,7 @@ RUNTIME_BULK_BUILDS = {
 }
 
 CASES = {
+    "storage_snapshot_root_approval": ("blender_storage_root_approval_smoke.py", "BLENDER_STORAGE_ROOT_APPROVAL_OK "),
     "storage_snapshot_runtime_context": ("blender_storage_snapshot_adapter_smoke.py", "BLENDER_STORAGE_RUNTIME_JOBS_CONTEXT_OK "),
     "system_storage_snapshot": ("blender_system_storage_snapshot_smoke.py", "BLENDER_SYSTEM_STORAGE_SNAPSHOT_OK "),
     "storage_snapshot_adapter": ("blender_storage_snapshot_adapter_smoke.py", "BLENDER_STORAGE_ADAPTER_OK "),
@@ -435,13 +436,14 @@ STORAGE_DISPATCH_CASE = "storage_snapshot_dispatch"
 STORAGE_DISPATCH_PHASES = ("success_denial", "stops", "failures")
 
 STORAGE_DISPATCH_MAX_REPORT = 8 * 1024 * 1024
+STORAGE_ROOT_APPROVAL_CASE = "storage_snapshot_root_approval"
 STORAGE_RUNTIME_CONTEXT_CASE = "storage_snapshot_runtime_context"
 OPT_IN_CASES.add(STORAGE_RUNTIME_CONTEXT_CASE)
 INTERACTIVE_CASES.add(STORAGE_RUNTIME_CONTEXT_CASE)
 
 
-OPT_IN_CASES.update({"system_storage_snapshot", STORAGE_ADAPTER_CASE, STORAGE_CLEANUP_CASE, STORAGE_DISPATCH_CASE, STORAGE_RUNTIME_CONTEXT_CASE})
-INTERACTIVE_CASES.update({"system_storage_snapshot", STORAGE_ADAPTER_CASE, STORAGE_CLEANUP_CASE, STORAGE_DISPATCH_CASE, STORAGE_RUNTIME_CONTEXT_CASE})
+OPT_IN_CASES.update({"system_storage_snapshot", STORAGE_ADAPTER_CASE, STORAGE_CLEANUP_CASE, STORAGE_DISPATCH_CASE, STORAGE_RUNTIME_CONTEXT_CASE, STORAGE_ROOT_APPROVAL_CASE})
+INTERACTIVE_CASES.update({"system_storage_snapshot", STORAGE_ADAPTER_CASE, STORAGE_CLEANUP_CASE, STORAGE_DISPATCH_CASE, STORAGE_RUNTIME_CONTEXT_CASE, STORAGE_ROOT_APPROVAL_CASE})
 
 def _cloth_file(path: Path, maximum: int, *, content: bool = False) -> tuple[str, bytes]:
     before = path.lstat()
@@ -1134,6 +1136,65 @@ def _system_storage_validate(payload, temporary, process_instance, inputs, proce
     except (OSError, ValueError, TypeError, KeyError, RecursionError, AttributeError):
         return {"passed": False, "reason": "SYSTEM_STORAGE_EVIDENCE_INVALID"}
 
+
+
+def _storage_root_approval_inputs(blender):
+    from scripts import blender_storage_root_approval_smoke as fixture
+    names = fixture.source_names(ROOT)
+    required = {"scripts/blender_storage_root_approval_smoke.py", "scripts/blender_storage_snapshot_adapter_smoke.py",
+                "scripts/run_blender_checks.py", "scripts/blender_artist_sidebar_smoke.py"}
+    required.update(str(path.relative_to(ROOT)) for path in (ROOT / "addon").rglob("*.py"))
+    if (type(names) not in (tuple, list) or any(type(name) is not str or not name or Path(name).is_absolute()
+            or ".." in Path(name).parts for name in names) or len(set(names)) != len(names) or set(names) != required):
+        raise ValueError("STORAGE_ROOT_APPROVAL_SOURCE_INVENTORY")
+    binary = {"path": str(blender.resolve()), "sha256": _cloth_file(blender, 1024**3)[0]}
+    if binary["sha256"] not in STORAGE_ADAPTER_BINARY_HASHES.values():
+        raise ValueError("STORAGE_ROOT_APPROVAL_BINARY_NOT_PINNED")
+    return {"source_fingerprints": {name: _cloth_file(ROOT / name, 1024**2)[0] for name in names},
+            "binary": binary, "private_display_binding": _domain_display()}
+
+
+def _storage_root_approval_validate(payload, phase, bundle, process_instance, process_id, inputs):
+    from scripts import blender_storage_root_approval_smoke as fixture
+    try:
+        expected = {"schema": fixture.SCHEMA, "profile": fixture.PROFILE, "phase": fixture.PHASE, "completed": True,
+                    "process_instance": process_instance, "process_id": process_id, **inputs}
+        if (phase != fixture.PHASE or type(payload) is not dict or type(process_id) is not int or process_id <= 0
+                or set(payload) != {*expected, "version", "build_hash", "blender_version", "full_receipt"}
+                or any(type(payload.get(key)) is not type(value) or payload.get(key) != value for key, value in expected.items())):
+            raise ValueError("STORAGE_ROOT_APPROVAL_MARKER_BINDING")
+        version = payload["version"]
+        if (type(version) is not list or len(version) != 3 or any(type(v) is not int for v in version)
+                or tuple(version) not in STORAGE_ADAPTER_BUILDS or payload["build_hash"] != STORAGE_ADAPTER_BUILDS[tuple(version)]
+                or inputs["binary"]["sha256"] != STORAGE_ADAPTER_BINARY_HASHES[tuple(version)]):
+            raise ValueError("STORAGE_ROOT_APPROVAL_BUILD")
+        path, binding = bundle / "registered_route.json", payload["full_receipt"]
+        if (type(binding) is not dict or set(binding) != {"path", "bytes", "sha256"} or binding["path"] != str(path)
+                or type(binding["bytes"]) is not int or not 0 < binding["bytes"] <= fixture.MAX_REPORT):
+            raise ValueError("STORAGE_ROOT_APPROVAL_REPORT_BINDING")
+        checksum, raw = _cloth_file(path, fixture.MAX_REPORT, content=True)
+        if len(raw) != binding["bytes"] or checksum != binding["sha256"]:
+            raise ValueError("STORAGE_ROOT_APPROVAL_REPORT_CHANGED")
+        full = json.loads(raw, object_pairs_hook=_cloth_unique, parse_constant=_cloth_nonfinite)
+        if (type(full) is not dict or any(type(full.get(key)) is not type(payload[key]) or full.get(key) != payload[key]
+                for key in (*expected, "version", "build_hash", "blender_version"))
+                or fixture.validate(full, sources=inputs["source_fingerprints"], binary=inputs["binary"],
+                    process_instance=process_instance, process_id=process_id) is not True):
+            raise ValueError("STORAGE_ROOT_APPROVAL_FULL_REPORT_INVALID")
+        if _storage_root_approval_inputs(Path(inputs["binary"]["path"])) != inputs:
+            raise ValueError("STORAGE_ROOT_APPROVAL_INPUT_CHANGED")
+        return {"passed": True, "path": str(path), "sha256": checksum, "actual_registered_preference_route": True,
+                "shipping_caller_qualified": False, "snapshot_writer_qualified": False, "post_C_root_check_qualified": False}
+    except (OSError, ValueError, TypeError, KeyError, AttributeError, RecursionError, AssertionError):
+        return {"passed": False, "reason": "STORAGE_ROOT_APPROVAL_EVIDENCE_INVALID"}
+
+
+def _run_storage_root_approval_case(blender, output, timeout):
+    from scripts import blender_storage_root_approval_smoke as fixture
+    bundle = output / (STORAGE_ROOT_APPROVAL_CASE + "-bundle")
+    bundle.mkdir(mode=0o700)
+    return _run_process(blender, STORAGE_ROOT_APPROVAL_CASE, output, min(timeout, 300), phase=fixture.PHASE,
+                        bundle=bundle, phase_marker=fixture.MARKER)
 
 
 def _storage_runtime_context_inputs(blender):
@@ -2773,6 +2834,10 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
                  phase_marker: str | None = None, domain_binary: dict | None = None,
                  domain_sources: dict | None = None, domain_display: dict | None = None) -> dict:
     filename, marker = CASES[case]
+    if case == STORAGE_ROOT_APPROVAL_CASE:
+        if phase != "registered_route" or bundle is None:
+            raise ValueError("Registered root approval requires its owned phase")
+        timeout = min(timeout, 300)
     if case == STORAGE_RUNTIME_CONTEXT_CASE:
         if phase != "runtime_context" or bundle is None:
             raise ValueError("Runtime context diagnostic requires its owned phase")
@@ -2840,7 +2905,7 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
         command.extend(["--", "--bridge-populated-protection"])
     # Blender writes quit.blend on normal UI exit. Keep it outside the user's temp recovery.
     temporary = output / f"{label}-temp"
-    temporary.mkdir(mode=0o700 if case in CURRENT_PIXELS_READ_CASES or case in GLB_STAGE_CASES or case in {"native_project_saving_large", MESH_STORAGE_CASE, MESH_STORAGE_CONTROL_CASE, "system_storage_snapshot", STORAGE_ADAPTER_CASE, STORAGE_CLEANUP_CASE, STORAGE_DISPATCH_CASE, STORAGE_RUNTIME_CONTEXT_CASE} else 0o777)
+    temporary.mkdir(mode=0o700 if case in CURRENT_PIXELS_READ_CASES or case in GLB_STAGE_CASES or case in {"native_project_saving_large", MESH_STORAGE_CASE, MESH_STORAGE_CONTROL_CASE, "system_storage_snapshot", STORAGE_ADAPTER_CASE, STORAGE_CLEANUP_CASE, STORAGE_DISPATCH_CASE, STORAGE_RUNTIME_CONTEXT_CASE, STORAGE_ROOT_APPROVAL_CASE} else 0o777)
     if case == MESH_STORAGE_CASE:
         command.extend(["--bridge-report", str(temporary / "mesh-storage-job.json")])
     if case == MESH_STORAGE_CONTROL_CASE:
@@ -2865,7 +2930,7 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
         environment[key] = str(directory)
     launch_cwd = ROOT
     if (case in PORTABLE_BLEND_RESEARCH_PHASES or case in PAIRED_RECOVERY_PROFILES
-            or case in {"isolated_asset_preview_probe", "native_project_saving", "native_project_saving_large", MESH_STORAGE_CASE, MESH_STORAGE_CONTROL_CASE, *CURRENT_PIXELS_READ_CASES, *GLB_STAGE_CASES, "system_storage_snapshot", STORAGE_ADAPTER_CASE, STORAGE_CLEANUP_CASE, STORAGE_DISPATCH_CASE, STORAGE_RUNTIME_CONTEXT_CASE}):
+            or case in {"isolated_asset_preview_probe", "native_project_saving", "native_project_saving_large", MESH_STORAGE_CASE, MESH_STORAGE_CONTROL_CASE, *CURRENT_PIXELS_READ_CASES, *GLB_STAGE_CASES, "system_storage_snapshot", STORAGE_ADAPTER_CASE, STORAGE_CLEANUP_CASE, STORAGE_DISPATCH_CASE, STORAGE_RUNTIME_CONTEXT_CASE, STORAGE_ROOT_APPROVAL_CASE}):
         # Research-only operational profile. This is not an OS/network sandbox.
         # Do not inherit credential variables or arbitrary Python/Blender paths.
         environment = {key: os.environ[key] for key in (
@@ -2911,7 +2976,19 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
             else "interactive_display" if interactive else "background"
         ),
     }
-    adapter_inputs = cleanup_inputs = dispatch_inputs = runtime_context_inputs = None
+    adapter_inputs = cleanup_inputs = dispatch_inputs = runtime_context_inputs = root_approval_inputs = None
+    if case == STORAGE_ROOT_APPROVAL_CASE:
+        result["qualification_scope"] = {"profile": "STOCK_REGISTERED_PREFERENCES_ROOT_APPROVAL_V1",
+            "fixture_only_registration": True, "shipping_caller_qualified": False, "snapshot_writer_qualified": False,
+            "post_C_root_check_qualified": False, "full_artist_target": "OPEN", "windows_testing_deferred": True}
+        if sys.platform != "linux":
+            result["preflight_error"] = "STORAGE_ROOT_APPROVAL_PLATFORM_DEFERRED"
+            return result
+        try:
+            root_approval_inputs = _storage_root_approval_inputs(blender)
+        except (OSError, ValueError) as error:
+            result["preflight_error"] = str(error)[:256]
+            return result
     if case == STORAGE_RUNTIME_CONTEXT_CASE:
         result["qualification_scope"] = {"profile": "STOCK_RUNTIME_JOBS_CONTEXT_QUEUED_REQUEST_DIAGNOSTIC_V1",
             "fixture_only_registration": True, "genuine_Runtime_jobs_context": True,
@@ -3036,7 +3113,7 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
                 glb_inputs = _glb_stage_inputs(blender, runtime=case == "glb_stage_runtime")
             if case == "system_storage_snapshot":
                 system_inputs = _system_storage_inputs(blender)
-            if case in {STORAGE_ADAPTER_CASE, STORAGE_CLEANUP_CASE, STORAGE_DISPATCH_CASE, STORAGE_RUNTIME_CONTEXT_CASE}:
+            if case in {STORAGE_ADAPTER_CASE, STORAGE_CLEANUP_CASE, STORAGE_DISPATCH_CASE, STORAGE_RUNTIME_CONTEXT_CASE, STORAGE_ROOT_APPROVAL_CASE}:
                 with subprocess.Popen(command, cwd=launch_cwd, stdout=stream,
                                       stderr=subprocess.STDOUT, env=environment) as process:
                     result["launched_process_id"] = process.pid
@@ -3084,7 +3161,7 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
                 result["exit_code"] = process.returncode
         except subprocess.TimeoutExpired:
             result["status"] = "timeout"
-            if case in {STORAGE_ADAPTER_CASE, STORAGE_CLEANUP_CASE, STORAGE_DISPATCH_CASE, STORAGE_RUNTIME_CONTEXT_CASE}:
+            if case in {STORAGE_ADAPTER_CASE, STORAGE_CLEANUP_CASE, STORAGE_DISPATCH_CASE, STORAGE_RUNTIME_CONTEXT_CASE, STORAGE_ROOT_APPROVAL_CASE}:
                 result.update(process_timeout=True, timeout_seconds=timeout,
                               native_terminal_outcome="UNKNOWN", owned_process_terminated=True,
                               native_call_preemption_qualified=False)
@@ -3132,7 +3209,7 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
                     payload = _native_save_json(candidates[0].encode())
         else:
             payload = (_public_cloth_payload(log_text, marker)
-                       if case in {"system_storage_snapshot", STORAGE_ADAPTER_CASE, STORAGE_CLEANUP_CASE, STORAGE_DISPATCH_CASE, STORAGE_RUNTIME_CONTEXT_CASE}
+                       if case in {"system_storage_snapshot", STORAGE_ADAPTER_CASE, STORAGE_CLEANUP_CASE, STORAGE_DISPATCH_CASE, STORAGE_RUNTIME_CONTEXT_CASE, STORAGE_ROOT_APPROVAL_CASE}
                        else success_payload(log_text, marker))
     result["evidence"] = payload
     version = (
@@ -3209,6 +3286,12 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
     if case == STORAGE_RUNTIME_CONTEXT_CASE:
         validation = _storage_runtime_context_validate(payload, phase, bundle, process_instance,
             result.get("launched_process_id"), runtime_context_inputs)
+        result["retained_evidence_validation"] = validation
+        if not validation["passed"] and result["status"] != "timeout":
+            result["status"] = "failed"
+    if case == STORAGE_ROOT_APPROVAL_CASE:
+        validation = _storage_root_approval_validate(payload, phase, bundle, process_instance,
+            result.get("launched_process_id"), root_approval_inputs)
         result["retained_evidence_validation"] = validation
         if not validation["passed"] and result["status"] != "timeout":
             result["status"] = "failed"
@@ -3372,6 +3455,8 @@ def _run_runtime_bulk_probe(blender: Path, output: Path, timeout: int) -> dict:
 
 
 def run_case(blender: Path, case: str, output: Path, timeout: int) -> dict:
+    if case == STORAGE_ROOT_APPROVAL_CASE:
+        return _run_storage_root_approval_case(blender, output, timeout)
     if case == STORAGE_RUNTIME_CONTEXT_CASE:
         return _run_storage_runtime_context_case(blender, output, timeout)
     if case == STORAGE_DISPATCH_CASE:

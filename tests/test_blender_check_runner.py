@@ -4683,3 +4683,141 @@ def test_storage_runtime_context_preflight_refuses_before_launch(runner, monkeyp
         monkeypatch.setattr(runner.sys, "platform", "win32")
     result = runner.run_case(model.binary, runner.STORAGE_RUNTIME_CONTEXT_CASE, model.output, 10)
     assert result["status"] == "failed" and not seen and "preflight_error" in result
+
+
+def root_approval_runner_model(runner, monkeypatch, tmp_path, version=(5, 2, 2)):
+    """Composition model: never executes Blender or qualifies native getters."""
+    import sys
+    from types import ModuleType
+
+    import scripts
+    from scripts import blender_storage_root_approval_smoke as original
+    source = tmp_path / "approval source with spaces"
+    names = ("scripts/blender_storage_root_approval_smoke.py", "scripts/blender_storage_snapshot_adapter_smoke.py",
+        "scripts/run_blender_checks.py", "scripts/blender_artist_sidebar_smoke.py", "addon/blender_codex_bridge/__init__.py")
+    for name in names:
+        path = source / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# synthetic root approval source\n")
+    binary = source / "Blender with spaces"
+    binary.write_bytes(b"synthetic binary never launched")
+    monkeypatch.setitem(runner.STORAGE_ADAPTER_BINARY_HASHES, version, hashlib.sha256(binary.read_bytes()).hexdigest())
+    monkeypatch.setattr(runner, "ROOT", source)
+    monkeypatch.setattr(runner.sys, "platform", "linux")
+    monkeypatch.setattr(runner, "_domain_display", lambda: {"path": "/owned/display.json", "bytes": 12, "sha256": "d" * 64})
+    fixture = ModuleType("scripts.blender_storage_root_approval_smoke")
+    for name in ("SCHEMA", "PROFILE", "PHASE", "MARKER", "MAX_REPORT"):
+        setattr(fixture, name, getattr(original, name))
+    fixture.source_names = lambda root: names
+    checked = []
+    def validate(full, **bindings):
+        checked.append((full, bindings))
+        return True
+    fixture.validate = validate
+    monkeypatch.setitem(sys.modules, fixture.__name__, fixture)
+    monkeypatch.setattr(scripts, "blender_storage_root_approval_smoke", fixture, raising=False)
+    output = tmp_path / "approval evidence with spaces"
+    output.mkdir()
+    return SimpleNamespace(binary=binary, output=output, version=version, fixture=fixture, checked=checked)
+
+
+def install_root_approval_process(runner, monkeypatch, model, fault=None):
+    seen = []
+    class Process:
+        returncode = 0
+        def __init__(self, command, **kwargs):
+            self.pid = 4511
+            assert "--background" not in command and command.count("--disable-autoexec") == 1
+            assert kwargs["cwd"].name == "working" and "PYTHONPATH" not in kwargs["env"]
+            bundle = Path(command[command.index("--bridge-bundle")+1])
+            full = {"schema": model.fixture.SCHEMA, "profile": model.fixture.PROFILE, "phase": model.fixture.PHASE,
+                "completed": True, "version": list(model.version), "build_hash": runner.STORAGE_ADAPTER_BUILDS[model.version],
+                "blender_version": ".".join(map(str, model.version)), "process_id": self.pid,
+                "process_instance": kwargs["env"]["BRIDGE_TEST_PROCESS_TOKEN"], **runner._storage_root_approval_inputs(model.binary)}
+            path = bundle / "registered_route.json"
+            raw = json.dumps(full).encode()
+            path.write_bytes(raw)
+            marker = {**full, "full_receipt": {"path": str(path), "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}}
+            if fault:
+                fault(full, marker, path)
+            kwargs["stdout"].write((model.fixture.MARKER + json.dumps(marker) + "\n").encode())
+            seen.append(command)
+        def __enter__(self):
+            return self
+        def __exit__(self, *_args):
+            return None
+        def wait(self, timeout=None):
+            assert type(timeout) is int and timeout <= 300
+            return 0
+    monkeypatch.setattr(runner.subprocess, "Popen", Process)
+    return seen
+
+
+@pytest.mark.parametrize("version", [(4, 5, 14), (5, 2, 2)])
+def test_storage_root_approval_runner_is_separate_private_interactive_opt_in(runner, monkeypatch, tmp_path, version):
+    model = root_approval_runner_model(runner, monkeypatch, tmp_path, version)
+    seen = install_root_approval_process(runner, monkeypatch, model)
+    result = runner.run_case(model.binary, runner.STORAGE_ROOT_APPROVAL_CASE, model.output, 1200)
+    assert result["status"] == "passed" and len(seen) == 1
+    assert runner.STORAGE_ROOT_APPROVAL_CASE in runner.OPT_IN_CASES & runner.INTERACTIVE_CASES
+    assert result["retained_evidence_validation"]["actual_registered_preference_route"] is True
+    assert result["retained_evidence_validation"]["snapshot_writer_qualified"] is False
+    assert len(model.checked) == 1 and model.checked[0][1]["process_id"] == 4511
+
+
+@pytest.mark.parametrize("fault", ("nonce", "pid_bool", "pid_other", "phase", "profile", "build", "version_bool",
+    "report_hash", "report_bytes_bool", "missing_report", "symlink", "duplicate_key", "nonfinite", "fixture_refusal",
+    "source_drift", "binary_drift", "display_drift"))
+def test_storage_root_approval_runner_rejects_unbound_evidence(runner, monkeypatch, tmp_path, fault):
+    model = root_approval_runner_model(runner, monkeypatch, tmp_path)
+    def change(full, marker, path):
+        if fault == "nonce":
+            marker["process_instance"] = "0" * 32
+        elif fault == "pid_bool":
+            marker["process_id"] = True
+        elif fault == "pid_other":
+            marker["process_id"] = 4512
+        elif fault in {"phase", "profile", "build"}:
+            marker[{"build": "build_hash"}.get(fault, fault)] = "foreign"
+        elif fault == "version_bool":
+            marker["version"][0] = True
+        elif fault == "report_hash":
+            marker["full_receipt"]["sha256"] = "0" * 64
+        elif fault == "report_bytes_bool":
+            marker["full_receipt"]["bytes"] = True
+        elif fault == "missing_report":
+            path.unlink()
+        elif fault == "symlink":
+            moved = path.with_suffix(".original")
+            path.rename(moved)
+            path.symlink_to(moved)
+        elif fault in {"duplicate_key", "nonfinite"}:
+            raw = path.read_bytes()[:-1] + (b',"phase":"registered_route"}' if fault == "duplicate_key" else b',"foreign":NaN}')
+            path.write_bytes(raw)
+            marker["full_receipt"].update(bytes=len(raw), sha256=hashlib.sha256(raw).hexdigest())
+        elif fault == "fixture_refusal":
+            monkeypatch.setattr(model.fixture, "validate", lambda *_a, **_k: False)
+        elif fault == "source_drift":
+            (runner.ROOT / "scripts/run_blender_checks.py").write_text("# changed\n")
+        elif fault == "binary_drift":
+            model.binary.write_bytes(b"changed binary")
+        else:
+            monkeypatch.setattr(runner, "_domain_display", lambda: {"path": "/owned/display.json", "bytes": 13, "sha256": "a" * 64})
+    seen = install_root_approval_process(runner, monkeypatch, model, change)
+    result = runner.run_case(model.binary, runner.STORAGE_ROOT_APPROVAL_CASE, model.output, 1200)
+    assert result["status"] == "failed" and len(seen) == 1
+    assert result["retained_evidence_validation"]["passed"] is False
+
+
+@pytest.mark.parametrize("fault", ["binary", "source", "platform"])
+def test_storage_root_approval_preflight_fails_before_process(runner, monkeypatch, tmp_path, fault):
+    model = root_approval_runner_model(runner, monkeypatch, tmp_path)
+    seen = install_root_approval_process(runner, monkeypatch, model)
+    if fault == "binary":
+        model.binary.write_bytes(b"unqualified binary")
+    elif fault == "source":
+        (runner.ROOT / "addon/blender_codex_bridge/__init__.py").unlink()
+    else:
+        monkeypatch.setattr(runner.sys, "platform", "darwin")
+    result = runner.run_case(model.binary, runner.STORAGE_ROOT_APPROVAL_CASE, model.output, 1200)
+    assert result["status"] == "failed" and not seen and "preflight_error" in result
