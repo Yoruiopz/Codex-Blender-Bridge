@@ -331,6 +331,23 @@ def _preferences_constructor_proof(bpy, cls, struct_proof):
     return cls, rna, native_get, pointer, origins
 
 
+def _registered_property_clause(prop, values):
+    """Already-read qualified metadata only; never read another property."""
+    type_name = type.__dict__["__name__"]
+    rows = {}
+    for name, value in zip(("identifier", "type", "is_readonly", "is_runtime", "is_registered", "subtype"), values, strict=True):
+        kind = type(value)
+        label = type_name.__get__(kind)
+        literal, truncated = None, False
+        if kind is bool:
+            literal = value
+        elif kind is str:
+            literal, truncated = value[:128], len(value) > 128
+            literal.encode("utf-8", "strict")
+        rows[name] = {"value": literal, "kind": label[:128], "truncated": truncated}
+    return {"exact_native_kind": True, "property_kind": type_name.__get__(type(prop))[:128], "fields": rows}
+
+
 def _route(bpy, declaration):
     """Read only the finite supported native preference route and its metadata."""
     proofs = {kind: graph._constructor_proof(bpy, kind) for kind in
@@ -372,11 +389,20 @@ def _route(bpy, declaration):
     rna, native_get, pointer = proof[1:4]
     prop, property_origin = _collection_get(rna.properties, "project_directory")
     property_proof = proofs["StringProperty"]
-    if (type(prop) is not property_proof[0]
-            or prop.identifier != "project_directory" or prop.type != "STRING"
-            or prop.is_readonly is not False or prop.is_runtime is not True or prop.is_registered is not True
-            or prop.subtype != "DIR_PATH"):
+    if type(prop) is not property_proof[0]:
         raise refused("ROOT_APPROVAL_REGISTERED_FIELD_CHANGED")
+    # The class/constructor/shadow guards above qualify every getter before
+    # collecting these finite values on the ordinary route, not after failure.
+    values = (prop.identifier, prop.type, prop.is_readonly, prop.is_runtime, prop.is_registered, prop.subtype)
+    if (any(type(values[index]) is not str for index in (0, 1, 5))
+            or any(type(values[index]) is not bool for index in (2, 3, 4))
+            or values != ("project_directory", "STRING", False, True, True, "DIR_PATH")):
+        error = refused("ROOT_APPROVAL_REGISTERED_FIELD_CHANGED")
+        try:  # noqa: SIM105 - preserve primary without a context-manager dispatch.
+            error.context["registered_property_clause"] = _registered_property_clause(prop, values)
+        except Exception:
+            pass  # Optional diagnostics must never replace the original refusal.
+        raise error
     if preferences.get_preferences() is not owner:
         raise refused("ROOT_APPROVAL_GETTER_ROUTE_CHANGED")
     identity = (context, prefs, addons, *collection_origin, addon, owner, cls, rna, prop,

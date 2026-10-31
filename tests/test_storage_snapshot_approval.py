@@ -650,3 +650,48 @@ def test_stock_meta_source_rejects_nonclass_base_with_typed_refusal(approval):
         env.module.LocalRootApproval.capture(env.context)
     assert failure.value.context["reason"] == "ROOT_APPROVAL_STOCK_PREFERENCES_BASE_CHANGED"
     assert env.calls == []
+
+
+@pytest.mark.parametrize("field,value", [("identifier", "foreign"), ("type", "BOOLEAN"), ("is_readonly", True),
+    ("is_runtime", False), ("is_registered", False), ("subtype", "NONE")])
+def test_registered_property_clause_retains_actual_metadata_without_admitting_it(native_route_model, field, value):
+    env = native_route_model
+    prop = env.rnas["BlenderCodexBridgePreferences"].properties["project_directory"]
+    setattr(prop, field, value)
+    with pytest.raises(env.module.BridgeError) as failure:
+        env.module._route(env.bpy, env.declaration)
+    assert failure.value.context["reason"] == "ROOT_APPROVAL_REGISTERED_FIELD_CHANGED"
+    clause = failure.value.context["registered_property_clause"]
+    assert clause["exact_native_kind"] is True and clause["property_kind"] == "StringProperty"
+    assert clause["fields"][field] == {"value": value, "kind": type(value).__name__, "truncated": False}
+    assert len(env.calls) == 3  # The root value getter is never reached.
+
+
+@pytest.mark.parametrize("failure_mode", ["foreign_value", "diagnostic_failure"])
+def test_registered_property_clause_preserves_refusal_and_never_formats_foreign_values(native_route_model, monkeypatch, failure_mode):
+    env = native_route_model
+    prop = env.rnas["BlenderCodexBridgePreferences"].properties["project_directory"]
+    if failure_mode == "foreign_value":
+        class Foreign:
+            def __eq__(self, _other):
+                pytest.fail("foreign metadata equality")
+            def __repr__(self):
+                pytest.fail("foreign metadata repr")
+            def __getattribute__(self, _name):
+                pytest.fail("foreign metadata getter")
+        prop.is_registered = Foreign()
+    else:
+        prop.is_registered = False
+        def unavailable(*_args):
+            raise MemoryError("diagnostic allocation model")
+        monkeypatch.setattr(env.module, "_registered_property_clause", unavailable)
+    with pytest.raises(env.module.BridgeError) as failure:
+        env.module._route(env.bpy, env.declaration)
+    assert failure.value.context["reason"] == "ROOT_APPROVAL_REGISTERED_FIELD_CHANGED"
+    assert failure.value.code == env.module.ErrorCode.NOT_IMPLEMENTED
+    if failure_mode == "foreign_value":
+        assert failure.value.context["registered_property_clause"]["fields"]["is_registered"] == {
+            "value": None, "kind": "Foreign", "truncated": False}
+    else:
+        assert "registered_property_clause" not in failure.value.context
+    assert len(env.calls) == 3
