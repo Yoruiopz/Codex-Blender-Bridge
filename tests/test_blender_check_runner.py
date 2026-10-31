@@ -2869,6 +2869,8 @@ def mesh_storage_runner_root(runner, monkeypatch, tmp_path):
         path.write_text("# owned storage job composition model\n")
     helper = "addon/blender_codex_bridge/mesh_storage_prepare.py"
     (source / helper).write_bytes((ROOT / helper).read_bytes())
+    constants = "addon/blender_codex_bridge/constants.py"
+    (source / constants).write_bytes((ROOT / constants).read_bytes())
     binary = tmp_path / "blender binary"
     binary.write_bytes(b"MODELED EXECUTABLE, NEVER LAUNCHED")
     digest = runner.hashlib.sha256(binary.read_bytes()).hexdigest()
@@ -5321,6 +5323,30 @@ def _inspection_sync_terminal(full):
     cached["inspection_fingerprint"] = terminal["result"]["inspection_fingerprint"]
 
 
+@pytest.mark.parametrize("declaration,attest", [
+    ("ADDON_VERSION = (0, 9, 2)\n", False),
+    ("ADDON_VERSION = (0, 9, 2)\n", True),
+    ("ADDON_VERSION = (0, 9, True)\n", True),
+    ("ADDON_VERSION = tuple([0, 9, 1])\n", True),
+    ("ADDON_VERSION = (0, 9, 1)\nADDON_VERSION = (0, 9, 1)\n", True),
+    ("ADDON_VERSION = (\n", True),
+])
+def test_inspection_fence_rejects_changed_or_malformed_attested_source_version(
+        runner, addon_package, monkeypatch, tmp_path, declaration, attest):
+    output, _binary = mesh_storage_runner_root(runner, monkeypatch, tmp_path)
+    report = output / runner.MESH_STORAGE_INSPECTION_REPORT
+    _report, full = mesh_storage_inspection_model(runner, addon_package,
+        ["modeled", "--bridge-report", str(report)], {"BRIDGE_TEST_PROCESS_TOKEN": "1" * 32}, 77)
+    fence = full["requests"][-1]["response"]["result"]
+    assert runner._inspection_fence(fence, full) is True
+    filename = "addon/blender_codex_bridge/constants.py"
+    raw = declaration.encode()
+    (runner.ROOT / filename).write_bytes(raw)
+    if attest:
+        full["source_fingerprints"][filename] = hashlib.sha256(raw).hexdigest()
+    assert runner._inspection_fence(fence, full) is False
+
+
 @pytest.mark.parametrize("path,value,synchronize", [
     (("extra",), True, False),
     (("limitations", "COW_event_count_observed"), True, False),
@@ -5362,6 +5388,7 @@ def _inspection_sync_terminal(full):
     (("terminal", "result", "checkpoint_roles", "before_readback", "owners", 0, 0), 999, True),
     (("requests", -1, "response", "result", "permissions", "SAVE_PROJECT"), True, False),
     (("requests", -1, "response", "result", "addon_version"), "1.0.0", False),
+    (("requests", -1, "response", "result", "addon_version"), "0.9.0", False),
     (("requests", -1, "response", "result", "agent", "is_executing"), False, False),
 ])
 def test_phased_inspection_cold_receipt_rejects_forged_or_inconsistent_known_evidence(

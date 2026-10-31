@@ -3320,10 +3320,30 @@ def _inspection_roles(result, context):
 
 
 def _inspection_fence(value, full):
+    import ast
+
+    # Match the literal identity in the same source inventory as this receipt.
+    # Do not execute add-on modules (or accept a status-provided version).
+    filename = "addon/blender_codex_bridge/constants.py"
+    try:
+        raw = (ROOT / filename).read_bytes()
+        if hashlib.sha256(raw).hexdigest() != full["source_fingerprints"][filename]:
+            return False
+        declarations = [node.value for node in ast.parse(raw).body
+            if isinstance(node, ast.Assign) and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name) and node.targets[0].id == "ADDON_VERSION"]
+        if len(declarations) != 1:
+            return False
+        version = ast.literal_eval(declarations[0])
+        if type(version) is not tuple or len(version) != 3 or any(type(part) is not int or part < 0 for part in version):
+            return False
+        addon_version = ".".join(str(part) for part in version)
+    except (OSError, KeyError, SyntaxError, ValueError, TypeError, UnicodeError):
+        return False
     fields = {"blender_version", "addon_version", "connection_status", "server", "filepath", "mode", "scene", "active_object",
               "enabled_permissions", "permissions", "enabled_toolsets", "jobs", "agent"}
     if (type(value) is not dict or set(value) != fields or value["blender_version"] != full["blender_version"]
-            or value["addon_version"] != "0.9.0"
+            or value["addon_version"] != addon_version
             or value["connection_status"] != "connected" or value["filepath"] != "" or value["mode"] != "OBJECT"
             or value["scene"] != full["after"]["context"]["scene"][0]
             or value["active_object"] != full["after"]["snapshot"]["object_identity"][0]):
@@ -3663,7 +3683,8 @@ def _inspection_cost_attempt(full):
         return False
     if full["failure"] is None:
         return (failed is None and full["worker_cached"] is None and full["supervisor_cached"] is None
-                and _inspection_wire({**partial, "blender_version": full["blender_version"]}))
+                and _inspection_wire({**partial, "blender_version": full["blender_version"],
+                                      "source_fingerprints": full["source_fingerprints"]}))
     if (type(full["failure"]) is not str or not 1 <= len(full["failure"]) <= 16384
             or type(failed) is not dict or set(failed) != {"stage", "method", "sent_at", "failed_at", "cpu_seconds",
                 "response_received", "exception_type", "request_id"}
