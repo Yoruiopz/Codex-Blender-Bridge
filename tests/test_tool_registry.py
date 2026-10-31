@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import importlib
+import json
 from collections.abc import Mapping
 from typing import Any
 
@@ -130,9 +133,64 @@ def test_non_json_tool_result_is_rejected() -> None:
     assert caught.value.code == "PROTOCOL_ERROR"
 
 
-def test_glb_candidates_use_canonical_scene_admission_and_exact_permissions(addon_package):
-    import importlib
+@pytest.mark.parametrize("all_enabled", [False, True])
+def test_public_addon_surface_matches_published_090_and_rejects_private_glb_rpc(
+    addon_package, monkeypatch, all_enabled
+):
+    runtime_module = importlib.import_module(addon_package + ".runtime")
+    states = importlib.import_module(addon_package + ".state")
+    protocol = importlib.import_module(addon_package + ".protocol")
+    monkeypatch.setattr(runtime_module, "get_state", states.BridgeState)
+    runtime = runtime_module.BridgeRuntime()
+    names = runtime.registry.list_tools()
+    public_names = tuple(name for name in names if runtime.registry.get(name).remote)
+    # Published v0.9.0 source d756b68: exact public names, independent of enablement.
+    assert len(public_names) == 270
+    assert hashlib.sha256(("\n".join(public_names) + "\n").encode()).hexdigest() == (
+        "1cb16ea5e7320962bc0be5d886bf76724e59ed548e9bc2808b5bff7e3d3b9c1e"
+    )
+    assert set(names) - set(public_names) == {"checkpoint.restore_last", "jobs._scene_turn"}
+    if all_enabled:
+        for toolset in runtime.registry.describe()["toolsets"]:
+            runtime.registry.enable_toolset(toolset["name"])
+    else:
+        assert runtime.registry.enabled_toolsets == ("core",)
+    calls = []
+
+    def forbidden(label):
+        def invoke(*_args, **_kwargs):
+            calls.append(label)
+            pytest.fail("unknown private GLB RPC entered " + label)
+        return invoke
+
+    monkeypatch.setattr(runtime.permissions, "_source", forbidden("permission provider"))
+    for method in ("before_modification", "after_modification", "capture_job_markers"):
+        monkeypatch.setattr(runtime.checkpoints, method, forbidden("checkpoint " + method))
+    monkeypatch.setattr(runtime.jobs, "start_scene", forbidden("scene job"))
+    for method in ("preview", "by_preview", "inspect", "publish_preview", "attach_job"):
+        monkeypatch.setattr(runtime.glb_stage, method, forbidden("GLB service " + method))
+
+    for index, method in enumerate((
+        "asset.glb_stage_preview", "asset.glb_stage_create_start", "asset.glb_stage_inspect",
+        "asset.glb_stage_publish_preview", "asset.glb_stage_publish_start",
+    )):
+        assert method not in names
+        request = protocol.decode_request(json.dumps({
+            "id": f"private_glb_{index}", "method": method, "params": {}, "protocol_version": "1.0",
+        }) + "\n")
+        response = runtime.executor.execute_request(request)
+        wire = json.loads(protocol.encode_response(response))
+        assert wire["id"] == request.id and wire["ok"] is False
+        assert wire["error"]["code"] == "METHOD_NOT_FOUND"
+    assert calls == []
+    assert runtime.registry.list_tools() == names
+    assert runtime.jobs.active is None
+    assert runtime.glb_stage._records == {} and runtime.glb_stage.store._records == {}
+
+
+def test_private_glb_candidates_require_explicit_registration_and_exact_permissions(addon_package):
     runtime = importlib.import_module(addon_package + ".runtime").BridgeRuntime()
+    importlib.import_module(addon_package + ".tools.glb_stage").register(runtime.registry)
     required = {
         "asset.glb_stage_preview": {"INSPECT_SCENE", "ACCESS_EXTERNAL_FILES"},
         "asset.glb_stage_create_start": {"INSPECT_SCENE", "ACCESS_EXTERNAL_FILES", "EDIT_SCENE", "TRANSFORM_OBJECTS", "EDIT_MESH", "EDIT_MATERIALS"},

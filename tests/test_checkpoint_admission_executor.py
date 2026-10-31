@@ -1018,6 +1018,7 @@ def test_glb_denied_start_grants_precede_native_marker_capture(addon_package, mo
     runtime_module = importlib.import_module(f"{addon_package}.runtime")
     lifecycle = importlib.import_module(f"{addon_package}.request_lifecycle")
     owner = runtime_module.BridgeRuntime()
+    importlib.import_module(f"{addon_package}.tools.glb_stage").register(owner.registry)
     owner._registered = True
     monkeypatch.setattr(runtime_module, "_RUNTIME", owner)
     owner.registry.enable_toolset("asset_delivery")

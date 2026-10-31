@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 
 import pytest
@@ -149,7 +150,8 @@ def test_sdk_enforces_annotated_bounds_and_strict_types_before_forwarding():
     asyncio.run(scenario())
 
 
-def test_private_glb_runtime_candidates_are_discoverable_gated_and_typed() -> None:
+@pytest.mark.parametrize("all_enabled", [False, True])
+def test_private_glb_candidates_are_absent_from_public_runtime(all_enabled: bool) -> None:
     from mcp_server.tools.glb_stage import TOOL_NAMES
 
     class RecordingClient:
@@ -166,32 +168,28 @@ def test_private_glb_runtime_candidates_are_discoverable_gated_and_typed() -> No
     async def scenario() -> None:
         remote = RecordingClient()
         runtime = build_runtime(client=remote)  # type: ignore[arg-type]
+        if all_enabled:
+            toolsets = runtime.registry.inspect()["toolsets"]
+            assert isinstance(toolsets, list)
+            for toolset in toolsets:
+                assert isinstance(toolset, dict)
+                name = toolset["name"]
+                assert isinstance(name, str)
+                runtime.registry.enable(name)
         async with Client(runtime.server) as client:
             tools = {tool.name: tool for tool in (await client.list_tools()).tools}
-            assert set(TOOL_NAMES) <= set(tools)
+            assert set(TOOL_NAMES).isdisjoint(tools)
             assert "asset.glb_stage_create" not in tools
+            # Exact public-name set from published v0.9.0 source d756b68.
+            assert len(tools) == 270
+            names_digest = hashlib.sha256(("\n".join(sorted(tools)) + "\n").encode()).hexdigest()
+            assert names_digest == "1cb16ea5e7320962bc0be5d886bf76724e59ed548e9bc2808b5bff7e3d3b9c1e"
+            assert set(runtime.registry.tool_names(include_disabled=True)) == set(tools)
             for name in TOOL_NAMES:
-                assert "UNQUALIFIED" in tools[name].description
-                assert tools[name].annotations.read_only_hint is (name not in {
-                    "asset.glb_stage_create_start", "asset.glb_stage_publish_start"})
-                assert tools[name].annotations.destructive_hint is False
-            stage = {"stage_id": "glb_stage_" + "a" * 32}
-            disabled = await client.call_tool("asset.glb_stage_inspect", stage)
-            assert disabled.is_error and "TOOLSET_DISABLED" in disabled.content[0].text
+                with pytest.raises(BridgeError) as caught:
+                    await runtime.registry.call(name, {})
+                assert caught.value.code == "TOOL_NOT_FOUND"
+                assert (await client.call_tool(name, {})).is_error
             assert remote.calls == []
-            runtime.registry.enable("asset_delivery")
-            invalid = await client.call_tool("asset.glb_stage_publish_start", {
-                **stage, "publish_preview_id": "glb_publish_" + "b" * 32,
-                "expected_fingerprint": "c" * 64, "overwrite_policy": "REFUSE",
-                "time_limit_seconds": True})
-            assert invalid.is_error and remote.calls == []
-            valid = await client.call_tool("asset.glb_stage_publish_start", {
-                **stage, "publish_preview_id": "glb_publish_" + "b" * 32,
-                "expected_fingerprint": "c" * 64, "overwrite_policy": "REFUSE"})
-            assert not valid.is_error
-            assert remote.calls == [("asset.glb_stage_publish_start", {
-                **stage, "publish_preview_id": "glb_publish_" + "b" * 32,
-                "expected_fingerprint": "c" * 64, "overwrite_policy": "REFUSE",
-                "time_limit_seconds": 60})]
 
     asyncio.run(scenario())

@@ -4,39 +4,28 @@ Let Codex inspect and edit Blender through local, permission-controlled MCP tool
 Work with objects, meshes, materials, UVs, rigs, animation, lights and renders, with
 status, permissions and recovery controls inside Blender.
 
-**[0.9.0 alpha candidate — qualification pending](docs/releases/0.9.0.md)** ·
-[Published 0.8.0 alpha](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.8.0) ·
+**[0.9.1 alpha candidate — qualification pending](docs/releases/0.9.1.md)** ·
+[Published 0.9.0 alpha](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.9.0) ·
 [GitHub releases](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases) ·
 [Install](#install--no-source-build-needed) · [Troubleshooting](docs/troubleshooting.md) ·
 [Contribute](CONTRIBUTING.md)
 
 This is **alpha software**. Try it on a disposable scene or a copy of your project.
-The 0.9.0 candidate exposes **270 MCP tools** and retains default-off native-save
-effects consent. Its finite increment supports clean, loaded, packed FILE images
-within 16,777,216 aggregate pixels/80 MiB packed bytes and an empty native sequencer
-with ordered public channel data. The prerequisite source passed a genuine queued
-single-4K save/reopen fixture on two official Linux builds; new 0.9.0 metadata and
-packages still require exact-commit full, CI, installed, native and integrity checks.
-This candidate has not been published or accepted. Use matching accepted 0.8.0
-add-on, MCP server and optional plugin artifacts for the published alpha route below.
-A source version alone does not identify accepted bytes or measured qualification.
-See the separate [0.8.0 release evidence](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.8.0).
+The 0.9.1 candidate retains the published **270 MCP tools** and strengthens runtime
+lifecycle and context checks. Its acceptance target is one installed static asset
+carried through creation, transform, structural inspection, geometry preview,
+approved Copy New save and fresh-reader verification. Exact native, installed,
+CI and package-integrity checks must pass before publication.
 
-This private development source also registers five **UNQUALIFIED**
-[structured GLB staging/publication candidates](docs/structured-glb-import.md).
-They are not part of accepted 0.8.0 artifacts. Their new-owned static subset still
-requires exact-source Runtime, native and installed acceptance; job acceptance is
-not completion, project saving or full textured/skinned/animated import delivery.
-The preservation target is logical authored data with declared bit-preserving
-ARRAY/COW/cache and empty deform-layer read effects. 5.2 SINGLE storage refuses
-pending separate authorized preparation; source models and raw fixture preparation
-do not qualify Runtime/native execution or a public preparation API.
+Five unqualified [GLB staging candidates](docs/structured-glb-import.md) are
+excluded from both public registries. Their implementation and explicit development
+tests remain preserved. The full artist-workflow target is deferred for this
+release pass and remains unfinished.
 
-The previous [0.7.0 alpha](docs/releases/0.7.0.md), published October 25, 2026 at
-19:16:03 UTC from `8d07ad898ba92c5e94db57b1562fefef9c8e0e1c`, remains available.
-Its retained direct-weight/raw-point and selected-data preview evidence applies only
-to those earlier accepted files, not the 0.8.0 artifacts. Prior releases and their
-separate evidence are preserved.
+Use matching accepted [0.9.0 artifacts](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.9.0)
+until 0.9.1 has a published acceptance record. The
+[0.9.0 evidence](docs/releases/0.9.0.md) applies to those exact bytes; it does not
+qualify this candidate. Previous releases and their separate evidence remain available.
 
 Development targets **official, unmodified Blender only**, without a fork or custom
 distribution. The [geometry preview](docs/geometry-preview.md) renders bounded authored
@@ -65,25 +54,25 @@ Windows 11/Blender 4.5 LTS and stable 5.x installed acceptance matrix.
 
 ## Install — no source build needed
 
-Install the matching **0.8.0 alpha** artifacts accepted on the
-[release page](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.8.0).
+Install the matching **0.9.0 alpha** artifacts accepted on the
+[release page](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.9.0).
 Review its recorded qualification and verify the supplied checksums before installing.
 A development ZIP or source tag alone is not a substitute for that acceptance record.
 
 You need Blender **4.2+**, standalone **Python 3.10+**, and a local Codex client with MCP
 support. Blender's bundled Python does not run the MCP server. The declared minimum is not
 a guarantee that every Blender version or platform is tested; see the
-[0.8.0 qualification record](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.8.0) for its evidence.
+[0.9.0 qualification record](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.9.0) for its evidence.
 
 ### 1. Download the packages
 
-Get these assets from the [0.8.0 release](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.8.0):
+Get these assets from the [0.9.0 release](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.9.0):
 
 | Asset | Purpose |
 | --- | --- |
-| `blender_codex_bridge-0.8.0.zip` | Required Blender add-on; keep it zipped |
-| `blender_codex_bridge-0.8.0-py3-none-any.whl` | Required standalone MCP server |
-| `blender-codex-bridge-plugin-0.8.0.zip` | Optional Codex plugin and workflow guidance |
+| `blender_codex_bridge-0.9.0.zip` | Required Blender add-on; keep it zipped |
+| `blender_codex_bridge-0.9.0-py3-none-any.whl` | Required standalone MCP server |
+| `blender-codex-bridge-plugin-0.9.0.zip` | Optional Codex plugin and workflow guidance |
 | `SHA256SUMS.txt` | Download checksums |
 
 Verify the three installers against `SHA256SUMS.txt`. Use the release assets
@@ -219,7 +208,7 @@ registry in CI. It does not describe the 108-tool 0.3.0 download.
 The local recovery UI also has an add-on-only action, not an extra MCP tool.
 
 <!-- BEGIN GENERATED MCP TOOLS -->
-Current registry: **275 MCP tools**.
+Current registry: **270 MCP tools**.
 
 <details>
 <summary>core — 38 tools</summary>
@@ -310,17 +299,12 @@ Current registry: **275 MCP tools**.
 </details>
 
 <details>
-<summary>asset_delivery — 9 tools</summary>
+<summary>asset_delivery — 4 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
 | `asset.export` | Export a current previewed asset to an approved unused GLB/FBX path. |
 | `asset.export_preview` | Preview exact static/skinned asset scope and GLB/FBX format limits. |
-| `asset.glb_stage_create_start` | Accept an exact GLB stage preview as a bounded Scene job; private candidate, not completed creation. |
-| `asset.glb_stage_inspect` | Inspect retained GLB stage facts and explicit unknown effects without cleanup authority. |
-| `asset.glb_stage_preview` | Preview new-ID GLB intent with declared logical-preservation read effects; private unqualified candidate. |
-| `asset.glb_stage_publish_preview` | Preview exact new-owned stage collection publication into one existing Scene; private candidate. |
-| `asset.glb_stage_publish_start` | Accept exact GLB stage publication as a bounded Scene job; private candidate, not completed delivery. |
 | `asset.import` | Import a current preview over frozen private source bytes into a new owned collection. |
 | `asset.import_preview` | Validate complete approved static GLB/FBX bytes and preview source/destination fingerprint. |
 

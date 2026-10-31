@@ -1,5 +1,12 @@
 # Full artist implementation checklist
 
+The current release pass targets **0.9.1 alpha**: a frozen 270-tool public
+surface, runtime reliability and one exact-package static-asset workflow.
+[Its release contract](releases/0.9.1.md) requires native, installed and CI
+qualification before publication. Broader implementation work is paused at
+preserved checkpoints for this release; the full target below is deferred,
+not removed or marked complete. Windows remains deferred and unverified.
+
 Current direction, **2026-10-29**: finish the entire agreed artist workflow through
 structured tools. The 29 items below define the remaining implementation work;
 they are not a tool-count target, a scope reduction or release acceptance.

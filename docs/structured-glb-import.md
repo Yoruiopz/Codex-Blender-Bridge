@@ -1,11 +1,12 @@
 # Structured GLB staging and publication candidate
 
-The current **private development source** registers five candidate MCP/RPC names
-in `asset_delivery`. They are **UNQUALIFIED** pending exact-source Runtime, native
-and installed-package acceptance. They are not accepted release artifacts or a
-claim of full typed GLB import. Historical private constructor evidence qualifies
-only its matching source and bounded constructor profile; it does not qualify
-these Runtime entry points or publication.
+The 0.9.1 release candidate excludes all five staging names from normal Blender
+registration, MCP discovery and dispatch. Their implementation and explicit
+development registration/tests remain preserved as **UNQUALIFIED** work. They
+require exact-source Runtime, native and installed-package acceptance before a
+future public release. Historical private constructor evidence qualifies only
+its matching source and bounded constructor profile; it does not qualify these
+Runtime entry points or publication.
 
 The Blender-free `asset_glb_import_plan.plan_glb` remains the numeric prerequisite.
 The candidate service must independently plan complete approved source bytes and

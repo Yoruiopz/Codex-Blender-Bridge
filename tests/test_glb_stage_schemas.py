@@ -143,7 +143,7 @@ def test_wrappers_forward_only_typed_intent_without_path_or_grant_actions(monkey
     ]
 
 
-def test_private_candidate_metadata_bindings_and_permissions_are_registered_exactly():
+def test_private_candidate_metadata_bindings_require_explicit_registration():
     from mcp_server.server import build_runtime
     from mcp_server.tools import catalog, iter_bindings
 
@@ -153,16 +153,20 @@ def test_private_candidate_metadata_bindings_and_permissions_are_registered_exac
     assert [row.modifying for row in definitions] == [False, True, False, False, True]
     assert [row.required_permissions for row in definitions] == [READ, CREATE, INSPECT, INSPECT, PUBLISH]
     assert "SAVE_PROJECT" not in CREATE and "DELETE_OBJECTS" not in CREATE
-    assert set(TOOL_NAMES) & set(catalog.MODIFYING_TOOL_NAMES) == {
-        "asset.glb_stage_create_start", "asset.glb_stage_publish_start"}
+    assert set(TOOL_NAMES).isdisjoint(catalog.MODIFYING_TOOL_NAMES)
     assert all("SAVE_PROJECT" not in row.required_permissions and
                "DELETE_OBJECTS" not in row.required_permissions for row in definitions)
-    assert {row.name for row in catalog.load_asset_delivery_definitions()} >= set(TOOL_NAMES)
+    assert set(TOOL_NAMES).isdisjoint(row.name for row in catalog.load_asset_delivery_definitions())
     runtime = build_runtime()
-    bindings = {binding.name: binding for binding in iter_bindings(runtime.registry)}
-    assert set(TOOL_NAMES) <= set(bindings)
-    assert "asset.glb_stage_create" not in bindings
-    assert all("UNQUALIFIED" in bindings[name].description for name in TOOL_NAMES)
+    try:
+        public_bindings = {binding.name for binding in iter_bindings(runtime.registry)}
+        assert set(TOOL_NAMES).isdisjoint(public_bindings)
+        bindings = {binding.name: binding for binding in GLBStageTools(runtime.registry).bindings()}
+        assert tuple(bindings) == TOOL_NAMES
+        assert "asset.glb_stage_create" not in bindings
+        assert all("UNQUALIFIED" in bindings[name].description for name in TOOL_NAMES)
+    finally:
+        asyncio.run(runtime.client.close())
 
 
 def test_official_sdk_validates_candidate_wrappers_in_an_isolated_test_server():

@@ -27,7 +27,6 @@ def register_all(registry: ToolRegistry) -> None:
         geometry_nodes,
         geometry_preview,
         geometry_zone_lifecycle,
-        glb_stage,
         image_delivery,
         image_paint,
         image_portability,
@@ -89,7 +88,6 @@ def register_all(registry: ToolRegistry) -> None:
     animation_lifecycle.register_tools(registry)
     asset_delivery.register_tools(registry)
     asset_import.register_tools(registry)
-    glb_stage.register(registry)
     for module in (animation_layers, compositor, simulation, weights):
         module.register_tools(registry)
     rigid_body.register(registry)

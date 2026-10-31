@@ -17,6 +17,7 @@ def runtime_case(addon_package, monkeypatch):
     # methods. This positive model needs a fresh canonical state instance.
     monkeypatch.setattr(module, "get_state", states.BridgeState)
     owner = module.BridgeRuntime()
+    importlib.import_module(addon_package + ".tools.glb_stage").register(owner.registry)
     monkeypatch.setattr(module, "_RUNTIME", owner)
     owner._registered = True
     owner.registry.enable_toolset("asset_delivery")
