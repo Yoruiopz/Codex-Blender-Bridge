@@ -14,6 +14,19 @@ import pytest
 @pytest.fixture
 def approval(addon_package, monkeypatch):
     module = importlib.import_module(addon_package + ".storage_snapshot_approval")
+    import sys
+    class Meta(type):
+        @property
+        def is_registered(cls):
+            pytest.fail("Stock meta property must never be invoked")
+    class AddonBase(metaclass=Meta):
+        __slots__ = ()
+    class Declared(AddonBase):
+        __slots__ = ()
+    stock = ModuleType("bpy_types")
+    stock._RNAMeta, stock.AddonPreferences = Meta, AddonBase
+    monkeypatch.setitem(sys.modules, "bpy_types", stock)
+    monkeypatch.setattr(module.preferences, "BlenderCodexBridgePreferences", Declared)
     runtime = module.runtime.BridgeRuntime()
     runtime.state.set_paused(False)
     runtime.state.set_emergency_stopped(False)
@@ -57,7 +70,7 @@ def approval(addon_package, monkeypatch):
     context = runtime.executor.context
     context.checkpoint_method = "fixture.root_approval"
     return SimpleNamespace(module=module, runtime=runtime, context=context, calls=calls,
-        hooks=hooks, root=root, changed_route=changed_route, prefs=prefs, route=route)
+        hooks=hooks, root=root, changed_route=changed_route, prefs=prefs, route=route, stock=stock)
 
 
 def test_authorize_then_separate_value_reads_keep_providers_separate(approval):
@@ -321,6 +334,8 @@ def native_route_model(addon_package, monkeypatch):
         assert resolved is None or resolved is cls
         return cls, rnas[name], native_get, pointer, ()
     monkeypatch.setattr(module.graph, "_constructor_proof", constructor)
+    monkeypatch.setattr(module, "_preferences_constructor_proof",
+                        lambda current_bpy, cls, _struct_proof: constructor(current_bpy, "BlenderCodexBridgePreferences", cls))
     monkeypatch.setattr(module.preferences, "get_preferences", lambda: owner)
     return SimpleNamespace(module=module, classes=classes, bpy=bpy, calls=calls,
         declaration=(classes["BlenderCodexBridgePreferences"],), rnas=rnas)
@@ -451,3 +466,187 @@ def test_registered_declaration_never_adopts_later_attr_or_callback_drift(addon_
     with pytest.raises(module.BridgeError) as failure:
         module._declaration_unchanged(bpy, fact)
     assert failure.value.context["reason"] == "ROOT_APPROVAL_DECLARATION_CHANGED"
+
+
+@pytest.fixture
+def preferences_constructor_model(addon_package, monkeypatch):
+    """Original raw type operations with an explicitly substituted native proof.
+
+    The Python stand-in for bpy_struct/pointer is not a native qualification.
+    The private constructor must never instantiate any model class or invoke
+    its stock is_registered property.
+    """
+    import sys
+    module = importlib.import_module(addon_package + ".storage_snapshot_approval")
+    calls = []
+    class NativeBase:
+        def as_pointer(self):
+            calls.append("pointer")
+            return id(self)
+    class Struct(NativeBase):
+        __slots__ = ("identifier",)
+    class Meta(type):
+        @property
+        def is_registered(cls):
+            pytest.fail("is_registered property invoked")
+    class AddonBase(NativeBase, metaclass=Meta):
+        __slots__ = ()
+    class Declared(AddonBase):
+        __slots__ = ()
+    declared_rna, base_rna = Struct(), Struct()
+    declared_rna.identifier, base_rna.identifier = "BlenderCodexBridgePreferences", "AddonPreferences"
+    Declared.bl_rna, AddonBase.bl_rna = declared_rna, base_rna
+    stock = ModuleType("bpy_types")
+    stock._RNAMeta, stock.AddonPreferences, stock._StructRNA = Meta, AddonBase, NativeBase
+    monkeypatch.setitem(sys.modules, "bpy_types", stock)
+    monkeypatch.setattr(module.preferences, "BlenderCodexBridgePreferences", Declared)
+    proof = (Struct, object(), object.__getattribute__, NativeBase.as_pointer,
+        (NativeBase, object(), object(), object.__getattribute__, NativeBase.as_pointer, object.__new__, object.__init__))
+    return SimpleNamespace(module=module, stock=stock, meta=Meta, addon_base=AddonBase, declared=Declared,
+        native_base=NativeBase, proof=proof, calls=calls, declared_rna=declared_rna, base_rna=base_rna)
+
+
+def test_private_preferences_constructor_uses_only_original_native_endpoints(preferences_constructor_model):
+    env = preferences_constructor_model
+    proof = env.module._preferences_constructor_proof(object(), env.declared, env.proof)
+    assert proof[:4] == (env.declared, env.declared_rna, object.__getattribute__, env.native_base.as_pointer)
+    assert env.calls == ["pointer", "pointer"]
+
+
+@pytest.mark.parametrize("slot", ["__getattribute__", "__call__", "__setattr__", "__new__", "__init__", "__getattr__", "__get__", "__del__"])
+def test_private_preferences_constructor_rejects_meta_hooks_without_callbacks(preferences_constructor_model, slot):
+    env = preferences_constructor_model
+    def forbidden(*_args):
+        pytest.fail("foreign metaclass callback")
+    setattr(env.meta, slot, forbidden)
+    try:
+        with pytest.raises(env.module.BridgeError):
+            env.module._preferences_constructor_proof(object(), env.declared, env.proof)
+    finally:
+        delattr(env.meta, slot)  # Never leave a model finalizer for later GC.
+    assert env.calls == []
+
+
+@pytest.mark.parametrize("slot", ["__getattribute__", "as_pointer", "__new__", "__init__", "__getattr__", "__del__"])
+def test_private_preferences_constructor_rejects_instance_hooks_without_callbacks(preferences_constructor_model, slot):
+    env = preferences_constructor_model
+    def forbidden(*_args):
+        pytest.fail("foreign instance callback")
+    setattr(env.declared, slot, forbidden)
+    with pytest.raises(env.module.BridgeError):
+        env.module._preferences_constructor_proof(object(), env.declared, env.proof)
+    assert env.calls == []
+
+
+@pytest.mark.parametrize("fault", ["module_alias", "module_meta", "module_base", "native_base", "class_binding", "foreign_meta", "unknown_mro", "metadata_type", "metadata_identifier"])
+def test_private_preferences_constructor_rejects_unqualified_origins(preferences_constructor_model, monkeypatch, fault):
+    import sys
+    env = preferences_constructor_model
+    candidate = env.declared
+    if fault == "module_alias":
+        monkeypatch.setitem(sys.modules, "bpy_types", ModuleType("foreign"))
+    elif fault == "module_meta":
+        env.stock._RNAMeta = type("Foreign", (type,), {})
+    elif fault == "module_base":
+        env.stock.AddonPreferences = object
+    elif fault == "native_base":
+        env.stock._StructRNA = object
+    elif fault == "class_binding":
+        candidate = object
+    elif fault == "foreign_meta":
+        class ForeignMeta(env.meta):
+            def __getattribute__(self, _name):
+                pytest.fail("foreign meta getter")
+        class ForeignClass(env.addon_base, metaclass=ForeignMeta):
+            pass
+        monkeypatch.setattr(env.module.preferences, "BlenderCodexBridgePreferences", ForeignClass)
+        candidate = ForeignClass
+    elif fault == "unknown_mro":
+        class Extra(env.addon_base):
+            pass
+        class ForeignClass(Extra):
+            pass
+        monkeypatch.setattr(env.module.preferences, "BlenderCodexBridgePreferences", ForeignClass)
+        candidate = ForeignClass
+    elif fault == "metadata_type":
+        env.declared.bl_rna = object()
+    else:
+        env.declared_rna.identifier = "ForeignPreferences"
+    with pytest.raises(env.module.BridgeError) as failure:
+        env.module._preferences_constructor_proof(object(), candidate, env.proof)
+    assert "preferences_type_shape" in failure.value.context
+    assert env.calls == []
+
+
+@pytest.mark.parametrize("fault", ["module_alias", "meta_property", "meta_property_code", "base_class", "registered_class"])
+def test_pure_root_source_rechecks_stock_definition_identities_before_route(approval, monkeypatch, fault):
+    import sys
+    env = approval
+    value = env.module.LocalRootApproval.capture(env.context).authorize()
+    env.calls.clear()
+    if fault == "module_alias":
+        monkeypatch.setitem(sys.modules, "bpy_types", ModuleType("foreign"))
+    elif fault == "meta_property":
+        env.stock._RNAMeta.is_registered = property(lambda *_: pytest.fail("new property invoked"))
+    elif fault == "meta_property_code":
+        def foreign(_cls):
+            pytest.fail("changed property invoked")
+        original = vars(env.stock._RNAMeta)["is_registered"].fget
+        monkeypatch.setattr(original, "__code__", foreign.__code__)
+    elif fault == "base_class":
+        env.stock.AddonPreferences = object
+    else:
+        monkeypatch.setattr(env.module.preferences, "BlenderCodexBridgePreferences", object)
+    with pytest.raises(env.module.BridgeError):
+        value.read_current()
+    assert env.calls == []
+
+
+def test_stock_meta_source_never_traverses_foreign_property_builtins(approval):
+    from types import FunctionType
+    env = approval
+    class Foreign:
+        def items(self):
+            pytest.fail("foreign builtins items")
+        def __getattribute__(self, _name):
+            pytest.fail("foreign builtins attribute")
+    def inert(_cls):
+        return None
+    getter = FunctionType(inert.__code__, {"__builtins__": Foreign()})
+    env.stock._RNAMeta.is_registered = property(getter)
+    with pytest.raises(env.module.BridgeError) as failure:
+        env.module.LocalRootApproval.capture(env.context)
+    assert failure.value.context["reason"] == "ROOT_APPROVAL_SOURCE_BUILTINS"
+    assert env.calls == []
+
+
+def test_stock_meta_source_rejects_colliding_foreign_namespace_key_without_comparison(approval):
+    env = approval
+    armed = [False]
+    class Key:
+        def __hash__(self):
+            return hash("_RNAMeta")
+        def __eq__(self, _other):
+            if armed[0]:
+                pytest.fail("foreign key comparison")
+            return False
+    key = Key()
+    env.stock.__dict__[key] = object()
+    armed[0] = True
+    with pytest.raises(env.module.BridgeError):
+        env.module.LocalRootApproval.capture(env.context)
+    assert env.calls == []
+    armed[0] = False
+    del env.stock.__dict__[key]
+
+
+def test_stock_meta_source_rejects_nonclass_base_with_typed_refusal(approval):
+    env = approval
+    class Foreign:
+        def __getattribute__(self, _name):
+            pytest.fail("foreign base attribute")
+    env.stock.AddonPreferences = Foreign()
+    with pytest.raises(env.module.BridgeError) as failure:
+        env.module.LocalRootApproval.capture(env.context)
+    assert failure.value.context["reason"] == "ROOT_APPROVAL_STOCK_PREFERENCES_BASE_CHANGED"
+    assert env.calls == []
