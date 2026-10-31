@@ -4632,7 +4632,8 @@ def _cloth_g0_catalog_validate(payload, temporary, token, pid, binary, sources):
                         or not 1 <= len(prop["identifier"]) <= 128 or prop["identifier"] in names
                         or prop.get("type") not in {"BOOLEAN", "INT", "FLOAT", "STRING", "ENUM", "POINTER", "COLLECTION"}
                         or any(type(prop.get(key)) is not bool for key in ("readonly", "runtime", "registered"))
-                        or set(prop) != base_keys | ({"enum_flag", "enum_identifiers"} if prop["type"] == "ENUM" else set())
+                        or set(prop) != base_keys | ({"enum_flag", "enum_identifiers", "enum_declared_count",
+                            "enum_separator_count", "enum_identifiers_complete", "enum_refusal"} if prop["type"] == "ENUM" else set())
                         or (prop["array_length"] is not None and
                             (type(prop["array_length"]) is not int or not 0 <= prop["array_length"] <= 1048576))
                         or any(prop[key] is not None and (type(prop[key]) is not str or not 1 <= len(prop[key]) <= 128)
@@ -4640,10 +4641,26 @@ def _cloth_g0_catalog_validate(payload, temporary, token, pid, binary, sources):
                     return False
                 names.add(prop["identifier"])
                 if prop["type"] == "ENUM" and (type(prop["enum_flag"]) is not bool
+                        or type(prop["enum_declared_count"]) is not int or not 0 <= prop["enum_declared_count"] <= 2**31 - 1
+                        or type(prop["enum_identifiers_complete"]) is not bool
                         or type(prop["enum_identifiers"]) is not list or len(prop["enum_identifiers"]) > fixture.MAX_ENUM_ITEMS
                         or any(type(value) is not str or not 1 <= len(value) <= 128 for value in prop["enum_identifiers"])
                         or len(set(prop["enum_identifiers"])) != len(prop["enum_identifiers"])):
                     return False
+                if prop["type"] == "ENUM":
+                    if prop["enum_declared_count"] <= fixture.MAX_ENUM_ITEMS:
+                        if (prop["enum_identifiers_complete"] is not True or prop["enum_refusal"] is not None
+                                or type(prop["enum_separator_count"]) is not int or prop["enum_separator_count"] < 0
+                                or len(prop["enum_identifiers"]) + prop["enum_separator_count"] != prop["enum_declared_count"]):
+                            return False
+                    else:
+                        expected_refusal = {"owner_class": name, "property": prop["identifier"], "reason": "ENUM_METADATA_CAP",
+                            "declared_count": prop["enum_declared_count"], "maximum_items": fixture.MAX_ENUM_ITEMS,
+                            "identifiers_observed": 0}
+                        if (prop["enum_identifiers_complete"] is not False or prop["enum_separator_count"] is not None
+                                or prop["enum_identifiers"] != []
+                                or fixture.canonical(prop["enum_refusal"]) != fixture.canonical(expected_refusal)):
+                            return False
         seen = set()
         for row in rows:
             if (type(row) is not dict or set(row) != {"tree", "node", "field", "value", "inputs", "outputs"}
@@ -4669,11 +4686,24 @@ def _cloth_g0_catalog_validate(payload, temporary, token, pid, binary, sources):
                     if fixture.canonical(socket["default_property"]) != fixture.canonical(expected):
                         return False
         reasons = {"ENUM_FLAG_POWERSET_UNOBSERVED", "DYNAMIC_ENUM_ITEMS_UNOBSERVED", "NODE_CREATE_REFUSED",
-                   "CONFIGURATION_SET_REFUSED", "CONFIGURATION_CAP"}
+                   "CONFIGURATION_SET_REFUSED", "CONFIGURATION_CAP", "ENUM_CONFIGURATION_CAP"}
         for row in refusals:
             if (type(row) is not dict or row.get("reason") not in reasons or row.get("tree") not in fixture.TREE_TYPES
-                    or row.get("node") not in fixture.LEGACY_NODES or set(row) - {"tree", "node", "field", "value", "reason", "error_type"}):
+                    or row.get("node") not in fixture.LEGACY_NODES
+                    or set(row) - {"tree", "node", "field", "value", "reason", "error_type", "declared_count", "maximum_items"}):
                 return False
+            if row["reason"] == "ENUM_CONFIGURATION_CAP":
+                if (set(row) != {"tree", "node", "field", "reason", "declared_count", "maximum_items"}
+                        or type(row["field"]) is not str or type(row["declared_count"]) is not int
+                        or not fixture.MAX_ENUM_ITEMS < row["declared_count"] <= 2**31 - 1
+                        or type(row["maximum_items"]) is not int or row["maximum_items"] != fixture.MAX_ENUM_ITEMS):
+                    return False
+                declared = next((prop for prop in catalogs[row["node"]].get("properties", [])
+                                 if prop["identifier"] == row["field"]), None)
+                if (declared is None or declared["type"] != "ENUM"
+                        or declared["enum_identifiers_complete"] is not False
+                        or declared["enum_declared_count"] != row["declared_count"]):
+                    return False
         return (full["configuration_attempts"] == len(rows) + sum(row["reason"] == "CONFIGURATION_SET_REFUSED" for row in refusals)
                 and full["plan_completed"] is not any(row["reason"] == "CONFIGURATION_CAP" for row in refusals))
     except (OSError, ValueError, TypeError, KeyError, IndexError, RecursionError, UnicodeError):

@@ -58,7 +58,8 @@ SEED_TYPES = ("ID", "Node", "NodeSocket", "NodeLink", "NodeTree", "NodeTreeInter
     "PackedFile", "ColorManagedInputColorspaceSettings", "TexMapping", "ColorMapping", "ColorRamp",
     "ColorRampElement", "ColorRampElements", "NodePanelState")
 GAPS = ("CONFIGURATION_CARTESIAN_PRODUCT_UNOBSERVED", "INSTANCE_PAYLOAD_GETTERS_UNQUALIFIED",
-    "INTERFACE_AND_ZONE_ITEM_INSTANCE_AUTHORING_UNOBSERVED", "IMAGE_TILES_VIEWS_FRAMES_PAYLOAD_UNOBSERVED")
+    "INTERFACE_AND_ZONE_ITEM_INSTANCE_AUTHORING_UNOBSERVED", "IMAGE_TILES_VIEWS_FRAMES_PAYLOAD_UNOBSERVED",
+    "ENUM_IDENTIFIERS_ABOVE128_UNOBSERVED")
 
 
 def canonical(value):
@@ -88,14 +89,24 @@ def bounded(values, maximum, label):
     return result
 
 
-def enum_identifiers(prop):
-    result = tuple(item.identifier for item in bounded(prop.enum_items, MAX_ENUM_ITEMS, "enum_items") if item.identifier)
+def enum_observation(prop):
+    """Retain an over-cap declaration without iterating or sampling its items."""
+    items = prop.enum_items
+    count = len(items)
+    if type(count) is not int or not 0 <= count <= 2**31 - 1:
+        raise ValueError("G0_ENUM_COUNT_SHAPE")
+    if count > MAX_ENUM_ITEMS:
+        return {"enum_identifiers": [], "enum_declared_count": count,
+                "enum_separator_count": None, "enum_identifiers_complete": False}
+    entries = bounded(items, MAX_ENUM_ITEMS, "enum_items")
+    result = tuple(item.identifier for item in entries if item.identifier)
     if any(type(value) is not str or len(value) > 128 for value in result) or len(set(result)) != len(result):
         raise ValueError("G0_ENUM_SHAPE")
-    return result
+    return {"enum_identifiers": list(result), "enum_declared_count": count,
+            "enum_separator_count": count - len(result), "enum_identifiers_complete": True}
 
 
-def metadata(prop):
+def metadata(prop, owner_class):
     kind = prop.type
     fixed = prop.fixed_type if kind in {"POINTER", "COLLECTION"} else None
     wrapper = getattr(prop, "srna", None) if kind in {"POINTER", "COLLECTION"} else None
@@ -105,7 +116,12 @@ def metadata(prop):
         "fixed_type": None if fixed is None else fixed.identifier,
         "srna": None if wrapper is None else wrapper.identifier}
     if kind == "ENUM":
-        result.update(enum_flag=prop.is_enum_flag, enum_identifiers=list(enum_identifiers(prop)))
+        observation = enum_observation(prop)
+        result.update(enum_flag=prop.is_enum_flag, **observation)
+        result["enum_refusal"] = None if observation["enum_identifiers_complete"] else {
+            "owner_class": owner_class, "property": prop.identifier, "reason": "ENUM_METADATA_CAP",
+            "declared_count": observation["enum_declared_count"], "maximum_items": MAX_ENUM_ITEMS,
+            "identifiers_observed": 0}
     return result
 
 
@@ -118,10 +134,15 @@ def configurations(properties):
         if prop.type == "BOOLEAN" and prop.array_length == 0:
             result.extend((prop.identifier, value) for value in (False, True))
         elif prop.type == "ENUM":
+            observation = enum_observation(prop)
+            if not observation["enum_identifiers_complete"]:
+                skipped.append({"field": prop.identifier, "reason": "ENUM_CONFIGURATION_CAP",
+                    "declared_count": observation["enum_declared_count"], "maximum_items": MAX_ENUM_ITEMS})
+                continue
             if prop.is_enum_flag:
                 skipped.append({"field": prop.identifier, "reason": "ENUM_FLAG_POWERSET_UNOBSERVED"})
                 continue
-            identifiers = enum_identifiers(prop)
+            identifiers = observation["enum_identifiers"]
             result.extend((prop.identifier, value) for value in identifiers)
             if not identifiers:
                 skipped.append({"field": prop.identifier, "reason": "DYNAMIC_ENUM_ITEMS_UNOBSERVED"})
@@ -153,7 +174,7 @@ def collect(bpy, legacy):
             rna = cls.bl_rna
             if rna.identifier != name:
                 raise ValueError("G0_CLASS_IDENTIFIER")
-            props = [metadata(prop) for prop in bounded(rna.properties, MAX_PROPERTIES, name + ".properties")]
+            props = [metadata(prop, name) for prop in bounded(rna.properties, MAX_PROPERTIES, name + ".properties")]
             if len({prop["identifier"] for prop in props}) != len(props):
                 raise ValueError("G0_DUPLICATE_PROPERTY")
             result = {"present": True, "identifier": name, "base": None if rna.base is None else rna.base.identifier,

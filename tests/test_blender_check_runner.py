@@ -163,6 +163,75 @@ def test_cloth_g0_catalog_configuration_plan_is_explicitly_oat_and_retains_dynam
     assert "CONFIGURATION_CARTESIAN_PRODUCT_UNOBSERVED" in fixture.GAPS
 
 
+def g0_overflow_enum_property():
+    class UniteratedItems:
+        def __len__(self):
+            return 129
+        def __iter__(self):
+            pytest.fail("Over-cap enum metadata must not be sampled or enumerated")
+    return SimpleNamespace(identifier="operation", type="ENUM", is_readonly=False, is_runtime=False,
+        is_registered=False, is_enum_flag=False, enum_items=UniteratedItems())
+
+
+def test_cloth_g0_catalog_enum_metadata_cap_retains_named_count_without_iteration():
+    from scripts import blender_cloth_storage_g0_catalog_smoke as fixture
+    prop = g0_overflow_enum_property()
+    observed = fixture.metadata(prop, "ShaderNodeMath")
+    assert observed["enum_identifiers"] == [] and observed["enum_declared_count"] == 129
+    assert observed["enum_separator_count"] is None and observed["enum_identifiers_complete"] is False
+    assert observed["enum_refusal"] == {"owner_class": "ShaderNodeMath", "property": "operation",
+        "reason": "ENUM_METADATA_CAP", "declared_count": 129, "maximum_items": 128, "identifiers_observed": 0}
+    assert fixture.configurations([prop]) == ([(None, None)], [{"field": "operation", "reason": "ENUM_CONFIGURATION_CAP",
+        "declared_count": 129, "maximum_items": 128}])
+    assert fixture.MAX_ENUM_ITEMS == 128 and "ENUM_IDENTIFIERS_ABOVE128_UNOBSERVED" in fixture.GAPS
+
+
+def test_cloth_g0_catalog_under_cap_enum_metadata_retains_separator_count():
+    from scripts import blender_cloth_storage_g0_catalog_smoke as fixture
+    prop = g0_overflow_enum_property()
+    prop.enum_items = [SimpleNamespace(identifier=value) for value in ("ADD", "", "MULTIPLY")]
+    observed = fixture.metadata(prop, "ShaderNodeMath")
+    assert observed["enum_identifiers"] == ["ADD", "MULTIPLY"] and observed["enum_declared_count"] == 3
+    assert observed["enum_separator_count"] == 1 and observed["enum_identifiers_complete"] is True
+    assert observed["enum_refusal"] is None
+
+
+@pytest.mark.parametrize("fault", [None, "owner", "property", "count", "cap", "observed", "missing_refusal",
+    "false_complete", "false_complete_integer", "sampled_identifiers", "separator", "config_count", "config_property"])
+def test_cloth_g0_catalog_enum_overflow_receipt_must_bind_exact_named_gap(runner, monkeypatch, tmp_path, fault):
+    fixture, binary, output, evidence = g0_catalog_model(runner, monkeypatch, tmp_path)
+    def launch(command, **kwargs):
+        report, full, compact = evidence(command, kwargs["env"])
+        observed = fixture.metadata(g0_overflow_enum_property(), "ShaderNodeMath")
+        full["catalogs"]["ShaderNodeMath"]["properties"].append(observed)
+        full["refusals"].append({"tree": "ShaderNodeTree", "node": "ShaderNodeMath", "field": "operation",
+            "reason": "ENUM_CONFIGURATION_CAP", "declared_count": 129, "maximum_items": 128})
+        if fault in {"owner", "property", "count", "cap", "observed"}:
+            key = {"owner": "owner_class", "count": "declared_count", "cap": "maximum_items",
+                   "observed": "identifiers_observed"}.get(fault, fault)
+            observed["enum_refusal"][key] = "foreign" if fault in {"owner", "property"} else 130 if fault == "count" else 1
+        elif fault == "missing_refusal":
+            observed["enum_refusal"] = None
+        elif fault in {"false_complete", "false_complete_integer"}:
+            observed["enum_identifiers_complete"] = True if fault == "false_complete" else 0
+        elif fault == "sampled_identifiers":
+            observed["enum_identifiers"] = ["ADD"]
+        elif fault == "separator":
+            observed["enum_separator_count"] = 0
+        elif fault == "config_count":
+            full["refusals"][0]["declared_count"] = 130
+        elif fault == "config_property":
+            full["refusals"][0]["field"] = "unobserved_field"
+        catalog = full["catalogs"]["ShaderNodeMath"]
+        catalog["sha256"] = hashlib.sha256(fixture.canonical({key: value for key, value in catalog.items() if key != "sha256"})).hexdigest()
+        g0_catalog_write(fixture, report, full, compact)
+        kwargs["stdout"].write((fixture.MARKER + json.dumps(compact) + "\n").encode())
+        return SimpleNamespace(pid=77, wait=lambda **_kwargs: 0)
+    monkeypatch.setattr(runner.subprocess, "Popen", launch)
+    result = runner.run_case(binary, runner.CLOTH_G0_CATALOG_CASE, output, 300)
+    assert result["status"] == ("passed" if fault is None else "failed")
+
+
 def test_cloth_g0_catalog_caps_retain_every_omitted_configuration_and_release_owned_groups(monkeypatch):
     from scripts import blender_cloth_storage_g0_catalog_smoke as fixture
     kinds = ("ShaderNodeMath", "GeometryNodeSwitch")
