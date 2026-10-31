@@ -10,7 +10,15 @@ import time
 import uuid
 from collections import deque
 from dataclasses import dataclass, field
-from types import CodeType, FunctionType, GetSetDescriptorType, MemberDescriptorType, ModuleType
+from time import monotonic as _INSPECTION_CLOCK
+from types import (
+    BuiltinFunctionType,
+    CodeType,
+    FunctionType,
+    GetSetDescriptorType,
+    MemberDescriptorType,
+    ModuleType,
+)
 from typing import Any
 
 from .checkpoint_completion import claim_native_push_completion
@@ -18,8 +26,10 @@ from .errors import BridgeError, ErrorCode, invalid_argument
 from .job_controller import TERMINAL, CooperativeJobController
 from .jobs import PaintJobs
 from .mesh_storage_effects import MeshStorageJournal, snapshot_storage_effects
+from .operation_lease import MutationInterlock, _InvocationRecord
 from .protocol import utc_timestamp
 from .request_lifecycle import RequestLifetime
+from .request_lifecycle import threading as _inspection_threading
 from .scene_job_authority import SceneJobAuthority, bind_permissions
 from .scene_job_effects import EffectsStatus, SceneNativeEffects, snapshot_native_effects
 from .scene_job_evidence import phase as phase_report
@@ -34,6 +44,19 @@ from .scene_job_reservations import (
 )
 from .task_plans import get_task_plans
 from .tool_registry import ToolSpec, check_final_mutation
+
+# Recognize the stock, nonblocking lifetime body; code membership alone cannot
+# establish that a replacement hook is callback-free.
+_INSPECTION_LIFETIME_CHECK = RequestLifetime.__dict__["check"]
+_INSPECTION_LIFETIME_CODE = _INSPECTION_LIFETIME_CHECK.__code__
+
+_INSPECTION_EVENT_KIND = _inspection_threading.Event
+_INSPECTION_EVENT_IS_SET = _INSPECTION_EVENT_KIND.__dict__["is_set"]
+_INSPECTION_EVENT_CODE = _INSPECTION_EVENT_IS_SET.__code__
+_INSPECTION_INTERLOCK_KIND = MutationInterlock
+_INSPECTION_INTERLOCK_OWNER = MutationInterlock.__dict__["check_owner"]
+_INSPECTION_INTERLOCK_OWNER_CODE = _INSPECTION_INTERLOCK_OWNER.__code__
+_INSPECTION_INTERLOCK_DICT = MutationInterlock.__dict__["__dict__"]
 
 
 def _storage_function_fact(function):
@@ -525,6 +548,22 @@ def _inspection_driver_fields(proof, *, instance=True):
     return fields
 
 
+
+def _inspection_driver_union_fields(proof, class_check, function_check, *, instance=True):
+    """Source-closed Python fields; no provider, native read or callback."""
+    driver, kind, classes, descriptor, seal, owned, methods = proof
+    for row in classes:
+        class_check(row)
+    fields = descriptor.__get__(driver, kind)
+    if (type(driver) is not kind or type(fields) is not dict or any(type(key) is not str for key in fields)
+            or any(name in fields for name in ("check_after_read", "advance")) or fields.get("source_seal") is not seal
+            or (instance and (len(fields) != len(owned) or any(name not in fields or fields[name] is not value for name, value in owned)))):
+        raise refused("INSPECTION_DRIVER_STATE_CHANGED")
+    for _name, fact in methods:
+        function_check(fact)
+    return fields
+
+
 def _inspection_fields(value, kind):
     """Read owned fields through native descriptors, without access hooks."""
     classes = _storage_class_facts(kind)
@@ -642,6 +681,29 @@ def _inspection_context_factory_fields(proof):
             raise refused("INSPECTION_CONTEXT_FACTORY_CHANGED")
 
 
+
+def _inspection_context_factory_union_fields(proof, class_check, function_check):
+    """Source-closed Python fields; callers verify the whole source first."""
+    _seal, runtime_module, runtime, _factory, fact, helper_module, namespace, functions, objects = proof
+    if vars(runtime_module).get("_RUNTIME") is not runtime:
+        raise refused("INSPECTION_CONTEXT_FACTORY_CHANGED")
+    current = vars(helper_module)
+    if (len(current) != len(namespace) or any(type(name) is not str for name in current)
+            or any(name not in current or current[name] is not value for name, value in namespace)):
+        raise refused("INSPECTION_CONTEXT_FACTORY_CHANGED")
+    for function in (fact, *functions):
+        function_check(function)
+    for value, kind, descriptor, classes, rows in objects:
+        for row in classes:
+            class_check(row)
+        current = descriptor.__get__(value, kind)
+        if (type(value) is not kind or type(current) is not dict or any(type(name) is not str for name in current)
+                or any(name not in current or current[name] is not item for name, item in rows)
+                or any(name in current for _base, _mro, saved, _methods in classes
+                       for name, value in saved if type(value) is FunctionType)):
+            raise refused("INSPECTION_CONTEXT_FACTORY_CHANGED")
+
+
 def _inspection_slot(owner, kind, name):
     if type(owner) is not kind:
         raise refused("INSPECTION_ADMISSION_CHANGED")
@@ -690,16 +752,26 @@ def _inspection_bind(admission):
             raise refused("INSPECTION_RECORD_LOST")
         record = dict.get(records, id(admission.job))
 
-    def checked():
-        # One held full verification covers only this callback-free field chain.
-        raw = tuple.__getitem__
-        seal = raw(proof, 4)
-        function, code, namespace, defaults, keywords, closure = raw(seal, 7)
-        native = raw(seal, 4)
-        if (type(function) is not FunctionType or function.__code__ is not code or function.__globals__ is not namespace
-                or function.__defaults__ is not defaults or function.__kwdefaults__ is not keywords or function.__closure__ is not closure):
-            raise raw(native, 8)
-        function(seal)
+    for row in proof[2]:
+        for fact in row[3]:
+            _inspection_function(fact)
+    for obj in factory_proof[8]:
+        for row in obj[3]:
+            for fact in row[3]:
+                _inspection_function(fact)
+
+    # Immutable auxiliary facts are not authority: the local Gate union must
+    # first prove this canonical admission and its owned closure.
+    interlock = context.registry._mutation_interlock
+    interlock_kind = type(interlock)
+    auxiliary = (frozenset(id(row[0]) for row in proof[4][1]),
+                 frozenset(id(row[0]) for row in proof[4][2]),
+                 interlock, interlock_kind, _storage_class_facts(interlock_kind))
+
+    def entry_fields(driver_check, factory_check, context_check, record_check):
+        """Held local leaf; only a freshly source-verified caller may dispatch."""
+        if type(auxiliary) is not tuple or len(auxiliary) != 5:
+            raise refused("INSPECTION_ADMISSION_CHANGED")
         for leaf_fact in leaf_facts:
             _inspection_function(leaf_fact)
         if (type(admission) is not admission_type
@@ -711,20 +783,392 @@ def _inspection_bind(admission):
                 or admission.driver_proof is not proof or admission.factory_proof is not factory_proof
                 or admission.inspection_context_proof is not captured):
             raise refused("INSPECTION_ADMISSION_CHANGED")
-        driver_fields(proof)
-        factory_fields(factory_proof)
-        context_fields(context, captured)
+        driver_check()
+        factory_check()
+        context_check()
         for manager, kind, descriptor, rows, _provider in captured[11]:
             data = descriptor.__get__(manager, kind)
             if (type(data) is not dict or len(data) != len(rows) or any(type(name) is not str for name in data)
                     or any(data.get(name) is not value for name, value in rows)):
                 raise refused("INSPECTION_PERMISSION_INSTANCE_CHANGED")
         if admission_type is _InspectionTurnAdmission:
-            record_fields(context.jobs, admission.job, record)
+            record_check()
+
+    def checked():
+        # One held full verification covers only this callback-free field chain.
+        raw = tuple.__getitem__
+        seal = raw(proof, 4)
+        function, code, namespace, defaults, keywords, closure = raw(seal, 7)
+        native = raw(seal, 4)
+        if (type(function) is not FunctionType or function.__code__ is not code or function.__globals__ is not namespace
+                or function.__defaults__ is not defaults or function.__kwdefaults__ is not keywords or function.__closure__ is not closure):
+            raise raw(native, 8)
+        function(seal)
+        _inspection_function(entry_fields_fact)
+        entry_fields(lambda: driver_fields(proof), lambda: factory_fields(factory_proof),
+                     lambda: context_fields(context, captured),
+                     lambda: record_fields(context.jobs, admission.job, record))
+
+    entry_fields_fact = _storage_function_fact(entry_fields)
 
     object.__setattr__(admission, "entry_guard", checked)
     object.__setattr__(admission, "entry_proof", (checked, checked.__code__, checked.__globals__, checked.__defaults__,
         checked.__kwdefaults__, checked.__closure__, tuple((cell, cell.cell_contents) for cell in checked.__closure__ or ())))
+
+
+def _inspection_gate_pure(gate, seal, cell):
+    """Run one exact canonical read Gate with a synchronous local fact union.
+
+    Gate has just dispatched its held source verifier. Unknown contexts/hooks
+    keep the ordinary path. No union state escapes this call, crosses I/O or a
+    snapshot lock, or grants a writer/native capability.
+    """
+    # Resolve only namespaces already owned and verified by the incoming seal;
+    # do not follow a fresh import through mutable process/package aliases.
+    pairs = [(ModuleType.__getattribute__(module, "__dict__").get("__name__"), module)
+             for module, _saved in tuple.__getitem__(seal, 0)]
+    if type(__package__) is not str or any(type(name) is not str for name, _module in pairs):
+        return False
+    modules = dict(pairs)
+    if __package__ + ".scene_job_reservations" not in modules:
+        return False  # Ordinary storage Gate seals never admit this branch.
+    source_fields = ModuleType.__getattribute__(modules[__package__ + ".mesh_storage_source"], "__dict__")
+    CheckpointAdmissionBinding = source_fields["CheckpointAdmissionBinding"]
+    ToolContext = source_fields["ToolContext"]
+    _context_slot = source_fields["_context_slot"]
+    _verify_context_fields = source_fields["_verify_context_fields"]
+    available_memory_facts = source_fields["available_memory_facts"]
+    contract = source_fields["contract"]
+    checkpoint_completion = modules[__package__ + ".checkpoint_completion"]
+    request_lifecycle = modules[__package__ + ".request_lifecycle"]
+    scene_job_reservations = modules[__package__ + ".scene_job_reservations"]
+    registry_fields = ModuleType.__getattribute__(modules[__package__ + ".tool_registry"], "__dict__")
+    _inspection_final_fields = registry_fields["_inspection_final_fields"]
+    task_fields = ModuleType.__getattribute__(modules[__package__ + ".task_plans"], "__dict__")
+    TaskPlanStore = task_fields["TaskPlanStore"]
+    ConnectionLifetime = ModuleType.__getattribute__(request_lifecycle, "__dict__")["ConnectionLifetime"]
+    Permission = ModuleType.__getattribute__(modules[__package__ + ".permissions"], "__dict__")["Permission"]
+
+    context = cell["context"]
+    if type(context) is not ToolContext:
+        return False
+    binding = _context_slot(context, ToolContext, "checkpoint_admission")
+    if type(binding) is not CheckpointAdmissionBinding:
+        return False
+    admission = _context_slot(binding, CheckpointAdmissionBinding, "callback")
+    if type(admission) is not _InspectionTurnAdmission:
+        return False
+    _verify_context_fields(context, cell["context_proof"])
+    proof = _inspection_slot(admission, _InspectionTurnAdmission, "driver_proof")
+    factory = _inspection_slot(admission, _InspectionTurnAdmission, "factory_proof")
+    captured = _inspection_slot(admission, _InspectionTurnAdmission, "inspection_context_proof")
+    entry = _inspection_slot(admission, _InspectionTurnAdmission, "entry_proof")
+    if (type(proof) is not tuple or len(proof) != 7 or proof[4] is not seal
+            or type(factory) is not tuple or len(factory) != 9 or factory[0] is not seal
+            or type(entry) is not tuple or len(entry) != 7):
+        return False
+    function, code, namespace, defaults, keywords, cells, contents = entry
+    if (type(function) is not FunctionType or function.__code__ is not code
+            or function.__globals__ is not namespace or function.__defaults__ is not defaults
+            or function.__kwdefaults__ is not keywords or function.__closure__ is not cells
+            or len(cells or ()) != len(contents)
+            or any(actual is not old or actual.cell_contents is not value
+                   for actual, (old, value) in zip(cells or (), contents, strict=True))
+            or admission.entry_guard is not function):
+        return False
+    closed = dict(zip(code.co_freevars, (item.cell_contents for item in cells or ()), strict=True))
+    entry_fields_fact = closed.get("entry_fields_fact")
+    if type(entry_fields_fact) is not tuple or len(entry_fields_fact) != 7:
+        return False
+    try:
+        _inspection_function(entry_fields_fact)
+    except BridgeError:
+        return False
+    entry_fields = entry_fields_fact[0]
+    field_closed = dict(zip(entry_fields.__code__.co_freevars,
+        (item.cell_contents for item in entry_fields.__closure__ or ()), strict=True))
+    auxiliary = field_closed.get("auxiliary")
+    record = closed.get("record")
+    if (type(auxiliary) is not tuple or len(auxiliary) != 5
+            or type(record) is not tuple or len(record) != 7):
+        return False
+    source_classes, source_functions, interlock, interlock_kind, interlock_classes = auxiliary
+    turn = _inspection_slot(admission, _InspectionTurnAdmission, "turn")
+    job = _inspection_slot(admission, _InspectionTurnAdmission, "job")
+    if type(turn) is not _Turn or type(job) is not InspectionJob or type(turn.owner) is not _Reservation:
+        return False
+    owner = turn.owner
+
+    def eligible():
+        # Eligibility reads only native slots/dictionaries. In particular no
+        # foreign clock, Event getter, __hash__ or __eq__ is called to decide.
+        if (type(_INSPECTION_CLOCK) is not BuiltinFunctionType
+                or type(request_lifecycle.time) is not ModuleType
+                or type(scene_job_reservations.time) is not ModuleType
+                or vars(request_lifecycle.time).get("monotonic") is not _INSPECTION_CLOCK
+                or vars(scene_job_reservations.time).get("monotonic") is not _INSPECTION_CLOCK
+                or RequestLifetime.__dict__.get("check") is not _INSPECTION_LIFETIME_CHECK
+                or _INSPECTION_LIFETIME_CHECK.__code__ is not _INSPECTION_LIFETIME_CODE
+                or _INSPECTION_EVENT_KIND.__dict__.get("is_set") is not _INSPECTION_EVENT_IS_SET
+                or _INSPECTION_EVENT_IS_SET.__code__ is not _INSPECTION_EVENT_CODE
+                or any(type(row[0]) is not _INSPECTION_EVENT_KIND for row in captured[10])
+                or type(context.request_lifecycle) is not RequestLifetime
+                or type(_context_slot(context.request_lifecycle, RequestLifetime, "deadline")) not in (int, float)
+                or type(turn.used) is not bool or type(turn.check_only) is not bool
+                or type(binding.active) is not bool or type(binding.method) is not str
+                or (context.checkpoint_method is not None and type(context.checkpoint_method) is not str)
+                or context.check_final_request is not None
+                or type(checkpoint_completion._consumers) is not dict
+                or checkpoint_completion._consumers):
+            return False
+        for kind in (RequestLifetime, ConnectionLifetime, _INSPECTION_EVENT_KIND):
+            fields = type.__dict__["__dict__"].__get__(kind)
+            if (fields.get("__getattribute__", object.__getattribute__) is not object.__getattribute__
+                    or fields.get("__setattr__", object.__setattr__) is not object.__setattr__
+                    or "__getattr__" in fields):
+                return False
+        if "_flag" in type.__dict__["__dict__"].__get__(_INSPECTION_EVENT_KIND):
+            return False
+        owned_data = {}
+        for value, kind, descriptor, _classes, _rows in factory[8]:
+            if type(value) is not kind or type(descriptor) is not GetSetDescriptorType:
+                return False
+            data = descriptor.__get__(value, kind)
+            if type(data) is not dict or any(type(key) is not str for key in data):
+                return False
+            owned_data[id(value)] = data
+        registry_data = owned_data.get(id(context.registry))
+        jobs_data = owned_data.get(id(context.jobs))
+        if registry_data is None or jobs_data is None:
+            return False
+        hook = context.check_final_job
+        if (type(hook) is not FunctionType or hook.__globals__ is not globals()
+                or hook.__defaults__ is not None or hook.__kwdefaults__ is not None
+                or hook.__code__.co_freevars != ("record", "self", "token")
+                or hook.__code__.co_names != ("_inspection_context_factory_check", "reservations", "check_inspection_turn")
+                or not any(hook.__code__ is value for origin in (SceneJobs._advance_work, SceneJobs._tick_check)
+                           for value in origin.__code__.co_consts if type(value) is CodeType)
+                or len(hook.__closure__ or ()) != 3
+                or any(item.cell_contents is not expected for item, expected in
+                       zip(hook.__closure__ or (), (record, context.jobs, turn.token), strict=True))):
+            return False
+        # No custom rich comparison may enter the closed live replay.
+        tools = registry_data.get("_tools")
+        enabled = registry_data.get("_enabled_toolsets")
+        records = jobs_data.get("_inspection_records")
+        if (type(tools) is not dict or any(type(key) is not str for key in tools)
+                or type(enabled) is not set or any(type(key) is not str for key in enabled)
+                or type(records) is not dict or any(type(key) is not int for key in records)
+                or type(owner.allowlist) is not tuple or type(owner.authority) is not SceneJobAuthority
+                or type(job.deadline) not in (float, int) or type(turn.inspection_deadline) not in (float, int)
+                or type(job.cancel_reason) is not str or type(owner.stopped) is not str
+                or type(owner.epoch) is not int
+                or type(job.phase) is not str or type(turn.phase) is not str
+                or type(job.revision) is not int or type(turn.revision) is not int
+                or job.pending is not None or job.lifetime is not context.request_lifecycle
+                or interlock_kind is not _INSPECTION_INTERLOCK_KIND
+                or type(interlock) is not _INSPECTION_INTERLOCK_KIND):
+            return False
+        interlock_class = type.__dict__["__dict__"].__get__(_INSPECTION_INTERLOCK_KIND)
+        if (interlock_class.get("check_owner") is not _INSPECTION_INTERLOCK_OWNER
+                or _INSPECTION_INTERLOCK_OWNER.__code__ is not _INSPECTION_INTERLOCK_OWNER_CODE
+                or interlock_class.get("__dict__") is not _INSPECTION_INTERLOCK_DICT
+                or interlock_class.get("__getattribute__", object.__getattribute__) is not object.__getattribute__
+                or interlock_class.get("__setattr__", object.__setattr__) is not object.__setattr__
+                or "__getattr__" in interlock_class
+                or type.__dict__["__mro__"].__get__(_INSPECTION_INTERLOCK_KIND) != (_INSPECTION_INTERLOCK_KIND, object)):
+            return False
+        interlock_data = _INSPECTION_INTERLOCK_DICT.__get__(interlock, _INSPECTION_INTERLOCK_KIND)
+        if (type(interlock_data) is not dict or any(type(key) is not str for key in interlock_data)
+                or "check_owner" in interlock_data or type(interlock_data.get("_entries")) is not list
+                or any(type(item) is not _InvocationRecord for item in interlock_data["_entries"])):
+            return False
+        # Native frozenset comparison is pure only with the stock string Enum
+        # equality/hash slots; read raw class dictionaries, never descriptors.
+        enum_slots = {}
+        for base in type.__dict__["__mro__"].__get__(Permission):
+            fields = type.__dict__["__dict__"].__get__(base)
+            for name in ("__eq__", "__hash__"):
+                if name not in enum_slots and name in fields:
+                    enum_slots[name] = fields[name]
+        if enum_slots.get("__eq__") is not str.__eq__ or enum_slots.get("__hash__") is not str.__hash__:
+            return False
+        declared = owner.authority.declared_permissions
+        if type(declared) is not frozenset or any(type(item) is not Permission for item in declared):
+            return False
+        for spec in (*owner.allowlist, turn.spec, owner.authority.spec):
+            if (type(spec) is not ToolSpec or type(spec.name) is not str
+                    or type(spec.toolset) is not str or type(spec.modifies) is not bool
+                    or type(spec.permissions) is not frozenset
+                    or any(type(item) is not Permission for item in spec.permissions)):
+                return False
+        reservation_data = owned_data.get(id(jobs_data.get("reservations")))
+        if reservation_data is None:
+            return False
+        tables = [scene_job_reservations._inspection_origins,
+                  *(reservation_data.get(name) for name in
+                    ("_retained", "_turns", "_inspection_turns", "_inspection_proofs"))]
+        if any(type(table) is not dict or any(type(key) is not int for key in table) for table in tables):
+            return False
+        origin = job.state_origin
+        if (type(origin) is not tuple or len(origin) != 3 or origin[0] is not context.state
+                or type(origin[1]) is not TaskPlanStore or type(origin[2]) is not int
+                or type(owner.authority.method) is not str or type(owner.authority.toolset) is not str
+                or type(reservation_data.get("epoch")) is not int):
+            return False
+        state_data = owned_data.get(id(context.state))
+        store_class = type.__dict__["__dict__"].__get__(TaskPlanStore)
+        if (state_data is None or state_data.get("_artist_task_plans") is not origin[1]
+                or store_class.get("__getattribute__", object.__getattribute__) is not object.__getattribute__
+                or store_class.get("__setattr__", object.__setattr__) is not object.__setattr__
+                or "__getattr__" in store_class or "evidence_epoch" in store_class):
+            return False
+        store_descriptor = store_class.get("__dict__")
+        if type(store_descriptor) is not GetSetDescriptorType:
+            return False
+        store_data = store_descriptor.__get__(origin[1], TaskPlanStore)
+        if (type(store_data) is not dict or any(type(key) is not str for key in store_data)
+                or type(store_data.get("evidence_epoch")) is not int):
+            return False
+        for rows in (turn.inspection_spec, owner.authority.inspection_spec):
+            if (type(rows) is not tuple or any(type(row) is not tuple or len(row) != 2
+                    or type(row[0]) is not str for row in rows)):
+                return False
+        return True
+
+    if not eligible():
+        return False
+    def same_facts(left, right):
+        if left is right:
+            return True
+        return (type(left) is tuple and type(right) is tuple and len(left) == len(right)
+                and all(same_facts(a, b) for a, b in zip(left, right, strict=True)))
+    shared_context_facts = same_facts(cell["context_proof"], captured)
+    seen_classes, seen_functions = set(), set()
+    seen_families = {"context"} if shared_context_facts else set()
+    active = True
+
+    def class_check(row):
+        base, mro, saved, functions = row
+        key = id(base)
+        if key in source_classes or key in seen_classes:
+            return
+        fields = type.__dict__["__dict__"].__get__(base)
+        if (type.__dict__["__mro__"].__get__(base) is not mro or len(fields) != len(saved)
+                or any(type(name) is not str for name in fields)
+                or any(name not in fields or fields[name] is not value for name, value in saved)):
+            raise refused("INSPECTION_DRIVER_SOURCE_CHANGED")
+        seen_classes.add(key)
+        for fact in functions:
+            function_check(fact)
+
+    def function_check(fact):
+        key = id(fact[0])
+        if key not in source_functions and key not in seen_functions:
+            _inspection_function(fact)
+            seen_functions.add(key)
+
+    def family(name, callback):
+        if name not in seen_families:
+            callback()
+            seen_families.add(name)
+
+    def driver_check():
+        family("driver", lambda: _inspection_driver_union_fields(proof, class_check, function_check))
+
+    def factory_check():
+        family("factory", lambda: _inspection_context_factory_union_fields(factory, class_check, function_check))
+
+    def context_check():
+        family("context", lambda: _verify_context_fields(context, captured))
+
+    def record_check():
+        family("record", lambda: _inspection_record_union_fields(context.jobs, job, record, factory_check, driver_check))
+
+    def entry_check(actual):
+        if actual is not entry:
+            raise refused("INSPECTION_ENTRY_PROVENANCE_CHANGED")
+        def verify_entry():
+            # Dynamic functions are absent from the module SourceSeal rows.
+            # Re-prove their original closure cells at each segment's first use.
+            function, code, namespace, defaults, keywords, cells, contents = entry
+            if (function.__code__ is not code or function.__globals__ is not namespace
+                    or function.__defaults__ is not defaults or function.__kwdefaults__ is not keywords
+                    or function.__closure__ is not cells or len(cells or ()) != len(contents)
+                    or any(actual is not old or actual.cell_contents is not value
+                           for actual, (old, value) in zip(cells or (), contents, strict=True))):
+                raise refused("INSPECTION_ENTRY_SOURCE_CHANGED")
+            _inspection_function(entry_fields_fact)
+            entry_fields(driver_check, factory_check, context_check, record_check)
+        family("entry", verify_entry)
+
+    def renew():
+        nonlocal active
+        # Called only after a successful boundary and its original returned
+        # resource/control validation. Failure is never hidden by a post-check.
+        verifier, code, namespace, defaults, keywords, closure = tuple.__getitem__(seal, 7)
+        native = tuple.__getitem__(seal, 4)
+        if (type(verifier) is not FunctionType or verifier.__code__ is not code
+                or verifier.__globals__ is not namespace or verifier.__defaults__ is not defaults
+                or verifier.__kwdefaults__ is not keywords or verifier.__closure__ is not closure):
+            raise tuple.__getitem__(native, 8)
+        verifier(seal)
+        seen_classes.clear()
+        seen_functions.clear()
+        seen_families.clear()
+        if not shared_context_facts:
+            _verify_context_fields(context, cell["context_proof"])
+        context_check()
+        factory_check()
+        driver_check()
+        record_check()
+        entry_check(entry)
+        active = active and eligible()
+
+    def interlock_check():
+        def verify_interlock():
+            for row in interlock_classes:
+                class_check(row)
+        family("interlock", verify_interlock)
+
+    def job_check():
+        factory_check()
+        context.jobs.reservations._inspection_check_turn_fields(turn.token, entry_check, interlock_check)
+
+    def owner_check(spec, actual_context):
+        interlock_check()
+        interlock.check_owner(actual_context.registry, spec, actual_context)
+        row = context.jobs.reservations._inspection_current_fields(context, entry_check, interlock_check)
+        record_check()
+        binding_now = context.checkpoint_admission
+        if binding_now is not None:
+            if row.binding is not binding_now or row.inspection_entry_proof is None:
+                raise BridgeError(ErrorCode.OPERATION_FAILED, "Inspection admission ownership changed.")
+            entry_check(row.inspection_entry_proof)
+        flags = context.state.snapshot()  # Hard RLock boundary, including release.
+        if flags["emergency_stopped"]:
+            raise BridgeError(ErrorCode.EMERGENCY_STOPPED, "Inspection emergency-stopped before its next read.")
+        if flags["paused"] and not row.check_only:
+            raise BridgeError(ErrorCode.AGENT_PAUSED, "Inspection paused before its next read.")
+        renew()
+
+    method = context.checkpoint_method or (TURN_METHOD if context.check_final_job is not None else cell["method"])
+    if context.registry is not cell["registry"] or context.state is not cell["state"]:
+        raise refused("STORAGE_RUNTIME_CONTEXT_CHANGED")
+    _inspection_final_fields(context, method, job_check, owner_check)
+    if get_task_plans(cell["state"]).evidence_epoch != cell["epoch"]:
+        raise contract.refused("STORAGE_TASK_PLAN_CHANGED")
+    facts = available_memory_facts()  # Hard external-I/O boundary.
+    available = facts["available_memory_bytes"]
+    if type(available) is not int or available < cell["floor"]:
+        raise contract.refused("STORAGE_LIVE_MEMORY_REFUSED")
+    cell["last_available"] = available
+    renew()
+    if active:
+        _inspection_final_fields(context, method, job_check, owner_check)
+    else:
+        check_final_mutation(context, method)
+    return True
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -1656,3 +2100,35 @@ class SceneJobs(PaintJobs):
         self._inspection_ready.clear()
         self.reservations.invalidate(reason)
         super().cancel_all(reason)
+
+
+def _inspection_record_union_fields(self, job, record, factory_check, driver_check, _type=type, _job_type=InspectionJob,
+                              _id=id, _get=dict.get, _tuple=tuple):
+    """One callback-free record chain under a freshly verified source seal."""
+    if (_type(job) is not _job_type or _type(record) is not _tuple or len(record) != 7 or record[0] is not job):
+        raise refused("INSPECTION_RECORD_LOST")
+    # Prove service/registry exact classes and method-shadow absence before
+    # reading service fields or dispatching the original registry get().
+    factory_check()
+    service_row = next(row for row in record[2][8] if row[0] is self)
+    data = service_row[2].__get__(self, service_row[1])
+    records = _get(data, "_inspection_records")
+    if (_type(records) is not dict or any(_type(key) is not int for key in records)
+            or _get(data, "active") is not job or _get(records, _id(job)) is not record):
+        raise refused("INSPECTION_RECORD_LOST")
+    if (job.driver is not record[1][0]
+            or any(getattr(job, name) is not value for name, value in record[3])):
+        raise refused("INSPECTION_RECORD_LOST")
+    registry = _get(data, "registry")
+    registry_row = next(row for row in record[2][8] if row[0] is registry)
+    registry_fields = registry_row[2].__get__(registry, registry_row[1])
+    tools = _get(registry_fields, "_tools")
+    if _type(tools) is not dict or any(_type(key) is not str for key in tools):
+        raise refused("INSPECTION_TURN_SPEC_CHANGED")
+    spec = _get(data, "_inspection_spec")
+    if (_type(spec) is not ToolSpec or registry.get(INSPECTION_TURN_METHOD) is not spec
+            or any(_inspection_slot(spec, ToolSpec, name) is not value
+                   for name, value in _get(data, "_inspection_spec_origin"))):
+        raise refused("INSPECTION_TURN_SPEC_CHANGED")
+    driver_check()
+    return record

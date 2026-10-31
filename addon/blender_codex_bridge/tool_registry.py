@@ -335,6 +335,47 @@ def check_final_mutation(context: ToolContext, method: str, *, allow_recovery: b
         raise BridgeError(ErrorCode.AGENT_PAUSED, "Mutation paused before its next write.")
 
 
+def _inspection_final_fields(context: ToolContext, method: str, job_check: Callable[[], None],
+                             owner_check: Callable[[ToolSpec, ToolContext], None]) -> None:
+    """Live final replay under the exact inspection caller's local static union.
+
+    Private leaves confer no authority. The caller proves the canonical owned
+    hook before replacing its repeated static checks with these local closures.
+    """
+    check_marker_context(context)
+    lifetime = getattr(context, "request_lifecycle", None)
+    if lifetime is not None:
+        lifetime.check()
+    for name in ("check_final_request", "check_final_job"):
+        hook = getattr(context, name, None)
+        if hook is not None:
+            (job_check if name == "check_final_job" else hook)()
+    expected_spec = None
+    admission = getattr(context, "checkpoint_admission", None)
+    if admission is not None:
+        admission.check_identity(method)
+        if expected_spec is None:
+            expected_spec = admission.spec
+    registry = getattr(context, "registry", None)
+    modifies = True  # Raw mutation helpers retain conservative stop behavior.
+    if registry is not None:
+        spec = registry.get(method)
+        if expected_spec is not None:
+            if spec is not expected_spec:
+                raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Registered tool identity changed before handler entry.",
+                                  {"checkpoint_parameters_unchanged": False})
+            modifies = expected_spec.modifies
+        if spec.toolset not in registry.enabled_toolsets:
+            raise BridgeError(ErrorCode.TOOLSET_DISABLED, "Mutation toolset was disabled before its next write.",
+                              {"tool": method, "toolset": spec.toolset})
+        check_owner = getattr(registry, "check_mutation_owner", None)
+        if check_owner is not None:
+            owner_check(spec, context)
+    if not modifies:
+        return
+    raise BridgeError(ErrorCode.OPERATION_FAILED, "Inspection final replay requires a readonly spec.")
+
+
 class ToolRegistry:
     """Register, describe, enable, and dispatch structured tools."""
 

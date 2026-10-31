@@ -556,6 +556,15 @@ class Gate(tuple):
         if kind(cell) is not raw_get(native, 2) or len(cell) != 9 or any(kind(key) is not str for key in cell):
             raise failure
         context = cell["context"]
+        # Dispatch from the held, just-verified module object. A fresh import
+        # could otherwise follow a replaced sys.modules/package alias.
+        for module, _saved in raw_get(seal, 0):
+            namespace = ModuleType.__getattribute__(module, "__dict__")
+            candidate = namespace.get("_inspection_gate_pure")
+            if type(candidate) is FunctionType and candidate.__globals__ is namespace:
+                if candidate(self, seal, cell):
+                    return
+                break
         verify_context(context, cell["context_proof"])
         if type(context) is not ToolContext or context.registry is not cell["registry"] or context.state is not cell["state"]:
             raise contract.refused("STORAGE_RUNTIME_CONTEXT_CHANGED")

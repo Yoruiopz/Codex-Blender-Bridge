@@ -6,9 +6,13 @@ checkpoint-role facts and OS resource observations are modeled before sealing.
 """
 from __future__ import annotations
 
+import ast
 import importlib
+import inspect
 import sys
+import textwrap
 import time
+from types import ModuleType
 from types import SimpleNamespace as NS
 
 import pytest
@@ -28,13 +32,45 @@ def inspection_runtime(addon_package, monkeypatch, request):
     reservations = importlib.import_module(addon_package + ".scene_job_reservations")
     native = environment(primitive, monkeypatch)
     env = NS(provider_calls=0, provider_hook=None, scope_reads=0, scope_hook=None,
-             binds=0, protected={"pixels": "a" * 64, "material": "original"}, source_walks=0)
-    if getattr(request, "param", None) == "count_source_walks":
+             binds=0, protected={"pixels": "a" * 64, "material": "original"}, source_walks=0,
+             fast_finals=0, memory_reads=0, memory_hook=None, snapshot_hook=None,
+             fact_counts={"driver": 0, "factory": 0, "context": 0, "record": 0})
+    registry_module = importlib.import_module(addon_package + ".tool_registry")
+    original_fast_final = registry_module._inspection_final_fields
+    env.original_fast_final = original_fast_final
+    def fast_final(*args):
+        env.fast_finals += 1
+        return original_fast_final(*args)
+    monkeypatch.setattr(registry_module, "_inspection_final_fields", fast_final)
+    jobs_module = importlib.import_module(addon_package + ".scene_jobs")
+    if getattr(request, "param", None) == "force_generic":
+        monkeypatch.setattr(jobs_module, "_inspection_gate_pure", lambda *_args: False)
+    if getattr(request, "param", None) in {"count_source_walks", "count_union_facts"}:
         original_verify = source.SourceSeal.verify
         def counted_verify(seal):
             env.source_walks += 1
             return original_verify(seal)
         monkeypatch.setattr(source.SourceSeal, "verify", counted_verify)
+    if getattr(request, "param", None) == "count_union_facts":
+        def observe(function, label):
+            def observed(*args, **kwargs):
+                env.fact_counts[label] += 1
+                return function(*args, **kwargs)
+            return observed
+        for owner, name, label in (
+            (jobs_module, "_inspection_driver_union_fields", "driver"),
+            (jobs_module, "_inspection_context_factory_union_fields", "factory"),
+            (source, "_verify_context_fields", "context"),
+            (jobs_module, "_inspection_record_union_fields", "record"),
+        ):
+            monkeypatch.setattr(owner, name, observe(getattr(owner, name), label))
+    if getattr(request, "param", None) == "nonstock_lifetime_clock":
+        env.clock_calls = []
+        native_clock = time.monotonic
+        def clock():
+            env.clock_calls.append("clock")
+            return native_clock()
+        monkeypatch.setattr(lifecycle, "time", NS(monotonic=clock))
     if getattr(request, "param", None) == "controlled_clock":
         env.clock = [time.monotonic()]
         monkeypatch.setattr(reservations, "time", NS(monotonic=lambda: env.clock[0]))
@@ -132,9 +168,27 @@ def inspection_runtime(addon_package, monkeypatch, request):
 
     monkeypatch.setattr(source, "CheckpointRoles", Roles)
     monkeypatch.setattr(source, "protected_facts", protected)
-    monkeypatch.setattr(source, "available_memory_facts", lambda: {"available_memory_bytes": 2 * 1024**3})
+    def memory_facts():
+        env.memory_reads += 1
+        hook, env.memory_hook = env.memory_hook, None
+        if hook is not None:
+            hook()
+        return {"available_memory_bytes": 2 * 1024**3}
+    monkeypatch.setattr(source, "available_memory_facts", memory_facts)
     monkeypatch.setattr(primitive, "qualify_collection_bindings", lambda *_args, **_kwargs: native.bindings)
     owner = runtime.BridgeRuntime()
+    class ObservedLock:
+        def __init__(self, lock):
+            self.lock = lock
+        def __enter__(self):
+            return self.lock.__enter__()
+        def __exit__(self, *args):
+            result = self.lock.__exit__(*args)
+            hook, env.snapshot_hook = env.snapshot_hook, None
+            if hook is not None:
+                hook()
+            return result
+    owner.state._lock = ObservedLock(owner.state._lock)
     monkeypatch.setattr(runtime, "_RUNTIME", owner)
     owner.register()
     tools.register_private(owner.registry)
@@ -878,3 +932,320 @@ def test_standalone_record_rejects_foreign_table_key_before_collision(inspection
     finally:
         table.clear()
         table.update(original)
+
+
+def test_canonical_turn_uses_local_static_union(inspection_runtime):
+    e = inspection_runtime
+    assert e.call().response.ok
+    terminal = e.drain()
+    assert terminal["state"] == "SUCCEEDED"
+    assert e.fast_finals > 0
+    assert e.fast_finals == 2 * e.memory_reads
+    assert e.native.writes == 0
+
+
+@pytest.mark.parametrize("inspection_runtime", ["count_union_facts"], indirect=True)
+def test_one_gate_repeats_complete_union_only_after_hard_boundaries(inspection_runtime):
+    e, observations = inspection_runtime, []
+    assert e.call().response.ok
+    def inspect_counts():
+        gate = e.owner.jobs.active.driver.gate
+        before = dict(e.fact_counts)
+        walks, finals = e.source_walks, e.fast_finals
+        gate.pure()
+        observations.append((e.source_walks - walks, e.fast_finals - finals,
+                             {key: e.fact_counts[key] - before[key] for key in before}))
+    e.scope_hook = inspect_counts
+    assert e.drain()["state"] == "SUCCEEDED"
+    assert observations == [(4, 2, {"driver": 4, "factory": 4, "context": 4, "record": 4})] * 2
+    assert e.native.writes == 0
+
+
+@pytest.mark.parametrize("boundary", ["memory", "snapshot"])
+def test_failing_boundary_retains_primary_despite_static_drift(inspection_runtime, boundary):
+    e, caught_errors, foreign_calls = inspection_runtime, [], []
+    module = importlib.import_module(e.runtime.__package__ + ".scene_jobs")
+    errors = importlib.import_module(e.runtime.__package__ + ".errors")
+    primary = errors.BridgeError(errors.ErrorCode.PERMISSION_DENIED, "synthetic boundary primary")
+    assert e.call().response.ok
+    original = module._inspection_driver_union_fields
+    def boundary_hook():
+        module._inspection_driver_union_fields = lambda *_args: foreign_calls.append("foreign")
+        raise primary
+    def probe():
+        setattr(e, boundary + "_hook", boundary_hook)
+        try:
+            with pytest.raises(errors.BridgeError) as caught:
+                e.owner.jobs.active.driver.gate.pure()
+            caught_errors.append(caught.value)
+        finally:
+            module._inspection_driver_union_fields = original
+        raise primary
+    e.scope_hook = probe
+    terminal = e.drain()
+    assert caught_errors == [primary] and foreign_calls == []
+    assert terminal["state"] == "FAILED" and terminal["ready"] is False
+    assert e.native.writes == 0
+
+
+@pytest.mark.parametrize("boundary", ["memory", "snapshot"])
+def test_successful_boundary_reseals_before_foreign_dispatch_and_live_expiry(inspection_runtime, boundary):
+    e, caught_errors, foreign_calls = inspection_runtime, [], []
+    module = importlib.import_module(e.runtime.__package__ + ".scene_jobs")
+    errors = importlib.import_module(e.runtime.__package__ + ".errors")
+    assert e.call().response.ok
+    original = module._inspection_driver_union_fields
+    def boundary_hook():
+        module._inspection_driver_union_fields = lambda *_args: foreign_calls.append("foreign")
+        e.connection.disconnected.set()
+    def probe():
+        setattr(e, boundary + "_hook", boundary_hook)
+        try:
+            with pytest.raises(errors.BridgeError) as caught:
+                e.owner.jobs.active.driver.gate.pure()
+            caught_errors.append(caught.value)
+        finally:
+            module._inspection_driver_union_fields = original
+            e.connection.disconnected.clear()
+        raise caught_errors[-1]
+    e.scope_hook = probe
+    terminal = e.drain()
+    # Explicit post-boundary priority: source drift is refused before dispatch
+    # of the now-expired lifetime. All original live-to-live priorities remain.
+    assert len(caught_errors) == 1
+    assert caught_errors[0].context["reason"] == "STORAGE_SOURCE_CHANGED"
+    assert foreign_calls == [] and terminal["state"] == "FAILED" and not terminal["ready"]
+    assert e.native.writes == 0
+
+
+@pytest.mark.parametrize("boundary", ["memory", "snapshot"])
+def test_dynamic_entry_closure_is_reproved_after_successful_boundary(inspection_runtime, boundary):
+    e, failures = inspection_runtime, []
+    errors = importlib.import_module(e.runtime.__package__ + ".errors")
+    assert e.call().response.ok
+    def probe():
+        context = e.owner.registry._mutation_interlock._entries[-1].context
+        checked = context.checkpoint_admission.callback.entry_guard
+        cell = dict(zip(checked.__code__.co_freevars, checked.__closure__, strict=True))["entry_fields_fact"]
+        original = cell.cell_contents
+        def boundary_hook():
+            cell.cell_contents = tuple([*original])
+        setattr(e, boundary + "_hook", boundary_hook)
+        try:
+            with pytest.raises(errors.BridgeError) as caught:
+                e.owner.jobs.active.driver.gate.pure()
+            failures.append(caught.value)
+        finally:
+            cell.cell_contents = original
+        raise failures[-1]
+    e.scope_hook = probe
+    terminal = e.drain()
+    assert len(failures) == 1 and failures[0].context["reason"] == "INSPECTION_ENTRY_SOURCE_CHANGED"
+    assert terminal["state"] == "FAILED" and terminal["ready"] is False and e.native.writes == 0
+
+
+@pytest.mark.parametrize("inspection_runtime", [None, "force_generic"], indirect=True)
+@pytest.mark.parametrize("fault", ["disconnect", "denial_before_allowlist"])
+def test_fast_and_generic_paths_preserve_live_failure_priority(inspection_runtime, fault):
+    e, failures = inspection_runtime, []
+    errors = importlib.import_module(e.runtime.__package__ + ".errors")
+    assert e.call().response.ok
+    denial = errors.BridgeError(errors.ErrorCode.PERMISSION_DENIED, "latched synthetic denial")
+    def probe():
+        context = e.owner.registry._mutation_interlock._entries[-1].context
+        row = context.checkpoint_admission.callback.turn
+        if fault == "disconnect":
+            e.connection.disconnected.set()
+            e.owner.jobs.active.lifetime.rejected.set()
+        else:
+            row.permission_denial = denial
+            e.owner.registry._tools.pop("bridge.status")
+        with pytest.raises(errors.BridgeError) as caught:
+            e.owner.jobs.active.driver.gate.pure()
+        failures.append(caught.value)
+        raise failures[-1]
+    e.scope_hook = probe
+    terminal = e.drain()
+    assert len(failures) == 1 and terminal["ready"] is False and e.native.writes == 0
+    if fault == "disconnect":
+        assert failures[0].code == errors.ErrorCode.TIMEOUT
+        assert failures[0].context["connection_disconnected"] is True
+        assert failures[0].context["start_delivery_failed"] is True
+    else:
+        assert failures[0] is denial
+
+
+@pytest.mark.parametrize("inspection_runtime", ["nonstock_lifetime_clock"], indirect=True)
+def test_nonstock_lifetime_clock_uses_generic_path(inspection_runtime):
+    e = inspection_runtime
+    assert e.call().response.ok
+    assert e.drain()["state"] == "SUCCEEDED"
+    assert e.clock_calls and e.fast_finals == 0 and e.native.writes == 0
+
+
+def test_private_live_replays_preserve_original_branching_and_call_order(inspection_runtime):
+    e = inspection_runtime
+    reservations = importlib.import_module(e.runtime.__package__ + ".scene_job_reservations")
+    registry = importlib.import_module(e.runtime.__package__ + ".tool_registry")
+    def body(function):
+        node = ast.parse(textwrap.dedent(inspect.getsource(function))).body[0]
+        return [item for item in node.body if not (isinstance(item, ast.Expr)
+                and isinstance(item.value, ast.Constant) and isinstance(item.value.value, str))]
+    def dump(nodes):
+        return ast.dump(ast.Module(body=nodes, type_ignores=[]), include_attributes=False)
+    original = body(reservations.SceneJobReservations._inspection_turn)
+    # Exactly the original static entry-proof verification/dispatch is replaced
+    # by the held local family checker. Every surrounding live branch remains.
+    static = next(item for item in original if isinstance(item, ast.If)
+                  and ast.unparse(item.test) == "entry_proof is not None")
+    static.body = static.body[:1] + ast.parse("entry_check(entry_proof)").body
+    assert dump(original) == dump(body(reservations.SceneJobReservations._inspection_turn_fields))
+    class RenameLocalCalls(ast.NodeTransformer):
+        def visit_Call(self, node):
+            self.generic_visit(node)
+            names = {"_inspection_check_turn_fields": "check_inspection_turn",
+                     "_inspection_turn_fields": "_inspection_turn"}
+            if isinstance(node.func, ast.Attribute) and node.func.attr in names:
+                count = 2 if node.func.attr == "_inspection_check_turn_fields" else 1
+                node.func.attr = names[node.func.attr]
+                node.args = node.args[:-count]
+            return node
+    for original_name, local_name in (("current_inspection", "_inspection_current_fields"),
+                                     ("check_inspection_turn", "_inspection_check_turn_fields")):
+        expected = body(getattr(reservations.SceneJobReservations, original_name))
+        local = body(getattr(reservations.SceneJobReservations, local_name))
+        local = [item for item in local if not (isinstance(item, ast.Expr)
+                 and isinstance(item.value, ast.Call) and isinstance(item.value.func, ast.Name)
+                 and item.value.func.id == "interlock_check")]
+        local = [RenameLocalCalls().visit(item) for item in local]
+        assert dump(expected) == dump(local)
+    expected = body(registry.check_final_mutation)
+    expected = expected[:next(i for i, item in enumerate(expected) if isinstance(item, ast.Assign)
+                             and ast.unparse(item.targets[0]) == "flags")]
+    class ReplaceStaticHooks(ast.NodeTransformer):
+        def visit_Call(self, node):
+            self.generic_visit(node)
+            if isinstance(node.func, ast.Name) and node.func.id == "hook":
+                node.func = ast.parse('(job_check if name == "check_final_job" else hook)', mode="eval").body
+            elif isinstance(node.func, ast.Name) and node.func.id == "check_owner":
+                node.func.id = "owner_check"
+            return node
+    expected = [ReplaceStaticHooks().visit(item) for item in expected]
+    local = body(e.original_fast_final)[:-1]
+    local = [item for item in local if not (isinstance(item, ast.Assign)
+             and len(item.targets) == 1 and ast.unparse(item.targets[0]) == "expected_spec"
+             and isinstance(item.value, ast.Constant) and item.value.value is None)]
+    assert dump(expected) == dump(local)
+
+
+def test_union_uses_held_method_keys_instead_of_mutable_function_name(inspection_runtime):
+    e, calls = inspection_runtime, []
+    jobs = importlib.import_module(e.runtime.__package__ + ".scene_jobs")
+    assert e.call().response.ok
+    function = jobs.SceneJobs.__dict__["_ensure_inspection_spec"]
+    original = function.__name__
+    class ForeignName(str):
+        def __hash__(self):
+            calls.append("hash")
+            raise AssertionError("Mutable functionname was hashed")
+        def __eq__(self, _other):
+            calls.append("equality")
+            raise AssertionError("Mutable functionname was compared")
+    def probe():
+        function.__name__ = ForeignName(original)
+        try:
+            e.owner.jobs.active.driver.gate.pure()
+        finally:
+            function.__name__ = original
+    e.scope_hook = probe
+    assert e.drain()["state"] == "SUCCEEDED"
+    assert e.fast_finals > 0 and calls == [] and e.native.writes == 0
+
+
+def test_gate_dispatch_uses_verified_module_not_replaced_import_alias(inspection_runtime):
+    e, calls = inspection_runtime, []
+    name = e.runtime.__package__ + ".scene_jobs"
+    original = sys.modules[name]
+    fake = ModuleType(name)
+    fake._inspection_gate_pure = lambda *_args: calls.append("foreign import dispatch")
+    assert e.call().response.ok
+    def probe():
+        sys.modules[name] = fake
+        try:
+            e.owner.jobs.active.driver.gate.pure()
+        finally:
+            sys.modules[name] = original
+    e.scope_hook = probe
+    assert e.drain()["state"] == "SUCCEEDED"
+    assert e.fast_finals > 0 and calls == [] and e.native.writes == 0
+
+
+def test_clock_change_at_memory_boundary_abandons_fast_live_replay(inspection_runtime):
+    e, calls, finals = inspection_runtime, [], []
+    native_clock = time.monotonic
+    assert e.call().response.ok
+    def clock():
+        calls.append("clock")
+        return native_clock()
+    def probe():
+        before = e.fast_finals
+        e.memory_hook = lambda: setattr(time, "monotonic", clock)
+        try:
+            e.owner.jobs.active.driver.gate.pure()
+            finals.append(e.fast_finals - before)
+        finally:
+            time.monotonic = native_clock
+    e.scope_hook = probe
+    assert e.drain()["state"] == "SUCCEEDED"
+    assert calls and finals == [1, 1]
+    assert e.native.writes == 0
+
+
+@pytest.mark.parametrize("target", ["declared_permissions", "spec_permissions", "lifetime_deadline",
+                                  "turn_used", "turn_check_only", "binding_active", "binding_method"])
+def test_eligibility_rejects_foreign_primitive_comparisons_without_dispatch(inspection_runtime, target):
+    e, calls, outcomes = inspection_runtime, [], []
+    jobs = importlib.import_module(e.runtime.__package__ + ".scene_jobs")
+    assert e.call().response.ok
+    class Foreign:
+        def __bool__(self):
+            calls.append("bool")
+            raise AssertionError("foreign bool")
+        def __hash__(self):
+            calls.append("hash")
+            raise AssertionError("foreign hash")
+        def __eq__(self, _other):
+            calls.append("equality")
+            raise AssertionError("foreign equality")
+        def __le__(self, _other):
+            calls.append("comparison")
+            raise AssertionError("foreign comparison")
+    def probe():
+        gate = e.owner.jobs.active.driver.gate
+        cell, seal = dict(tuple.__getitem__(gate, 0)), tuple.__getitem__(gate, 1)
+        context = cell["context"]
+        binding = context.checkpoint_admission
+        row = binding.callback.turn
+        owner, name = {
+            "declared_permissions": (row.owner.authority, "declared_permissions"),
+            "spec_permissions": (row.owner.authority.spec, "permissions"),
+            "lifetime_deadline": (context.request_lifecycle, "deadline"),
+            "turn_used": (row, "used"), "turn_check_only": (row, "check_only"),
+            "binding_active": (binding, "active"), "binding_method": (binding, "method"),
+        }[target]
+        original = getattr(owner, name)
+        before = e.fast_finals
+        object.__setattr__(owner, name, Foreign())
+        try:
+            # A native slot identity proof alone doesn't establish primitive
+            # semantics. Re-capture only this diagnostic cell to exercise that
+            # missing admission premise; it is never installed on the Gate.
+            cell["context_proof"] = e.source.capture_context(context, seal)
+            e.source.verify_seal(seal)
+            outcomes.append(jobs._inspection_gate_pure(gate, seal, cell))
+            assert e.fast_finals == before
+        finally:
+            object.__setattr__(owner, name, original)
+    e.scope_hook = probe
+    assert e.drain()["state"] == "SUCCEEDED"
+    assert outcomes == [False, False] and calls == [] and e.native.writes == 0

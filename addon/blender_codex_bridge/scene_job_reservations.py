@@ -299,6 +299,56 @@ class SceneJobReservations:
             raise refused("INSPECTION_TURN_LOST")
         self.registry._mutation_interlock.check_owner(self.registry, row.spec, row.context)
 
+    def _inspection_turn_fields(self, token, entry_check, _get=dict.get):
+        """Live replay; caller holds a source-verified local static-field union."""
+        origin = _get(_inspection_origins, id(token))
+        if (type(token) is not InspectionTurn or type(origin) is not tuple or len(origin) != 8
+                or origin[0] is not token or origin[1] is not self):
+            raise refused("INSPECTION_TURN_LOST")
+        _token, _service, row, owner, turns, proofs, scheduler, entry_proof = origin
+        if (type(row) is not _Turn or type(owner) is not _Reservation or self._inspection_turns is not turns
+                or self._inspection_proofs is not proofs or self._scheduler is not scheduler
+                or _get(turns, id(token)) is not row or row.token is not token or row.owner is not owner
+                or owner.turn is not token):
+            raise refused("INSPECTION_TURN_ORIGIN_CHANGED")
+        if entry_proof is not None:
+            if _get(proofs, id(token)) is not entry_proof or row.inspection_entry_proof is not entry_proof:
+                raise refused("INSPECTION_ENTRY_PROVENANCE_CHANGED")
+            entry_check(entry_proof)
+        self._live(row.owner)
+        if time.monotonic() >= row.inspection_deadline:
+            raise BridgeError(ErrorCode.TIMEOUT, "Inspection turn exceeded its unchanged 60-second bound.",
+                              {"reason": "INSPECTION_TURN_DEADLINE", "inspection_status": "INCOMPLETE", "ready": False})
+        if not row.check_only and not row.owner.job.lifetime.delivered.is_set():
+            raise refused("SCENE_START_NOT_DELIVERED")
+        return row
+
+    def _inspection_current_fields(self, context, entry_check, interlock_check, _values=dict.values):
+        rows = []
+        for origin in _values(_inspection_origins):
+            if type(origin) is not tuple or len(origin) != 8 or origin[1] is not self:
+                continue
+            row = origin[2]
+            if type(row) is not _Turn:
+                raise refused("INSPECTION_TURN_ORIGIN_CHANGED")
+            if row.context is context:
+                rows.append(row)
+        if len(rows) != 1:
+            raise refused("INSPECTION_TURN_LOST")
+        self._inspection_check_turn_fields(rows[0].token, entry_check, interlock_check)
+        return rows[0]
+
+    def _inspection_check_turn_fields(self, token, entry_check, interlock_check):
+        row = self._inspection_turn_fields(token, entry_check)
+        entries = self.registry._mutation_interlock._entries
+        if (not row.used or row.invocation is None or not entries or entries[-1] is not row.invocation
+                or row.owner.job.phase != row.phase or row.owner.job.revision != row.revision
+                or row.spec.modifies or row.spec.name != INSPECTION_TURN_METHOD
+                or any(getattr(row.spec, name) is not value for name, value in row.inspection_spec)):
+            raise refused("INSPECTION_TURN_LOST")
+        interlock_check()
+        self.registry._mutation_interlock.check_owner(self.registry, row.spec, row.context)
+
     def close_inspection_turn(self, token, _pop=dict.pop):
         origin = _pop(_inspection_origins, id(token), None)
         if type(origin) is not tuple or len(origin) != 8 or origin[0] is not token or origin[1] is not self:
