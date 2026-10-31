@@ -6,8 +6,9 @@ from dataclasses import dataclass
 from .. import mesh_storage_contract as contract
 from .. import mesh_storage_prepare as primitive
 from .. import mesh_storage_source as source
-from ..scene_jobs import _StartAdmission, _TurnAdmission, start_admission
+from ..scene_jobs import _StartAdmission, _TurnAdmission, inspection_admission, start_admission
 from ..utils import require_blender
+from ._mesh_storage_inspection import MeshStorageInspectionDriver
 from ._mesh_storage_job import MeshStorageDriver
 from .artist_loop import check_affected
 
@@ -88,6 +89,11 @@ def start(context, params):
     return context.jobs.start_scene(context, params, time_limit=parameters.time_limit_seconds)
 
 
+def inspection_start(context, params):
+    parameters = contract.parse(params)
+    return context.jobs.start_inspection(context, params, time_limit=parameters.time_limit_seconds)
+
+
 def protected_scope(context, params):
     contract.parse(params, starting=True)
     binding = context.checkpoint_admission
@@ -109,6 +115,7 @@ def register_private(registry):
     """Explicit in-process fixture registration, not an RPC capability."""
     # Source closure is frozen before the FIRST request permission provider;
     # constructing a fresh closure after it would adopt a replacement helper.
+    inspection_seal = source.SourceSeal.capture(inspection=True)
     seal = source.SourceSeal.capture()
     verify = source.SourceSeal.__dict__["verify"]
     proof = (verify, verify.__code__, verify.__globals__, verify.__defaults__, verify.__kwdefaults__, verify.__closure__)
@@ -142,6 +149,28 @@ def register_private(registry):
         contract.parse(params)
         return _PreviewAdmission(context, seal)
 
+    def checked_inspection_factory(context, params):
+        function, code, namespace, defaults, keywords, closure = proof
+        if (function.__code__ is not code or function.__globals__ is not namespace
+                or function.__defaults__ is not defaults or function.__kwdefaults__ is not keywords
+                or function.__closure__ is not closure):
+            raise failure
+        function(inspection_seal)
+        return MeshStorageInspectionDriver(context, params, require_blender(), source_seal=inspection_seal)
+
+    make_inspection_admission = inspection_admission(checked_inspection_factory)
+
+    def checked_inspection_admission(context, params):
+        # This is the first inspection callback. Prove the held registration
+        # seal before core admission helpers or classes can be resolved.
+        function, code, namespace, defaults, keywords, closure = proof
+        if (function.__code__ is not code or function.__globals__ is not namespace
+                or function.__defaults__ is not defaults or function.__kwdefaults__ is not keywords
+                or function.__closure__ is not closure):
+            raise failure
+        function(inspection_seal)
+        return make_inspection_admission(context, params)
+
     registry.register(contract.PREVIEW, checked_preview, permissions=contract.PERMISSIONS, toolset="geometry",
                       batchable=False, checkpoint_admission_factory=checked_preview_admission,
                       description="Inspect exact metadata and bounded storage-preparation intent.")
@@ -150,3 +179,7 @@ def register_private(registry):
                       exclusive_mutation=True, batchable=False, checkpoint_admission_factory=start_admission(checked_factory),
                       protected_scope_resolver=protected_scope,
                       description="Prepare one selected attribute per owned Scene turn; retain partial preparation.")
+    registry.register(contract.INSPECTION_START, inspection_start, permissions=contract.PERMISSIONS, toolset="geometry",
+                      batchable=False, automatic_checkpoint=False, record_history=False,
+                      checkpoint_admission_factory=checked_inspection_admission,
+                      description="Inspect storage in cancelable read turns; complete evidence grants no write capability.")

@@ -14,6 +14,7 @@ from types import (
     FunctionType,
     GetSetDescriptorType,
     MappingProxyType,
+    MemberDescriptorType,
     MethodDescriptorType,
     MethodType,
     ModuleType,
@@ -24,9 +25,10 @@ from . import current_pixels_graph as graph
 from . import mesh_storage_contract as contract
 from . import mesh_storage_prepare as primitive
 from .native_save_profile import available_memory_facts
+from .request_lifecycle import ConnectionLifetime, RequestLifetime
 from .scene_job_reservations import TURN_METHOD
 from .task_plans import get_task_plans
-from .tool_registry import ToolContext, check_final_mutation
+from .tool_registry import CheckpointAdmissionBinding, ToolContext, check_final_mutation
 from .tools import _scene_checkpoint_roles as checkpoint_roles
 from .tools import _scene_mutation as checkpoint_proof
 
@@ -46,7 +48,7 @@ class SourceSeal(tuple):
     __slots__ = ()
 
     @classmethod
-    def capture(cls):
+    def capture(cls, *, inspection=False):
         names = ("mesh_storage_source", "mesh_storage_contract", "mesh_storage_effects", "tools._mesh_storage_job",
                  # check_affected keeps its defining globals even when imported
                  # into tools.mesh_storage. Pin its directly reached helpers
@@ -56,6 +58,8 @@ class SourceSeal(tuple):
                  "native_save_profile", "state", "permissions", "task_plans", "tool_registry",
                  "request_lifecycle", "scene_jobs", "scene_job_authority", "executor", "command_queue",
                  "checkpoints", "checkpoint_completion", "current_pixels_graph", "mesh_storage_prepare", "uv_edit_guard")
+        if inspection:
+            names += ("tools._mesh_storage_inspection", "scene_job_reservations", "runtime", "glb_stage_runtime")
         modules = tuple(importlib.import_module(__package__ + "." + name) for name in names)
         module_rows, class_rows, functions, builtins = [], [], [], []
         for module in modules:
@@ -99,6 +103,36 @@ class SourceSeal(tuple):
                 functions.append((fn, fn.__code__, fn.__globals__, fn.__defaults__, keywords,
                                   () if keywords is None else tuple(keywords.items()),
                                   tuple((cell, cell.cell_contents) for cell in fn.__closure__ or ())))
+        # Namespace rows above retain every alias. Repeated aliases need only
+        # one owner fact, but inconsistent snapshots must still refuse capture.
+        unique_classes, unique_functions = {}, {}
+        for row in class_rows:
+            previous = unique_classes.get(id(row[0]))
+            if previous is None:
+                unique_classes[id(row[0])] = row
+                continue
+            fields = dict(previous[2])
+            if (row[0] is not previous[0] or row[1] is not previous[1]
+                    or len(row[2]) != len(fields)
+                    or any(type(key) is not str or key not in fields or fields[key] is not value
+                           for key, value in row[2])):
+                raise contract.refused("STORAGE_SOURCE_CHANGED")
+        for row in functions:
+            previous = unique_functions.get(id(row[0]))
+            if previous is None:
+                unique_functions[id(row[0])] = row
+                continue
+            if (any(row[index] is not previous[index] for index in range(5))
+                    or len(row[5]) != len(previous[5]) or len(row[6]) != len(previous[6])
+                    or any(type(key) is not str for key, _ in previous[5])):
+                raise contract.refused("STORAGE_SOURCE_CHANGED")
+            keywords = dict(previous[5])
+            if (any(type(key) is not str or key not in keywords or keywords[key] is not value
+                    for key, value in row[5])
+                    or any(cell is not old_cell or value is not old_value
+                           for (cell, value), (old_cell, old_value) in zip(row[6], previous[6], strict=True))):
+                raise contract.refused("STORAGE_SOURCE_CHANGED")
+        class_rows, functions = list(unique_classes.values()), list(unique_functions.values())
         failure = contract.refused("STORAGE_SOURCE_CHANGED")
         native = (type, len, dict, str, FunctionType, ModuleType.__getattribute__,
                   type.__dict__["__dict__"].__get__, type.__dict__["__mro__"].__get__, failure)
@@ -310,6 +344,17 @@ _BINDING_FIELDS = ("context", "method", "params", "call_id", "callback", "frozen
                    "native_push_callback", "registry", "spec", "enclosing", "active", "stopped", "marker_write_callback")
 
 
+def _context_slot(owner, kind, name):
+    """Read one canonical Python slot without a user attribute callback."""
+    if type(owner) is not kind:
+        raise contract.refused("STORAGE_CONTEXT_CHANGED")
+    descriptor = type.__dict__["__dict__"].__get__(kind).get(name)
+    if (type(descriptor) is not MemberDescriptorType or descriptor.__objclass__ is not kind
+            or descriptor.__name__ != name):
+        raise contract.refused("STORAGE_CONTEXT_CHANGED")
+    return descriptor.__get__(owner, kind)
+
+
 def capture_context(context, seal):
     """Capture scheduler-owned identities BEFORE any permission provider.
 
@@ -326,26 +371,23 @@ def capture_context(context, seal):
     binding = fields.get("checkpoint_admission")
     binding_rows, binding_callbacks = (), ()
     if binding is not None:
-        from .tool_registry import CheckpointAdmissionBinding
         if type(binding) is not CheckpointAdmissionBinding:
             raise contract.refused("STORAGE_CONTEXT_CHANGED")
-        binding_rows = tuple((name, getattr(binding, name)) for name in _BINDING_FIELDS)
-        binding_callbacks = tuple((name, _callback_fact(getattr(binding, name), seal, internal=True))
+        binding_rows = tuple((name, _context_slot(binding, CheckpointAdmissionBinding, name)) for name in _BINDING_FIELDS)
+        binding_callbacks = tuple((name, _callback_fact(_context_slot(binding, CheckpointAdmissionBinding, name), seal, internal=True))
                                   for name in ("readonly_callback", "native_push_callback", "marker_write_callback"))
-    from .request_lifecycle import RequestLifetime
     lifetime, lifetime_rows, connection_rows, event_rows = fields.get("request_lifecycle"), (), (), []
     if lifetime is not None:
         if type(lifetime) is not RequestLifetime:
             raise contract.refused("STORAGE_CONTEXT_CHANGED")
-        lifetime_rows = tuple((name, getattr(lifetime, name)) for name in ("connection", "deadline", "delivered", "rejected"))
-        connection = lifetime.connection
-        events = [lifetime.delivered, lifetime.rejected]
+        lifetime_rows = tuple((name, _context_slot(lifetime, RequestLifetime, name)) for name in ("connection", "deadline", "delivered", "rejected"))
+        connection = _context_slot(lifetime, RequestLifetime, "connection")
+        events = [_context_slot(lifetime, RequestLifetime, name) for name in ("delivered", "rejected")]
         if connection is not None:
-            from .request_lifecycle import ConnectionLifetime
             if type(connection) is not ConnectionLifetime:
                 raise contract.refused("STORAGE_CONTEXT_CHANGED")
-            connection_rows = tuple((name, getattr(connection, name)) for name in ("disconnected", "background_active"))
-            events += [connection.disconnected, connection.background_active]
+            connection_rows = tuple((name, _context_slot(connection, ConnectionLifetime, name)) for name in ("disconnected", "background_active"))
+            events += [_context_slot(connection, ConnectionLifetime, name) for name in ("disconnected", "background_active")]
         for event in events:
             event_kind = type(event)
             if event_kind is not tuple.__getitem__(seal, 4)[10]:
@@ -389,9 +431,14 @@ def capture_context(context, seal):
 
 
 def verify_context(context, proof):
-    (original, seal, rows, callbacks, binding, binding_rows, binding_callbacks, lifetime, lifetime_rows,
+    verify_seal(tuple.__getitem__(proof, 1))
+    _verify_context_fields(context, proof)
+
+
+def _verify_context_fields(context, proof):
+    """Callback-free fields only; callers hold a freshly verified source seal."""
+    (original, _seal, rows, callbacks, binding, binding_rows, binding_callbacks, lifetime, lifetime_rows,
      connection_rows, events, permissions) = proof
-    verify_seal(seal)
     if context is not original or type(context) is not ToolContext:
         raise contract.refused("STORAGE_CONTEXT_CHANGED")
     fields = {name: ToolContext.__dict__[name].__get__(context, ToolContext) for name in _CONTEXT_FIELDS}
@@ -400,15 +447,15 @@ def verify_context(context, proof):
     for name, fact in callbacks:
         _check_callback(fields.get(name), fact)
     if binding is not None:
-        if any(getattr(binding, name) is not value for name, value in binding_rows):
+        if any(_context_slot(binding, CheckpointAdmissionBinding, name) is not value for name, value in binding_rows):
             raise contract.refused("STORAGE_CONTEXT_CHANGED")
         for name, fact in binding_callbacks:
-            _check_callback(getattr(binding, name), fact)
+            _check_callback(_context_slot(binding, CheckpointAdmissionBinding, name), fact)
     if lifetime is not None:
-        if any(getattr(lifetime, name) is not value for name, value in lifetime_rows):
+        if any(_context_slot(lifetime, RequestLifetime, name) is not value for name, value in lifetime_rows):
             raise contract.refused("STORAGE_CONTEXT_CHANGED")
-        connection = lifetime.connection
-        if any(getattr(connection, name) is not value for name, value in connection_rows):
+        connection = _context_slot(lifetime, RequestLifetime, "connection")
+        if any(_context_slot(connection, ConnectionLifetime, name) is not value for name, value in connection_rows):
             raise contract.refused("STORAGE_CONTEXT_CHANGED")
     for event, event_kind, saved, methods, descriptor, data_rows in events:
         namespace = type.__dict__["__dict__"].__get__(event_kind)
@@ -433,6 +480,57 @@ def verify_context(context, proof):
             _check_callback(data.get("_source"), provider)
 
 
+def _same_context_snapshot_data(left, right):
+    """Compare immutable snapshot data; never validate current object state."""
+    if left is right:
+        return True
+    return (type(left) is tuple and type(right) is tuple and len(left) == len(right)
+            and all(_same_context_snapshot_data(a, b) for a, b in zip(left, right, strict=True)))
+
+
+def _canonical_inspection_context_data(context, seal, fresh):
+    """Reuse equivalent captured DATA after the caller's original fresh capture.
+
+    Current validation remains mandatory on every Gate entry. Unknown admission
+    kinds, malformed snapshots and differing baselines keep the fresh snapshot.
+    Native slot reads cannot dispatch foreign attribute or descriptor callbacks.
+    """
+    if (type(context) is not ToolContext or type(fresh) is not tuple or len(fresh) != 12
+            or fresh[0] is not context or fresh[1] is not seal):
+        return fresh
+    missing = object()
+    def slot(value, kind, name):
+        if type(value) is not kind:
+            return missing
+        descriptor = type.__dict__["__dict__"].__get__(kind).get(name)
+        if (type(descriptor) is not MemberDescriptorType or descriptor.__objclass__ is not kind
+                or descriptor.__name__ != name):
+            return missing
+        return descriptor.__get__(value, kind)
+    binding = slot(context, ToolContext, "checkpoint_admission")
+    if type(binding) is not CheckpointAdmissionBinding:
+        return fresh
+    callback = slot(binding, CheckpointAdmissionBinding, "callback")
+    if slot(binding, CheckpointAdmissionBinding, "context") is not context:
+        return fresh
+    for module, _saved in tuple.__getitem__(seal, 0):
+        namespace = ModuleType.__getattribute__(module, "__dict__")
+        function = namespace.get("_inspection_gate_pure")
+        if type(function) is not FunctionType or function.__globals__ is not namespace:
+            continue
+        kind = namespace.get("_InspectionTurnAdmission")
+        if type(kind) is not type or type(callback) is not kind:
+            return fresh
+        if slot(callback, kind, "context") is not context:
+            return fresh
+        candidate = slot(callback, kind, "inspection_context_proof")
+        if (type(candidate) is not tuple or len(candidate) != 12
+                or candidate[0] is not context or candidate[1] is not seal):
+            return fresh
+        return candidate if _same_context_snapshot_data(fresh, candidate) else fresh
+    return fresh
+
+
 class Gate(tuple):
     """Native tuple entry slots precede every replaceable Python callback."""
     __slots__ = ()
@@ -446,6 +544,7 @@ class Gate(tuple):
                 "floor": BASE_MEMORY, "last_available": 0, "provider_reads": 0,
                 "epoch": get_task_plans(context.state).evidence_epoch, "method": method,
                 "context_proof": capture_context(context, source_seal)}
+        cell["context_proof"] = _canonical_inspection_context_data(context, source_seal, cell["context_proof"])
         return tuple.__new__(cls, (cell, source_seal, facts(verify), facts(pure)))
 
     @property
@@ -456,11 +555,21 @@ class Gate(tuple):
     def context(self, context):
         seal = tuple.__getitem__(self, 1)
         verify_seal(seal)
-        from .scene_jobs import _StartAdmission, _TurnAdmission
+        from .scene_jobs import (
+            _InspectionAdmission,
+            _InspectionTurnAdmission,
+            _StartAdmission,
+            _TurnAdmission,
+        )
         binding = context.checkpoint_admission
         callback = None if binding is None else binding.callback
         if type(callback) is _StartAdmission or type(callback) is _TurnAdmission:
             proof = callback.storage_context_proof
+            if proof is None:
+                raise contract.refused("STORAGE_CANONICAL_CONTEXT_REQUIRED")
+            verify_context(context, proof)
+        elif type(callback) is _InspectionAdmission or type(callback) is _InspectionTurnAdmission:
+            proof = callback.inspection_context_proof
             if proof is None:
                 raise contract.refused("STORAGE_CANONICAL_CONTEXT_REQUIRED")
             verify_context(context, proof)
@@ -471,6 +580,7 @@ class Gate(tuple):
             verify_context(context, cell["context_proof"])
         cell = tuple.__getitem__(self, 0)
         cell["context"], cell["context_proof"] = context, capture_context(context, seal)
+        cell["context_proof"] = _canonical_inspection_context_data(context, seal, cell["context_proof"])
 
     @property
     def floor(self):
@@ -499,6 +609,15 @@ class Gate(tuple):
         if kind(cell) is not raw_get(native, 2) or len(cell) != 9 or any(kind(key) is not str for key in cell):
             raise failure
         context = cell["context"]
+        # Dispatch from the held, just-verified module object. A fresh import
+        # could otherwise follow a replaced sys.modules/package alias.
+        for module, _saved in raw_get(seal, 0):
+            namespace = ModuleType.__getattribute__(module, "__dict__")
+            candidate = namespace.get("_inspection_gate_pure")
+            if type(candidate) is FunctionType and candidate.__globals__ is namespace:
+                if candidate(self, seal, cell):
+                    return
+                break
         verify_context(context, cell["context_proof"])
         if type(context) is not ToolContext or context.registry is not cell["registry"] or context.state is not cell["state"]:
             raise contract.refused("STORAGE_RUNTIME_CONTEXT_CHANGED")

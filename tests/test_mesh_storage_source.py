@@ -2,7 +2,7 @@
 import importlib
 import warnings
 from dataclasses import replace
-from types import ModuleType
+from types import FunctionType, ModuleType
 from types import SimpleNamespace as NS
 
 import pytest
@@ -869,6 +869,185 @@ def test_source_seal_refuses_before_foreign_callback(source, monkeypatch, change
     assert calls == []
 
 
+@pytest.mark.parametrize("inspection", [False, True])
+def test_source_capture_deduplicates_fact_rows_but_retains_every_alias(source, monkeypatch, inspection):
+    before = source.SourceSeal.capture(inspection=inspection)
+    function_ids = {id(row[0]) for row in before[2]}
+    class_ids = {id(row[0]) for row in before[1]}
+    function, owner, method = source.metadata_matches, source.Gate, source.Gate.pure
+    monkeypatch.setattr(source, "_capture_function_alias", function, raising=False)
+    monkeypatch.setattr(source.contract, "_capture_imported_function_alias", function, raising=False)
+    monkeypatch.setattr(source, "_capture_class_alias", owner, raising=False)
+    monkeypatch.setattr(source.contract, "_capture_imported_class_alias", owner, raising=False)
+    method_aliases = {
+        "_capture_method_alias": method,
+        "_capture_static_alias": staticmethod(method),
+        "_capture_classmethod_alias": classmethod(method),
+        "_capture_property_alias": property(method),
+    }
+    for name, value in method_aliases.items():
+        monkeypatch.setattr(owner, name, value, raising=False)
+
+    seal = source.SourceSeal.capture(inspection=inspection)
+    source.verify_seal(seal)
+    assert len(seal[2]) == len({id(row[0]) for row in seal[2]})
+    assert len(seal[1]) == len({id(row[0]) for row in seal[1]})
+    assert {id(row[0]) for row in seal[2]} == function_ids
+    assert {id(row[0]) for row in seal[1]} == class_ids
+    assert {id(row[0]) for row in seal[0]} == {id(row[0]) for row in before[0]}
+    for module, fields in seal[0]:
+        namespace = vars(module)
+        assert len(fields) == len(namespace)
+        assert all(namespace[name] is value for name, value in fields)
+    source_fields = dict(next(fields for module, fields in seal[0] if module is source))
+    imported_fields = dict(next(fields for module, fields in seal[0] if module is source.contract))
+    assert source_fields["_capture_function_alias"] is function
+    assert source_fields["_capture_class_alias"] is owner
+    assert imported_fields["_capture_imported_function_alias"] is function
+    assert imported_fields["_capture_imported_class_alias"] is owner
+    owner_fields = dict(next(fields for kind, _mro, fields in seal[1] if kind is owner))
+    assert all(owner_fields[name] is value for name, value in method_aliases.items())
+
+
+def _source_capture_alias_probe(source, monkeypatch):
+    marker, default, keyword_default = object(), object(), object()
+    def template(value=default, *, keyword=keyword_default):
+        return marker, value, keyword, importlib
+    function = FunctionType(template.__code__, vars(source), "_capture_probe",
+                            template.__defaults__, template.__closure__)
+    function.__kwdefaults__ = dict(template.__kwdefaults__)
+    monkeypatch.setattr(source, "_capture_probe", function, raising=False)
+    monkeypatch.setattr(source.contract, "_capture_probe_alias", function, raising=False)
+    base = type("CaptureBase", (), {"__module__": source.__name__})
+    other_base = type("CaptureOtherBase", (), {"__module__": source.__name__})
+    owner = type("CaptureOwner", (base,), {"__module__": source.__name__, "method": function})
+    monkeypatch.setattr(source, "_capture_probe_owner", owner, raising=False)
+    monkeypatch.setattr(source, "_capture_probe_owner_alias", owner, raising=False)
+    return function, owner, other_base
+
+
+@pytest.mark.parametrize("change", [
+    "module_alias", "imported_alias", "function_code", "function_defaults", "keyword_binding",
+    "keyword_value", "closure_value", "empty_closure", "globals_binding", "class_alias",
+    "class_namespace", "class_mro",
+])
+def test_source_deduplicated_facts_keep_alias_and_metadata_drift_refusals(source, monkeypatch, change):
+    function, owner, other_base = _source_capture_alias_probe(source, monkeypatch)
+    seal = source.SourceSeal.capture()
+    source.verify_seal(seal)
+    function_rows = [row for row in seal[2] if row[0] is function]
+    owner_rows = [row for row in seal[1] if row[0] is owner]
+    assert len(function_rows) == len(owner_rows) == 1
+    assert function_rows[0][2] is vars(source)
+    calls = []
+    def foreign(*_args, **_kwargs):
+        calls.append("call")
+        raise AssertionError("Foreign alias or metadata executed")
+    if change == "module_alias":
+        monkeypatch.setattr(source, "_capture_probe", foreign)
+    elif change == "imported_alias":
+        monkeypatch.setattr(source.contract, "_capture_probe_alias", foreign)
+    elif change == "function_code":
+        monkeypatch.setattr(function, "__code__", function.__code__.replace(co_name="changed"))
+    elif change == "function_defaults":
+        monkeypatch.setattr(function, "__defaults__", (foreign,))
+    elif change == "keyword_binding":
+        monkeypatch.setattr(function, "__kwdefaults__", dict(function.__kwdefaults__))
+    elif change == "keyword_value":
+        monkeypatch.setitem(function.__kwdefaults__, "keyword", foreign)
+    elif change == "closure_value":
+        monkeypatch.setattr(function.__closure__[0], "cell_contents", foreign)
+    elif change == "empty_closure":
+        monkeypatch.delattr(function.__closure__[0], "cell_contents")
+    elif change == "globals_binding":
+        monkeypatch.setattr(source, "importlib", foreign)
+    elif change == "class_alias":
+        monkeypatch.setattr(source, "_capture_probe_owner_alias", object())
+    elif change == "class_namespace":
+        monkeypatch.setattr(owner, "method", property(foreign))
+    else:
+        original_bases = owner.__bases__
+        owner.__bases__ = (other_base,)
+    try:
+        with pytest.raises(source.contract.BridgeError) as caught:
+            source.verify_seal(seal)
+        assert caught.value.context["reason"] == "STORAGE_SOURCE_CHANGED"
+        assert calls == []
+    finally:
+        if change == "class_mro":
+            owner.__bases__ = original_bases
+
+
+def test_source_capture_keeps_distinct_functions_with_shared_code(source, monkeypatch):
+    function, _owner, _base = _source_capture_alias_probe(source, monkeypatch)
+    clone = FunctionType(function.__code__, function.__globals__, "_capture_clone",
+                         function.__defaults__, function.__closure__)
+    clone.__kwdefaults__ = dict(function.__kwdefaults__)
+    monkeypatch.setattr(source, "_capture_probe_clone", clone, raising=False)
+    seal = source.SourceSeal.capture()
+    source.verify_seal(seal)
+    rows = [row for row in seal[2] if row[0] is function or row[0] is clone]
+    assert len(rows) == 2
+    assert {id(row[0]) for row in rows} == {id(function), id(clone)}
+    assert rows[0][1] is rows[1][1]
+    assert rows[0][2] is rows[1][2]
+    monkeypatch.setattr(clone, "__kwdefaults__", {"keyword": object()})
+    with pytest.raises(source.contract.BridgeError) as caught:
+        source.verify_seal(seal)
+    assert caught.value.context["reason"] == "STORAGE_SOURCE_CHANGED"
+
+
+def _source_context_objects(source):
+    package = source.__package__
+    tools = importlib.import_module(package + ".tool_registry")
+    permissions = importlib.import_module(package + ".permissions")
+    states = importlib.import_module(package + ".state")
+    lifecycle = importlib.import_module(package + ".request_lifecycle")
+    context = tools.ToolContext(states.BridgeState(), permissions.PermissionManager(lambda: {}),
+                                tools.ToolRegistry(), None)
+    connection = lifecycle.ConnectionLifetime()
+    lifetime = lifecycle.RequestLifetime(connection)
+    binding = tools.CheckpointAdmissionBinding(context, "fixture.context", {}, object(), lambda: None)
+    context.request_lifecycle, context.checkpoint_admission = lifetime, binding
+    return context, {"binding": binding, "lifetime": lifetime, "connection": connection}
+
+
+@pytest.mark.parametrize("boundary", ["capture", "verify"])
+@pytest.mark.parametrize("target", ["binding", "lifetime", "connection"])
+def test_context_owner_class_drift_refuses_before_foreign_access(source, boundary, target):
+    context, owners = _source_context_objects(source)
+    seal = source.SourceSeal.capture()
+    proof = source.capture_context(context, seal)
+    owner, calls = owners[target], []
+    original = type(owner)
+    class Foreign(original):
+        __slots__ = ()
+
+        def __getattribute__(self, name):
+            calls.append(name)
+            raise AssertionError("Foreign context owner was accessed")
+
+        def __hash__(self):
+            calls.append("hash")
+            raise AssertionError("Foreign context owner was hashed")
+
+        def __eq__(self, _other):
+            calls.append("equality")
+            raise AssertionError("Foreign context owner was compared")
+
+    object.__setattr__(owner, "__class__", Foreign)
+    try:
+        with pytest.raises(source.contract.BridgeError) as caught:
+            if boundary == "capture":
+                source.capture_context(context, seal)
+            else:
+                source.verify_context(context, proof)
+        assert caught.value.context["reason"] == "STORAGE_CONTEXT_CHANGED"
+        assert calls == []
+    finally:
+        object.__setattr__(owner, "__class__", original)
+
+
 def test_source_fingerprint_binds_code_even_when_function_identity_is_retained(source, monkeypatch):
     before = source.SourceSeal.capture().fingerprint()
     fn = source.metadata_matches
@@ -1247,4 +1426,78 @@ def test_b2_third_native_error_check_keeps_held_accessor_origin_fence(checkpoint
         role.access.settings(c.brush)
     assert caught.value.context["reason"] == "STORAGE_CHECKPOINT_ROLE_ACCESS_CHANGED"
     assert events == ["pre", "native_keys", "post", "extra"]
+    assert calls == []
+
+
+def test_snapshot_data_equivalence_never_calls_mutable_leaf_comparisons(source):
+    calls = []
+    class Foreign:
+        def __eq__(self, _other):
+            calls.append("equality")
+            raise AssertionError("foreign snapshot equality")
+        def __hash__(self):
+            calls.append("hash")
+            raise AssertionError("foreign snapshot hash")
+    leaf = Foreign()
+    assert source._same_context_snapshot_data((leaf, ("key",)), (leaf, ("key",)))
+    assert not source._same_context_snapshot_data((leaf,), (Foreign(),))
+    assert not source._same_context_snapshot_data((leaf,), [leaf])
+    assert calls == []
+
+
+@pytest.fixture
+def inspection_snapshot_data(source):
+    core = importlib.import_module(source.__package__ + ".scene_jobs")
+    states = importlib.import_module(source.__package__ + ".state")
+    policies = importlib.import_module(source.__package__ + ".permissions")
+    context = source.ToolContext(states.BridgeState(), policies.PermissionManager(lambda: {}),
+                                 NS(), None)
+    callback = object.__new__(core._InspectionTurnAdmission)
+    object.__setattr__(callback, "context", context)
+    binding = source.CheckpointAdmissionBinding(context, "jobs._inspection_turn", {}, object(), callback)
+    context.checkpoint_admission = binding
+    seal = source.SourceSeal.capture(inspection=True)
+    candidate = source.capture_context(context, seal)
+    object.__setattr__(callback, "inspection_context_proof", candidate)
+    fresh = source.capture_context(context, seal)
+    assert fresh is not candidate
+    return NS(source=source, context=context, callback=callback, seal=seal, candidate=candidate, fresh=fresh)
+
+
+def test_equivalent_context_data_reuses_captured_tuple_without_proving_state(inspection_snapshot_data):
+    e = inspection_snapshot_data
+    assert e.source._canonical_inspection_context_data(e.context, e.seal, e.fresh) is e.candidate
+    e.context.request_id = "current state changed after both snapshots"
+    # Immutable snapshot equivalence says nothing about the current object.
+    assert e.source._canonical_inspection_context_data(e.context, e.seal, e.fresh) is e.candidate
+    errors = importlib.import_module(e.source.__package__ + ".errors")
+    with pytest.raises(errors.BridgeError):
+        e.source.verify_context(e.context, e.candidate)
+
+
+def test_different_context_snapshot_keeps_original_fresh_data(inspection_snapshot_data):
+    e = inspection_snapshot_data
+    e.context.request_id = "new snapshot data"
+    fresh = e.source.capture_context(e.context, e.seal)
+    assert e.source._canonical_inspection_context_data(e.context, e.seal, fresh) is fresh
+
+
+@pytest.mark.parametrize("candidate", [None, (), (None,) * 12, "foreign"])
+def test_malformed_inspection_snapshot_keeps_fresh_data(inspection_snapshot_data, candidate):
+    e = inspection_snapshot_data
+    object.__setattr__(e.callback, "inspection_context_proof", candidate)
+    assert e.source._canonical_inspection_context_data(e.context, e.seal, e.fresh) is e.fresh
+
+
+def test_foreign_admission_getters_are_not_used_for_snapshot_data(source, inspection_snapshot_data):
+    e, calls = inspection_snapshot_data, []
+    class Foreign:
+        def __getattribute__(self, name):
+            calls.append(name)
+            raise AssertionError("foreign candidate getter")
+        def __eq__(self, _other):
+            calls.append("equality")
+            raise AssertionError("foreign candidate equality")
+    e.context.checkpoint_admission.callback = Foreign()
+    assert source._canonical_inspection_context_data(e.context, e.seal, e.fresh) is e.fresh
     assert calls == []

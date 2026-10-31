@@ -13,6 +13,7 @@ import socket
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 from types import ModuleType
 from types import SimpleNamespace as NS
@@ -7088,3 +7089,1239 @@ def test_storage_root_approval_schema_rejects_counterfeit_proofs(fault):
     else:
         full["phase"] = "other"
     assert not _storage_root_approval_model_valid(case, full)
+
+
+class AtomicMonitoringModel:
+    """Public monitoring API model, never a CPython/native timing result."""
+    def __init__(self):
+        self.events = NS(PY_START=1, PY_RETURN=4)
+        self.owner, self.global_mask = None, 0
+        self.local, self.callbacks = {}, {}
+        self.fail_code = None
+    def get_tool(self, _tool):
+        return self.owner
+    def get_events(self, _tool):
+        return self.global_mask
+    def get_local_events(self, _tool, code):
+        return self.local.get(code, 0)
+    def use_tool_id(self, _tool, name):
+        assert self.owner is None
+        self.owner = name
+    def register_callback(self, _tool, event, callback):
+        previous = self.callbacks.get(event)
+        self.callbacks[event] = callback
+        return previous
+    def set_local_events(self, _tool, code, mask):
+        self.local[code] = mask
+        if code is self.fail_code and mask:
+            raise MemoryError("owned monitoring setup failure")
+    def set_events(self, _tool, mask):
+        self.global_mask = mask
+    def free_tool_id(self, _tool):
+        assert self.global_mask == 0 and not any(self.local.values())
+        self.owner = None
+
+
+def atomic_monitor_model(clock=None):
+    script = importlib.import_module("scripts.blender_mesh_storage_job_smoke")
+    def outer():
+        pass
+    def inner():
+        pass
+    api = AtomicMonitoringModel()
+    monitor = script.AtomicPhaseMonitor({outer.__code__: "preview", inner.__code__: "build_plan"}, monitoring=api,
+        clock=time.monotonic if clock is None else clock, get_ident=lambda: 7)
+    return script, monitor, api, outer.__code__, inner.__code__
+
+
+def test_atomic_local_monitor_records_completed_nesting_and_restores_every_owned_slot():
+    ticks = iter([10., 11., 12., 14., 15.])
+    _script, monitor, api, outer, inner = atomic_monitor_model(lambda: next(ticks))
+    monitor.install()
+    monitor._start(outer, 0)
+    monitor._start(inner, 0)
+    monitor._return(inner, 0, object())
+    monitor._return(outer, 0, object())
+    monitor.restore()
+    result = monitor.summary()
+    assert [(row["label"], row["duration_seconds"], row["depth"]) for row in result["spans"]] == [
+        ("preview", 4., 0), ("build_plan", 1., 1)]
+    assert api.owner is None and api.global_mask == 0 and not any(api.local.values())
+    assert all(value is None for value in api.callbacks.values())
+    assert result["observed_timings_are_untraced_timings"] is False
+
+
+@pytest.mark.parametrize("kind", ["open", "inner_unwind_unknown", "recursion"])
+def test_atomic_local_monitor_never_invents_exact_unwind_or_recursive_duration(kind):
+    ticks = iter(float(i) for i in range(10, 30))
+    script, monitor, _api, outer, inner = atomic_monitor_model(lambda: next(ticks))
+    monitor.install()
+    monitor._start(outer, 0)
+    if kind == "inner_unwind_unknown":
+        monitor._start(inner, 0)
+        monitor._return(outer, 0, None)
+    elif kind == "recursion":
+        monitor._start(outer, 0)
+        monitor._return(outer, 0, None)
+        monitor._return(outer, 0, None)
+    monitor.restore()
+    unknown = [row for row in monitor.summary()["spans"] if row["end"] == script.TIMING_UNKNOWN]
+    assert unknown and all(row["duration_seconds"] is None and row["elapsed_upper_bound_seconds"] >= 0 for row in unknown)
+
+
+@pytest.mark.parametrize("fault", ["occupied", "global", "local", "callback", "setup_failure"])
+def test_atomic_monitor_refuses_existing_ownership_and_rolls_back_partial_install(fault):
+    _script, monitor, api, outer, _inner = atomic_monitor_model()
+    def previous(*_args):
+        return None
+    if fault == "occupied":
+        api.owner = "other tool"
+    elif fault == "global":
+        api.global_mask = 1
+    elif fault == "local":
+        api.local[outer] = 1
+    elif fault == "callback":
+        api.callbacks[1] = previous
+    else:
+        api.fail_code = outer
+    with pytest.raises((AssertionError, MemoryError)):
+        monitor.install()
+    if fault in {"occupied", "global", "local"}:
+        assert api.owner == ("other tool" if fault == "occupied" else None)
+        assert api.global_mask == int(fault == "global")
+        assert api.local.get(outer, 0) == int(fault == "local")
+    else:
+        assert api.owner is None and api.global_mask == 0 and not any(api.local.values())
+        assert api.callbacks.get(1) is (previous if fault == "callback" else None)
+        assert api.callbacks.get(4) is None
+
+
+@pytest.mark.parametrize("fault", ["clock", "bound", "foreign_thread", "foreign_code", "return_without_entry"])
+def test_atomic_monitor_bounded_callback_refusal_never_admits_summary(fault):
+    script, monitor, _api, outer, _inner = atomic_monitor_model()
+    monitor.install()
+    if fault == "clock":
+        monitor.clock = lambda: float("nan")
+    elif fault == "bound":
+        monitor.spans = [{}] * script.TIMING_MAX_ROWS
+    elif fault == "foreign_thread":
+        monitor.main_thread = 8
+    if fault == "return_without_entry":
+        monitor._return(outer, 0, None)
+    else:
+        monitor._start((lambda: None).__code__ if fault == "foreign_code" else outer, 0)
+    assert monitor.failure is not None
+    if fault == "clock":
+        monitor.clock = time.monotonic
+    monitor.restore()
+    with pytest.raises(AssertionError):
+        monitor.summary()
+
+
+def test_atomic_monitor_callback_replacement_restores_all_slots_before_refusal():
+    _script, monitor, api, _outer, _inner = atomic_monitor_model()
+    monitor.install()
+    api.callbacks[1] = lambda *_: None
+    with pytest.raises(AssertionError, match="callback ownership changed"):
+        monitor.restore()
+    assert api.owner is None and not any(api.local.values()) and all(value is None for value in api.callbacks.values())
+
+
+def test_atomic_monitor_preserves_original_control_profile_and_default_qualifier_AST():
+    script = importlib.import_module("scripts.blender_mesh_storage_job_smoke")
+    tree = ast.parse(Path(script.__file__).read_text())
+    cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "AtomicPhaseMonitor")
+    event = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == "_event")
+    text = ast.unparse(event)
+    assert "_getframe" not in text and "f_locals" not in text and "bpy" not in text
+    assert "setprofile" not in text and "settrace" not in text and "provider" not in text
+    codes = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "atomic_phase_codes")
+    assert "Gate" not in ast.unparse(codes) and "pure" not in ast.unparse(codes)
+    assert len(script.TIMING_LABELS) == 16 and script.TIMING_MAX_ROWS == 2048
+
+
+@pytest.mark.parametrize("fault", ["local", "global", "callback"])
+def test_atomic_monitor_restore_attempts_every_owned_slot_and_preserves_first_error(fault):
+    _script, monitor, api, outer, inner = atomic_monitor_model()
+    monitor.install()
+    primary = MemoryError("first public API cleanup failure")
+    attempts = []
+    original_local, original_global, original_callback = api.set_local_events, api.set_events, api.register_callback
+    def local(tool, code, mask):
+        attempts.append(("local", code))
+        if fault == "local" and code is outer:
+            raise primary
+        return original_local(tool, code, mask)
+    def global_events(tool, mask):
+        attempts.append(("global", mask))
+        if fault == "global":
+            raise primary
+        return original_global(tool, mask)
+    def callback(tool, event, value):
+        attempts.append(("callback", event))
+        if fault == "callback" and event == 1:
+            raise primary
+        return original_callback(tool, event, value)
+    api.set_local_events, api.set_events, api.register_callback = local, global_events, callback
+    with pytest.raises(MemoryError) as caught:
+        monitor.restore()
+    assert caught.value is primary
+    assert attempts == [("local", outer), ("local", inner), ("global", 0), ("callback", 1), ("callback", 4)]
+    assert api.local[inner] == 0 and api.callbacks[4] is None
+    if fault in {"local", "callback"}:
+        assert api.owner == monitor.tool_name
+    else:
+        assert api.owner is None  # Global mask was already zero and verified.
+    # A fresh pure cleanup attempt can release retained ownership, but never
+    # turns failed instrumentation into an accepted timing observation.
+    api.set_local_events, api.set_events, api.register_callback = original_local, original_global, original_callback
+    monitor.restore()
+    assert api.owner is None and not any(api.local.values())
+    with pytest.raises(AssertionError):
+        monitor.summary()
+
+
+def _inspection_frozen_ast(value):
+    """Stable syntax fingerprint across the supported Python minor versions."""
+    if isinstance(value, ast.AST):
+        return [type(value).__name__, [[name, _inspection_frozen_ast(item)]
+                for name, item in ast.iter_fields(value) if name != "type_params"]]
+    if isinstance(value, list):
+        return [_inspection_frozen_ast(item) for item in value]
+    if isinstance(value, bytes):
+        return ["bytes", value.hex()]
+    return value
+
+
+def test_phased_inspection_probe_preserves_prior_fixture_and_observer_routes():
+    # Frozen from 0cf15f6d964748479995456a96524a393c710638. This checks actual
+    # prior bodies and defaults, not a second hand-maintained equivalent path.
+    expected = {
+        "Client": "4440a593e4aa15006cc9ca477b65e6884ef209044d309c142e8b0e7b7c270087",
+        "Observer": "0fbe528138e811617beb7ab51672631a7a54f81c553a7b0d2a8710ace8750d98",
+        "Fixture": "9e656e40b4f64ee7ed12be71ce46abd5338bd7de502e5e566e03efe65f469dc7",
+        "control_hook_state": "82c9a21d966e6c21569fb8225cadb511d24b1f1ffcc54b56dd21cd45092f1f98",
+        "FirstJobControl": "8055e41b59914a1f47bb475b672f4b147cf690ad56edf3a5c8f16066fa4b3cf5",
+        "AtomicPhaseMonitor": "0cf2534234816c813d6ee5857aeebca1b8215d552df12a9dd7f135bd1d5ccef8",
+        "AtomicPhaseTiming": "34abe08eab87fe7b90361feff1d0aba1ab387c9e93987a79172a92aa453bc01c",
+    }
+    source = (ROOT / "scripts/blender_mesh_storage_job_smoke.py").read_text()
+    tree = ast.parse(source)
+    actual = {node.name: hashlib.sha256(json.dumps(_inspection_frozen_ast(node),
+              ensure_ascii=True, separators=(",", ":")).encode()).hexdigest()
+              for node in tree.body if isinstance(node, (ast.ClassDef, ast.FunctionDef)) and node.name in expected}
+    assert actual == expected
+
+
+def test_phased_inspection_probe_import_is_inert(fixture_imports):
+    script = importlib.import_module("scripts.blender_mesh_storage_job_smoke")
+    assert issubclass(script.PhasedInspectionProbe, script.FirstJobControl)
+    assert script.PhasedInspectionProbe.setup is script.Fixture.setup
+    assert fixture_imports.timers == [] and fixture_imports.events == []
+
+
+def _inspection_hook_model(monkeypatch):
+    script = importlib.import_module("scripts.blender_mesh_storage_job_smoke")
+    calls = []
+    owners, events = [None] * 6, [0] * 6
+    def tool(index):
+        calls.append(("owner", index))
+        return owners[index]
+    def event(index):
+        calls.append(("events", index))
+        return events[index]
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("Unobserved inspection probe changed monitoring state")
+    monitoring = NS(get_tool=tool, get_events=event, use_tool_id=forbidden, free_tool_id=forbidden,
+                    set_events=forbidden, set_local_events=forbidden, register_callback=forbidden)
+    monkeypatch.setattr(sys, "monitoring", monitoring, raising=False)
+    for owner, name in ((sys, "getprofile"), (sys, "gettrace"),
+                        (threading, "getprofile"), (threading, "gettrace")):
+        monkeypatch.setattr(owner, name, lambda: None)
+    return script, calls, owners, events
+
+
+def test_phased_inspection_requires_all_public_monitoring_slots_unowned_without_mutating_them(monkeypatch):
+    script, calls, _owners, _events = _inspection_hook_model(monkeypatch)
+    assert script.inspection_hook_state() == {"python": [None] * 4,
+        "monitoring_tools": [None] * 6, "monitoring_global_events": [0] * 6}
+    assert calls == [("owner", index) for index in range(6)] + [("events", index) for index in range(6)]
+
+
+@pytest.mark.parametrize("slot", range(6))
+@pytest.mark.parametrize("fault", ("owner", "event", "bool_event", "foreign_event"))
+def test_phased_inspection_refuses_owned_or_malformed_monitoring_state_before_any_setter(monkeypatch, slot, fault):
+    script, _calls, owners, events = _inspection_hook_model(monkeypatch)
+    foreign_calls = []
+    class Foreign:
+        def __eq__(self, _other):
+            foreign_calls.append("eq")
+            return False
+        def __bool__(self):
+            foreign_calls.append("bool")
+            return False
+    if fault == "owner":
+        owners[slot] = Foreign()
+    elif fault == "event":
+        events[slot] = 1
+    elif fault == "bool_event":
+        events[slot] = False
+    else:
+        events[slot] = Foreign()
+    with pytest.raises(AssertionError):
+        script.inspection_hook_state()
+    assert foreign_calls == []
+
+
+@pytest.mark.parametrize("slot", range(4))
+def test_phased_inspection_refuses_python_hooks_before_monitoring_reads(monkeypatch, slot):
+    script, calls, _owners, _events = _inspection_hook_model(monkeypatch)
+    owner, name = ((sys, "getprofile"), (sys, "gettrace"),
+                   (threading, "getprofile"), (threading, "gettrace"))[slot]
+    monkeypatch.setattr(owner, name, lambda: object())
+    with pytest.raises(AssertionError, match="four hooks absent"):
+        script.inspection_hook_state()
+    assert calls == []
+
+
+def test_phased_inspection_refuses_missing_public_monitoring_api(monkeypatch):
+    script, calls, _owners, _events = _inspection_hook_model(monkeypatch)
+    monkeypatch.setattr(sys, "monitoring", None)
+    with pytest.raises(AssertionError):
+        script.inspection_hook_state()
+    assert calls == []
+
+
+def test_phased_inspection_constructor_retains_original_unobserved_setup_without_RNA(monkeypatch):
+    script, _calls, _owners, _events = _inspection_hook_model(monkeypatch)
+    class Blender:
+        app = NS(version=(5, 2, 2), build_hash=script.BUILD, version_string="5.2.2")
+        def __getattribute__(self, name):
+            assert name == "app", "Constructor accessed RNA before owned setup"
+            return object.__getattribute__(self, name)
+    probe = script.PhasedInspectionProbe(Blender(), NS(bridge_phase="success"), "1" * 32, {}, {})
+    assert probe.observe is False and probe.hooks is None and probe.observer is None
+    assert probe.inspection_data == {"requests": [], "timings": [], "terminal": None}
+
+
+@pytest.mark.parametrize("fault", ("active_job", "wrong_thread", "executing"))
+def test_phased_inspection_snapshot_requires_settled_runtime_before_all_native_samples(monkeypatch, fault):
+    script, control, calls = _b2_control_model(monkeypatch)
+    probe = object.__new__(script.PhasedInspectionProbe)
+    vars(probe).update(vars(control))
+    monkeypatch.setattr(script, "inspection_context_snapshot", lambda *_: calls.append("context") or {})
+    monkeypatch.setattr(script, "inspection_boundaries", lambda *_: calls.append("boundaries") or {})
+    monkeypatch.setattr(script, "inspection_hook_state", lambda: calls.append("hooks") or {})
+    if fault == "active_job":
+        probe.runtime.jobs.active = object()
+    elif fault == "wrong_thread":
+        probe.runtime.executor._main_thread_id += 1
+    else:
+        probe.runtime.state.is_executing = True
+    with pytest.raises(AssertionError, match="settled Runtime"):
+        probe.apply("inspection_snapshot", {"stage": "after"})
+    assert calls == []
+
+
+def test_phased_inspection_snapshot_refuses_observer_before_any_native_sample(monkeypatch):
+    script, control, calls = _b2_control_model(monkeypatch)
+    probe = object.__new__(script.PhasedInspectionProbe)
+    vars(probe).update(vars(control))
+    def refused():
+        raise AssertionError("Existing observer")
+    monkeypatch.setattr(script, "inspection_hook_state", refused)
+    monkeypatch.setattr(script, "inspection_context_snapshot", lambda *_: calls.append("context") or {})
+    monkeypatch.setattr(script, "inspection_boundaries", lambda *_: calls.append("boundaries") or {})
+    with pytest.raises(AssertionError, match="Existing observer"):
+        probe.apply("inspection_snapshot", {"stage": "before"})
+    assert calls == []
+
+
+def test_phased_inspection_probe_uses_only_real_client_and_queued_runtime_route():
+    tree = ast.parse((ROOT / "scripts/blender_mesh_storage_job_smoke.py").read_text())
+    cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "PhasedInspectionProbe")
+    scenario = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == "scenario")
+    forbidden = {"tick", "execute_request", "_invoke_owned", "_drain_timer", "invoke", "prepare", "undo_push",
+                 "setprofile", "settrace", "set_events", "set_local_events", "register_callback"}
+    assert not any(isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                   and node.func.attr in forbidden for node in ast.walk(cls))
+    assert not any(isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name)
+                   and node.value.id == "bpy" for node in ast.walk(scenario))
+    assert not any(isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name)
+                   and node.value.id == "self" and node.attr == "bpy" for node in ast.walk(scenario))
+    assert not any(isinstance(node, ast.Attribute) and node.attr in {"PREVIEW", "START"} for node in ast.walk(scenario))
+    source = ast.unparse(scenario)
+    assert "INSPECTION_START" in source and "jobs.inspect" in source and "jobs.list" in source
+
+
+def test_phased_inspection_payload_report_counts_complete_known_arrays_without_claiming_COW():
+    script = importlib.import_module("scripts.blender_mesh_storage_job_smoke")
+    sample = {"protected": {"original_ARRAY_values": [
+        ["bool", "FACE", "BOOLEAN", [True, False, True]],
+        ["int", "POINT", "INT", [1, 2]],
+        ["pair", "EDGE", "INT32_2D", [[1, 2], [3, 4]]],
+        ["uv", "CORNER", "FLOAT2", [["00000000", "0000803f"]]],
+        ["position", "POINT", "FLOAT_VECTOR", [["00000000"] * 3] * 2]],
+        "image": {"pixels_float32_le": "0000803f" * 16, "packed_bytes": 128}}}
+    report = script.inspection_payload_counts(sample)
+    assert report["original_ARRAY_elements"] == 10
+    assert report["original_ARRAY_payload_bytes"] == 3 + 8 + 16 + 8 + 24
+    assert report["image_float32_values"] == 16 and report["image_float32_bytes"] == 64
+    assert report["packed_bytes"] == 128 and report["selected_SINGLE_payloads_sampled"] is False
+    assert "not total native allocations or COW events" in report["scope"]
+
+
+def _inspection_cached_job_model(monkeypatch):
+    script = importlib.import_module("scripts.blender_mesh_storage_job_smoke")
+    class InspectionJob:
+        pass
+    class SourceSeal(tuple):
+        pass
+    for name, kind_name, kind in (("scene_jobs", "InspectionJob", InspectionJob),
+                                 ("mesh_storage_source", "SourceSeal", SourceSeal)):
+        module = ModuleType("blender_codex_bridge." + name)
+        setattr(module, kind_name, kind)
+        monkeypatch.setitem(sys.modules, module.__name__, module)
+    lifetime = NS(delivered=threading.Event(), rejected=threading.Event(),
+                  connection=NS(disconnected=threading.Event()))
+    lifetime.delivered.set()
+    job = InspectionJob()
+    vars(job).update(job_id="job_" + "1" * 32, request_id="request_1", method="jobs._inspection_turn",
+                     kind="mesh.attribute_storage_inspection", state="SUCCEEDED", phase="inspection_complete",
+                     revision=5, driver=None, lifetime=lifetime, deadline=1000.,
+                     result={"inspection_fingerprint": "a" * 64, "cached_at_completion": True,
+                             "native_state_revalidated": False, "write_authorized": False,
+                             "writer_handoff_supported": False})
+    runtime = NS(registry=object(), state=object(), jobs=NS(history=[job], _inspection_ready={}))
+    proof = (SourceSeal(), (None, None, runtime), NS(registry=runtime.registry), (), (runtime.state,), lifetime,
+             (), (), (), (), 1000.)
+    runtime.jobs._inspection_ready[id(job)] = proof
+    return script, runtime, job, proof
+
+
+def test_phased_inspection_runtime_sample_binds_actual_retired_job_and_cached_ready_scope(monkeypatch):
+    script, runtime, job, _proof = _inspection_cached_job_model(monkeypatch)
+    report = script.inspection_runtime_job(runtime, job.job_id)
+    assert report["job_id"] == job.job_id and report["request_id"] == job.request_id
+    assert report["method"] == "jobs._inspection_turn" and report["phase"] == "inspection_complete"
+    assert report["driver_retired"] is report["ready_record_present"] is True
+    assert report["original_runtime"] is report["registry_match"] is report["state_match"] is True
+    assert report["delivered"] is report["connection_present"] is True
+    assert report["rejected"] is report["disconnected"] is False
+    assert report["job_deadline"] == 1000. and report["ready_deadline"] == 1000.
+    assert type(report["sampled_at"]) is float
+    assert report["cached_result_sha256"] == hashlib.sha256(script.canonical(job.result)).hexdigest()
+    assert report["inspection_fingerprint"] == job.result["inspection_fingerprint"]
+
+
+@pytest.mark.parametrize("fault", ("missing_job", "duplicate_job", "wrong_job_class", "missing_ready", "foreign_tuple", "wrong_seal"))
+def test_phased_inspection_runtime_sample_refuses_missing_or_foreign_cached_origin(monkeypatch, fault):
+    script, runtime, job, proof = _inspection_cached_job_model(monkeypatch)
+    foreign_calls = []
+    class ForeignTuple(tuple):
+        def __iter__(self):
+            foreign_calls.append("iter")
+            return super().__iter__()
+    if fault == "missing_job":
+        runtime.jobs.history.clear()
+    elif fault == "duplicate_job":
+        runtime.jobs.history.append(job)
+    elif fault == "wrong_job_class":
+        runtime.jobs.history = [NS(**vars(job))]
+    elif fault == "missing_ready":
+        runtime.jobs._inspection_ready.clear()
+    elif fault == "foreign_tuple":
+        runtime.jobs._inspection_ready[id(job)] = ForeignTuple(proof)
+    else:
+        runtime.jobs._inspection_ready[id(job)] = ((), *proof[1:])
+    with pytest.raises(AssertionError):
+        script.inspection_runtime_job(runtime, job.job_id)
+    assert foreign_calls == []
+
+
+def test_inspection_failure_literal_detaches_only_bounded_builtin_values():
+    script = importlib.import_module("scripts.blender_mesh_storage_job_smoke")
+    value = {"phase": "inspection_capture", "flags": (False, True, None),
+             "counts": [-(2**64 - 1), 2**64 - 1, -0., 2.5], "nested": {"value": "x" * 4096}}
+    report = script._inspection_failure_literal(value)
+    assert report == {**value, "flags": [False, True, None]}
+    assert report is not value and report["counts"] is not value["counts"] and report["nested"] is not value["nested"]
+
+
+@pytest.mark.parametrize("fault", ("list_width", "dict_width", "string", "integer", "nan", "infinity", "depth", "nodes", "cycle"))
+def test_inspection_failure_literal_refuses_excess_or_nonfinite_values_without_partial_claim(fault):
+    script = importlib.import_module("scripts.blender_mesh_storage_job_smoke")
+    if fault == "list_width":
+        value = [0] * 33
+    elif fault == "dict_width":
+        value = {str(index): 0 for index in range(33)}
+    elif fault == "string":
+        value = "x" * 4097
+    elif fault == "integer":
+        value = 2**64
+    elif fault == "nan":
+        value = float("nan")
+    elif fault == "infinity":
+        value = float("inf")
+    elif fault == "nodes":
+        value = [[0] * 32 for _ in range(16)]
+    elif fault == "cycle":
+        value = []
+        value.append(value)
+    else:
+        value = 0
+        for _ in range(10):
+            value = [value]
+    with pytest.raises(ValueError, match="DIAGNOSTIC_LITERAL"):
+        script._inspection_failure_literal(value)
+
+
+@pytest.mark.parametrize("kind", ("object", "list", "dict", "key", "metaclass"))
+def test_inspection_failure_literal_refuses_foreign_dunders_and_container_subclasses(kind):
+    script = importlib.import_module("scripts.blender_mesh_storage_job_smoke")
+    calls = []
+    class Meta(type):
+        def __eq__(self, _other):
+            calls.append("type_eq")
+            return False
+        def __hash__(self):
+            calls.append("type_hash")
+            return 0
+    class Foreign:
+        def __str__(self):
+            calls.append("str")
+            return "foreign"
+        def __repr__(self):
+            calls.append("repr")
+            return "foreign"
+        def __bool__(self):
+            calls.append("bool")
+            return False
+        def __iter__(self):
+            calls.append("iter")
+            return iter(())
+        def __hash__(self):
+            calls.append("hash")
+            return hash("state")
+        def __eq__(self, _other):
+            calls.append("eq")
+            return False
+    class ForeignList(list, Foreign):
+        pass
+    class ForeignDict(dict, Foreign):
+        pass
+    class ForeignType(metaclass=Meta):
+        pass
+    if kind == "list":
+        value = ForeignList([0])
+    elif kind == "dict":
+        value = ForeignDict(state=0)
+    elif kind == "key":
+        value = {Foreign(): 0}
+    elif kind == "metaclass":
+        value = ForeignType()
+    else:
+        value = Foreign()
+    calls.clear()
+    with pytest.raises(ValueError, match="DIAGNOSTIC_LITERAL"):
+        script._inspection_failure_literal(value)
+    assert calls == []
+
+
+@pytest.fixture
+def inspection_failure_model(addon_package, monkeypatch):
+    """Real Python container/slot classes; no Runtime or Blender is started."""
+    import queue
+    from collections import deque
+
+    script = importlib.import_module("scripts.blender_mesh_storage_job_smoke")
+    modules = {name: importlib.import_module(addon_package + "." + name) for name in
+               ("runtime", "native_save_jobs", "command_queue", "protocol", "scene_job_reservations", "scene_jobs")}
+    for name, source in modules.items():
+        module = ModuleType("blender_codex_bridge." + name)
+        for kind in {"runtime": ("BridgeRuntime",), "native_save_jobs": ("NativeSaveJobs",),
+                     "command_queue": ("CommandQueue", "QueuedRequest"), "protocol": ("Request",),
+                     "scene_job_reservations": ("SceneJobReservations", "_Reservation", "_Turn"),
+                     "scene_jobs": ("InspectionJob",)}[name]:
+            setattr(module, kind, getattr(source, kind))
+        monkeypatch.setitem(sys.modules, module.__name__, module)
+    runtime = object.__new__(modules["runtime"].BridgeRuntime)
+    jobs = object.__new__(modules["native_save_jobs"].NativeSaveJobs)
+    commands = object.__new__(modules["command_queue"].CommandQueue)
+    service = object.__new__(modules["scene_job_reservations"].SceneJobReservations)
+    fifo_owner = queue.Queue()
+    vars(runtime).update(jobs=jobs, command_queue=commands)
+    vars(jobs).update(reservations=service, history=deque(), active=None)
+    vars(commands)["_queue"] = fifo_owner
+    vars(service)["_inspection_turns"] = {}
+    origin = script.inspection_failure_origin(runtime)
+    values = {"job_id": "job_" + "1" * 32, "request_id": "inspection_1", "method": "jobs._inspection_turn",
+        "kind": "mesh.attribute_storage_inspection", "state": "RUNNING", "phase": "inspection_capture", "revision": 2,
+        "progress": {"phase": "inspection_capture", "completed": 1, "total": 3}, "error": None,
+        "deadline": time.monotonic() + 300., "in_tick": True, "in_commit": False, "native_reads_started": True,
+        "cancel_reason": "", "ready_valid": False, "invalidated_reason": ""}
+    def job_factory(identifier=None):
+        job = object.__new__(modules["scene_jobs"].InspectionJob)
+        for name, value in values.items():
+            object.__setattr__(job, name, identifier if name == "job_id" and identifier is not None else value)
+        return job
+    job = job_factory()
+    vars(jobs)["active"] = job
+    reservation = object.__new__(modules["scene_job_reservations"]._Reservation)
+    reservation.job = job
+    turn = object.__new__(modules["scene_job_reservations"]._Turn)
+    for name, value in {"phase": "inspection_capture", "revision": 2, "used": True, "check_only": False,
+                        "inspection_deadline": time.monotonic() + 60., "owner": reservation}.items():
+        setattr(turn, name, value)
+    vars(service)["_inspection_turns"][1] = turn
+    request = modules["protocol"].Request("pending_inspect", "jobs.inspect", {})
+    queued = object.__new__(modules["command_queue"].QueuedRequest)
+    for name, value in {"request": request, "deadline": time.monotonic() + 60., "_state": "pending",
+                        "_stop_requested": False, "response": None}.items():
+        setattr(queued, name, value)
+    fifo_owner.queue.append(queued)
+    return NS(script=script, runtime=runtime, jobs=jobs, commands=commands, service=service, fifo_owner=fifo_owner,
+              origin=origin, job=job, job_factory=job_factory, reservation=reservation, turn=turn,
+              request=request, queued=queued, modules=modules)
+
+
+def test_inspection_failure_snapshot_reports_only_nonatomic_cached_python_facts(inspection_failure_model):
+    e = inspection_failure_model
+    report = e.script.inspection_failure_snapshot(e.origin, e.job.job_id, "worker")
+    assert report["available"] is report["origin_identity_valid"] is True
+    assert report["non_atomic_cached_only"] is True and report["truncated"] is False
+    assert report["job"]["phase"] == "inspection_capture" and report["active_is_expected"] is True
+    assert report["job"]["progress"] == {"phase": "inspection_capture", "completed": 1, "total": 3}
+    assert report["inspection_turns"] == [{"phase": "inspection_capture", "revision": 2, "used": True,
+        "check_only": False, "inspection_deadline": e.turn.inspection_deadline, "belongs_to_expected_job": True}]
+    assert report["pending_queue"] == [{"request_id": "pending_inspect", "method": "jobs.inspect",
+        "deadline": e.queued.deadline, "state": "pending", "stop_requested": False, "response_present": False}]
+    assert set(report["job"]) == {name for name, _descriptor in e.origin[3][0][1]}
+    assert type(report["sampled_at"]) is type(report["cpu_seconds"]) is float
+
+
+def test_inspection_failure_snapshot_never_calls_runtime_job_driver_event_queue_or_lock_callbacks(inspection_failure_model, monkeypatch):
+    e = inspection_failure_model
+    calls = []
+    def forbidden(*_args, **_kwargs):
+        calls.append("callback")
+        raise AssertionError("Cached failure observation dispatched a callback")
+    class Trap:
+        def __getattribute__(self, name):
+            calls.append(name)
+            raise AssertionError("Cached failure observation inspected a foreign object")
+    vars(e.runtime).update(registry=Trap(), executor=Trap(), permissions=Trap())
+    vars(e.jobs).update(inspect=forbidden, list=forbidden, tick=forbidden, _inspection_record=forbidden)
+    vars(e.fifo_owner).update(mutex=Trap(), not_empty=Trap(), not_full=Trap(), all_tasks_done=Trap(),
+                             qsize=forbidden, get=forbidden, get_nowait=forbidden)
+    e.job.driver, e.queued.completed, e.queued._lock = Trap(), Trap(), Trap()
+    monkeypatch.setattr(e.modules["scene_jobs"].InspectionJob, "summary", forbidden)
+    report = e.script.inspection_failure_snapshot(e.origin, e.job.job_id, "worker")
+    assert report["available"] is True and calls == []
+
+
+@pytest.mark.parametrize("fault", ("history", "fifo", "turns", "jobs", "commands", "service", "queue_owner"))
+def test_inspection_failure_snapshot_refuses_replaced_original_container_or_owner(inspection_failure_model, fault):
+    from collections import deque
+    e = inspection_failure_model
+    if fault == "history":
+        e.jobs.history = deque()
+    elif fault == "fifo":
+        e.fifo_owner.queue = deque()
+    elif fault == "turns":
+        e.service._inspection_turns = {}
+    elif fault == "jobs":
+        e.runtime.jobs = object()
+    elif fault == "commands":
+        e.runtime.command_queue = object()
+    elif fault == "service":
+        e.jobs.reservations = object()
+    else:
+        e.commands._queue = object()
+    report = e.script.inspection_failure_snapshot(e.origin, e.job.job_id, "worker")
+    assert report["available"] is False and report["origin_identity_valid"] is False
+    assert report["non_atomic_cached_only"] is True and report["unavailable_reason"] == "DIAGNOSTIC_CACHE_UNAVAILABLE"
+
+
+def test_inspection_failure_snapshot_bounds_history_and_queue_prefixes(inspection_failure_model):
+    e = inspection_failure_model
+    for index in range(100):
+        e.jobs.history.append(e.job_factory("other_" + str(index)))
+    e.fifo_owner.queue.extend([e.queued] * 100)
+    report = e.script.inspection_failure_snapshot(e.origin, e.job.job_id, "supervisor")
+    assert report["available"] is True and report["truncated"] is True
+    assert len(report["pending_queue"]) == 8 and report["active_is_expected"] is True
+
+
+@pytest.mark.parametrize("fault", ("job_deadline", "job_revision", "job_flag", "turn_deadline", "turn_flag", "queue_deadline", "queue_flag"))
+def test_inspection_failure_snapshot_refuses_malformed_cached_typed_facts(inspection_failure_model, fault):
+    e = inspection_failure_model
+    if fault == "job_deadline":
+        e.job.deadline = 1
+    elif fault == "job_revision":
+        e.job.revision = True
+    elif fault == "job_flag":
+        e.job.in_tick = 1
+    elif fault == "turn_deadline":
+        e.turn.inspection_deadline = 1
+    elif fault == "turn_flag":
+        e.turn.check_only = 0
+    elif fault == "queue_deadline":
+        e.queued.deadline = 1
+    else:
+        e.queued._stop_requested = 0
+    report = e.script.inspection_failure_snapshot(e.origin, e.job.job_id, "worker")
+    assert report["available"] is False and report["origin_identity_valid"] is False
+
+
+@pytest.mark.parametrize("fault", ("origin", "row", "reader", "dictionary_descriptor", "slot_descriptor",
+                                  "unknown_owner", "unknown_stage", "identifier", "dictionary_key",
+                                  "turn_key", "ambiguous_job", "history_owner", "foreign_progress"))
+def test_inspection_failure_snapshot_refuses_foreign_origins_without_callbacks(inspection_failure_model, fault):
+    e = inspection_failure_model
+    calls = []
+    class Foreign:
+        def __iter__(self):
+            calls.append("iter")
+            return iter(())
+        def __str__(self):
+            calls.append("str")
+            return "foreign"
+        def __repr__(self):
+            calls.append("repr")
+            return "foreign"
+        def __bool__(self):
+            calls.append("bool")
+            return False
+        def __eq__(self, _other):
+            calls.append("eq")
+            return False
+        def __hash__(self):
+            calls.append("hash")
+            return hash("jobs")
+    class ForeignTuple(tuple, Foreign):
+        pass
+    class ForeignStr(str, Foreign):
+        pass
+    class ForeignDict(dict, Foreign):
+        pass
+    origin, identifier, stage = e.origin, e.job.job_id, "worker"
+    if fault == "origin":
+        origin = ForeignTuple(origin)
+    elif fault == "row":
+        origin = ((Foreign(), *origin[0][1:]), *origin[1:])
+    elif fault == "reader":
+        origin = (*origin[:3], (Foreign(), *origin[3][1:]), origin[4])
+    elif fault == "dictionary_descriptor":
+        first = origin[0][0]
+        origin = (((first[0], first[1], Foreign(), first[3]), *origin[0][1:]), *origin[1:])
+    elif fault == "slot_descriptor":
+        kind, rows = origin[3][0]
+        origin = (*origin[:3], ((kind, ((rows[0][0], Foreign()), *rows[1:])), *origin[3][1:]), origin[4])
+    elif fault == "unknown_owner":
+        e.jobs.active = Foreign()
+    elif fault == "unknown_stage":
+        stage = Foreign()
+    elif fault == "identifier":
+        identifier = ForeignStr(identifier)
+    elif fault == "dictionary_key":
+        vars(e.runtime)[Foreign()] = 0
+    elif fault == "turn_key":
+        e.service._inspection_turns["foreign"] = e.turn
+    elif fault == "ambiguous_job":
+        e.jobs.history.append(e.job)
+    elif fault == "history_owner":
+        e.jobs.history.append(Foreign())
+    else:
+        e.job.progress = ForeignDict(phase="inspection_capture")
+    calls.clear()
+    report = e.script.inspection_failure_snapshot(origin, identifier, stage)
+    assert report["available"] is False and report["origin_identity_valid"] is False
+    assert report["non_atomic_cached_only"] is True and calls == []
+    if fault == "unknown_stage":
+        assert report["stage"] == "unknown"
+
+
+def test_inspection_failure_origin_refuses_unknown_runtime_before_attribute_callbacks(inspection_failure_model):
+    e = inspection_failure_model
+    calls = []
+    class Foreign:
+        def __getattribute__(self, name):
+            calls.append(name)
+            raise AssertionError("Unknown runtime attribute dispatched")
+    with pytest.raises(ValueError, match="DIAGNOSTIC_RUNTIME_ORIGIN"):
+        e.script.inspection_failure_origin(Foreign())
+    assert calls == []
+
+
+def test_inspection_failure_origin_refuses_foreign_dictionary_keys_before_lookup(inspection_failure_model):
+    e = inspection_failure_model
+    calls = []
+    class Key:
+        def __hash__(self):
+            calls.append("hash")
+            return hash("jobs")
+        def __eq__(self, _other):
+            calls.append("eq")
+            return False
+    vars(e.runtime)[Key()] = 0
+    calls.clear()
+    with pytest.raises(ValueError, match="DIAGNOSTIC_DICTIONARY_ORIGIN"):
+        e.script.inspection_failure_origin(e.runtime)
+    assert calls == []
+
+
+def _inspection_failed_probe_model(model):
+    script = model.script
+    probe = object.__new__(script.PhasedInspectionProbe)
+    probe.inspection_data = {"requests": [], "timings": [], "terminal": None}
+    probe.failure_origin = model.origin
+    probe.failed_call = probe.worker_cached = probe.supervisor_cached = probe.secondary_failure = None
+    probe.failure = None
+    return probe
+
+
+@pytest.mark.parametrize("secondary", (False, True))
+def test_inspection_failed_call_records_real_failure_timing_and_reraises_original(inspection_failure_model, monkeypatch, secondary):
+    e = inspection_failure_model
+    probe = _inspection_failed_probe_model(e)
+    primary = TimeoutError("original socket deadline")
+    calls = []
+    class Client:
+        def call(self, method, *, ok, **parameters):
+            assert ok is None and method == "jobs.inspect" and parameters == {"job_id": e.job.job_id}
+            probe.inspection_data["requests"].append({"request": {"id": "failed_1", "method": method}, "response": None})
+            raise primary
+    def cached(origin, identifier, stage):
+        calls.append((origin is e.origin, identifier, stage))
+        if secondary:
+            raise MemoryError("secondary cached observation failed")
+        return {"available": False, "non_atomic_cached_only": True}
+    monkeypatch.setattr(e.script, "inspection_failure_snapshot", cached)
+    with pytest.raises(TimeoutError) as failure:
+        probe.inspected_call(Client(), "inspect", "jobs.inspect", job_id=e.job.job_id)
+    assert failure.value is primary and failure.value.__traceback__ is not None
+    failed = probe.failed_call
+    assert set(failed) == {"stage", "method", "sent_at", "failed_at", "cpu_seconds", "response_received", "exception_type", "request_id"}
+    assert failed["stage"] == "inspect" and failed["method"] == "jobs.inspect"
+    assert failed["request_id"] == "failed_1" and failed["exception_type"] == "TimeoutError"
+    assert failed["response_received"] is False and failed["failed_at"] >= failed["sent_at"]
+    assert failed["cpu_seconds"] >= 0. and probe.inspection_data["timings"] == []
+    assert probe.inspection_data["requests"][-1]["response"] is None
+    assert calls == [(True, "", "worker")]
+    if secondary:
+        assert probe.secondary_failure == {"stage": "worker_cached_sample", "exception_type": "MemoryError"}
+    else:
+        assert probe.secondary_failure is None and probe.worker_cached["non_atomic_cached_only"] is True
+
+
+def test_inspection_success_call_preserves_original_timing_schema(inspection_failure_model):
+    e = inspection_failure_model
+    probe = _inspection_failed_probe_model(e)
+    class Client:
+        def call(self, method, *, ok, **parameters):
+            assert ok is None
+            probe.inspection_data["requests"].append({"request": {"id": "success_1"},
+                                                      "response": {"ok": True, "result": {"owned": True}}})
+            return probe.inspection_data["requests"][-1]["response"]
+    assert probe.inspected_call(Client(), "start", "owned.start") == {"owned": True}
+    assert len(probe.inspection_data["timings"]) == 1
+    timing = probe.inspection_data["timings"][0]
+    assert set(timing) == {"stage", "request_id", "sent_at", "received_at", "cpu_seconds"}
+    assert timing["stage"] == "start" and timing["request_id"] == "success_1"
+    assert timing["received_at"] >= timing["sent_at"] and timing["cpu_seconds"] >= 0.
+    assert probe.failed_call is probe.worker_cached is probe.secondary_failure is None
+
+
+def test_inspection_failed_call_does_not_adopt_prior_request_id_when_no_row_was_sent(inspection_failure_model):
+    e = inspection_failure_model
+    probe = _inspection_failed_probe_model(e)
+    probe.inspection_data["requests"] = [{"request": {"id": "prior_start"},
+        "response": {"result": {"job_id": e.job.job_id}}}]
+    primary = TimeoutError("failed before a new request row")
+    class Client:
+        def call(self, *_args, **_kwargs):
+            raise primary
+    with pytest.raises(TimeoutError) as failure:
+        probe.inspected_call(Client(), "inspect", "jobs.inspect", job_id=e.job.job_id)
+    assert failure.value is primary
+    assert probe.failed_call["request_id"] is None and probe.failed_call["response_received"] is False
+    assert probe.inspection_data["requests"][0]["request"]["id"] == "prior_start"
+
+
+@pytest.mark.parametrize("secondary", (False, True))
+def test_inspection_worker_samples_before_socket_close_and_preserves_primary_traceback(inspection_failure_model, monkeypatch, secondary):
+    e = inspection_failure_model
+    probe = _inspection_failed_probe_model(e)
+    probe.domain = NS(contract=NS(INSPECTION_START="owned.inspection_start"))
+    probe.targets = {"main": {"object_name": "Object", "mesh_name": "Mesh"}}
+    probe.started, probe.port, probe.done = time.monotonic(), 1234, threading.Event()
+    probe.control = lambda *_args, **_kwargs: {}
+    primary = TimeoutError("ORIGINAL PRIMARY SOCKET DEADLINE")
+    events, clients = [], []
+    class Client:
+        def __init__(self, port, transcript):
+            assert port == 1234
+            self.transcript, self.closed = transcript, False
+            clients.append(self)
+        def call(self, method, *, ok, **parameters):
+            assert ok is None
+            row = {"request": {"id": "request_" + str(len(self.transcript)), "method": method}, "response": None}
+            self.transcript.append(row)
+            if method == "owned.inspection_start":
+                row["response"] = {"ok": True, "result": {"accepted": True, "terminal": False,
+                    "ready": False, "result": None, "job_id": e.job.job_id}}
+                return row["response"]
+            events.append("primary")
+            raise primary
+        def close(self):
+            events.append("close")
+            self.closed = True
+            e.job.cancel_reason = "fixture socket disconnect"
+    original = e.script.inspection_failure_snapshot
+    def cached(origin, identifier, stage):
+        assert not clients[0].closed
+        events.append("cached")
+        if secondary:
+            raise MemoryError("SECONDARY CACHE FAILURE")
+        return original(origin, identifier, stage)
+    monkeypatch.setattr(e.script, "Client", Client)
+    monkeypatch.setattr(e.script, "inspection_hook_state", lambda: {})
+    monkeypatch.setattr(e.script, "inspection_failure_snapshot", cached)
+    probe.scenario()
+    assert probe.done.is_set() and clients[0].closed and events == ["primary", "cached", "close"]
+    assert "TimeoutError: ORIGINAL PRIMARY SOCKET DEADLINE" in probe.failure
+    assert "MemoryError" not in probe.failure and probe.failed_call["exception_type"] == "TimeoutError"
+    assert "in call" in probe.failure and "raise primary" in probe.failure
+    if secondary:
+        assert probe.secondary_failure == {"stage": "worker_cached_sample", "exception_type": "MemoryError"}
+    else:
+        assert probe.worker_cached["job"]["cancel_reason"] == ""
+        assert e.job.cancel_reason == "fixture socket disconnect"
+
+
+@pytest.mark.parametrize("secondary", (False, True))
+def test_inspection_supervisor_preserves_primary_failure_and_uses_only_cached_snapshot(inspection_failure_model, monkeypatch, secondary):
+    e = inspection_failure_model
+    probe = _inspection_failed_probe_model(e)
+    primary = "ORIGINAL PRIMARY TRACEBACK\nTimeoutError: original deadline"
+    probe.failure = primary
+    probe.inspection_data["requests"] = [{"response": {"result": {"job_id": e.job.job_id}}}]
+    calls = []
+    class Stop(BaseException):
+        pass
+    class Trap:
+        def __getattribute__(self, name):
+            pytest.fail("Supervisor performed noncached cleanup: " + name)
+    probe.controls = probe.done = probe.hooks = Trap()
+    def fail():
+        calls.append("fail")
+        raise Stop
+    probe.fail = fail
+    sidebar = ModuleType("scripts.blender_artist_sidebar_smoke")
+    sidebar.owned_process_exit = lambda *_args: pytest.fail("Diagnostic model attempted process exit")
+    monkeypatch.setitem(sys.modules, sidebar.__name__, sidebar)
+    original = e.script.inspection_failure_snapshot
+    def cached(origin, identifier, stage):
+        calls.append(stage)
+        if secondary:
+            raise MemoryError("SECONDARY SUPERVISOR CACHE FAILURE")
+        return original(origin, identifier, stage)
+    monkeypatch.setattr(e.script, "inspection_failure_snapshot", cached)
+    with pytest.raises(Stop):
+        probe.supervise()
+    assert probe.failure is primary and calls == ["supervisor", "fail"]
+    if secondary:
+        assert probe.secondary_failure["stage"] == "supervisor"
+        assert "MemoryError: SECONDARY SUPERVISOR CACHE FAILURE" in probe.secondary_failure["traceback"]
+    else:
+        assert probe.supervisor_cached["non_atomic_cached_only"] is True and probe.secondary_failure is None
+
+
+def test_inspection_cost_probe_preserves_existing_success_and_failure_routes():
+    # Observed cost evidence has a separate subclass and cannot redefine the
+    # accepted unobserved route from a2c4a61c0ef3d51934ea666ce4443ceb45aeb82e.
+    expected = {
+        "_inspection_failure_literal": "6d53e7c81c6b358a9b70002a8dcb0de1bedcedf238912fd17e64c0b0a320b730",
+        "inspection_failure_origin": "6f73309e5906764b93ab8b5edf4983ead29fed7937f7c3238004b370d9fc4446",
+        "inspection_failure_snapshot": "0355e70d77a1583b8d71f3e3552b98e254a65209a977591eae4966425ccff068",
+        "inspection_hook_state": "da78042ff343f1ae090a378077034e83d3251aab1691dd37b0a476c62e8f9d11",
+        "PhasedInspectionProbe": "bd20254b7c808b1b5378d40915cad3d519fc3b99f1b5ddc3b87059a1fae82f98",
+    }
+    tree = ast.parse((ROOT / "scripts/blender_mesh_storage_job_smoke.py").read_text())
+    actual = {node.name: hashlib.sha256(json.dumps(_inspection_frozen_ast(node),
+              ensure_ascii=True, separators=(",", ":")).encode()).hexdigest()
+              for node in tree.body if isinstance(node, (ast.ClassDef, ast.FunctionDef)) and node.name in expected}
+    assert actual == expected
+
+
+def inspection_cost_monitor_model(clock=None):
+    script = importlib.import_module("scripts.blender_mesh_storage_job_smoke")
+    def first():
+        pass
+    def second():
+        pass
+    def third():
+        pass
+    def fourth():
+        pass
+    def fifth():
+        pass
+    def sixth():
+        pass
+    codes = tuple(function.__code__ for function in (first, second, third, fourth, fifth, sixth))
+    api = AtomicMonitoringModel()
+    monitor = script.InspectionCostMonitor(dict(zip(codes, script.COST_LABELS, strict=True)), monitoring=api,
+        clock=time.monotonic if clock is None else clock, get_ident=lambda: 7)
+    return script, monitor, api, codes
+
+
+def test_inspection_cost_monitor_aggregates_completed_inclusive_nesting_without_rows():
+    ticks = iter((10., 11., 12., 14., 15.))
+    script, monitor, api, codes = inspection_cost_monitor_model(lambda: next(ticks))
+    monitor.install()
+    monitor._start(codes[0], 0)
+    monitor._start(codes[1], 0)
+    monitor._return(codes[1], 0, None)
+    monitor._return(codes[0], 0, None)
+    monitor.restore()
+    report = monitor.summary()
+    assert report["backend"] == "sys.monitoring.local_START_RETURN.aggregate" and "spans" not in report
+    assert set(report["aggregates"]) == set(script.COST_LABELS)
+    outer, inner = (report["aggregates"][name] for name in script.COST_LABELS[:2])
+    assert (outer["started"], outer["returned"], outer["completed"]) == (1, 1, 1)
+    assert outer["completed_inclusive_seconds"] == outer["maximum_completed_seconds"] == 4.
+    assert inner["completed_inclusive_seconds"] == inner["maximum_completed_seconds"] == 1.
+    assert outer["unknown"] == inner["unknown"] == 0
+    assert report["product_success_qualified"] is report["exact_unwind_observed"] is False
+    assert report["observed_timings_are_untraced_timings"] is False
+    assert report["overlapping_inclusive_times_may_not_be_added"] is True
+    assert api.owner is None and api.global_mask == 0 and not any(api.local.values())
+    assert all(callback is None for callback in api.callbacks.values())
+
+
+@pytest.mark.parametrize("case", ("open", "inner_unwind", "recursion", "recursive_unwind"))
+def test_inspection_cost_monitor_keeps_unwound_open_and_recursive_time_unknown(case):
+    ticks = iter(float(value) for value in range(10, 30))
+    script, monitor, _api, codes = inspection_cost_monitor_model(lambda: next(ticks))
+    monitor.install()
+    monitor._start(codes[0], 0)
+    if case == "inner_unwind":
+        monitor._start(codes[1], 0)
+        monitor._return(codes[0], 0, None)
+    elif case in {"recursion", "recursive_unwind"}:
+        monitor._start(codes[0], 0)
+        monitor._return(codes[0], 0, None)
+        if case == "recursion":
+            monitor._return(codes[0], 0, None)
+    monitor.restore()
+    aggregates = monitor.summary()["aggregates"]
+    assert sum(row["unknown"] for row in aggregates.values()) >= 1
+    assert all(row["unknown_elapsed_upper_bound_seconds"] >= row["maximum_unknown_upper_bound_seconds"] >= 0.
+               for row in aggregates.values())
+    if case in {"recursion", "recursive_unwind"}:
+        row = aggregates[script.COST_LABELS[0]]
+        assert row["started"] == row["unknown"] == 2 and row["completed"] == 0
+        assert row["completed_inclusive_seconds"] == row["maximum_completed_seconds"] == 0.
+
+
+@pytest.mark.parametrize("fault", ("foreign_code", "cloned_code", "thread", "int_clock", "nan_clock", "negative_clock", "reversal", "call_limit", "stack_limit", "return_without_start"))
+def test_inspection_cost_monitor_latches_bounded_callback_failures_and_refuses_summary(fault):
+    ticks = iter(float(value) for value in range(10, 100))
+    script, monitor, api, codes = inspection_cost_monitor_model(lambda: next(ticks))
+    monitor.install()
+    foreign_calls = []
+    if fault == "foreign_code":
+        class Foreign:
+            def __hash__(self):
+                foreign_calls.append("hash")
+                return 0
+            def __eq__(self, _other):
+                foreign_calls.append("eq")
+                return False
+        monitor._start(Foreign(), 0)
+    elif fault == "cloned_code":
+        clone = codes[0].replace()
+        assert clone is not codes[0] and clone == codes[0]
+        monitor._start(clone, 0)
+    elif fault == "thread":
+        monitor.main_thread += 1
+        monitor._start(codes[0], 0)
+    elif fault in {"int_clock", "nan_clock", "negative_clock"}:
+        bad = {"int_clock": 1, "nan_clock": float("nan"), "negative_clock": -1.}[fault]
+        original = monitor.raw_clock
+        monitor.raw_clock = lambda: bad
+        with pytest.raises(ValueError, match="MONITOR_CLOCK"):
+            monitor._start(codes[0], 0)
+        monitor.raw_clock = original
+    elif fault == "reversal":
+        monitor._start(codes[0], 0)
+        original = monitor.raw_clock
+        monitor.raw_clock = lambda: 1.
+        with pytest.raises(ValueError, match="MONITOR_CLOCK"):
+            monitor._return(codes[0], 0, None)
+        monitor.raw_clock = original
+    elif fault == "call_limit":
+        monitor.calls = script.COST_MAX_CALLS
+        monitor._start(codes[0], 0)
+    elif fault == "stack_limit":
+        for _ in range(65):
+            monitor._start(codes[0], 0)
+    else:
+        monitor._return(codes[0], 0, None)
+    assert monitor.failure is not None and foreign_calls == []
+    monitor.restore()
+    assert api.owner is None and not any(api.local.values())
+    with pytest.raises(AssertionError):
+        monitor.summary()
+
+
+@pytest.mark.parametrize("fault", ("local", "global", "callback"))
+def test_inspection_cost_restore_attempts_all_six_codes_and_callbacks_before_raising_first_error(fault):
+    _script, monitor, api, codes = inspection_cost_monitor_model()
+    monitor.install()
+    primary = MemoryError("original aggregate monitor cleanup fault")
+    attempts = []
+    local, global_events, callback = api.set_local_events, api.set_events, api.register_callback
+    def local_fault(tool, code, mask):
+        attempts.append(("local", code))
+        if fault == "local" and code is codes[0]:
+            raise primary
+        return local(tool, code, mask)
+    def global_fault(tool, mask):
+        attempts.append(("global", mask))
+        if fault == "global":
+            raise primary
+        return global_events(tool, mask)
+    def callback_fault(tool, event, value):
+        attempts.append(("callback", event))
+        if fault == "callback" and event == 1:
+            raise primary
+        return callback(tool, event, value)
+    api.set_local_events, api.set_events, api.register_callback = local_fault, global_fault, callback_fault
+    with pytest.raises(MemoryError) as failure:
+        monitor.restore()
+    assert failure.value is primary
+    assert attempts == [("local", code) for code in codes] + [("global", 0), ("callback", 1), ("callback", 4)]
+    assert all(api.local[code] == 0 for code in codes[1:]) and api.callbacks[4] is None
+    api.set_local_events, api.set_events, api.register_callback = local, global_events, callback
+    monitor.restore()
+    assert api.owner is None and not any(api.local.values())
+    with pytest.raises(AssertionError):
+        monitor.summary()
+
+
+def test_inspection_cost_source_catalog_has_only_six_approved_held_functions():
+    script = importlib.import_module("scripts.blender_mesh_storage_job_smoke")
+    tree = ast.parse(Path(script.__file__).read_text())
+    function = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "inspection_cost_codes")
+    fields = next(node.value for node in function.body if isinstance(node, ast.Assign)
+                  and any(isinstance(target, ast.Name) and target.id == "functions" for target in node.targets))
+    assert [ast.unparse(node) for node in fields.elts] == ["MeshStorageInspectionDriver.__dict__['_advance']",
+        "source.Gate.__dict__['pure']", "source.SourceSeal.__dict__['verify']", "primitive.build_plan",
+        "primitive.qualify_collection_bindings", "source.CheckpointRoles.__dict__['__init__']"]
+    assert len(script.COST_LABELS) == 6 and script.COST_MAX_CALLS == 131072
+    cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "InspectionCostMonitor")
+    event = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == "_event")
+    assert not any(isinstance(node, ast.Attribute) and node.attr in {"f_locals", "f_back", "settrace", "setprofile"}
+                   for node in ast.walk(event))
+    assert not any(isinstance(node, ast.Name) and node.id == "bpy" for node in ast.walk(event))
+
+
+@pytest.mark.parametrize("fault", ("clock", "thread"))
+def test_inspection_cost_callback_exception_is_latched_and_primary_is_preserved(fault):
+    _script, monitor, api, codes = inspection_cost_monitor_model()
+    monitor.install()
+    primary = MemoryError("original cost observer callback failure")
+    original = monitor.raw_clock if fault == "clock" else monitor.get_ident
+    def refused():
+        raise primary
+    if fault == "clock":
+        monitor.raw_clock = refused
+    else:
+        monitor.get_ident = refused
+    with pytest.raises(MemoryError) as failure:
+        monitor._start(codes[0], 0)
+    assert failure.value is primary and monitor.failure is not None
+    if fault == "clock":
+        monitor.raw_clock = original
+    else:
+        monitor.get_ident = original
+    monitor.restore()
+    assert api.owner is None and not any(api.local.values())
+    with pytest.raises(AssertionError):
+        monitor.summary()
+
+
+def test_inspection_cost_monitor_is_installed_after_before_sample_and_restored_before_after_sample(monkeypatch):
+    script = importlib.import_module("scripts.blender_mesh_storage_job_smoke")
+    calls = []
+    class Monitor:
+        def __init__(self, codes):
+            calls.append("construct")
+        def install(self):
+            calls.append("install")
+        def restore(self):
+            calls.append("restore")
+    def sample(_self, action, parameters):
+        assert action == "inspection_snapshot"
+        calls.append("sample_" + parameters["stage"])
+        return {"stage": parameters["stage"]}
+    monkeypatch.setattr(script, "InspectionCostMonitor", Monitor)
+    monkeypatch.setattr(script, "inspection_cost_codes", lambda: {})
+    monkeypatch.setattr(script.PhasedInspectionProbe, "apply", sample)
+    fixture = object.__new__(script.InspectionCostTiming)
+    fixture.cost_monitor = None
+    assert fixture.apply("inspection_snapshot", {"stage": "before"}) == {"stage": "before"}
+    assert fixture.apply("inspection_snapshot", {"stage": "after"}) == {"stage": "after"}
+    assert calls == ["sample_before", "construct", "install", "restore", "sample_after"]
+
+
+def test_inspection_cost_supervisor_preserves_failure_branch_before_Event_or_control_callbacks(monkeypatch):
+    script = importlib.import_module("scripts.blender_mesh_storage_job_smoke")
+    fixture = object.__new__(script.InspectionCostTiming)
+    fixture.failure = "ORIGINAL PRIMARY TIMEOUT TRACE"
+    fixture.failure_origin, fixture.inspection_data = object(), {"requests": []}
+    class Trap:
+        def __getattribute__(self, name):
+            pytest.fail("Cost failed-route inspected Event/control callbacks: " + name)
+    fixture.done = fixture.controls = Trap()
+    calls = []
+    monkeypatch.setattr(script, "inspection_failure_snapshot", lambda *_args: calls.append("cached") or {})
+    fixture._cost_exit = lambda: calls.append("cost_exit") or "owned_exit"
+    assert fixture.supervise() == "owned_exit"
+    assert fixture.failure == "ORIGINAL PRIMARY TIMEOUT TRACE" and calls == ["cached", "cost_exit"]
+
+
+def test_inspection_cost_exit_cleanup_failure_uses_parent_fallback_once_without_losing_primary(monkeypatch):
+    script = importlib.import_module("scripts.blender_mesh_storage_job_smoke")
+    fixture = object.__new__(script.InspectionCostTiming)
+    primary = "ORIGINAL PRIMARY SOCKET TRACE"
+    fixture.failure, fixture.secondary_failure = primary, None
+    fixture.cost_exiting = fixture.cost_fallback_attempted = False
+    calls = []
+    class Stop(BaseException):
+        pass
+    def exit_process(code):
+        calls.append(("exit", code))
+        raise Stop
+    sidebar = ModuleType("scripts.blender_artist_sidebar_smoke")
+    sidebar.owned_process_exit = exit_process
+    monkeypatch.setitem(sys.modules, sidebar.__name__, sidebar)
+    def restore():
+        calls.append("restore")
+        raise MemoryError("SECONDARY COST CLEANUP FAILURE")
+    fixture.cost_monitor = NS(restore=restore)
+    def parent_fail(self):
+        assert self.failure is primary
+        calls.append("parent_fail")
+        return "fallback_written"
+    monkeypatch.setattr(script.PhasedInspectionProbe, "fail", parent_fail)
+    assert fixture._cost_exit() == "fallback_written"
+    assert fixture.failure is primary and fixture.cost_fallback_attempted is True
+    assert calls == ["restore", "restore", "parent_fail"]
+    assert "MemoryError: SECONDARY COST CLEANUP FAILURE" in fixture.secondary_failure["traceback"]
+    assert "MemoryError: SECONDARY COST CLEANUP FAILURE" in fixture.secondary_failure["monitor_restore_failure"]
+    with pytest.raises(Stop):
+        fixture._cost_exit()
+    assert fixture.failure is primary and calls == ["restore", "restore", "parent_fail", ("exit", 1)]

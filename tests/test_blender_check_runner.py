@@ -4821,3 +4821,808 @@ def test_storage_root_approval_preflight_fails_before_process(runner, monkeypatc
         monkeypatch.setattr(runner.sys, "platform", "darwin")
     result = runner.run_case(model.binary, runner.STORAGE_ROOT_APPROVAL_CASE, model.output, 1200)
     assert result["status"] == "failed" and not seen and "preflight_error" in result
+
+
+def mesh_storage_atomic_cached_roles(full):
+    """Use the actual inert producer helper, rather than a hand-maintained shape."""
+    from scripts.blender_mesh_storage_job_smoke import cached_checkpoint_roles
+    def role():
+        return {"profile": "B2_EXACT_CHECKPOINT_WEAK_ROLE_V1", "initial_roles": [1, None],
+                "before_readback": {"scene_self_references": 0}, "after_readback": None,
+                "native_push_completed": False, "after_readback_measured": False, "protected_scope_sha256": "a" * 64,
+                "foreign_previous_owner_supported": False, "physical_cache_passivity_claimed": False}
+    preview = full["requests"][0]["response"]
+    result = preview["result"] if preview["ok"] is True else None
+    if result is not None:
+        result["checkpoint_roles"] = role()
+    terminal = full["terminal"]
+    if terminal is not None:
+        terminal.setdefault("result", {})["checkpoint_roles"] = role()
+    return cached_checkpoint_roles(result, terminal)
+
+
+def mesh_storage_atomic_model(runner):
+    return {"backend": "sys.monitoring.local_START_RETURN", "tool_id": 4, "global_event_mask": 0,
+        "local_event_mask": 5, "restored": True, "callbacks_restored": True, "local_events_restored": True,
+        "tool_freed": True, "row_limit": 2048, "exact_unwind_observed": False,
+        "unknown_open_elapsed_is_upper_bound": True, "observed_timings_are_untraced_timings": False,
+        "speedup_qualified": False, "overlapping_nested_spans_may_not_be_added": True,
+        "catalog": [{**row, "code_sha256": "a" * 64} for row in runner._mesh_storage_atomic_catalog()],
+        "spans": [{"label": "preview", "entered_at": 10., "ended_at": 10.5, "elapsed_upper_bound_seconds": None,
+                   "duration_seconds": .5, "depth": 0, "end": "RETURN_COMPLETED", "ambiguous_recursion": False}]}
+
+
+def mesh_storage_inspection_model(runner, addon_package, command, environment, pid):
+    """Actual pure producer projections; native observations remain modeled."""
+    import importlib
+    from unittest.mock import patch
+
+    script = importlib.import_module("scripts.blender_mesh_storage_job_smoke")
+    primitive = importlib.import_module(addon_package + ".mesh_storage_prepare")
+    source = importlib.import_module(addon_package + ".mesh_storage_source")
+    report = Path(command[command.index("--bridge-report") + 1])
+    sources = runner._mesh_storage_sources()
+    snapshot = mesh_storage_snapshot_model(runner, prepared=False)
+    snapshot["uv_roles"][0] = 0
+    object_identity, mesh_identity = snapshot["object_identity"], snapshot["mesh_identity"]
+    counts = (("vertices", 3), ("edges", 3), ("polygons", 1), ("loops", 3))
+    layouts = {"BOOLEAN": ("BoolAttribute", "BoolAttributeValue"), "FLOAT2": ("Float2Attribute", "Float2AttributeValue"),
+               "FLOAT_VECTOR": ("FloatVectorAttribute", "FloatVectorAttributeValue")}
+    native_headers = snapshot["selected_storage"] + snapshot["protected"]["unselected_attribute_headers"]
+    headers = tuple(primitive.AttributeHeader(name, domain, kind, *layouts[kind], storage, count, "a" * 64, "b" * 64)
+                    for name, domain, kind, storage, count in sorted(native_headers))
+    def identities(kind, row):
+        return (("kind", kind), ("name", row[0]), ("pointer", format(row[2], "x")), ("session_uid", str(row[1])))
+    metadata = primitive._Metadata(object(), object(), identities("Object", object_identity),
+        identities("Mesh", mesh_identity), "1000", counts, (0, (("UVSingle", True, False),)), headers)
+    targets = tuple(primitive.Target(name, next(row for row in headers if row.name == name), "MATERIALIZE_SINGLE")
+                    for name in (".uv_select_face", "UVSingle"))
+    plan_fingerprint = hashlib.sha256(primitive._canonical([metadata.plain(),
+                                    [(row.name, row.action) for row in targets]])).hexdigest()
+    plan = primitive.PreparationPlan(metadata, targets, plan_fingerprint,
+                                    tuple(primitive._resource_facts(targets, 2 * 1024**3, 0).items()))
+    roles = object.__new__(source.CheckpointRoles)
+    roles.initial_roles, roles.after_readback, roles.native_push_completed = (0, (None, None)), None, False
+    roles.before_readback = {"owners": ((4096, 41), 5000, 6000, (4096, 41), (8192, 42)),
+        "scene_self_references": 0, "particle_object": (None, None), "scene_object_references": 1,
+        "structural_memberships": 1, "weak_object_references": 0}
+    roles.bound_digest = "e" * 64
+    result = {"schema": "mesh_storage_inspection_v1", "policy": "B2_PHASED_COHERENT_READ_ONLY_V1",
+        "object_name": object_identity[0], "mesh_name": mesh_identity[0], "attribute_names": [".uv_select_face", "UVSingle"],
+        "time_limit_seconds": 300., "plan": plan.summary(), "inspection_status": "COHERENT",
+        "inspection_fingerprint": "f" * 64, "protected_logical_scope_sha256": roles.bound_digest,
+        "checkpoint_roles": source.CheckpointRoles.report(roles),
+        "write_authorized": False, "native_calls_preemptible": False, "transient_intervening_edits_detectable": False,
+        "edits_before_first_observation_detectable": False, "writer_handoff_supported": False,
+        "physical_read_effects": {"ARRAY_COW_or_tagging_possible": True, "image_buffer_cache_changes_possible": True},
+        "undo_boundary_created": False, "project_saved": False, "native_functional_qualified": False,
+        "publicly_registered": False, "cached_at_completion": True, "native_state_revalidated": False,
+        "permission_values_revalidated": False}
+    result = json.loads(json.dumps(result))
+    job_id, request_id = "job_" + "1" * 32, "inspection_1"
+    def summary(completed, *, accepted=False):
+        phase = ("inspection_plan", "inspection_capture", "inspection_seal", "inspection_complete")[completed]
+        row = {"job_id": job_id, "kind": "mesh.attribute_storage_inspection", "label": "Inspect mesh attribute storage Mesh",
+            "request_id": request_id, "state": "SUCCEEDED" if completed == 3 else "QUEUED" if completed == 0 else "RUNNING",
+            "terminal": completed == 3, "phase": phase, "revision": completed + 1,
+            "progress": {"phase": "succeeded" if completed == 3 else "awaiting_start_delivery" if completed == 0 else phase,
+                         "completed": completed, "total": 3}, "result": result if completed == 3 else None,
+            "error": None, "inspection_only": True, "ready": completed == 3, "invalidated_reason": "",
+            "logical_write_capability": False, "native_reads_started": completed > 0,
+            "physical_read_effects": {"ARRAY_COW_or_tagging_possible": completed > 0,
+                                      "image_buffer_cache_changes_possible": completed > 0},
+            "undo_boundary_created": False, "undo_boundary_finalized": False, "checkpoint": {},
+            "created_at": "2026-10-30T12:00:00Z", "verification_required": True, "durable": False}
+        if accepted:
+            row.update(accepted=True, job_completed=False, input_frozen_at_acceptance=True, native_commit_interruptible=False)
+        return row
+    terminal = summary(3)
+    listing = {"jobs": [terminal], "total": 1, "truncated": False, "max_active": 1,
+               "terminal_history_limit": 32, "durable": False, "retained_native_saves": [], "retained_native_save_limit": 4}
+    params = {"object_name": object_identity[0], "mesh_name": mesh_identity[0],
+              "attribute_names": [".uv_select_face", "UVSingle"], "time_limit_seconds": 300.}
+    core = importlib.import_module(addon_package + ".tools.core")
+    checkpoints_module = importlib.import_module(addon_package + ".checkpoints")
+    state_module = importlib.import_module(addon_package + ".state")
+    permissions_module = importlib.import_module(addon_package + ".permissions")
+    state = state_module.BridgeState()
+    state.server_running, state.connected_clients, state.port = True, 1, 1234
+    state.current_method, state.is_executing = "bridge.status", True
+    disabled = {"EDIT_SCENE", "DELETE_OBJECTS", "EXECUTE_PYTHON", "ACCESS_EXTERNAL_FILES", "SAVE_PROJECT", "NATIVE_SAVE_EFFECTS"}
+    permissions = permissions_module.PermissionManager(lambda: {item.value: item.value not in disabled
+                                                               for item in permissions_module.Permission})
+    bpy = SimpleNamespace(app=SimpleNamespace(version_string="5.2.2"), data=SimpleNamespace(filepath=""),
+        context=SimpleNamespace(mode="OBJECT", scene=SimpleNamespace(name="Scene"),
+            view_layer=SimpleNamespace(objects=SimpleNamespace(active=SimpleNamespace(name=object_identity[0]))),
+            preferences=SimpleNamespace(edit=SimpleNamespace(use_global_undo=True, undo_steps=256, undo_memory_limit=0))))
+    compact_job = {key: terminal[key] for key in ("job_id", "kind", "state", "terminal", "revision", "progress")}
+    context = SimpleNamespace(state=state, permissions=permissions, registry=SimpleNamespace(enabled_toolsets=("core", "geometry")),
+        checkpoints=checkpoints_module.CheckpointManager(), jobs=SimpleNamespace(status=lambda: {
+            "active": None, "last_terminal": compact_job, "max_active": 1, "terminal_history_limit": 32, "durable": False}))
+    with patch.object(core, "require_blender", lambda: bpy), patch.object(checkpoints_module, "require_blender", lambda: bpy):
+        fence = core.bridge_status(context, {})
+    exchanges, timings = [], []
+    for index, (stage, method, arguments, response) in enumerate((
+        ("start", "mesh.attribute_storage_prepare_inspection_start", params, summary(0, accepted=True)),
+        ("inspect", "jobs.inspect", {"job_id": job_id}, summary(1)),
+        ("inspect", "jobs.inspect", {"job_id": job_id}, summary(2)),
+        ("inspect", "jobs.inspect", {"job_id": job_id}, terminal),
+        ("repeat", "jobs.inspect", {"job_id": job_id}, terminal),
+        ("list", "jobs.list", {}, listing), ("fence", "bridge.status", {}, fence))):
+        identifier = request_id if index == 0 else "inspection_" + str(index + 1)
+        request = {"id": identifier, "method": method, "params": arguments, "protocol_version": "1.0", "timeout_ms": 60000}
+        exchanges.append({"request": request, "response": mesh_storage_reply(request, response)})
+        began = 11.4 if stage == "fence" else 10. + index * .2
+        timings.append({"stage": stage, "request_id": identifier, "sent_at": began,
+                        "received_at": began + .1, "cpu_seconds": .01})
+    hooks = {"python": [None] * 4, "monitoring_tools": [None] * 6, "monitoring_global_events": [0] * 6}
+    boundaries = {"operation_history": [], "checkpoints": [], "undo_steps": 0, "pending": False, "owned_pending": 0,
+                  "editor_session": False, "recovery_ids": [], "reservation_owner": False,
+                  "retained_reservations": 0, "write_turns": 0, "read_turns": 0}
+    def sample(before):
+        began = 9.5 if before else 11.2
+        return {"snapshot": snapshot, "context": {"mode": "OBJECT", "scene": ["Scene", 41, 4096],
+            "active": object_identity, "selection": [object_identity], "scene_self_references": 0, "particle_object": None},
+            "boundaries": boundaries, "hooks": hooks,
+            "settled": {"job_active": False, "is_executing": False, "executing_mutators": 0,
+                        "executor_frame_present": False, "main_thread": True},
+            "payloads": script.inspection_payload_counts(snapshot),
+            "memory": {"supported": True, "resident_bytes": 64 * 1024**2, "peak_resident_bytes": 96 * 1024**2,
+                "scope": "Whole isolated Blender process lifetime; Linux procfs RSS/high-water mark, not a cap or attribution",
+                "available_bytes": 12 * 1024**3}, "runtime_job": None,
+            "measurement": {"started_at": began, "ended_at": began + .1, "cpu_seconds": .01}}
+    before, after = sample(True), sample(False)
+    after["runtime_job"] = {**{key: terminal[key] for key in ("job_id", "request_id", "kind", "state", "phase", "revision")},
+        "method": "jobs._inspection_turn", "driver_retired": True, "ready_record_present": True, "original_runtime": True,
+        "registry_match": True, "state_match": True, "delivered": True, "rejected": False,
+        "connection_present": True, "disconnected": False, "job_deadline": 310.05, "ready_deadline": 310.05, "sampled_at": 11.25,
+        "cached_result_sha256": hashlib.sha256(script.canonical(result)).hexdigest(),
+        "inspection_fingerprint": result["inspection_fingerprint"]}
+    identity = {"process_instance": environment["BRIDGE_TEST_PROCESS_TOKEN"], "runtime_id": 1001, "registry_id": 1002, "queue_id": 1003}
+    full = {"schema": runner.MESH_STORAGE_INSPECTION_PROFILE, "completed": True, "phase": "success", "process_id": pid,
+        "process_instance": environment["BRIDGE_TEST_PROCESS_TOKEN"], "source_build": "d13f752e3b9c", "blender_version": "5.2.2",
+        "binary_sha256": runner.MESH_STORAGE_EXECUTABLE_SHA256,
+        "source_snapshot_sha256": hashlib.sha256(script.canonical(sources)).hexdigest(),
+        "runtime_nonce": hashlib.sha256(script.canonical(identity)).hexdigest()[:32], "runtime_identity": identity,
+        "helper_sha256": runner.MESH_STORAGE_HELPER_SHA256, "source_fingerprints": sources, "private_display": runner._domain_display(),
+        "transport": {"host": "127.0.0.1", "socket_json": True, "runtime_timer_queue": True,
+                      "direct_dispatch": False, "manual_scheduler_drain": False},
+        "limitations": dict(runner.MESH_STORAGE_INSPECTION_LIMITS), "requests": exchanges, "timings": timings,
+        "terminal": terminal, "repeat": terminal, "listed": listing, "worker_before": hooks, "worker_after": hooks,
+        "before": before, "after": after, "extra_response_check": {"outcome": "SOCKET_TIMEOUT", "bytes": 0,
+            "started_at": 11.5, "ended_at": 11.6, "timeout_seconds": .1},
+        "setup_oracle_values": {".uv_select_face": [True], "UVSingle": [["0000803e", "000000bf"]] * 3},
+        "process_cpu_seconds_at_completion": 1., "seconds": 3.,
+        "hardware": {"system": "Linux", "machine": "x86_64", "processor": "modeled, not native", "cpu_count": 4}}
+    return report, json.loads(json.dumps(full))
+
+
+def mesh_storage_inspection_write(runner, report, full):
+    raw = json.dumps(full, sort_keys=True, ensure_ascii=True, allow_nan=False, separators=(",", ":")).encode("ascii")
+    report.write_bytes(raw)
+    marker = {key: full[key] for key in ("schema", "completed", "phase", "process_id", "process_instance", "source_build",
+                                       "blender_version", "binary_sha256", "source_snapshot_sha256")}
+    marker["full_receipt"] = runner._domain_regular(report, report.parent, 8 * 1024**2)[1]
+    return marker
+
+
+def test_phased_inspection_success_receipt_binds_actual_pure_plan_and_wire_shapes(runner, addon_package, monkeypatch, tmp_path):
+    output, binary = mesh_storage_runner_root(runner, monkeypatch, tmp_path)
+    temporary = output / "private"
+    temporary.mkdir(mode=0o700)
+    report = temporary / runner.MESH_STORAGE_INSPECTION_REPORT
+    command = [str(binary), "--bridge-report", str(report)]
+    sources = runner._mesh_storage_sources()
+    report, full = mesh_storage_inspection_model(runner, addon_package, command, {"BRIDGE_TEST_PROCESS_TOKEN": "1" * 32}, 77)
+    marker = mesh_storage_inspection_write(runner, report, full)
+    row = runner._mesh_storage_inspection_matches(marker, temporary, "1" * 32, 77,
+        {"sha256": runner.MESH_STORAGE_EXECUTABLE_SHA256}, sources, runner._domain_display())
+    assert row["passed"] is True, row
+
+
+def _inspection_sync_terminal(full):
+    """Keep independent wire/cache copies coherent when testing deeper fields."""
+    def copy(value):
+        return json.loads(json.dumps(value))
+    terminal = full["terminal"]
+    full["repeat"] = copy(terminal)
+    full["listed"]["jobs"] = [copy(terminal)]
+    for exchange in full["requests"]:
+        method, response = exchange["request"]["method"], exchange["response"]
+        if method == "jobs.inspect" and response["result"].get("terminal") is True:
+            response["result"] = copy(terminal)
+        elif method == "jobs.list":
+            response["result"] = copy(full["listed"])
+        elif method == "bridge.status":
+            response["result"]["jobs"]["last_terminal"] = {key: copy(terminal[key])
+                for key in ("job_id", "kind", "state", "terminal", "revision", "progress")}
+    cached = full["after"]["runtime_job"]
+    cached["cached_result_sha256"] = hashlib.sha256(json.dumps(terminal["result"], sort_keys=True,
+        ensure_ascii=True, allow_nan=False, separators=(",", ":")).encode("ascii")).hexdigest()
+    cached["inspection_fingerprint"] = terminal["result"]["inspection_fingerprint"]
+
+
+@pytest.mark.parametrize("path,value,synchronize", [
+    (("extra",), True, False),
+    (("limitations", "COW_event_count_observed"), True, False),
+    (("transport", "direct_dispatch"), True, False),
+    (("helper_sha256",), "0" * 64, False),
+    (("source_snapshot_sha256",), "0" * 64, False),
+    (("runtime_nonce",), "0" * 32, False),
+    (("worker_before", "monitoring_global_events", 0), False, False),
+    (("requests", 0, "response", "result", "ready"), True, False),
+    (("requests", 0, "response", "result", "result"), {"inspection_fingerprint": "f" * 64}, False),
+    (("requests", 1, "response", "id"), "foreign", False),
+    (("requests", 1, "request", "id"), "inspection_1", False),
+    (("requests", 0, "request", "timeout_ms"), 60001, False),
+    (("requests", 0, "request", "params", "time_limit_seconds"), 300, False),
+    (("requests", 0, "request", "method"), "mesh.attribute_storage_prepare_job_start", False),
+    (("requests", 2, "response", "result", "progress", "completed"), 1, False),
+    (("timings", 2, "received_at"), 9., False),
+    (("timings", 0, "cpu_seconds"), 100., False),
+    (("before", "measurement", "cpu_seconds"), -.1, False),
+    (("after", "memory", "resident_bytes"), False, False),
+    (("after", "snapshot", "protected", "image", "pixels_float32_le"), "00000000" * 16, False),
+    (("after", "snapshot", "selected_storage", 0, 3), "ARRAY", False),
+    (("after", "boundaries", "undo_steps"), 1, False),
+    (("after", "context", "selection"), [], False),
+    (("after", "runtime_job", "cached_result_sha256"), "0" * 64, False),
+    (("after", "runtime_job", "registry_match"), False, False),
+    (("after", "runtime_job", "job_deadline"), 311., False),
+    (("after", "runtime_job", "ready_deadline"), 10000., False),
+    (("extra_response_check", "bytes"), 1, False),
+    (("extra_response_check", "ended_at"), 11.51, False),
+    (("terminal", "result", "write_authorized"), True, True),
+    (("terminal", "result", "native_state_revalidated"), True, True),
+    (("terminal", "result", "cached_at_completion"), 1, True),
+    (("terminal", "result", "writer_handoff_supported"), True, True),
+    (("terminal", "result", "inspection_fingerprint"), "A" * 64, True),
+    (("terminal", "result", "plan", "metadata", "counts", 0, 1), True, True),
+    (("terminal", "result", "plan", "targets", 0, "header", 3), "ForeignAttribute", True),
+    (("terminal", "result", "checkpoint_roles", "initial_roles", 0), True, True),
+    (("terminal", "result", "checkpoint_roles", "before_readback", "owners", 0, 0), 999, True),
+    (("requests", -1, "response", "result", "permissions", "SAVE_PROJECT"), True, False),
+    (("requests", -1, "response", "result", "addon_version"), "1.0.0", False),
+    (("requests", -1, "response", "result", "agent", "is_executing"), False, False),
+])
+def test_phased_inspection_cold_receipt_rejects_forged_or_inconsistent_known_evidence(
+        runner, addon_package, monkeypatch, tmp_path, path, value, synchronize):
+    output, binary = mesh_storage_runner_root(runner, monkeypatch, tmp_path)
+    temporary = output / "private"
+    temporary.mkdir(mode=0o700)
+    sources = runner._mesh_storage_sources()
+    report, full = mesh_storage_inspection_model(runner, addon_package,
+        [str(binary), "--bridge-report", str(temporary / runner.MESH_STORAGE_INSPECTION_REPORT)],
+        {"BRIDGE_TEST_PROCESS_TOKEN": "1" * 32}, 77)
+    owner = full
+    for key in path[:-1]:
+        owner = owner[key]
+    owner[path[-1]] = value
+    if synchronize:
+        _inspection_sync_terminal(full)
+    marker = mesh_storage_inspection_write(runner, report, full)
+    row = runner._mesh_storage_inspection_matches(marker, temporary, "1" * 32, 77,
+        {"sha256": runner.MESH_STORAGE_EXECUTABLE_SHA256}, sources, runner._domain_display())
+    assert row["passed"] is False, (path, row)
+
+
+@pytest.mark.parametrize("fault", ("missing", "extra_marker", "bad_pid", "symbolic_report", "hardlinked_report", "changed_source"))
+def test_phased_inspection_refuses_missing_replaced_or_misbound_report_paths(runner, addon_package, monkeypatch, tmp_path, fault):
+    output, binary = mesh_storage_runner_root(runner, monkeypatch, tmp_path)
+    temporary = output / "private"
+    temporary.mkdir(mode=0o700)
+    sources = runner._mesh_storage_sources()
+    report, full = mesh_storage_inspection_model(runner, addon_package,
+        [str(binary), "--bridge-report", str(temporary / runner.MESH_STORAGE_INSPECTION_REPORT)],
+        {"BRIDGE_TEST_PROCESS_TOKEN": "1" * 32}, 77)
+    marker = mesh_storage_inspection_write(runner, report, full)
+    if fault == "missing":
+        report.unlink()
+    elif fault == "extra_marker":
+        marker["release_acceptance"] = True
+    elif fault == "bad_pid":
+        marker["process_id"] = 78
+    elif fault == "symbolic_report":
+        moved = report.with_suffix(".other")
+        report.rename(moved)
+        report.symlink_to(moved)
+    elif fault == "hardlinked_report":
+        report.with_suffix(".hardlink").hardlink_to(report)
+    else:
+        (runner.ROOT / "addon/blender_codex_bridge/scene_jobs.py").write_text("# source drift after attestation\n")
+    row = runner._mesh_storage_inspection_matches(marker, temporary, "1" * 32, 77,
+        {"sha256": runner.MESH_STORAGE_EXECUTABLE_SHA256}, sources, runner._domain_display())
+    assert row["passed"] is False, row
+
+
+@pytest.mark.parametrize("fault", (None, "exit", "binary", "source", "marker"))
+def test_phased_inspection_runner_keeps_actual_private_launch_and_original_deadlines(
+        runner, addon_package, monkeypatch, tmp_path, fault):
+    output, binary = mesh_storage_runner_root(runner, monkeypatch, tmp_path)
+    calls = []
+    class Process:
+        pid = 77
+        def __init__(self, command, **kwargs):
+            calls.append((command, kwargs))
+            report, full = mesh_storage_inspection_model(runner, addon_package, command, kwargs["env"], self.pid)
+            if fault == "binary":
+                binary.write_bytes(b"changed after original executable attestation")
+            elif fault == "source":
+                (runner.ROOT / "scripts/run_blender_checks.py").write_text("# source replaced after launch\n")
+            marker = mesh_storage_inspection_write(runner, report, full)
+            line = runner.MESH_STORAGE_INSPECTION_MARKER + json.dumps(marker) + "\n"
+            kwargs["stdout"].write(("not a marker\n" if fault == "marker" else line).encode())
+        def wait(self, timeout):
+            assert timeout == 300
+            return 1 if fault == "exit" else 0
+    monkeypatch.setattr(runner.subprocess, "Popen", Process)
+    monkeypatch.setenv("BRIDGE_TEST_PRIVATE_UI_MANIFEST", "owned-selector")
+    monkeypatch.setattr(runner.sys, "platform", "linux")
+    row = runner.run_case(binary, runner.MESH_STORAGE_INSPECTION_CASE, output, 1200)
+    assert row["status"] == ("diagnostic_completed" if fault is None else "failed"), row
+    assert len(calls) == 1
+    command, options = calls[0]
+    assert command.count("--bridge-phased-inspection") == 1
+    assert "--bridge-untraced-control" not in command and "--bridge-atomic-phase-timing" not in command
+    assert "--background" not in command and "--factory-startup" in command and "--disable-autoexec" in command
+    assert command[command.index("--bridge-phase") + 1] == "success"
+    assert Path(command[command.index("--bridge-report") + 1]).name == runner.MESH_STORAGE_INSPECTION_REPORT
+    assert options["cwd"].is_relative_to(output) and options["start_new_session"] is True
+    assert runner.MESH_STORAGE_INSPECTION_CASE in runner.OPT_IN_CASES & runner.INTERACTIVE_CASES
+
+
+@pytest.mark.parametrize("status,exit_code", (("diagnostic_completed", 0), ("passed", 1), ("failed", 1), ("timeout", 1)))
+def test_phased_inspection_cli_reports_only_explicit_probe_completion(runner, monkeypatch, tmp_path, status, exit_code):
+    binary = tmp_path / "blender"
+    binary.write_bytes(b"not launched")
+    output = tmp_path / "evidence"
+    monkeypatch.setattr(runner.sys, "argv", ["runner", "--blender", str(binary), "--output", str(output),
+                                           "--case", runner.MESH_STORAGE_INSPECTION_CASE])
+    monkeypatch.setattr(runner, "git_value", lambda *_args: "")
+    monkeypatch.setattr(runner, "run_case", lambda *_args: {"case": runner.MESH_STORAGE_INSPECTION_CASE, "status": status})
+    assert runner.main() == exit_code
+    report = json.loads((output / "report.json").read_text())
+    assert report["checks_passed"] is False and report["release_readiness"] == "NOT_ASSESSED"
+    assert report["selected_cases"] == [runner.MESH_STORAGE_INSPECTION_CASE]
+
+
+def test_phased_inspection_remains_excluded_from_default_interactive_inventory(runner, monkeypatch, tmp_path):
+    binary = tmp_path / "blender"
+    binary.write_bytes(b"not launched")
+    monkeypatch.setattr(runner.sys, "argv", ["runner", "--blender", str(binary), "--output", str(tmp_path / "evidence"),
+                                           "--include-interactive"])
+    monkeypatch.setattr(runner, "git_value", lambda *_args: "")
+    cases = []
+    def launch(_binary, case, _output, _timeout):
+        cases.append(case)
+        return {"case": case, "status": "passed"}
+    monkeypatch.setattr(runner, "run_case", launch)
+    assert runner.main() == 0
+    assert runner.MESH_STORAGE_INSPECTION_CASE not in cases
+
+
+def test_inspection_cost_probe_preserves_existing_cold_success_and_control_qualifiers():
+    import ast
+
+    from test_research_fixture_imports import _inspection_frozen_ast
+
+    expected = {
+        "_mesh_storage_control_matches": "97ad09dd6c0720eecce5179e53c139d2be04b9beeb9187a767f9cd668ac848e8",
+        "_mesh_storage_timing_matches": "288203d204e136f8ce1e62231c57e16fe8911349f4a01ba4ba8d5aeb6968a8f3",
+        "_inspection_result": "c00d85a6021e14c5c7287eed46b49b2b31f4c515adf8306a5133ca5c0af0fc26",
+        "_inspection_wire": "c9b289210f6691dca9465b77c81c2ad5e3a2e3c32fc45e5ff70dceef6152b4dd",
+        "_mesh_storage_inspection_matches": "c19b221d1a85542d1827739cef1af714ebefe9bb345c1ef3f35f948d1aba5c9a",
+        "_run_mesh_storage_inspection": "77e97b7f0101b12ca6a18e44b22d469473ee54b13565ad4d6834b579ffe5ab9e",
+    }
+    tree = ast.parse((ROOT / "scripts/run_blender_checks.py").read_text())
+    actual = {node.name: hashlib.sha256(json.dumps(_inspection_frozen_ast(node),
+              ensure_ascii=True, separators=(",", ":")).encode()).hexdigest()
+              for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in expected}
+    assert actual == expected
+
+
+def inspection_cost_runner_root(runner, monkeypatch, tmp_path):
+    output, binary = mesh_storage_runner_root(runner, monkeypatch, tmp_path)
+    for name in ("mesh_storage_source.py", "tools/_mesh_storage_inspection.py"):
+        relative = "addon/blender_codex_bridge/" + name
+        target = runner.ROOT / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes((ROOT / relative).read_bytes())
+    return output, binary
+
+
+def inspection_cost_model(runner, addon_package, monkeypatch, command, environment, pid, outcome="timeout"):
+    import importlib
+
+    from test_research_fixture_imports import AtomicMonitoringModel, inspection_failure_model
+
+    script = importlib.import_module("scripts.blender_mesh_storage_job_smoke")
+    report, route = mesh_storage_inspection_model(runner, addon_package, command, environment, pid)
+    domain = importlib.import_module(addon_package + ".tools._mesh_storage_inspection")
+    source = importlib.import_module(addon_package + ".mesh_storage_source")
+    primitive = importlib.import_module(addon_package + ".mesh_storage_prepare")
+    functions = (domain.MeshStorageInspectionDriver.__dict__["_advance"], source.Gate.__dict__["pure"],
+        source.SourceSeal.__dict__["verify"], primitive.build_plan, primitive.qualify_collection_bindings,
+        source.CheckpointRoles.__dict__["__init__"])
+    codes = tuple(function.__code__ for function in functions)
+    ticks = iter((10.2, 10.3, 10.4, 10.5, 10.6, 10.7, 10.8))
+    monitor = script.InspectionCostMonitor(dict(zip(codes, script.COST_LABELS, strict=True)),
+        monitoring=AtomicMonitoringModel(), clock=lambda: next(ticks), get_ident=lambda: 7)
+    monitor.install()
+    for code in codes[:3]:
+        monitor._start(code, 0)
+    monitor._return(codes[2], 0, None)
+    monitor._return(codes[1], 0, None)
+    if outcome == "success":
+        monitor._return(codes[0], 0, None)
+    monitor.restore()
+    keep = {"requests", "timings", "terminal", "worker_before", "before", "repeat", "listed", "after",
+            "extra_response_check", "worker_after", "setup_oracle_values"}
+    partial = {key: value for key, value in route.items() if key in keep}
+    failed, worker, supervisor, failure = None, None, None, None
+    if outcome == "timeout":
+        partial = {key: value for key, value in partial.items() if key in {"requests", "timings", "terminal", "worker_before", "before"}}
+        partial["requests"] = partial["requests"][:2]
+        partial["requests"][-1]["response"] = None
+        partial["timings"], partial["terminal"] = partial["timings"][:1], None
+        failed = {"stage": "inspect", "method": "jobs.inspect", "sent_at": 10.2, "failed_at": 70.2,
+            "cpu_seconds": 59., "response_received": False, "exception_type": "TimeoutError", "request_id": "inspection_2"}
+        failure = "Traceback (model only)\nTimeoutError: original socket deadline"
+        model = inspection_failure_model.__wrapped__(addon_package, monkeypatch)
+        model.job.request_id, model.job.deadline = "inspection_1", 310.05
+        model.turn.inspection_deadline, model.queued.deadline = 70., 70.2
+        sample_ticks = iter((70.21, 70.25))
+        with monkeypatch.context() as patch:
+            patch.setattr(script, "time", SimpleNamespace(monotonic=lambda: next(sample_ticks), process_time=lambda: 100.))
+            worker = script.inspection_failure_snapshot(model.origin, model.job.job_id, "worker")
+            supervisor = script.inspection_failure_snapshot(model.origin, model.job.job_id, "supervisor")
+    common = ("phase", "process_id", "process_instance", "runtime_nonce", "runtime_identity", "source_build",
+              "blender_version", "binary_sha256", "helper_sha256", "source_fingerprints", "source_snapshot_sha256",
+              "private_display", "transport")
+    full = {key: route[key] for key in common}
+    full.update(schema=runner.MESH_STORAGE_COST_PROFILE, completed=True, diagnostic_only=True,
+        failure=failure, secondary_failure=None, failed_call=failed, worker_cached=worker, supervisor_cached=supervisor,
+        partial=partial, cost_timing=monitor.summary(), product_success_qualified=False,
+        seconds=90. if outcome == "timeout" else 3.)
+    return report, json.loads(json.dumps(full))
+
+
+def inspection_cost_write(runner, report, full):
+    raw = json.dumps(full, sort_keys=True, ensure_ascii=True, allow_nan=False, separators=(",", ":")).encode("ascii")
+    report.write_bytes(raw)
+    marker = {key: full[key] for key in ("schema", "completed", "diagnostic_only", "phase", "process_id", "process_instance",
+        "source_build", "blender_version", "binary_sha256", "source_snapshot_sha256", "product_success_qualified")}
+    marker["full_receipt"] = runner._domain_regular(report, report.parent, 8 * 1024**2)[1]
+    return marker
+
+
+@pytest.mark.parametrize("outcome", ("timeout", "success"))
+def test_inspection_cost_cold_receipt_uses_actual_aggregate_and_route_helpers_without_qualification(
+        runner, addon_package, monkeypatch, tmp_path, outcome):
+    output, binary = inspection_cost_runner_root(runner, monkeypatch, tmp_path)
+    temporary = output / "private"
+    temporary.mkdir(mode=0o700)
+    sources = runner._mesh_storage_sources()
+    report, full = inspection_cost_model(runner, addon_package, monkeypatch,
+        [str(binary), "--bridge-report", str(temporary / runner.MESH_STORAGE_COST_REPORT)],
+        {"BRIDGE_TEST_PROCESS_TOKEN": "1" * 32}, 77, outcome)
+    marker = inspection_cost_write(runner, report, full)
+    result = runner._mesh_storage_cost_matches(marker, temporary, "1" * 32, 77,
+        {"sha256": runner.MESH_STORAGE_EXECUTABLE_SHA256}, sources, runner._domain_display())
+    assert result["diagnostic_completed"] is True and result["qualified"] is False, result
+    assert result["outcome"] == ("TRANSPORT_TIMEOUT" if outcome == "timeout" else "OBSERVED_SUCCESS")
+
+
+@pytest.mark.parametrize("kind", ("completed", "unknown"))
+def test_inspection_cost_aggregate_refuses_impossible_single_observation_sum_and_maximum(
+        runner, addon_package, monkeypatch, tmp_path, kind):
+    output, binary = inspection_cost_runner_root(runner, monkeypatch, tmp_path)
+    _report, full = inspection_cost_model(runner, addon_package, monkeypatch,
+        [str(binary), "--bridge-report", str(output / runner.MESH_STORAGE_COST_REPORT)],
+        {"BRIDGE_TEST_PROCESS_TOKEN": "1" * 32}, 77)
+    observed = full["cost_timing"]
+    row = observed["aggregates"]["gate_pure" if kind == "completed" else "driver_advance"]
+    total, maximum = (("completed_inclusive_seconds", "maximum_completed_seconds") if kind == "completed"
+                      else ("unknown_elapsed_upper_bound_seconds", "maximum_unknown_upper_bound_seconds"))
+    assert row[kind] == 1
+    row[total], row[maximum] = 5., 1.
+    assert runner._inspection_cost_aggregates(observed, full["seconds"]) is False
+
+
+@pytest.mark.parametrize("kind", ("completed", "unknown"))
+def test_inspection_cost_aggregate_accepts_real_iterative_fractional_sum_roundoff(
+        runner, addon_package, monkeypatch, tmp_path, kind):
+    output, binary = inspection_cost_runner_root(runner, monkeypatch, tmp_path)
+    _report, full = inspection_cost_model(runner, addon_package, monkeypatch,
+        [str(binary), "--bridge-report", str(output / runner.MESH_STORAGE_COST_REPORT)],
+        {"BRIDGE_TEST_PROCESS_TOKEN": "1" * 32}, 77)
+    observed = full["cost_timing"]
+    row = observed["aggregates"]["gate_pure" if kind == "completed" else "driver_advance"]
+    count, duration, accumulated = 18, .1, 0.
+    for _ in range(count):
+        accumulated += duration
+    assert accumulated > count * duration
+    row.update(started=count, returned=count if kind == "completed" else 0,
+               completed=count if kind == "completed" else 0, unknown=count if kind == "unknown" else 0)
+    if kind == "completed":
+        row.update(completed_inclusive_seconds=accumulated, maximum_completed_seconds=duration)
+    else:
+        row.update(unknown_elapsed_upper_bound_seconds=accumulated, maximum_unknown_upper_bound_seconds=duration)
+    assert runner._inspection_cost_aggregates(observed, full["seconds"]) is True
+
+
+def test_inspection_cost_aggregate_refuses_wrong_maximum_type_before_arithmetic(
+        runner, addon_package, monkeypatch, tmp_path):
+    output, binary = inspection_cost_runner_root(runner, monkeypatch, tmp_path)
+    _report, full = inspection_cost_model(runner, addon_package, monkeypatch,
+        [str(binary), "--bridge-report", str(output / runner.MESH_STORAGE_COST_REPORT)],
+        {"BRIDGE_TEST_PROCESS_TOKEN": "1" * 32}, 77)
+    calls = []
+    class Foreign:
+        def __rmul__(self, _other):
+            calls.append("multiply")
+            raise AssertionError("Arithmetic preceded exact finite-float validation")
+    observed = full["cost_timing"]
+    observed["aggregates"]["gate_pure"]["maximum_completed_seconds"] = Foreign()
+    assert runner._inspection_cost_aggregates(observed, full["seconds"]) is False
+    assert calls == []
+
+
+@pytest.mark.parametrize("path,value", [
+    (("product_success_qualified",), True),
+    (("diagnostic_only",), False),
+    (("helper_sha256",), "0" * 64),
+    (("source_snapshot_sha256",), "0" * 64),
+    (("transport", "direct_dispatch"), True),
+    (("secondary_failure",), {"stage": "restore"}),
+    (("cost_timing", "restored"), False),
+    (("cost_timing", "exact_unwind_observed"), True),
+    (("cost_timing", "observed_timings_are_untraced_timings"), True),
+    (("cost_timing", "global_event_mask"), 1),
+    (("cost_timing", "catalog", 0, "label"), "foreign"),
+    (("cost_timing", "catalog", 0, "first_line"), 1),
+    (("cost_timing", "catalog", 0, "filename"), "foreign.py"),
+    (("cost_timing", "catalog", 0, "code_sha256"), "A" * 64),
+    (("cost_timing", "aggregates", "gate_pure", "started"), True),
+    (("cost_timing", "aggregates", "gate_pure", "returned"), 2),
+    (("cost_timing", "aggregates", "gate_pure", "maximum_completed_seconds"), 1000.),
+    (("cost_timing", "aggregates", "driver_advance", "unknown"), 0),
+    (("failed_call", "exception_type"), "AssertionError"),
+    (("failed_call", "response_received"), True),
+    (("failed_call", "failed_at"), 1000.),
+    (("partial", "requests", 1, "request", "timeout_ms"), 60001),
+    (("partial", "requests", 0, "request", "params", "time_limit_seconds"), 301.),
+    (("worker_cached", "non_atomic_cached_only"), False),
+    (("worker_cached", "job", "deadline"), True),
+    (("worker_cached", "job", "request_id"), "foreign"),
+    (("worker_cached", "pending_queue", 0, "stop_requested"), 0),
+])
+def test_inspection_cost_cold_receipt_rejects_counter_code_clock_cache_or_scope_forgery(
+        runner, addon_package, monkeypatch, tmp_path, path, value):
+    output, binary = inspection_cost_runner_root(runner, monkeypatch, tmp_path)
+    temporary = output / "private"
+    temporary.mkdir(mode=0o700)
+    sources = runner._mesh_storage_sources()
+    report, full = inspection_cost_model(runner, addon_package, monkeypatch,
+        [str(binary), "--bridge-report", str(temporary / runner.MESH_STORAGE_COST_REPORT)],
+        {"BRIDGE_TEST_PROCESS_TOKEN": "1" * 32}, 77)
+    owner = full
+    for key in path[:-1]:
+        owner = owner[key]
+    owner[path[-1]] = value
+    marker = inspection_cost_write(runner, report, full)
+    result = runner._mesh_storage_cost_matches(marker, temporary, "1" * 32, 77,
+        {"sha256": runner.MESH_STORAGE_EXECUTABLE_SHA256}, sources, runner._domain_display())
+    assert result["diagnostic_completed"] is False and result["qualified"] is False, (path, result)
+
+
+@pytest.mark.parametrize("outcome,fault", (("timeout", None), ("success", None),
+    ("timeout", "exit"), ("timeout", "binary"), ("timeout", "source"), ("timeout", "marker")))
+def test_inspection_cost_runner_preserves_real_route_limits_and_separate_diagnostic_marker(
+        runner, addon_package, monkeypatch, tmp_path, outcome, fault):
+    output, binary = inspection_cost_runner_root(runner, monkeypatch, tmp_path)
+    calls = []
+    class Process:
+        pid = 77
+        def __init__(self, command, **kwargs):
+            calls.append((command, kwargs))
+            report, full = inspection_cost_model(runner, addon_package, monkeypatch, command, kwargs["env"], self.pid, outcome)
+            if fault == "binary":
+                binary.write_bytes(b"changed modeled executable after launch")
+            elif fault == "source":
+                (runner.ROOT / "scripts/run_blender_checks.py").write_text("# source changed after launch\n")
+            marker = inspection_cost_write(runner, report, full)
+            text = runner.MESH_STORAGE_COST_MARKER + json.dumps(marker) + "\n"
+            kwargs["stdout"].write(("missing marker\n" if fault == "marker" else text).encode())
+        def wait(self, timeout):
+            assert timeout == 300
+            return 1 if fault == "exit" else 0
+    monkeypatch.setattr(runner.subprocess, "Popen", Process)
+    monkeypatch.setenv("BRIDGE_TEST_PRIVATE_UI_MANIFEST", "owned-selector")
+    monkeypatch.setattr(runner.sys, "platform", "linux")
+    result = runner.run_case(binary, runner.MESH_STORAGE_COST_CASE, output, 1200)
+    assert result["status"] == ("diagnostic_completed" if fault is None else "failed"), result
+    assert len(calls) == 1
+    command, options = calls[0]
+    assert command.count("--bridge-inspection-cost-timing") == 1 and "--bridge-phased-inspection" not in command
+    assert "--background" not in command and "--factory-startup" in command and "--disable-autoexec" in command
+    assert command[command.index("--bridge-phase") + 1] == "success"
+    assert options["cwd"].is_relative_to(output) and options["start_new_session"] is True
+    assert runner.MESH_STORAGE_COST_CASE in runner.OPT_IN_CASES & runner.INTERACTIVE_CASES
+    assert result["qualification_scope"]["product_success"] is False
+    assert result["qualification_scope"]["untraced_timings"] is False
+
+
+@pytest.mark.parametrize("status,expected", (("diagnostic_completed", 0), ("passed", 1), ("failed", 1), ("timeout", 1)))
+def test_inspection_cost_cli_never_labels_observed_measurement_a_qualified_check(runner, monkeypatch, tmp_path, status, expected):
+    binary = tmp_path / "blender"
+    binary.write_bytes(b"not executed")
+    output = tmp_path / "evidence"
+    monkeypatch.setattr(runner.sys, "argv", ["runner", "--blender", str(binary), "--output", str(output),
+                                           "--case", runner.MESH_STORAGE_COST_CASE])
+    monkeypatch.setattr(runner, "git_value", lambda *_args: "")
+    monkeypatch.setattr(runner, "run_case", lambda *_args: {"case": runner.MESH_STORAGE_COST_CASE, "status": status})
+    assert runner.main() == expected
+    report = json.loads((output / "report.json").read_text())
+    assert report["checks_passed"] is False and report["release_readiness"] == "NOT_ASSESSED"
+
+
+@pytest.mark.parametrize("outcome", ["success", "failed", "preview_refused", "start_refused"])
+@pytest.mark.parametrize("fault", [None, "source", "binary", "pid", "wire_deadline"])
+def test_atomic_timing_runner_keeps_original_RPC_factory_setup_and_diagnostic_scope(runner, monkeypatch, tmp_path, fault, outcome):
+    expected_catalog = runner._mesh_storage_atomic_catalog()
+    output, binary = mesh_storage_runner_root(runner, monkeypatch, tmp_path)
+    monkeypatch.setattr(runner, "_mesh_storage_atomic_catalog", lambda: expected_catalog)
+    calls = []
+    class Process:
+        pid = 77
+        def __init__(self, command, **kwargs):
+            calls.append(command)
+            assert "--bridge-atomic-phase-timing" in command and "--bridge-untraced-control" not in command
+            assert "--background" not in command and "--factory-startup" in command and "--disable-autoexec" in command
+            report, full = mesh_storage_control_model(runner, command, kwargs["env"], self.pid, outcome)
+            full["schema"] = runner.MESH_STORAGE_TIMING_PROFILE
+            full["atomic_timing"] = mesh_storage_atomic_model(runner)
+            full["checkpoint_roles"] = mesh_storage_atomic_cached_roles(full)
+            if fault == "source":
+                (runner.ROOT / "scripts/run_blender_checks.py").write_text("# drift after frozen source snapshot\n")
+            elif fault == "binary":
+                binary.write_bytes(b"changed executable bytes, never launched")
+            elif fault == "pid":
+                full["process_id"] = 78
+            elif fault == "wire_deadline":
+                full["requests"][0]["request"]["timeout_ms"] = 60001
+            compact = mesh_storage_control_write(runner, report, full)
+            kwargs["stdout"].write((runner.MESH_STORAGE_TIMING_MARKER + json.dumps(compact) + "\n").encode())
+        def wait(self, timeout):
+            assert timeout == 300
+            return 0
+    monkeypatch.setattr(runner.subprocess, "Popen", Process)
+    monkeypatch.setenv("BRIDGE_TEST_PRIVATE_UI_MANIFEST", "owned-selector")
+    result = runner.run_case(binary, runner.MESH_STORAGE_TIMING_CASE, output, 1200)
+    assert result["status"] == ("diagnostic_completed" if fault is None else "failed"), result
+    assert result["retained_evidence_validation"]["qualified"] is False
+    assert len(calls) == 1 and all(value is False for value in result["qualification_scope"].values())
+    assert runner.MESH_STORAGE_TIMING_CASE in runner.OPT_IN_CASES & runner.INTERACTIVE_CASES
+
+
+@pytest.mark.parametrize("fault", ["unrestored", "callbacks", "local_events", "tool", "global", "mask", "scope", "speed",
+    "unwind", "upperbound", "row_limit", "empty", "oversize", "unknown_label", "filename", "catalog_count", "code_hash",
+    "depth_bool", "clock_bool", "clock_nan", "clock_order", "duration", "unknown_exact", "unknown_upper", "recursion_exact", "extra", "source_line", "source_label_path"])
+def test_atomic_timing_cold_validator_rejects_unbounded_unclean_or_overclaimed_spans(runner, fault):
+    observed = mesh_storage_atomic_model(runner)
+    row = observed["spans"][0]
+    if fault in {"unrestored", "callbacks", "local_events", "tool"}:
+        observed[{"unrestored": "restored", "callbacks": "callbacks_restored", "local_events": "local_events_restored", "tool": "tool_freed"}[fault]] = False
+    elif fault in {"global", "mask", "row_limit"}:
+        observed[{"global": "global_event_mask", "mask": "local_event_mask", "row_limit": "row_limit"}[fault]] = 1
+    elif fault in {"scope", "speed", "unwind"}:
+        observed[{"scope": "observed_timings_are_untraced_timings", "speed": "speedup_qualified", "unwind": "exact_unwind_observed"}[fault]] = True
+    elif fault == "upperbound":
+        observed["unknown_open_elapsed_is_upper_bound"] = False
+    elif fault == "empty":
+        observed["spans"] = []
+    elif fault == "oversize":
+        observed["spans"] = [row] * 2049
+    elif fault == "unknown_label":
+        row["label"] = "Gate.pure"
+    elif fault == "filename":
+        observed["catalog"][0]["filename"] = "arbitrary.py"
+    elif fault == "catalog_count":
+        observed["catalog"].pop()
+    elif fault == "source_line":
+        observed["catalog"][0]["first_line"] += 1
+    elif fault == "source_label_path":
+        observed["catalog"][0]["filename"] = observed["catalog"][1]["filename"]
+    elif fault == "code_hash":
+        observed["catalog"][0]["code_sha256"] = "foreign"
+    elif fault == "depth_bool":
+        row["depth"] = True
+    elif fault == "clock_bool":
+        row["entered_at"] = True
+    elif fault == "clock_nan":
+        row["ended_at"] = float("nan")
+    elif fault == "clock_order":
+        row["ended_at"] = 9.
+    elif fault == "duration":
+        row["duration_seconds"] = .6
+    elif fault == "unknown_exact":
+        row["end"] = "OPEN_AT_CUTOFF_OR_UNWOUND_UNKNOWN"
+    elif fault == "unknown_upper":
+        row.update(end="OPEN_AT_CUTOFF_OR_UNWOUND_UNKNOWN", duration_seconds=None, elapsed_upper_bound_seconds=.6)
+    elif fault == "recursion_exact":
+        row["ambiguous_recursion"] = True
+    else:
+        row["untraced_deadline_passed"] = True
+    assert not runner._mesh_storage_atomic_spans(observed, 1.)
+
+
+def test_atomic_timing_cold_validator_accepts_honest_unknown_open_upper_bound(runner):
+    observed = mesh_storage_atomic_model(runner)
+    observed["spans"][0].update(end="OPEN_AT_CUTOFF_OR_UNWOUND_UNKNOWN", duration_seconds=None, elapsed_upper_bound_seconds=.5)
+    assert runner._mesh_storage_atomic_spans(observed, 1.)
+
+
+@pytest.mark.parametrize("fault", [None, "missing", "extra", "source", "reads_bool", "reads_nonzero", "retained_integer", "retained",
+    "preview_mismatch", "terminal_mismatch", "nested_bool_integer", "role_missing", "role_extra", "profile", "native_push_integer",
+    "after_measured_integer", "foreign_owner", "passivity", "scope", "float", "negative", "huge", "string", "width", "key", "depth"])
+def test_atomic_cached_roles_matches_delivered_wire_with_exact_types_and_literal_bounds(runner, monkeypatch, tmp_path, fault):
+    expected_catalog = runner._mesh_storage_atomic_catalog()
+    output, binary = mesh_storage_runner_root(runner, monkeypatch, tmp_path)
+    monkeypatch.setattr(runner, "_mesh_storage_atomic_catalog", lambda: expected_catalog)
+    temporary = output / "owned-temp"
+    temporary.mkdir()
+    bundle = output / "bundle"
+    bundle.mkdir()
+    command = ["--bridge-phase", "success", "--bridge-bundle", str(bundle), "--bridge-report",
+               str(temporary / runner.MESH_STORAGE_TIMING_REPORT)]
+    token = "a" * 32
+    report, full = mesh_storage_control_model(runner, command, {"BRIDGE_TEST_PROCESS_TOKEN": token}, 77)
+    full["schema"] = runner.MESH_STORAGE_TIMING_PROFILE
+    full["atomic_timing"] = mesh_storage_atomic_model(runner)
+    full["checkpoint_roles"] = mesh_storage_atomic_cached_roles(full)
+    cached = full["checkpoint_roles"]
+    if fault == "missing":
+        full.pop("checkpoint_roles")
+    elif fault == "extra":
+        cached["fresh_readback"] = {}
+    elif fault == "source":
+        cached["source"] = "fresh_RNA_read"
+    elif fault == "reads_bool":
+        cached["additional_RNA_reads"] = False
+    elif fault == "reads_nonzero":
+        cached["additional_RNA_reads"] = 1
+    elif fault in {"retained_integer", "retained"}:
+        cached["failed_terminal_after_readback_retained"] = 0 if fault == "retained_integer" else True
+    elif fault in {"preview_mismatch", "terminal_mismatch"}:
+        cached["preview" if fault.startswith("preview") else "terminal"]["initial_roles"][0] = 2
+    elif fault == "nested_bool_integer":
+        cached["preview"]["initial_roles"][0] = True  # True == 1; canonical typed comparison must still refuse.
+    elif fault == "role_missing":
+        cached["preview"].pop("before_readback")
+    elif fault == "role_extra":
+        cached["preview"]["new_claim"] = True
+    elif fault == "profile":
+        cached["preview"]["profile"] = "foreign"
+    elif fault == "native_push_integer":
+        cached["preview"]["native_push_completed"] = 0
+    elif fault == "after_measured_integer":
+        cached["preview"]["after_readback_measured"] = 0
+    elif fault in {"foreign_owner", "passivity"}:
+        cached["preview"]["foreign_previous_owner_supported" if fault == "foreign_owner" else "physical_cache_passivity_claimed"] = True
+    elif fault == "scope":
+        cached["preview"]["protected_scope_sha256"] = None
+    elif fault is not None:
+        value = {"float": 1., "negative": -1, "huge": 2**64, "string": "x" * 257,
+                 "width": [None] * 33, "key": {"x" * 129: None}, "depth": None}[fault]
+        if fault == "depth":
+            for _index in range(9):
+                value = [value]
+        cached["preview"]["before_readback"] = value
+        full["requests"][0]["response"]["result"]["checkpoint_roles"]["before_readback"] = value
+    compact = mesh_storage_control_write(runner, report, full)
+    _raw, binding = runner._domain_regular(binary, binary.parent, 1024**3)
+    result = runner._mesh_storage_timing_matches(compact, temporary, token, 77, binding,
+                                                full["source_fingerprints"], full["private_display"])
+    assert result["diagnostic_completed"] is (fault is None), result
+    assert result["qualified"] is False

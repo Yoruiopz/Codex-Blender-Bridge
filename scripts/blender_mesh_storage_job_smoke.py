@@ -24,8 +24,18 @@ import threading
 import time
 import traceback
 from array import array
+from collections import deque
 from pathlib import Path
-from types import CellType, CodeType, FrameType, FunctionType, MappingProxyType, ModuleType
+from types import (
+    CellType,
+    CodeType,
+    FrameType,
+    FunctionType,
+    GetSetDescriptorType,
+    MappingProxyType,
+    MemberDescriptorType,
+    ModuleType,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA = "MESH_STORAGE_OWNED_JOB_NATIVE_V1"
@@ -50,6 +60,23 @@ CONTROL_CASE = "mesh_storage_first_job_control"
 CONTROL_PROFILE = "MESH_STORAGE_FIRST_JOB_UNTRACED_CONTROL_V1"
 CONTROL_MARKER = "BLENDER_MESH_STORAGE_FIRST_JOB_CONTROL_DIAGNOSTIC "
 CONTROL_REPORT = "mesh-storage-first-job-control.json"
+INSPECTION_CASE = "mesh_storage_phased_inspection"
+INSPECTION_PROFILE = "MESH_STORAGE_PHASED_INSPECTION_NATIVE_V1"
+INSPECTION_MARKER = "BLENDER_MESH_STORAGE_PHASED_INSPECTION_OK "
+INSPECTION_REPORT = "mesh-storage-phased-inspection.json"
+COST_CASE = "mesh_storage_inspection_cost_timing"
+COST_PROFILE = "MESH_STORAGE_INSPECTION_COST_OBSERVED_V1"
+COST_MARKER = "BLENDER_MESH_STORAGE_INSPECTION_COST_DIAGNOSTIC "
+COST_REPORT = "mesh-storage-inspection-cost.json"
+COST_LABELS = ("driver_advance", "gate_pure", "source_seal_verify", "metadata_plan", "collection_bindings", "checkpoint_roles_init")
+COST_MAX_CALLS = 131072
+INSPECTION_LIMITATIONS = {
+    "success_only": True, "inspection_only": True, "public_tool": False, "mcp": False,
+    "writer_handoff": False, "full_artist_workflow": False, "installed_package": False,
+    "windows": False, "blender_4_5": False, "physical_cache_passivity": False,
+    "exact_native_entry_counters": False, "COW_event_count_observed": False,
+    "postboundary_original_SINGLE_values_observed": False, "all_adversaries_qualified": False,
+}
 CONTROL_FLAGS = dict.fromkeys(("source_frame_observer_installed", "native_access_counter_observed",
     "checkpoint_boundary_observed", "complete_five_phase_qualified", "preservation_qualified",
     "cancel_disconnect_qualified", "recovery_qualified", "durable_backup_qualified",
@@ -1619,17 +1646,931 @@ class FirstJobControl(Fixture):
         return None
 
 
+
+TIMING_CASE = "mesh_storage_atomic_phase_timing"
+TIMING_PROFILE = "MESH_STORAGE_ATOMIC_PHASE_OBSERVED_DIAGNOSTIC_V1"
+TIMING_MARKER = "BLENDER_MESH_STORAGE_ATOMIC_PHASE_TIMING_DIAGNOSTIC "
+TIMING_REPORT = "mesh-storage-atomic-phase-timing.json"
+TIMING_UNKNOWN = "OPEN_AT_CUTOFF_OR_UNWOUND_UNKNOWN"
+TIMING_MAX_ROWS = 2048
+TIMING_LABELS = ("preview", "build_plan", "checkpoint_roles_init", "checkpoint_plan_read", "protected_facts",
+    "bind_protected", "roles_authored", "roles_check", "driver_init", "driver_full_check", "start_admission_init",
+    "start_admission_full_check", "turn_admission_full_check", "array_inventory", "material", "array_hash")
+
+
+class AtomicPhaseMonitor:
+    """Only local START/RETURN for held coarse code; no unwind/frame inference."""
+    tool_id = 4
+    tool_name = "bcb-private-atomic-phase-timing"
+
+    def __init__(self, codes, *, monitoring=None, clock=time.monotonic, get_ident=threading.get_ident):
+        assert type(codes) is dict and 1 <= len(codes) <= 16
+        assert all(type(code) is CodeType and type(label) is str and label in TIMING_LABELS for code, label in codes.items())
+        assert len(set(codes.values())) == len(codes)
+        self.monitoring = getattr(sys, "monitoring", None) if monitoring is None else monitoring
+        assert self.monitoring is not None, "Public local-code monitoring unavailable"
+        self.codes, self.clock, self.get_ident = dict(codes), clock, get_ident
+        self.main_thread = get_ident()
+        self.spans, self.stack = [], []
+        self.failure, self.claimed, self.armed, self.restored = None, False, [], False
+        self.prior_callbacks, self.released_callbacks = {}, set()
+        self.start_callback, self.return_callback = self._start, self._return
+        self.mask = self.monitoring.events.PY_START | self.monitoring.events.PY_RETURN
+        self.catalog = [{"label": label, "filename": str(Path(code.co_filename).relative_to(ROOT)),
+                         "first_line": code.co_firstlineno, "code_sha256": hashlib.sha256(code.co_code).hexdigest()}
+                        for code, label in codes.items()]
+
+    def _start(self, code, _offset):
+        self._event(code, True)
+
+    def _return(self, code, _offset, _value):
+        self._event(code, False)
+
+    def _event(self, code, starting):
+        # No frames, RNA, provider, source inspection, exception formatting or per-field hooks.
+        if self.failure is not None:
+            return
+        if self.get_ident() != self.main_thread or code not in self.codes:
+            self.failure = "MONITOR_FOREIGN_THREAD_OR_CODE"
+            return
+        now = self.clock()
+        if type(now) is not float or not math.isfinite(now) or now < 0:
+            self.failure = "MONITOR_CLOCK"
+            return
+        if starting:
+            if len(self.spans) >= TIMING_MAX_ROWS or len(self.stack) >= 64:
+                self.failure = "MONITOR_BOUND"
+                return
+            ambiguous = any(row[0] is code for row in self.stack)
+            if ambiguous:
+                for entry in self.stack:
+                    if entry[0] is code:
+                        entry[2]["ambiguous_recursion"] = True
+            row = {"label": self.codes[code], "entered_at": now, "ended_at": None,
+                   "elapsed_upper_bound_seconds": None, "duration_seconds": None,
+                   "depth": len(self.stack), "end": TIMING_UNKNOWN, "ambiguous_recursion": ambiguous}
+            self.spans.append(row)
+            self.stack.append([code, len(self.spans) - 1, row])
+            return
+        index = next((i for i in range(len(self.stack) - 1, -1, -1) if self.stack[i][0] is code), None)
+        if index is None:
+            self.failure = "MONITOR_RETURN_WITHOUT_ENTRY"
+            return
+        # Inner functions can unwind without a local event. Their cutoff is an
+        # UPPERBOUND only; matching returns never turn them into exact unwinds.
+        for _held_code, _ordinal, row in self.stack[index + 1:]:
+            row["ended_at"] = now
+            row["elapsed_upper_bound_seconds"] = now - row["entered_at"]
+        row = self.stack[index][2]
+        if now < row["entered_at"]:
+            self.failure = "MONITOR_CLOCK"
+            return
+        row["ended_at"] = now
+        if row["ambiguous_recursion"]:
+            row["elapsed_upper_bound_seconds"] = now - row["entered_at"]
+        else:
+            row["end"], row["duration_seconds"] = "RETURN_COMPLETED", now - row["entered_at"]
+        del self.stack[index:]
+
+    def install(self):
+        monitor, tool = self.monitoring, self.tool_id
+        assert monitor.get_tool(tool) is None and monitor.get_events(tool) == 0, "Monitoring tool already in use"
+        assert all(monitor.get_local_events(tool, code) == 0 for code in self.codes), "Existing local events"
+        monitor.use_tool_id(tool, self.tool_name)
+        self.claimed = True
+        try:
+            for event, callback in ((monitor.events.PY_START, self.start_callback), (monitor.events.PY_RETURN, self.return_callback)):
+                previous = monitor.register_callback(tool, event, callback)
+                self.prior_callbacks[event] = previous
+                assert previous is None, "Monitoring callback already present"
+            for code in self.codes:
+                self.armed.append(code)
+                monitor.set_local_events(tool, code, self.mask)
+            assert monitor.get_events(tool) == 0
+        except BaseException:
+            try:
+                self.restore()
+            except BaseException:
+                self.failure = "MONITOR_RESTORATION_FAILED"
+            raise
+
+    def restore(self):
+        if self.restored or not self.claimed:
+            return
+        monitor, tool = self.monitoring, self.tool_id
+        assert monitor.get_tool(tool) == self.tool_name, "Monitoring tool ownership changed"
+        errors, callbacks_done = [], True
+        # Attempt every bounded owned slot, even after an earlier public API
+        # failure. Free only after all events and callback baselines are proved.
+        for code in self.codes:
+            try:
+                monitor.set_local_events(tool, code, 0)
+            except BaseException as error:
+                errors.append(error)
+        try:
+            monitor.set_events(tool, 0)
+        except BaseException as error:
+            errors.append(error)
+        for event, previous in self.prior_callbacks.items():
+            expected = previous if event in self.released_callbacks else self.start_callback if event == monitor.events.PY_START else self.return_callback
+            try:
+                actual = monitor.register_callback(tool, event, previous)
+                self.released_callbacks.add(event)
+                if actual is not expected:
+                    errors.append(AssertionError("Monitoring callback ownership changed"))
+            except BaseException as error:
+                callbacks_done = False
+                errors.append(error)
+        inactive = monitor.get_events(tool) == 0 and all(monitor.get_local_events(tool, code) == 0 for code in self.codes)
+        if inactive and callbacks_done:
+            monitor.free_tool_id(tool)
+            assert monitor.get_tool(tool) is None
+            self.claimed, self.restored = False, True
+        else:
+            errors.append(AssertionError("Monitoring restoration incomplete; owned tool not freed"))
+        if errors:
+            self.failure = "MONITOR_RESTORATION_FAILED"
+            raise errors[0]
+        cutoff = self.clock()
+        assert type(cutoff) is float and math.isfinite(cutoff)
+        for _code, _ordinal, row in self.stack:
+            assert cutoff >= row["entered_at"]
+            row["ended_at"], row["elapsed_upper_bound_seconds"] = cutoff, cutoff - row["entered_at"]
+        self.stack.clear()
+
+    def summary(self):
+        assert self.restored and not self.claimed and self.failure is None
+        return {"backend": "sys.monitoring.local_START_RETURN", "tool_id": self.tool_id,
+                "global_event_mask": 0, "local_event_mask": self.mask, "restored": True,
+                "callbacks_restored": True, "local_events_restored": True, "tool_freed": True,
+                "catalog": self.catalog, "spans": self.spans, "row_limit": TIMING_MAX_ROWS,
+                "exact_unwind_observed": False, "unknown_open_elapsed_is_upper_bound": True,
+                "observed_timings_are_untraced_timings": False, "speedup_qualified": False,
+                "overlapping_nested_spans_may_not_be_added": True}
+
+
+def atomic_phase_codes():
+    from blender_codex_bridge import scene_jobs
+    from blender_codex_bridge.tools import mesh_storage as domain
+    from blender_codex_bridge.tools._mesh_storage_job import MeshStorageDriver
+    source = domain.source
+    functions = (domain.preview, source.build_plan, source.CheckpointRoles.__init__, source._StorageCheckpointPlan._read,
+        source.protected_facts, source.CheckpointRoles.bind_protected, source.CheckpointRoles.authored,
+        source.CheckpointRoles.check_after_read, MeshStorageDriver.__init__, MeshStorageDriver.check_after_read,
+        scene_jobs._StartAdmission.__init__, scene_jobs._StartAdmission.check_after_read,
+        scene_jobs._TurnAdmission.check_after_read, source.array_inventory, source._material, source.array_hash)
+    assert all(type(function) is FunctionType for function in functions)
+    return {function.__code__: label for function, label in zip(functions, TIMING_LABELS, strict=True)}
+
+
+class AtomicPhaseTiming(FirstJobControl):
+    """Original genuine RPC scenario, with explicitly observed coarse spans."""
+    def __init__(self, *args):
+        super().__init__(*args)
+        self.atomic_monitor = None
+
+    def apply(self, action, parameters):
+        if parameters.get("stage") == "after" and self.atomic_monitor is not None:
+            self.atomic_monitor.restore()
+        result = super().apply(action, parameters)
+        if parameters.get("stage") == "before":
+            assert self.atomic_monitor is None
+            self.atomic_monitor = AtomicPhaseMonitor(atomic_phase_codes())
+            self.atomic_monitor.install()
+        return result
+
+    def fail(self):
+        from scripts.blender_artist_sidebar_smoke import owned_process_exit
+        if self.atomic_monitor is not None:
+            try:
+                self.atomic_monitor.restore()
+            except BaseException:
+                self.failure = (self.failure or "") + "\nAtomic monitor restoration failed."
+        raw = {"schema": TIMING_PROFILE, "completed": False, "diagnostic_only": True,
+               "process_id": os.getpid(), "process_instance": self.token, "failure": self.failure}
+        domain_new(self.options.bridge_report.with_suffix(".failure.json"), canonical(raw))
+        print(self.failure, file=sys.stderr, flush=True)
+        owned_process_exit(1)
+
+    def supervise(self):
+        from scripts.blender_artist_sidebar_smoke import owned_process_exit
+        try:
+            while not self.controls.empty():
+                action, parameters, event, result = self.controls.get_nowait()
+                try:
+                    result.extend((True, self.apply(action, parameters)))
+                except Exception:
+                    result.extend((False, traceback.format_exc()))
+                finally:
+                    event.set()
+            assert time.monotonic() - self.started <= 300, "Original bounded native phase expired"
+            if not self.done.is_set():
+                return .005
+            assert self.failure is None, self.failure
+            assert self.hooks is None and self.observe is False
+            control_hook_state()
+            self.settled()
+            assert self.atomic_monitor is not None
+            self.atomic_monitor.restore()
+            assert source_fingerprints() == self.sources
+            encoded = canonical(self.sources)
+            full = {"schema": TIMING_PROFILE, "completed": True, "diagnostic_only": True, "phase": self.phase,
+                "process_id": os.getpid(), "process_instance": self.token, "runtime_nonce": self.nonce,
+                "runtime_identity": self.runtime_identity, "source_build": self.control_build,
+                "blender_version": self.control_version, "binary_sha256": self.binary_sha256,
+                "helper_sha256": HELPER_SHA256, "source_fingerprints": self.sources,
+                "source_snapshot_sha256": hashlib.sha256(encoded).hexdigest(), "private_display": self.display,
+                "transport": {"host": "127.0.0.1", "socket_json": True, "runtime_timer_queue": True,
+                              "direct_dispatch": False, "manual_scheduler_drain": False},
+                "flags": dict(CONTROL_FLAGS), **self.control_data, "atomic_timing": self.atomic_monitor.summary(),
+                "seconds": time.monotonic() - self.started}
+            binding = domain_new(self.options.bridge_report, canonical(full))
+            compact = {key: full[key] for key in ("schema", "completed", "diagnostic_only", "process_id",
+                "process_instance", "source_build", "blender_version", "binary_sha256", "source_snapshot_sha256", "product_success")}
+            compact["full_receipt"] = binding
+            print(TIMING_MARKER + canonical(compact).decode("ascii"), flush=True)
+            owned_process_exit(0)
+        except Exception:
+            self.failure = traceback.format_exc()
+            self.fail()
+        return None
+
+
+def _inspection_failure_literal(value, depth=0, budget=None):
+    """Fail closed without calling foreign conversion or container methods."""
+    if budget is None:
+        budget = [512]
+    budget[0] -= 1
+    if depth > 8 or budget[0] < 0:
+        raise ValueError("DIAGNOSTIC_LITERAL_BUDGET")
+    kind = type(value)
+    if value is None or kind is bool:
+        return value
+    if kind is str and len(value) <= 4096:
+        return value
+    if kind is int and value.bit_length() <= 64:
+        return value
+    if kind is float and math.isfinite(value):
+        return value
+    if kind is list or kind is tuple:
+        if len(value) > 32:
+            raise ValueError("DIAGNOSTIC_LITERAL_BUDGET")
+        return [_inspection_failure_literal(item, depth+1, budget) for item in value]
+    if kind is dict and len(value) <= 32 and all(type(key) is str and len(key) <= 128 for key in value):
+        return {key: _inspection_failure_literal(item, depth+1, budget) for key, item in value.items()}
+    raise ValueError("DIAGNOSTIC_LITERAL_UNAVAILABLE")
+
+
+def _inspection_failure_dictionary(owner):
+    kind = type(owner)
+    for base in type.__dict__["__mro__"].__get__(kind):
+        fields = type.__dict__["__dict__"].__get__(base)
+        descriptor = fields.get("__dict__")
+        if type(descriptor) is GetSetDescriptorType:
+            data = descriptor.__get__(owner, kind)
+            if type(data) is dict and len(data) <= 256 and all(type(key) is str for key in data):
+                return owner, kind, descriptor, data
+    raise ValueError("DIAGNOSTIC_DICTIONARY_ORIGIN")
+
+
+def inspection_failure_origin(runtime):
+    """Capture fixed Python-only readers before the first RPC/provider."""
+    from blender_codex_bridge.command_queue import CommandQueue, QueuedRequest
+    from blender_codex_bridge.native_save_jobs import NativeSaveJobs
+    from blender_codex_bridge.protocol import Request
+    from blender_codex_bridge.runtime import BridgeRuntime
+    from blender_codex_bridge.scene_job_reservations import (
+        SceneJobReservations,
+        _Reservation,
+        _Turn,
+    )
+    from blender_codex_bridge.scene_jobs import InspectionJob
+    if type(runtime) is not BridgeRuntime:
+        raise ValueError("DIAGNOSTIC_RUNTIME_ORIGIN")
+    runtime_row = _inspection_failure_dictionary(runtime)
+    jobs, commands = runtime_row[3]["jobs"], runtime_row[3]["command_queue"]
+    if type(jobs) is not NativeSaveJobs or type(commands) is not CommandQueue:
+        raise ValueError("DIAGNOSTIC_SERVICE_ORIGIN")
+    jobs_row, commands_row = _inspection_failure_dictionary(jobs), _inspection_failure_dictionary(commands)
+    reservations, fifo_owner = jobs_row[3]["reservations"], commands_row[3]["_queue"]
+    if type(reservations) is not SceneJobReservations or type(fifo_owner) is not queue.Queue:
+        raise ValueError("DIAGNOSTIC_SERVICE_ORIGIN")
+    dictionaries = (runtime_row, jobs_row, _inspection_failure_dictionary(reservations),
+                    commands_row, _inspection_failure_dictionary(fifo_owner))
+    history, fifo = dictionaries[1][3]["history"], dictionaries[4][3]["queue"]
+    if type(history) is not deque or type(fifo) is not deque:
+        raise ValueError("DIAGNOSTIC_CONTAINER_ORIGIN")
+    turns = dictionaries[2][3]["_inspection_turns"]
+    if type(turns) is not dict or len(turns) > 2 or any(type(key) is not int for key in turns):
+        raise ValueError("DIAGNOSTIC_TURN_CONTAINER")
+    fields = (
+        (InspectionJob, ("job_id", "request_id", "method", "kind", "state", "phase", "revision", "progress", "error", "deadline",
+                         "in_tick", "in_commit", "native_reads_started", "cancel_reason", "ready_valid", "invalidated_reason")),
+        (_Turn, ("phase", "revision", "used", "check_only", "inspection_deadline", "owner")),
+        (_Reservation, ("job",)),
+        (QueuedRequest, ("request", "deadline", "_state", "_stop_requested", "response")),
+        (Request, ("id", "method")),
+    )
+    readers = []
+    for kind, names in fields:
+        namespace = type.__dict__["__dict__"].__get__(kind)
+        rows = tuple((name, namespace.get(name)) for name in names)
+        if any(type(descriptor) is not MemberDescriptorType or descriptor.__objclass__ is not kind for _name, descriptor in rows):
+            raise ValueError("DIAGNOSTIC_SLOT_ORIGIN")
+        readers.append((kind, rows))
+    return dictionaries, history, fifo, tuple(readers), turns
+
+
+def _inspection_failure_slots(owner, reader):
+    if type(reader) is not tuple or len(reader) != 2:
+        raise ValueError("DIAGNOSTIC_SLOT_ORIGIN")
+    kind, rows = reader
+    if type(kind) is not type or type(owner) is not kind or type(rows) is not tuple or len(rows) > 32:
+        raise ValueError("DIAGNOSTIC_SLOT_OWNER")
+    if (any(type(row) is not tuple or len(row) != 2 or type(row[0]) is not str for row in rows)
+            or any(type(descriptor) is not MemberDescriptorType or descriptor.__objclass__ is not kind for _name, descriptor in rows)):
+        raise ValueError("DIAGNOSTIC_SLOT_ORIGIN")
+    return {name: descriptor.__get__(owner, kind) for name, descriptor in rows}
+
+
+def inspection_failure_snapshot(origin, identifier, stage):
+    """Non-atomic cached Python observation; never inspect a stopped driver."""
+    valid_stage = type(stage) is str and stage in ("worker", "supervisor")
+    result = {"available": False, "stage": stage if valid_stage else "unknown", "non_atomic_cached_only": True,
+              "sampled_at": time.monotonic(), "cpu_seconds": time.process_time(), "truncated": False}
+    try:
+        if (not valid_stage or type(origin) is not tuple or len(origin) != 5
+                or type(identifier) is not str or len(identifier) > 128):
+            raise ValueError("DIAGNOSTIC_ORIGIN_UNAVAILABLE")
+        dictionaries, history, fifo, readers, turns = origin
+        if (type(dictionaries) is not tuple or len(dictionaries) != 5 or type(readers) is not tuple or len(readers) != 5
+                or any(type(row) is not tuple or len(row) != 4 for row in dictionaries)):
+            raise ValueError("DIAGNOSTIC_ORIGIN_UNAVAILABLE")
+        for owner, kind, descriptor, data in dictionaries:
+            if (type(owner) is not kind or type(descriptor) is not GetSetDescriptorType
+                    or descriptor.__get__(owner, kind) is not data or type(data) is not dict
+                    or len(data) > 256 or any(type(key) is not str for key in data)):
+                raise ValueError("DIAGNOSTIC_DICTIONARY_ORIGIN")
+        runtime, jobs, service, commands, queue_fields = tuple(row[3] for row in dictionaries)
+        if (runtime.get("jobs") is not dictionaries[1][0] or runtime.get("command_queue") is not dictionaries[3][0]
+                or jobs.get("reservations") is not dictionaries[2][0] or commands.get("_queue") is not dictionaries[4][0]
+                or jobs.get("history") is not history or queue_fields.get("queue") is not fifo
+                or type(history) is not deque or type(fifo) is not deque or service.get("_inspection_turns") is not turns):
+            raise ValueError("DIAGNOSTIC_CONTAINER_ORIGIN")
+        active = jobs.get("active")
+        candidates = ([] if active is None else [active]) + [deque.__getitem__(history, index) for index in range(min(len(history), 32))]
+        result["truncated"] = len(history) > 32 or len(fifo) > 8
+        budget, matches, matched_owner = [512], [], None
+        for candidate in candidates:
+            fields = _inspection_failure_slots(candidate, readers[0])
+            if type(fields["job_id"]) is not str:
+                raise ValueError("DIAGNOSTIC_JOB_ID")
+            if fields["job_id"] == identifier:
+                matches.append(fields)
+                matched_owner = candidate
+        if len(matches) > 1:
+            raise ValueError("DIAGNOSTIC_JOB_AMBIGUOUS")
+        job = None if not matches else _inspection_failure_literal(matches[0], budget=budget)
+        if job is not None and (type(job["deadline"]) is not float or type(job["revision"]) is not int
+                or any(type(job[key]) is not bool for key in ("in_tick", "in_commit", "native_reads_started", "ready_valid"))):
+            raise ValueError("DIAGNOSTIC_JOB_LITERAL_TYPE")
+        if type(turns) is not dict or len(turns) > 2 or any(type(key) is not int for key in turns):
+            raise ValueError("DIAGNOSTIC_TURN_CONTAINER")
+        retained_turns = []
+        for turn in tuple(turns.values()):
+            fields = _inspection_failure_slots(turn, readers[1])
+            reservation = _inspection_failure_slots(fields.pop("owner"), readers[2])
+            owner = _inspection_failure_slots(reservation["job"], readers[0])
+            if type(owner["job_id"]) is not str:
+                raise ValueError("DIAGNOSTIC_JOB_ID")
+            fields["belongs_to_expected_job"] = owner["job_id"] == identifier
+            if (type(fields["inspection_deadline"]) is not float or type(fields["revision"]) is not int
+                    or any(type(fields[key]) is not bool for key in ("used", "check_only"))):
+                raise ValueError("DIAGNOSTIC_TURN_LITERAL_TYPE")
+            retained_turns.append(_inspection_failure_literal(fields, budget=budget))
+        queued = []
+        for index in range(min(len(fifo), 8)):
+            item = deque.__getitem__(fifo, index)
+            fields = _inspection_failure_slots(item, readers[3])
+            request = _inspection_failure_slots(fields["request"], readers[4])
+            if type(fields["deadline"]) is not float or type(fields["_stop_requested"]) is not bool:
+                raise ValueError("DIAGNOSTIC_QUEUE_LITERAL_TYPE")
+            queued.append(_inspection_failure_literal({"request_id": request["id"], "method": request["method"],
+                "deadline": fields["deadline"], "state": fields["_state"], "stop_requested": fields["_stop_requested"],
+                "response_present": fields["response"] is not None}, budget=budget))
+        result.update(available=True, origin_identity_valid=True, job=job, active_is_expected=active is not None and active is matched_owner,
+            inspection_turns=retained_turns, pending_queue=queued)
+    except (ValueError, TypeError, AttributeError, KeyError, RuntimeError, IndexError):
+        result.update(available=False, origin_identity_valid=False, unavailable_reason="DIAGNOSTIC_CACHE_UNAVAILABLE")
+    return result
+
+
+def _inspection_failure_identifier(data):
+    if type(data) is not dict or any(type(key) is not str for key in data):
+        return ""
+    requests = data.get("requests")
+    if type(requests) is not list or not requests or type(requests[0]) is not dict:
+        return ""
+    exchange = requests[0]
+    if any(type(key) is not str for key in exchange):
+        return ""
+    response = exchange.get("response")
+    if type(response) is not dict or any(type(key) is not str for key in response):
+        return ""
+    result = response.get("result")
+    if type(result) is not dict or any(type(key) is not str for key in result):
+        return ""
+    identifier = result.get("job_id")
+    return identifier if type(identifier) is str and len(identifier) <= 128 else ""
+
+
+def inspection_hook_state():
+    """Refuse existing observers; never install or change one."""
+    python = control_hook_state()
+    monitoring = getattr(sys, "monitoring", None)
+    assert monitoring is not None
+    tools = [monitoring.get_tool(index) for index in range(6)]
+    events = [monitoring.get_events(index) for index in range(6)]
+    assert all(value is None for value in tools) and all(type(value) is int and value == 0 for value in events)
+    return {"python": python, "monitoring_tools": tools, "monitoring_global_events": events}
+
+
+def inspection_context_snapshot(bpy):
+    context = bpy.context
+    selected = tuple(context.selected_objects)
+    assert len(selected) <= 512
+    scene = context.scene
+    particle = scene.tool_settings.particle_edit
+    return {"mode": context.mode, "scene": identity(scene),
+            "active": None if context.view_layer.objects.active is None else identity(context.view_layer.objects.active),
+            "selection": sorted(identity(value) for value in selected),
+            "scene_self_references": scene.user_of_id(scene),
+            "particle_object": None if particle.object is None else identity(particle.object)}
+
+
+def inspection_boundaries(runtime):
+    """Cached application state only; no native undo/API counter is inferred."""
+    checkpoints, jobs = runtime.checkpoints, runtime.jobs
+    reservations = runtime.registry._scene_reservations
+    return {"operation_history": runtime.state.history(100), "checkpoints": checkpoints.list(100),
+            "undo_steps": len(checkpoints._undo_steps), "pending": checkpoints._pending is not None,
+            "owned_pending": len(checkpoints._owned_pending), "editor_session": checkpoints._editor_session is not None,
+            "recovery_ids": sorted(jobs.recovery_ledger), "reservation_owner": reservations.owner is not None,
+            "retained_reservations": len(reservations._retained), "write_turns": len(reservations._turns),
+            "read_turns": len(reservations._inspection_turns)}
+
+
+def inspection_runtime_job(runtime, identifier):
+    """Bind delivered wire data to the actual retired queued job; cached only."""
+    from blender_codex_bridge.mesh_storage_source import SourceSeal
+    from blender_codex_bridge.scene_jobs import InspectionJob
+    jobs = [job for job in runtime.jobs.history if job.job_id == identifier]
+    assert len(jobs) == 1 and type(jobs[0]) is InspectionJob
+    job = jobs[0]
+    proof = runtime.jobs._inspection_ready.get(id(job))
+    assert type(proof) is tuple and len(proof) == 11
+    seal, factory, authority, _rows, state, lifetime, _life, _connection, _events, _permissions, deadline = proof
+    assert type(seal) is SourceSeal and lifetime is job.lifetime
+    return {"job_id": job.job_id, "request_id": job.request_id, "method": job.method,
+            "kind": job.kind, "state": job.state, "phase": job.phase, "revision": job.revision,
+            "driver_retired": job.driver is None, "ready_record_present": True,
+            "original_runtime": factory[2] is runtime, "registry_match": authority.registry is runtime.registry,
+            "state_match": state[0] is runtime.state, "delivered": lifetime.delivered.is_set(),
+            "rejected": lifetime.rejected.is_set(), "connection_present": lifetime.connection is not None,
+            "disconnected": lifetime.connection is None or lifetime.connection.disconnected.is_set(),
+            "job_deadline": job.deadline, "ready_deadline": deadline, "sampled_at": time.monotonic(),
+            "cached_result_sha256": hashlib.sha256(canonical(job.result)).hexdigest(),
+            "inspection_fingerprint": job.result["inspection_fingerprint"]}
+
+
+def inspection_payload_counts(sample):
+    widths = {"BOOLEAN": 1, "INT": 4, "INT32_2D": 8, "FLOAT2": 8, "FLOAT_VECTOR": 12}
+    arrays = sample["protected"]["original_ARRAY_values"]
+    image = sample["protected"]["image"]
+    return {"original_ARRAY_elements": sum(len(row[3]) for row in arrays),
+            "original_ARRAY_payload_bytes": sum(len(row[3]) * widths[row[2]] for row in arrays),
+            "image_float32_values": len(image["pixels_float32_le"]) // 8,
+            "image_float32_bytes": len(image["pixels_float32_le"]) // 2,
+            "packed_bytes": image["packed_bytes"], "selected_SINGLE_payloads_sampled": False,
+            "scope": "Known fixture ARRAY/image payloads; not total native allocations or COW events"}
+
+
+class PhasedInspectionProbe(FirstJobControl):
+    """Unobserved success path through real TCP, Runtime and queued read turns."""
+
+    def __init__(self, bpy, options, token, sources, display):
+        super().__init__(bpy, options, token, sources, display)
+        inspection_hook_state()
+        self.inspection_data = {"requests": [], "timings": [], "terminal": None}
+        self.failure_origin = self.failed_call = self.worker_cached = self.supervisor_cached = self.secondary_failure = None
+
+    def apply(self, action, parameters):
+        assert action == "inspection_snapshot" and parameters["stage"] in {"before", "after"}
+        from scripts.native_resources import linux_available_memory, linux_process_memory
+        settled, hooks = self.settled(), inspection_hook_state()
+        if parameters["stage"] == "before":
+            self.failure_origin = inspection_failure_origin(self.runtime)
+        began, cpu = time.monotonic(), time.process_time()
+        cached_job = None if parameters["stage"] == "before" else inspection_runtime_job(self.runtime, parameters["job_id"])
+        sample = snapshot(self.bpy, self.targets["main"])
+        result = {"snapshot": sample,
+                "context": inspection_context_snapshot(self.bpy),
+                "boundaries": inspection_boundaries(self.runtime),
+                "hooks": hooks, "settled": settled,
+                "payloads": inspection_payload_counts(sample),
+                "memory": {**linux_process_memory(), "available_bytes": linux_available_memory()},
+                "runtime_job": cached_job}
+        result["measurement"] = {"started_at": began, "ended_at": time.monotonic(),
+                                 "cpu_seconds": time.process_time() - cpu}
+        return result
+
+    def inspected_call(self, client, stage, method, **parameters):
+        began, cpu = time.monotonic(), time.process_time()
+        requests = self.inspection_data["requests"]
+        prior_count = len(requests)
+        try:
+            response = client.call(method, ok=None, **parameters)
+        except Exception as error:
+            self.failed_call = {"stage": stage, "method": method, "sent_at": began, "failed_at": time.monotonic(),
+                "cpu_seconds": time.process_time()-cpu, "response_received": False,
+                "exception_type": type.__dict__["__name__"].__get__(type(error), type), "request_id": None}
+            if len(requests) == prior_count+1:
+                exchange = requests[prior_count]
+                if type(exchange) is dict and all(type(key) is str for key in exchange):
+                    self.failed_call["response_received"] = exchange.get("response") is not None
+                    request = exchange.get("request")
+                    if type(request) is dict and all(type(key) is str for key in request):
+                        request_id = request.get("id")
+                        if type(request_id) is str or type(request_id) is int:
+                            self.failed_call["request_id"] = request_id
+            try:
+                self.worker_cached = inspection_failure_snapshot(self.failure_origin,
+                    _inspection_failure_identifier(self.inspection_data), "worker")
+            except Exception as secondary:
+                self.secondary_failure = {"stage": "worker_cached_sample",
+                    "exception_type": type.__dict__["__name__"].__get__(type(secondary), type)}
+            raise
+        self.inspection_data["timings"].append({"stage": stage,
+            "request_id": self.inspection_data["requests"][-1]["request"]["id"],
+            "sent_at": began, "received_at": time.monotonic(), "cpu_seconds": time.process_time() - cpu})
+        assert response["ok"] is True, response
+        return response["result"]
+
+    def scenario(self):
+        client = None
+        try:
+            data = self.inspection_data
+            data["worker_before"] = inspection_hook_state()
+            data["before"] = self.control("inspection_snapshot", stage="before")
+            client = Client(self.port, data["requests"])
+            target = self.targets["main"]
+            parameters = {"object_name": target["object_name"], "mesh_name": target["mesh_name"],
+                          "attribute_names": list(SELECTED), "time_limit_seconds": 300.}
+            accepted = self.inspected_call(client, "start", self.domain.contract.INSPECTION_START, **parameters)
+            assert accepted["accepted"] is True and accepted["terminal"] is False
+            assert accepted["ready"] is False and accepted["result"] is None
+            identifier = accepted["job_id"]
+            while time.monotonic() - self.started < 300:
+                summary = self.inspected_call(client, "inspect", "jobs.inspect", job_id=identifier)
+                if summary["terminal"]:
+                    data["terminal"] = summary
+                    break
+                time.sleep(.01)
+            assert data["terminal"] is not None and data["terminal"]["state"] == "SUCCEEDED", data["terminal"]
+            data["repeat"] = self.inspected_call(client, "repeat", "jobs.inspect", job_id=identifier)
+            data["listed"] = self.inspected_call(client, "list", "jobs.list")
+            # bridge.status intentionally records its own operation history.
+            # Keep that protocol fence outside the inspection preservation sample.
+            data["after"] = self.control("inspection_snapshot", stage="after", job_id=identifier)
+            self.inspected_call(client, "fence", "bridge.status")
+            # A final fence makes an earlier duplicate response an ID mismatch.
+            # Check buffered bytes too before closing this genuine connection.
+            client.socket.settimeout(.1)
+            began = time.monotonic()
+            try:
+                extra = client.stream.peek(1)
+                outcome = "EMPTY_READ"
+            except TimeoutError:
+                extra = b""
+                outcome = "SOCKET_TIMEOUT"
+            assert extra == b"", "Unexpected additional terminal protocol bytes"
+            data["extra_response_check"] = {"outcome": outcome, "bytes": len(extra),
+                "started_at": began, "ended_at": time.monotonic(), "timeout_seconds": .1}
+            data["worker_after"] = inspection_hook_state()
+            data["setup_oracle_values"] = target["oracle_values"]
+        except Exception:
+            self.failure = traceback.format_exc()
+        finally:
+            if client is not None:
+                client.close()
+            self.done.set()
+
+    def fail(self):
+        from scripts.blender_artist_sidebar_smoke import owned_process_exit
+        raw = {"schema": INSPECTION_PROFILE, "completed": False, "phase": self.phase,
+               "process_id": os.getpid(), "process_instance": self.token,
+               "failure": self.failure, "partial": self.inspection_data,
+               "failed_call": self.failed_call, "worker_cached": self.worker_cached,
+               "supervisor_cached": self.supervisor_cached, "secondary_failure": self.secondary_failure,
+               "limitations": dict(INSPECTION_LIMITATIONS)}
+        domain_new(self.options.bridge_report.with_suffix(".failure.json"), canonical(raw))
+        print(self.failure, file=sys.stderr, flush=True)
+        owned_process_exit(1)
+
+    def supervise(self):
+        from scripts.blender_artist_sidebar_smoke import owned_process_exit
+        try:
+            if self.failure is not None:
+                self.supervisor_cached = inspection_failure_snapshot(self.failure_origin,
+                    _inspection_failure_identifier(self.inspection_data), "supervisor")
+                self.fail()
+                return None
+            while not self.controls.empty():
+                action, parameters, event, result = self.controls.get_nowait()
+                try:
+                    result.extend((True, self.apply(action, parameters)))
+                except Exception:
+                    result.extend((False, traceback.format_exc()))
+                finally:
+                    event.set()
+            assert time.monotonic() - self.started <= 300, "Original native outer deadline expired"
+            if not self.done.is_set():
+                return .005
+            if self.failure is not None:
+                self.supervisor_cached = inspection_failure_snapshot(self.failure_origin,
+                    _inspection_failure_identifier(self.inspection_data), "supervisor")
+                self.fail()
+                return None
+            assert self.hooks is None and self.observe is False
+            inspection_hook_state()
+            self.settled()
+            assert source_fingerprints() == self.sources
+            full = {"schema": INSPECTION_PROFILE, "completed": True, "phase": self.phase,
+                "process_id": os.getpid(), "process_instance": self.token, "runtime_nonce": self.nonce,
+                "runtime_identity": self.runtime_identity, "source_build": self.control_build,
+                "blender_version": self.control_version, "binary_sha256": self.binary_sha256,
+                "helper_sha256": HELPER_SHA256, "source_fingerprints": self.sources,
+                "source_snapshot_sha256": hashlib.sha256(canonical(self.sources)).hexdigest(),
+                "private_display": self.display,
+                "transport": {"host": "127.0.0.1", "socket_json": True, "runtime_timer_queue": True,
+                              "direct_dispatch": False, "manual_scheduler_drain": False},
+                "limitations": dict(INSPECTION_LIMITATIONS), **self.inspection_data,
+                "hardware": {"system": platform.system(), "machine": platform.machine(),
+                             "processor": platform.processor(), "cpu_count": os.cpu_count()},
+                "process_cpu_seconds_at_completion": time.process_time(),
+                "seconds": time.monotonic() - self.started}
+            binding = domain_new(self.options.bridge_report, canonical(full))
+            compact = {key: full[key] for key in ("schema", "completed", "phase", "process_id",
+                "process_instance", "source_build", "blender_version", "binary_sha256", "source_snapshot_sha256")}
+            compact["full_receipt"] = binding
+            print(INSPECTION_MARKER + canonical(compact).decode("ascii"), flush=True)
+            owned_process_exit(0)
+        except Exception:
+            secondary = traceback.format_exc()
+            if self.failure is None:
+                self.failure = secondary
+            else:
+                self.secondary_failure = {"stage": "supervisor", "traceback": secondary}
+            self.fail()
+        return None
+
+
+def inspection_cost_codes():
+    from blender_codex_bridge import mesh_storage_prepare as primitive
+    from blender_codex_bridge import mesh_storage_source as source
+    from blender_codex_bridge.tools._mesh_storage_inspection import MeshStorageInspectionDriver
+    functions = (MeshStorageInspectionDriver.__dict__["_advance"], source.Gate.__dict__["pure"],
+        source.SourceSeal.__dict__["verify"], primitive.build_plan, primitive.qualify_collection_bindings,
+        source.CheckpointRoles.__dict__["__init__"])
+    assert all(type(function) is FunctionType for function in functions)
+    return {function.__code__: label for function, label in zip(functions, COST_LABELS, strict=True)}
+
+
+class InspectionCostMonitor(AtomicPhaseMonitor):
+    """Fixed aggregate counters; inclusive nested durations are not additive."""
+    tool_name = "bcb-private-inspection-cost"
+
+    def __init__(self, codes, *, monitoring=None, clock=time.monotonic, get_ident=threading.get_ident):
+        assert type(codes) is dict and len(codes) == 6
+        assert all(type(code) is CodeType and type(label) is str for code, label in codes.items())
+        assert tuple(codes.values()) == COST_LABELS
+        self.monitoring = getattr(sys, "monitoring", None) if monitoring is None else monitoring
+        assert self.monitoring is not None
+        self.codes, self.raw_clock, self.get_ident, self.main_thread = dict(codes), clock, get_ident, get_ident()
+        self.stack, self.failure, self.claimed, self.armed, self.restored = [], None, False, [], False
+        self.prior_callbacks, self.released_callbacks = {}, set()
+        self.start_callback, self.return_callback = self._start, self._return
+        self.mask = self.monitoring.events.PY_START | self.monitoring.events.PY_RETURN
+        self.calls, self.last_clock = 0, 0.
+        self.clock = self._checked_clock
+        self.aggregates = {label: {"started": 0, "returned": 0, "completed": 0,
+            "completed_inclusive_seconds": 0., "maximum_completed_seconds": 0.,
+            "unknown": 0, "unknown_elapsed_upper_bound_seconds": 0., "maximum_unknown_upper_bound_seconds": 0.}
+            for label in COST_LABELS}
+        self.catalog = [{"label": label, "filename": str(Path(code.co_filename).relative_to(ROOT)),
+            "first_line": code.co_firstlineno, "code_sha256": hashlib.sha256(code.co_code).hexdigest()}
+            for code, label in codes.items()]
+
+    def _checked_clock(self):
+        try:
+            value = self.raw_clock()
+        except BaseException:
+            self.failure = "MONITOR_CLOCK_CALLBACK"
+            raise
+        if type(value) is not float or not math.isfinite(value) or value < self.last_clock:
+            self.failure = "MONITOR_CLOCK"
+            raise ValueError("MONITOR_CLOCK")
+        self.last_clock = value
+        return value
+
+    def _unknown(self, code, row, cutoff):
+        duration = cutoff-row["entered_at"]
+        assert duration >= 0 and math.isfinite(duration)
+        aggregate = self.aggregates[self.codes[code]]
+        aggregate["unknown"] += 1
+        aggregate["unknown_elapsed_upper_bound_seconds"] += duration
+        aggregate["maximum_unknown_upper_bound_seconds"] = max(aggregate["maximum_unknown_upper_bound_seconds"], duration)
+
+    def _event(self, code, starting):
+        if self.failure is not None:
+            return
+        if type(code) is not CodeType or not any(held is code for held in self.codes):
+            self.failure = "MONITOR_FOREIGN_THREAD_OR_CODE"
+            return
+        try:
+            current_thread = self.get_ident()
+        except BaseException:
+            self.failure = "MONITOR_THREAD_CALLBACK"
+            raise
+        if current_thread != self.main_thread:
+            self.failure = "MONITOR_FOREIGN_THREAD_OR_CODE"
+            return
+        now = self.clock()
+        if type(now) is not float or not math.isfinite(now) or not self.last_clock <= now:
+            self.failure = "MONITOR_CLOCK"
+            return
+        self.last_clock = now
+        aggregate = self.aggregates[self.codes[code]]
+        if starting:
+            if self.calls >= COST_MAX_CALLS or len(self.stack) >= 64:
+                self.failure = "MONITOR_BOUND"
+                return
+            self.calls += 1
+            aggregate["started"] += 1
+            recursive = any(entry[0] is code for entry in self.stack)
+            if recursive:
+                for held, _ordinal, row in self.stack:
+                    if held is code:
+                        row["recursive"] = True
+            self.stack.append([code, 0, {"entered_at": now, "ended_at": None, "recursive": recursive}])
+            return
+        aggregate["returned"] += 1
+        index = next((index for index in range(len(self.stack)-1, -1, -1) if self.stack[index][0] is code), None)
+        if index is None:
+            self.failure = "MONITOR_RETURN_WITHOUT_ENTRY"
+            return
+        for held, _ordinal, row in self.stack[index+1:]:
+            self._unknown(held, row, now)
+        row = self.stack[index][2]
+        if row["recursive"]:
+            self._unknown(code, row, now)
+        else:
+            duration = now-row["entered_at"]
+            aggregate["completed"] += 1
+            aggregate["completed_inclusive_seconds"] += duration
+            aggregate["maximum_completed_seconds"] = max(aggregate["maximum_completed_seconds"], duration)
+        del self.stack[index:]
+
+    def restore(self):
+        pending = tuple(self.stack)
+        was_restored = self.restored
+        super().restore()  # The original all-owned-slot restoration contract.
+        if not was_restored and self.restored:
+            for code, _ordinal, row in pending:
+                self._unknown(code, row, row["ended_at"])
+
+    def summary(self):
+        assert self.restored and not self.claimed and self.failure is None
+        return {"backend": "sys.monitoring.local_START_RETURN.aggregate", "tool_id": self.tool_id,
+            "global_event_mask": 0, "local_event_mask": self.mask, "restored": True,
+            "callbacks_restored": True, "local_events_restored": True, "tool_freed": True,
+            "exact_unwind_observed": False, "unknown_open_elapsed_is_upper_bound": True,
+            "observed_timings_are_untraced_timings": False, "overlapping_inclusive_times_may_not_be_added": True,
+            "product_success_qualified": False, "call_limit": COST_MAX_CALLS,
+            "catalog": self.catalog, "aggregates": self.aggregates}
+
+
+class InspectionCostTiming(PhasedInspectionProbe):
+    """Repeat the original route with a separate diagnostic-only marker."""
+    def __init__(self, bpy, options, token, sources, display):
+        super().__init__(bpy, options, token, sources, display)
+        self.cost_monitor = None
+        self.cost_exiting = self.cost_fallback_attempted = False
+
+    def apply(self, action, parameters):
+        if parameters["stage"] == "after" and self.cost_monitor is not None:
+            self.cost_monitor.restore()
+        result = super().apply(action, parameters)
+        if parameters["stage"] == "before":
+            self.cost_monitor = InspectionCostMonitor(inspection_cost_codes())
+            self.cost_monitor.install()
+        return result
+
+    def _cost_exit(self):
+        from scripts.blender_artist_sidebar_smoke import owned_process_exit
+        primary = self.failure
+        try:
+            assert not self.cost_exiting, "Cost diagnostic exit already attempted"
+            self.cost_exiting = True
+            assert self.cost_monitor is not None
+            self.cost_monitor.restore()
+            observed = self.cost_monitor.summary()
+            full = {"schema": COST_PROFILE, "completed": True, "diagnostic_only": True, "phase": self.phase,
+            "process_id": os.getpid(), "process_instance": self.token, "runtime_nonce": self.nonce,
+            "runtime_identity": self.runtime_identity, "source_build": self.control_build,
+            "blender_version": self.control_version, "binary_sha256": self.binary_sha256,
+            "helper_sha256": HELPER_SHA256, "source_fingerprints": self.sources,
+            "source_snapshot_sha256": hashlib.sha256(canonical(self.sources)).hexdigest(), "private_display": self.display,
+            "transport": {"host": "127.0.0.1", "socket_json": True, "runtime_timer_queue": True,
+                          "direct_dispatch": False, "manual_scheduler_drain": False},
+            "failure": primary, "secondary_failure": self.secondary_failure, "failed_call": self.failed_call,
+            "worker_cached": self.worker_cached, "supervisor_cached": self.supervisor_cached,
+            "partial": self.inspection_data, "cost_timing": observed,
+                "product_success_qualified": False, "seconds": time.monotonic()-self.started}
+            assert source_fingerprints() == self.sources
+            assert full["seconds"] <= 300
+            binding = domain_new(self.options.bridge_report, canonical(full))
+            compact = {key: full[key] for key in ("schema", "completed", "diagnostic_only", "phase", "process_id", "process_instance",
+            "source_build", "blender_version", "binary_sha256", "source_snapshot_sha256", "product_success_qualified")}
+            compact["full_receipt"] = binding
+            print(COST_MARKER+canonical(compact).decode("ascii"), flush=True)
+            owned_process_exit(0)
+        except Exception:
+            self.failure = primary
+            return self._cost_fallback(traceback.format_exc())
+
+    def _cost_fallback(self, secondary):
+        from scripts.blender_artist_sidebar_smoke import owned_process_exit
+        self.secondary_failure = {"stage": "cost_diagnostic_exit", "traceback": secondary}
+        if self.failure is None:
+            self.failure = secondary
+        if self.cost_fallback_attempted:
+            print(self.failure, file=sys.stderr, flush=True)
+            owned_process_exit(1)
+            return None
+        self.cost_fallback_attempted = True
+        if self.cost_monitor is not None:
+            try:
+                self.cost_monitor.restore()
+            except Exception:
+                self.secondary_failure["monitor_restore_failure"] = traceback.format_exc()
+        return PhasedInspectionProbe.fail(self)
+
+    def fail(self):
+        return self._cost_exit()
+
+    def supervise(self):
+        try:
+            if self.failure is not None:
+                self.supervisor_cached = inspection_failure_snapshot(self.failure_origin,
+                    _inspection_failure_identifier(self.inspection_data), "supervisor")
+                return self._cost_exit()
+            while not self.controls.empty():
+                action, parameters, event, result = self.controls.get_nowait()
+                try:
+                    result.extend((True, self.apply(action, parameters)))
+                except Exception:
+                    result.extend((False, traceback.format_exc()))
+                finally:
+                    event.set()
+            assert time.monotonic()-self.started <= 300
+            if self.failure is not None:
+                self.supervisor_cached = inspection_failure_snapshot(self.failure_origin,
+                    _inspection_failure_identifier(self.inspection_data), "supervisor")
+                return self._cost_exit()
+            if not self.done.is_set():
+                return .005
+            return self._cost_exit()
+        except Exception:
+            return self._cost_fallback(traceback.format_exc())
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bridge-phase", choices=PHASES, required=True)
     parser.add_argument("--bridge-bundle", type=Path, required=True)
     parser.add_argument("--bridge-report", type=Path, required=True)
     parser.add_argument("--bridge-untraced-control", action="store_true")
+    parser.add_argument("--bridge-atomic-phase-timing", action="store_true")
+    parser.add_argument("--bridge-phased-inspection", action="store_true")
+    parser.add_argument("--bridge-inspection-cost-timing", action="store_true")
     arguments = sys.argv[sys.argv.index("--") + 1:] if argv is None and "--" in sys.argv else argv
     options = parser.parse_args(arguments)
     assert sys.platform == "linux" and "--factory-startup" in sys.argv and "--disable-autoexec" in sys.argv
     parent, report = options.bridge_report.parent, options.bridge_report
-    expected_report = CONTROL_REPORT if options.bridge_untraced_control else REPORT
+    assert sum((options.bridge_untraced_control, options.bridge_atomic_phase_timing, options.bridge_phased_inspection,
+                options.bridge_inspection_cost_timing)) <= 1
+    expected_report = COST_REPORT if options.bridge_inspection_cost_timing else INSPECTION_REPORT if options.bridge_phased_inspection else TIMING_REPORT if options.bridge_atomic_phase_timing else CONTROL_REPORT if options.bridge_untraced_control else REPORT
     assert report.is_absolute() and report.name == expected_report and not report.exists() and not report.is_symlink()
     assert parent.resolve(strict=True) == parent and stat.S_IMODE(parent.stat().st_mode) == 0o700
     assert parent.stat().st_uid == os.getuid()
@@ -1655,7 +2596,7 @@ def main(argv=None):
     assert bpy.ops.wm.read_factory_settings(use_empty=True) == {"FINISHED"}
     sources = source_fingerprints()
     assert sources["addon/blender_codex_bridge/mesh_storage_prepare.py"] == HELPER_SHA256
-    fixture_type = FirstJobControl if options.bridge_untraced_control else Fixture
+    fixture_type = InspectionCostTiming if options.bridge_inspection_cost_timing else PhasedInspectionProbe if options.bridge_phased_inspection else AtomicPhaseTiming if options.bridge_atomic_phase_timing else FirstJobControl if options.bridge_untraced_control else Fixture
     fixture = fixture_type(bpy, options, token, sources, display)
     bpy.app.timers.register(fixture.setup, first_interval=.05)
 
