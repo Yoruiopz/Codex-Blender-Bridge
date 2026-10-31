@@ -340,3 +340,78 @@ def test_actual_route_rejects_foreign_metadata_type_before_field_getter(native_r
     env.rnas["BlenderCodexBridgePreferences"].properties["project_directory"] = Foreign()
     with pytest.raises(env.module.BridgeError):
         env.module._route(env.bpy, env.declaration)
+
+
+@pytest.mark.parametrize("diagnostic_failure", [False, True])
+def test_declaration_clause_diagnostic_retains_additional_keyword_difference(addon_package, monkeypatch, diagnostic_failure):
+    import os
+    module = importlib.import_module(addon_package + ".storage_snapshot_approval")
+    class Marker:
+        __slots__ = ("function", "keywords")
+    class Prefs:
+        pass
+    marker = Marker()
+    marker.function, marker.keywords = os.getcwd, {**dict(module._DECLARATION), "attr": "project_directory"}
+    Prefs.__annotations__ = {"project_directory": marker}
+    props, bpy = ModuleType("owned.props"), ModuleType("owned.bpy")
+    props.StringProperty, props._PropertyDeferred, bpy.props = os.getcwd, Marker, props
+    slots = (Marker.function, Marker.keywords)
+    origins = (bpy, props, Marker, (), None, slots)
+    monkeypatch.setattr(module.graph, "_deferred_type", lambda _bpy: (Marker, origins))
+    monkeypatch.setattr(module.preferences, "BlenderCodexBridgePreferences", Prefs)
+    if diagnostic_failure:
+        def unavailable(*_args):
+            raise MemoryError("diagnostic allocation model")
+        monkeypatch.setattr(module, "_declaration_clause_facts", unavailable)
+    with pytest.raises(module.BridgeError) as failure:
+        module._declaration(bpy)
+    assert failure.value.code == module.ErrorCode.NOT_IMPLEMENTED
+    assert failure.value.context["reason"] == "ROOT_APPROVAL_CALLBACK_OR_DECLARATION_CHANGED"
+    if diagnostic_failure:
+        assert "declaration_clause" not in failure.value.context
+        return
+    facts = failure.value.context["declaration_clause"]
+    assert facts["function_is_builtin"] and facts["function_matches_original"]
+    assert facts["keywords_exact_dict"] and facts["keyword_count"] == 5
+    assert facts["expected_keyword_names"] == [key for key, _ in module._DECLARATION]
+    assert facts["keywords"][-1] == {"name": "attr", "name_kind": "str", "name_truncated": False,
+        "value": "project_directory", "value_kind": "str", "value_truncated": False}
+
+
+def test_declaration_clause_diagnostic_never_formats_or_traverses_foreign_objects(addon_package):
+    module = importlib.import_module(addon_package + ".storage_snapshot_approval")
+    class Foreign:
+        def __repr__(self):
+            pytest.fail("foreign repr")
+        def __str__(self):
+            pytest.fail("foreign str")
+        def __getattribute__(self, _name):
+            pytest.fail("foreign attribute")
+        def __eq__(self, _other):
+            pytest.fail("foreign equality")
+    foreign = Foreign()
+    facts = module._declaration_clause_facts(foreign, object(), {"get": foreign})
+    assert facts["function_kind"] == "Foreign"
+    assert facts["function_is_builtin"] is False and facts["function_matches_original"] is False
+    assert facts["keywords"][0]["value"] is None and facts["keywords"][0]["value_kind"] == "Foreign"
+    class ForeignDict(dict):
+        def items(self):
+            pytest.fail("foreign items")
+        def __len__(self):
+            pytest.fail("foreign len")
+    facts = module._declaration_clause_facts(foreign, foreign, ForeignDict())
+    assert facts["keywords_exact_dict"] is False and facts["keyword_count"] is None and facts["keywords"] == []
+
+
+def test_declaration_clause_diagnostic_bounds_literal_rows_and_text(addon_package):
+    import json
+    module = importlib.import_module(addon_package + ".storage_snapshot_approval")
+    facts = module._declaration_clause_facts(None, object(), {str(i) * 100: "v" * 10000 for i in range(30)})
+    assert facts["keyword_count"] == 30 and facts["rows_truncated"] is True
+    assert len(facts["keywords"]) == 16
+    assert all(len(row["name"]) <= 64 and len(row["value"]) <= 512 for row in facts["keywords"])
+    assert all(row["name_truncated"] and row["value_truncated"] for row in facts["keywords"])
+    assert len(json.dumps(facts)) < 16000
+    facts = module._declaration_clause_facts(None, None, {"bad": "\ud800", "large": 1 << 10000})
+    assert facts["keywords"][0]["value"] is None and facts["keywords"][0]["value_truncated"] is True
+    assert facts["keywords"][1]["value"] is None

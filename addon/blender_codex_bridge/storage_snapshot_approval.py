@@ -111,6 +111,44 @@ def _root(value):
     return value
 
 
+def _declaration_clause_facts(function, original, keywords):
+    """Bounded literal facts from ALREADY read marker slots; no new getters.
+
+    These diagnostics grant nothing and never format or traverse foreign
+    objects. Preserve the original declaration refusal even for malformed data.
+    """
+    type_name = type.__dict__["__name__"]
+    def name(value):
+        label = type_name.__get__(type(value))
+        return label[:128] if type(label) is str else None
+    def text(value, maximum):
+        part = value[:maximum]
+        try:
+            part.encode("utf-8", "strict")
+        except UnicodeError:
+            return None, True
+        return part, len(value) > maximum
+    rows, truncated = [], False
+    if type(keywords) is dict:
+        for index, (key, value) in enumerate(dict.items(keywords)):
+            if index >= 16:
+                truncated = True
+                break
+            key_text, key_truncated = text(key, 64) if type(key) is str else (None, False)
+            value_text, value_truncated = None, False
+            if type(value) is str:
+                value_text, value_truncated = text(value, 512)
+            elif type(value) is bool or value is None or (type(value) is int and value.bit_length() <= 256):
+                value_text = value
+            rows.append({"name": key_text, "name_kind": name(key), "name_truncated": key_truncated,
+                         "value": value_text, "value_kind": name(value), "value_truncated": value_truncated})
+    return {"function_kind": name(function), "function_is_builtin": type(function) is BuiltinFunctionType,
+            "function_matches_original": function is original, "keywords_exact_dict": type(keywords) is dict,
+            "keyword_count": len(keywords) if type(keywords) is dict else None,
+            "keywords": rows, "rows_truncated": truncated,
+            "expected_keyword_names": [key for key, _value in _DECLARATION]}
+
+
 def _declaration(bpy):
     cls = preferences.BlenderCodexBridgePreferences
     if cls is None:
@@ -130,7 +168,13 @@ def _declaration(bpy):
             or type(keywords) is not dict or len(keywords) != len(_DECLARATION)
             or any(type(key) is not str or type(value) is not str for key, value in keywords.items())
             or any(keywords.get(key) != value for key, value in _DECLARATION)):
-        raise refused("ROOT_APPROVAL_CALLBACK_OR_DECLARATION_CHANGED")
+        error = refused("ROOT_APPROVAL_CALLBACK_OR_DECLARATION_CHANGED")
+        try:  # noqa: SIM105 - keep primary without a context-manager dispatch.
+            error.context["declaration_clause"] = _declaration_clause_facts(function, props.get("StringProperty"), keywords)
+        except Exception:
+            # Optional diagnostics must never replace the original refusal.
+            pass
+        raise error
     return cls, annotations, marker, marker_kind, origins, function_slot, keyword_slot, function, keywords, tuple(keywords.items())
 
 
