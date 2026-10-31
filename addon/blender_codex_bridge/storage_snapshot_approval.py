@@ -26,7 +26,7 @@ from .tools import _cloth_cache_source as sources
 REQUIRED = (Permission.INSPECT_SCENE, Permission.SAVE_PROJECT, Permission.ACCESS_EXTERNAL_FILES)
 _DECLARATION = (("name", "Approved Project Folder"),
                 ("description", "Local .blend artifact folder; the separate native-save session permission covers normal callback/catalog effects outside it. Not configurable through MCP"),
-                ("subtype", "DIR_PATH"), ("default", ""))
+                ("subtype", "DIR_PATH"), ("default", ""), ("attr", "project_directory"))
 # Establish CPython's warning-cache binding before immutable source capture.
 __warningregistry__ = {}
 

@@ -240,7 +240,8 @@ def test_unknown_context_is_rejected_without_attribute_callbacks(addon_package):
         module.LocalRootApproval.capture(Foreign())
 
 
-@pytest.mark.parametrize("callback", [None, "get", "set", "update", "foreign_key", "foreign_value"])
+@pytest.mark.parametrize("callback", [None, "get", "set", "update", "foreign_key", "foreign_value",
+    "missing_attr", "wrong_attr", "foreign_attr", "extra_key"])
 def test_registered_declaration_allows_only_original_callback_free_keywords(addon_package, monkeypatch, callback):
     import os
     module = importlib.import_module(addon_package + ".storage_snapshot_approval")
@@ -262,6 +263,17 @@ def test_registered_declaration_allows_only_original_callback_free_keywords(addo
         marker.keywords[1] = "foreign"
     elif callback == "foreign_value":
         marker.keywords["name"] = object()
+    elif callback == "missing_attr":
+        del marker.keywords["attr"]
+    elif callback == "wrong_attr":
+        marker.keywords["attr"] = "texture_directory"
+    elif callback == "foreign_attr":
+        class Foreign:
+            def __eq__(self, _other):
+                pytest.fail("foreign attr equality")
+        marker.keywords["attr"] = Foreign()
+    elif callback == "extra_key":
+        marker.keywords["unexpected"] = "literal"
     if callback is None:
         fact = module._declaration(bpy)
         module._declaration_unchanged(bpy, fact)
@@ -351,7 +363,7 @@ def test_declaration_clause_diagnostic_retains_additional_keyword_difference(add
     class Prefs:
         pass
     marker = Marker()
-    marker.function, marker.keywords = os.getcwd, {**dict(module._DECLARATION), "attr": "project_directory"}
+    marker.function, marker.keywords = os.getcwd, {**dict(module._DECLARATION), "unexpected": "literal"}
     Prefs.__annotations__ = {"project_directory": marker}
     props, bpy = ModuleType("owned.props"), ModuleType("owned.bpy")
     props.StringProperty, props._PropertyDeferred, bpy.props = os.getcwd, Marker, props
@@ -372,10 +384,10 @@ def test_declaration_clause_diagnostic_retains_additional_keyword_difference(add
         return
     facts = failure.value.context["declaration_clause"]
     assert facts["function_is_builtin"] and facts["function_matches_original"]
-    assert facts["keywords_exact_dict"] and facts["keyword_count"] == 5
+    assert facts["keywords_exact_dict"] and facts["keyword_count"] == 6
     assert facts["expected_keyword_names"] == [key for key, _ in module._DECLARATION]
-    assert facts["keywords"][-1] == {"name": "attr", "name_kind": "str", "name_truncated": False,
-        "value": "project_directory", "value_kind": "str", "value_truncated": False}
+    assert facts["keywords"][-1] == {"name": "unexpected", "name_kind": "str", "name_truncated": False,
+        "value": "literal", "value_kind": "str", "value_truncated": False}
 
 
 def test_declaration_clause_diagnostic_never_formats_or_traverses_foreign_objects(addon_package):
@@ -415,3 +427,27 @@ def test_declaration_clause_diagnostic_bounds_literal_rows_and_text(addon_packag
     facts = module._declaration_clause_facts(None, None, {"bad": "\ud800", "large": 1 << 10000})
     assert facts["keywords"][0]["value"] is None and facts["keywords"][0]["value_truncated"] is True
     assert facts["keywords"][1]["value"] is None
+
+
+@pytest.mark.parametrize("drift", ["attr", "get", "set", "update"])
+def test_registered_declaration_never_adopts_later_attr_or_callback_drift(addon_package, monkeypatch, drift):
+    import os
+    module = importlib.import_module(addon_package + ".storage_snapshot_approval")
+    class Marker:
+        __slots__ = ("function", "keywords")
+    class Prefs:
+        pass
+    marker = Marker()
+    marker.function, marker.keywords = os.getcwd, dict(module._DECLARATION)
+    Prefs.__annotations__ = {"project_directory": marker}
+    props, bpy = ModuleType("owned.props"), ModuleType("owned.bpy")
+    props.StringProperty, props._PropertyDeferred, bpy.props = os.getcwd, Marker, props
+    origins = (bpy, props, Marker, (), None, (Marker.function, Marker.keywords))
+    monkeypatch.setattr(module.graph, "_deferred_type", lambda _bpy: (Marker, origins))
+    monkeypatch.setattr(module.preferences, "BlenderCodexBridgePreferences", Prefs)
+    fact = module._declaration(bpy)
+    assert tuple(marker.keywords) == ("name", "description", "subtype", "default", "attr")
+    marker.keywords[drift] = "texture_directory" if drift == "attr" else lambda: pytest.fail("callback invoked")
+    with pytest.raises(module.BridgeError) as failure:
+        module._declaration_unchanged(bpy, fact)
+    assert failure.value.context["reason"] == "ROOT_APPROVAL_DECLARATION_CHANGED"
