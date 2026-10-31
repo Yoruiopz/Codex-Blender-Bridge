@@ -1427,3 +1427,77 @@ def test_b2_third_native_error_check_keeps_held_accessor_origin_fence(checkpoint
     assert caught.value.context["reason"] == "STORAGE_CHECKPOINT_ROLE_ACCESS_CHANGED"
     assert events == ["pre", "native_keys", "post", "extra"]
     assert calls == []
+
+
+def test_snapshot_data_equivalence_never_calls_mutable_leaf_comparisons(source):
+    calls = []
+    class Foreign:
+        def __eq__(self, _other):
+            calls.append("equality")
+            raise AssertionError("foreign snapshot equality")
+        def __hash__(self):
+            calls.append("hash")
+            raise AssertionError("foreign snapshot hash")
+    leaf = Foreign()
+    assert source._same_context_snapshot_data((leaf, ("key",)), (leaf, ("key",)))
+    assert not source._same_context_snapshot_data((leaf,), (Foreign(),))
+    assert not source._same_context_snapshot_data((leaf,), [leaf])
+    assert calls == []
+
+
+@pytest.fixture
+def inspection_snapshot_data(source):
+    core = importlib.import_module(source.__package__ + ".scene_jobs")
+    states = importlib.import_module(source.__package__ + ".state")
+    policies = importlib.import_module(source.__package__ + ".permissions")
+    context = source.ToolContext(states.BridgeState(), policies.PermissionManager(lambda: {}),
+                                 NS(), None)
+    callback = object.__new__(core._InspectionTurnAdmission)
+    object.__setattr__(callback, "context", context)
+    binding = source.CheckpointAdmissionBinding(context, "jobs._inspection_turn", {}, object(), callback)
+    context.checkpoint_admission = binding
+    seal = source.SourceSeal.capture(inspection=True)
+    candidate = source.capture_context(context, seal)
+    object.__setattr__(callback, "inspection_context_proof", candidate)
+    fresh = source.capture_context(context, seal)
+    assert fresh is not candidate
+    return NS(source=source, context=context, callback=callback, seal=seal, candidate=candidate, fresh=fresh)
+
+
+def test_equivalent_context_data_reuses_captured_tuple_without_proving_state(inspection_snapshot_data):
+    e = inspection_snapshot_data
+    assert e.source._canonical_inspection_context_data(e.context, e.seal, e.fresh) is e.candidate
+    e.context.request_id = "current state changed after both snapshots"
+    # Immutable snapshot equivalence says nothing about the current object.
+    assert e.source._canonical_inspection_context_data(e.context, e.seal, e.fresh) is e.candidate
+    errors = importlib.import_module(e.source.__package__ + ".errors")
+    with pytest.raises(errors.BridgeError):
+        e.source.verify_context(e.context, e.candidate)
+
+
+def test_different_context_snapshot_keeps_original_fresh_data(inspection_snapshot_data):
+    e = inspection_snapshot_data
+    e.context.request_id = "new snapshot data"
+    fresh = e.source.capture_context(e.context, e.seal)
+    assert e.source._canonical_inspection_context_data(e.context, e.seal, fresh) is fresh
+
+
+@pytest.mark.parametrize("candidate", [None, (), (None,) * 12, "foreign"])
+def test_malformed_inspection_snapshot_keeps_fresh_data(inspection_snapshot_data, candidate):
+    e = inspection_snapshot_data
+    object.__setattr__(e.callback, "inspection_context_proof", candidate)
+    assert e.source._canonical_inspection_context_data(e.context, e.seal, e.fresh) is e.fresh
+
+
+def test_foreign_admission_getters_are_not_used_for_snapshot_data(source, inspection_snapshot_data):
+    e, calls = inspection_snapshot_data, []
+    class Foreign:
+        def __getattribute__(self, name):
+            calls.append(name)
+            raise AssertionError("foreign candidate getter")
+        def __eq__(self, _other):
+            calls.append("equality")
+            raise AssertionError("foreign candidate equality")
+    e.context.checkpoint_admission.callback = Foreign()
+    assert source._canonical_inspection_context_data(e.context, e.seal, e.fresh) is e.fresh
+    assert calls == []

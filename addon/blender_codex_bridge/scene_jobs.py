@@ -837,6 +837,7 @@ def _inspection_gate_pure(gate, seal, cell):
     ToolContext = source_fields["ToolContext"]
     _context_slot = source_fields["_context_slot"]
     _verify_context_fields = source_fields["_verify_context_fields"]
+    _same_context_snapshot_data = source_fields["_same_context_snapshot_data"]
     available_memory_facts = source_fields["available_memory_facts"]
     contract = source_fields["contract"]
     checkpoint_completion = modules[__package__ + ".checkpoint_completion"]
@@ -1038,12 +1039,9 @@ def _inspection_gate_pure(gate, seal, cell):
 
     if not eligible():
         return False
-    def same_facts(left, right):
-        if left is right:
-            return True
-        return (type(left) is tuple and type(right) is tuple and len(left) == len(right)
-                and all(same_facts(a, b) for a, b in zip(left, right, strict=True)))
-    shared_context_facts = same_facts(cell["context_proof"], captured)
+    # Baseline DATA identity never replaces the actual current field proofs.
+    shared_context_facts = (cell["context_proof"] is captured
+                            or _same_context_snapshot_data(cell["context_proof"], captured))
     seen_classes, seen_functions = set(), set()
     seen_families = {"context"} if shared_context_facts else set()
     active = True

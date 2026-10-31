@@ -1249,3 +1249,59 @@ def test_eligibility_rejects_foreign_primitive_comparisons_without_dispatch(insp
     e.scope_hook = probe
     assert e.drain()["state"] == "SUCCEEDED"
     assert outcomes == [False, False] and calls == [] and e.native.writes == 0
+
+
+def test_gate_creation_and_adoption_canonicalize_only_equivalent_snapshot_data(inspection_runtime):
+    e, observations = inspection_runtime, []
+    assert e.call().response.ok
+    def probe():
+        gate = e.owner.jobs.active.driver.gate
+        context = gate.context
+        captured = context.checkpoint_admission.callback.inspection_context_proof
+        assert tuple.__getitem__(gate, 0)["context_proof"] is captured
+        new_gate = e.source.Gate(context, tuple.__getitem__(gate, 1))
+        assert tuple.__getitem__(new_gate, 0)["context_proof"] is captured
+        gate.context = context
+        assert tuple.__getitem__(gate, 0)["context_proof"] is captured
+        observations.append(True)
+    e.scope_hook = probe
+    assert e.drain()["state"] == "SUCCEEDED"
+    assert observations == [True, True] and e.native.writes == 0
+
+
+@pytest.mark.parametrize("fault", ["context", "disconnect", "epoch"])
+def test_shared_snapshot_data_never_caches_current_validation(inspection_runtime, fault):
+    e, failures = inspection_runtime, []
+    errors = importlib.import_module(e.runtime.__package__ + ".errors")
+    assert e.call().response.ok
+    def probe():
+        gate = e.owner.jobs.active.driver.gate
+        context = gate.context
+        assert tuple.__getitem__(gate, 0)["context_proof"] is context.checkpoint_admission.callback.inspection_context_proof
+        original_id = context.request_id
+        store = e.owner.state._artist_task_plans
+        epoch = store.evidence_epoch
+        if fault == "context":
+            context.request_id = "changed despite equal baseline data"
+        elif fault == "disconnect":
+            e.connection.disconnected.set()
+        else:
+            store.evidence_epoch += 1
+        try:
+            with pytest.raises(errors.BridgeError) as caught:
+                gate.pure()
+            failures.append(caught.value)
+        finally:
+            context.request_id = original_id
+            e.connection.disconnected.clear()
+            store.evidence_epoch = epoch
+        raise failures[-1]
+    e.scope_hook = probe
+    terminal = e.drain()
+    assert len(failures) == 1 and terminal["ready"] is False and e.native.writes == 0
+    if fault == "context":
+        assert failures[0].context["reason"] == "STORAGE_CONTEXT_CHANGED"
+    elif fault == "disconnect":
+        assert failures[0].code == errors.ErrorCode.TIMEOUT
+    else:
+        assert failures[0].context["reason"] == "SCENE_RUNTIME_RESET"

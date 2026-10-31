@@ -480,6 +480,57 @@ def _verify_context_fields(context, proof):
             _check_callback(data.get("_source"), provider)
 
 
+def _same_context_snapshot_data(left, right):
+    """Compare immutable snapshot data; never validate current object state."""
+    if left is right:
+        return True
+    return (type(left) is tuple and type(right) is tuple and len(left) == len(right)
+            and all(_same_context_snapshot_data(a, b) for a, b in zip(left, right, strict=True)))
+
+
+def _canonical_inspection_context_data(context, seal, fresh):
+    """Reuse equivalent captured DATA after the caller's original fresh capture.
+
+    Current validation remains mandatory on every Gate entry. Unknown admission
+    kinds, malformed snapshots and differing baselines keep the fresh snapshot.
+    Native slot reads cannot dispatch foreign attribute or descriptor callbacks.
+    """
+    if (type(context) is not ToolContext or type(fresh) is not tuple or len(fresh) != 12
+            or fresh[0] is not context or fresh[1] is not seal):
+        return fresh
+    missing = object()
+    def slot(value, kind, name):
+        if type(value) is not kind:
+            return missing
+        descriptor = type.__dict__["__dict__"].__get__(kind).get(name)
+        if (type(descriptor) is not MemberDescriptorType or descriptor.__objclass__ is not kind
+                or descriptor.__name__ != name):
+            return missing
+        return descriptor.__get__(value, kind)
+    binding = slot(context, ToolContext, "checkpoint_admission")
+    if type(binding) is not CheckpointAdmissionBinding:
+        return fresh
+    callback = slot(binding, CheckpointAdmissionBinding, "callback")
+    if slot(binding, CheckpointAdmissionBinding, "context") is not context:
+        return fresh
+    for module, _saved in tuple.__getitem__(seal, 0):
+        namespace = ModuleType.__getattribute__(module, "__dict__")
+        function = namespace.get("_inspection_gate_pure")
+        if type(function) is not FunctionType or function.__globals__ is not namespace:
+            continue
+        kind = namespace.get("_InspectionTurnAdmission")
+        if type(kind) is not type or type(callback) is not kind:
+            return fresh
+        if slot(callback, kind, "context") is not context:
+            return fresh
+        candidate = slot(callback, kind, "inspection_context_proof")
+        if (type(candidate) is not tuple or len(candidate) != 12
+                or candidate[0] is not context or candidate[1] is not seal):
+            return fresh
+        return candidate if _same_context_snapshot_data(fresh, candidate) else fresh
+    return fresh
+
+
 class Gate(tuple):
     """Native tuple entry slots precede every replaceable Python callback."""
     __slots__ = ()
@@ -493,6 +544,7 @@ class Gate(tuple):
                 "floor": BASE_MEMORY, "last_available": 0, "provider_reads": 0,
                 "epoch": get_task_plans(context.state).evidence_epoch, "method": method,
                 "context_proof": capture_context(context, source_seal)}
+        cell["context_proof"] = _canonical_inspection_context_data(context, source_seal, cell["context_proof"])
         return tuple.__new__(cls, (cell, source_seal, facts(verify), facts(pure)))
 
     @property
@@ -528,6 +580,7 @@ class Gate(tuple):
             verify_context(context, cell["context_proof"])
         cell = tuple.__getitem__(self, 0)
         cell["context"], cell["context_proof"] = context, capture_context(context, seal)
+        cell["context_proof"] = _canonical_inspection_context_data(context, seal, cell["context_proof"])
 
     @property
     def floor(self):
