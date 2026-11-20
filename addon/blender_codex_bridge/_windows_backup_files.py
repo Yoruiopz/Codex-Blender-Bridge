@@ -20,19 +20,25 @@ from typing import NamedTuple
 
 _GENERIC_READ = 0x80000000
 _GENERIC_WRITE = 0x40000000
+_DELETE = 0x00010000
 _SHARE_READ = 0x01
 _SHARE_WRITE = 0x02
+_SHARE_DELETE = 0x04
 _OPEN_EXISTING = 3
 _BACKUP_SEMANTICS = 0x02000000
 _OPEN_REPARSE_POINT = 0x00200000
 _ATTRIBUTE_DIRECTORY = 0x10
 _ATTRIBUTE_REPARSE_POINT = 0x400
 _FILE_TYPE_DISK = 1
+_DISPOSITION_INFO = 4
 _ATTRIBUTES_INFO = 9
 _FILE_ID_INFO = 18
+_ERROR_SHARING_VIOLATION = 32
 _MAX_APPEND_BYTES = 1024 * 1024
 _MAX_CHECKED_PREFIX_BYTES = 64 * 1024
 _MAX_FILE_OFFSET = 2**63 - 1
+_MAX_RETIRE_BYTES = 1024 * 1024
+_MAX_NATIVE_NAME = 4096
 
 FileID = tuple[int, bytes]
 LeafSignature = tuple[int, int, int, int]
@@ -58,6 +64,10 @@ def _kernel32():
     kernel.GetFileType.argtypes, kernel.GetFileType.restype = [w.HANDLE], w.DWORD
     kernel.GetFileInformationByHandleEx.argtypes = [w.HANDLE, ctypes.c_int, w.LPVOID, w.DWORD]
     kernel.GetFileInformationByHandleEx.restype = w.BOOL
+    kernel.GetFinalPathNameByHandleW.argtypes = [w.HANDLE, w.LPWSTR, w.DWORD, w.DWORD]
+    kernel.GetFinalPathNameByHandleW.restype = w.DWORD
+    kernel.SetFileInformationByHandle.argtypes = [w.HANDLE, ctypes.c_int, w.LPVOID, w.DWORD]
+    kernel.SetFileInformationByHandle.restype = w.BOOL
     kernel.FlushFileBuffers.argtypes, kernel.FlushFileBuffers.restype = [w.HANDLE], w.BOOL
     kernel.CloseHandle.argtypes, kernel.CloseHandle.restype = [w.HANDLE], w.BOOL
     return kernel
@@ -67,12 +77,14 @@ def _winerror() -> OSError:
     return ctypes.WinError(ctypes.get_last_error())
 
 
-def _open_existing(path: Path, *, directory: bool, writable: bool = False) -> int:
-    # Leaf handles deny concurrent write/delete opens. The new writable
-    # directory handle shares read/write with the pre-existing ancestry pin.
+def _open_existing(path: Path, *, directory: bool, writable: bool = False,
+                   delete_access: bool = False, share_delete: bool = False) -> int:
+    # Leaf guards deny concurrent write/delete opens. Only the non-mutating
+    # retirement guard test requests a share mode compatible with existing DELETE.
+    access = _GENERIC_READ | (_GENERIC_WRITE if directory or writable else 0) | (_DELETE if delete_access else 0)
+    share = _SHARE_READ | (_SHARE_WRITE if directory else 0) | (_SHARE_DELETE if share_delete else 0)
     handle = _kernel32().CreateFileW(
-        str(path), _GENERIC_READ | (_GENERIC_WRITE if directory or writable else 0),
-        _SHARE_READ | (_SHARE_WRITE if directory else 0), None, _OPEN_EXISTING,
+        str(path), access, share, None, _OPEN_EXISTING,
         _OPEN_REPARSE_POINT | (_BACKUP_SEMANTICS if directory else 0), None,
     )
     if handle is None or handle == ctypes.c_void_p(-1).value:
@@ -108,6 +120,18 @@ def _valid_file_id(value: FileID) -> bool:
             and type(value[1]) is bytes and len(value[1]) == 16 and any(value[1]))
 
 
+def _normalized_name(handle: int) -> str:
+    name = ctypes.create_unicode_buffer(_MAX_NATIVE_NAME + 1)
+    # FILE_NAME_NORMALIZED | VOLUME_NAME_DOS. Short-name aliases must not
+    # make two spellings of the same link look like two distinct names.
+    length = _kernel32().GetFinalPathNameByHandleW(handle, name, len(name), 0)
+    if not length:
+        raise _winerror()
+    if length >= len(name):
+        raise OSError(errno.ENAMETOOLONG, "The normalized backup path exceeds its bound.")
+    return name.value
+
+
 def _leaf_signature(info: os.stat_result, links: int) -> LeafSignature:
     if (not stat.S_ISREG(info.st_mode) or info.st_file_attributes & _ATTRIBUTE_REPARSE_POINT
             or not info.st_ino or info.st_nlink != links):
@@ -124,10 +148,11 @@ def _binary_descriptor(handle: int, *, writable: bool) -> int:
 
 
 @contextmanager
-def _open_verified_leaf(path: Path, *, links: int, writable: bool = False) -> Iterator[tuple[int, LeafDescriptor]]:
+def _open_verified_leaf(path: Path, *, links: int, writable: bool = False,
+                        delete_access: bool = False) -> Iterator[tuple[int, LeafDescriptor]]:
     _kernel32()  # Refuse unsupported platforms before probing the path.
     expected = _leaf_signature(path.lstat(), links)
-    handle = _open_existing(path, directory=False, writable=writable)
+    handle = _open_existing(path, directory=False, writable=writable, delete_access=delete_access)
     try:
         file_id = _file_id(handle, directory=False)
         fd = _binary_descriptor(handle, writable=writable)
@@ -234,6 +259,87 @@ def link_leaf(source: Path, target: Path, *, expected_file_id: FileID,
     except OSError as error:
         if published:
             raise OSError(errno.EIO, "Backup hard-link verification failed after publication. The target may exist.") from error
+        raise
+
+
+def _verify_retirement_bytes(leaf: LeafDescriptor, expected_file_id: FileID, expected_signature: LeafSignature,
+                             expected_bytes: bytes) -> None:
+    if (leaf.file_id != expected_file_id or leaf.signature != expected_signature
+            or os.read(leaf.fd, len(expected_bytes) + 1) != expected_bytes):
+        raise OSError(errno.EIO, "The published sibling does not match the exact retirement proof.")
+
+
+def _require_delete_sharing_conflict(path: Path, role: str) -> None:
+    try:
+        competitor = _open_existing(path, directory=False, delete_access=True, share_delete=True)
+    except OSError as error:
+        if getattr(error, "winerror", None) != _ERROR_SHARING_VIOLATION:
+            raise
+    else:
+        _close_handle(competitor)
+        raise OSError(errno.EIO, f"The protected {role} name admitted a competing DELETE open.")
+
+
+def retire_stage_link(stage: Path, target: Path, *, expected_file_id: FileID, expected_signature: LeafSignature,
+                      expected_bytes: bytes) -> LeafSignature:
+    """Retire the exact stage name of a verified two-link file by handle.
+
+    The caller owns the approved ancestry pins, prior whole-file evidence,
+    uncertainty tracking, and the subsequent parent flush. The inline byte
+    check is bounded for private qualification. A late error may leave the
+    stage retired; there is no pathname delete, retry, or inverse.
+    """
+    if not stage.is_absolute() or stage == target or stage.parent != target.parent:
+        raise ValueError("Backup retirement paths must be distinct absolute siblings.")
+    if not _valid_file_id(expected_file_id):
+        raise ValueError("Backup retirement requires an exact native file identity.")
+    if (type(expected_bytes) is not bytes or not 1 <= len(expected_bytes) <= _MAX_RETIRE_BYTES
+            or type(expected_signature) is not tuple or len(expected_signature) != 4
+            or any(type(part) is not int for part in expected_signature) or expected_signature[2] != len(expected_bytes)):
+        raise ValueError("Backup retirement requires exact bounded bytes and a matching source signature.")
+
+    attempted = False
+    try:
+        # NTFS can share DELETE access differently for the two names. Hold an
+        # independent no-write/no-delete read guard on the published link until
+        # the stage has closed and the surviving link is reverified.
+        with _open_verified_leaf(target, links=2) as (target_handle, published):
+            with _open_verified_leaf(stage, links=2, delete_access=True) as (handle, source):
+                if source.file_id != expected_file_id or source.signature != expected_signature:
+                    raise OSError(errno.EIO, "The backup staging file changed before retirement.")
+                if _normalized_name(handle).casefold() == _normalized_name(target_handle).casefold():
+                    raise OSError(errno.EIO, "The staging and published handles resolve to one native name.")
+                _verify_retirement_bytes(published, expected_file_id, expected_signature, expected_bytes)
+                _require_delete_sharing_conflict(target, "published")
+                _require_delete_sharing_conflict(stage, "staging")
+                if (_file_id(handle, directory=False) != expected_file_id
+                        or _leaf_signature(os.fstat(source.fd), 2) != expected_signature
+                        or _leaf_signature(stage.lstat(), 2) != expected_signature
+                        or _leaf_signature(os.fstat(published.fd), 2) != expected_signature
+                        or _leaf_signature(target.lstat(), 2) != expected_signature):
+                    raise OSError(errno.EIO, "The verified two-link file changed before retirement.")
+
+                # FILE_DISPOSITION_INFO contains one Win32 BOOL. Only the
+                # exact staging handle receives the delete disposition.
+                delete_file = ctypes.c_int32(1)
+                attempted = True
+                if not _kernel32().SetFileInformationByHandle(
+                        handle, _DISPOSITION_INFO, ctypes.byref(delete_file), ctypes.sizeof(delete_file)):
+                    raise _winerror()
+
+            if (_file_id(target_handle, directory=False) != expected_file_id
+                    or _leaf_signature(os.fstat(published.fd), 1) != expected_signature):
+                raise OSError(errno.EIO, "The held published handle changed after staging retirement.")
+            with open_leaf(target, links=1) as retained:
+                _verify_retirement_bytes(retained, expected_file_id, expected_signature, expected_bytes)
+                try:
+                    stage.lstat()
+                except FileNotFoundError:
+                    return retained.signature
+                raise OSError(errno.EIO, "The staging name remains after handle retirement.")
+    except OSError as error:
+        if attempted:
+            raise OSError(errno.EIO, "Backup retirement requires reinspection. The staging name may have changed.") from error
         raise
 
 

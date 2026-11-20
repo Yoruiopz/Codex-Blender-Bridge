@@ -356,6 +356,169 @@ def test_late_link_failure_reports_possible_effect_without_unlink_or_retry(sibli
 
 
 @pytest.fixture
+def stage_retirement(sibling_link, monkeypatch):
+    model = sibling_link
+    fixture = model.api
+    model.create_link(model.source, model.target, follow_symlinks=False)
+    fixture.attributes[20] = 0
+    fixture.identities[20] = fixture.identities[17]
+    refused_open = ctypes.c_void_p(-1).value
+    fixture.kernel.CreateFileW.side_effect = [19, 17, refused_open, refused_open, 20]
+    fixture.crt.open_osfhandle.side_effect = [43, 42, 44]
+    fixture.os.fstat.side_effect = {42: model.source_open, 43: model.target_open, 44: model.target_open}.__getitem__
+    expected_bytes = b"\r\n\x1a\x00" + b"x" * 19
+    fixture.os.read = Mock(return_value=expected_bytes)
+
+    names = {17: r"\\?\C:\fixture\stage.bin", 19: r"\\?\C:\fixture\published.bin"}
+
+    def final_path(handle, buffer, capacity, flags):
+        assert capacity == 4097 and flags == 0
+        buffer.value = names[handle]
+        return len(buffer.value)
+
+    fixture.kernel.GetFinalPathNameByHandleW = Mock(side_effect=final_path)
+    error = PermissionError("modeled sharing violation")
+    error.winerror = 32
+    monkeypatch.setattr(fixture.module, "_winerror", lambda: error)
+    disposition = False
+
+    def set_disposition(handle, query, buffer, size):
+        assert handle == 17 and query == 4 and size == 4
+        assert ctypes.cast(buffer, ctypes.POINTER(ctypes.c_int32)).contents.value == 1
+        nonlocal disposition
+        disposition = True
+        return True
+
+    def close(fd):
+        if fd == 42 and disposition:
+            model.source.lstat.side_effect = FileNotFoundError
+            model.target_named.st_nlink = model.target_open.st_nlink = 1
+
+    fixture.kernel.SetFileInformationByHandle = Mock(side_effect=set_disposition)
+    fixture.os.close.side_effect = close
+    model.timeline.attach_mock(fixture.os.read, "read")
+    model.timeline.attach_mock(fixture.kernel.SetFileInformationByHandle, "dispose")
+
+    def retire(**override):
+        return fixture.module.retire_stage_link(model.source, model.target,
+                                                **{**model.expected, "expected_bytes": expected_bytes, **override})
+
+    return SimpleNamespace(model=model, retire=retire, expected_bytes=expected_bytes, names=names,
+                           share_error=error, refused_open=refused_open)
+
+
+def test_retirement_holds_published_guard_through_disposition_close_and_reopen(stage_retirement):
+    probe = stage_retirement
+    model = probe.model
+    assert probe.retire() == model.expected["expected_signature"]
+    assert [(operation[0], operation.args[0]) for operation in model.timeline.mock_calls] == [
+        ("open", str(model.target)), ("open", str(model.source)), ("read", 43),
+        ("open", str(model.target)), ("open", str(model.source)), ("dispose", 17), ("close", 42),
+        ("open", str(model.target)), ("read", 44), ("close", 44), ("close", 43),
+    ]
+    assert model.api.kernel.CreateFileW.call_args_list == [
+        call(str(model.target), 0x80000000, 1, None, 3, 0x00200000, None),
+        call(str(model.source), 0x80010000, 1, None, 3, 0x00200000, None),
+        call(str(model.target), 0x80010000, 5, None, 3, 0x00200000, None),
+        call(str(model.source), 0x80010000, 5, None, 3, 0x00200000, None),
+        call(str(model.target), 0x80000000, 1, None, 3, 0x00200000, None),
+    ]
+    assert model.api.os.read.call_args_list == [call(43, 24), call(44, 24)]
+    model.api.os.unlink.assert_not_called()
+
+
+@pytest.mark.parametrize("bad_bytes", [b"", b"short", b"x" * (1024 * 1024 + 1)])
+def test_retirement_refuses_invalid_inline_readback_before_native_open(stage_retirement, bad_bytes):
+    with pytest.raises(ValueError, match="exact bounded bytes"):
+        stage_retirement.retire(expected_bytes=bad_bytes)
+    stage_retirement.model.api.kernel.CreateFileW.assert_not_called()
+
+
+@pytest.mark.parametrize("fault", ["same_actual_name", "target_id", "target_bytes", "target_delete_access_granted",
+                                   "stage_delete_access_granted", "wrong_winerror"])
+def test_retirement_refuses_unproven_target_before_disposition(stage_retirement, fault):
+    probe = stage_retirement
+    model = probe.model
+    if fault == "same_actual_name":
+        probe.names[19] = probe.names[17].upper()
+    elif fault == "target_id":
+        model.api.identities[19] = (91, b"z" * 16)
+    elif fault == "target_bytes":
+        model.api.os.read.return_value = b"z" * 23
+    elif fault == "target_delete_access_granted":
+        model.api.kernel.CreateFileW.side_effect = [19, 17, 21]
+    elif fault == "stage_delete_access_granted":
+        model.api.kernel.CreateFileW.side_effect = [19, 17, probe.refused_open, 21]
+    else:
+        probe.share_error.winerror = 5
+    with pytest.raises(OSError):
+        probe.retire()
+    model.api.kernel.SetFileInformationByHandle.assert_not_called()
+    if fault in {"target_delete_access_granted", "stage_delete_access_granted"}:
+        model.api.kernel.CloseHandle.assert_called_once_with(21)
+    else:
+        model.api.kernel.CloseHandle.assert_not_called()
+    assert model.api.os.close.call_args_list == [call(42), call(43)]
+    model.api.os.unlink.assert_not_called()
+
+
+def test_retirement_refuses_incompatible_independent_guards_without_loosening_share(stage_retirement):
+    probe = stage_retirement
+    model = probe.model
+    model.api.kernel.CreateFileW.side_effect = [19, probe.refused_open]
+    with pytest.raises(PermissionError, match="sharing violation"):
+        probe.retire()
+    assert model.api.kernel.CreateFileW.call_args_list == [
+        call(str(model.target), 0x80000000, 1, None, 3, 0x00200000, None),
+        call(str(model.source), 0x80010000, 1, None, 3, 0x00200000, None),
+    ]
+    model.api.os.close.assert_called_once_with(43)
+    model.api.kernel.SetFileInformationByHandle.assert_not_called()
+    model.api.os.unlink.assert_not_called()
+
+
+@pytest.mark.parametrize("fault", ["disposition_refused", "target_replaced", "target_bytes", "stage_still_present"])
+def test_retirement_preserves_uncertainty_after_disposition_attempt(stage_retirement, fault):
+    probe = stage_retirement
+    model = probe.model
+    if fault == "disposition_refused":
+        api = model.api.kernel.SetFileInformationByHandle
+        api.side_effect = None
+        api.return_value = False
+    elif fault == "target_replaced":
+        model.api.identities[20] = (91, b"z" * 16)
+    elif fault == "target_bytes":
+        model.api.os.read.side_effect = [probe.expected_bytes, b"z" * 23]
+    else:
+        close = model.api.os.close.side_effect
+
+        def stage_remains(fd):
+            close(fd)
+            if fd == 42:
+                model.source.lstat.side_effect = None
+
+        model.api.os.close.side_effect = stage_remains
+    with pytest.raises(OSError, match="The staging name may have changed") as error:
+        probe.retire()
+    assert isinstance(error.value.__cause__, OSError)
+    model.api.kernel.SetFileInformationByHandle.assert_called_once()
+    model.api.os.unlink.assert_not_called()
+
+
+def test_retirement_does_not_release_published_guard_to_claim_deferred_deletion_succeeded(stage_retirement):
+    model = stage_retirement.model
+    apply_retirement = model.api.os.close.side_effect
+    model.api.os.close.side_effect = lambda fd: apply_retirement(42) if fd == 43 else None
+    with pytest.raises(OSError, match="The staging name may have changed") as error:
+        stage_retirement.retire()
+    assert "expected link count" in str(error.value.__cause__)
+    model.api.kernel.SetFileInformationByHandle.assert_called_once()
+    assert model.api.os.close.call_args_list == [call(42), call(43)]
+    assert model.api.kernel.CreateFileW.call_count == 4
+    model.api.os.unlink.assert_not_called()
+
+
+@pytest.fixture
 def pinned_directory(windows_files):
     fixture = windows_files
     fixture.attributes[17] = 0x10

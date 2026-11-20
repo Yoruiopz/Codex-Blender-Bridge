@@ -1,7 +1,7 @@
 """Opt-in Windows backup primitive probe on an explicit disposable fixture parent.
 
 Uses local synthetic files and retains one new, owned directory. The receipt
-records binary append, create-only hard-link publication with a held source,
+records binary append, held-source publication, exact stage retirement by handle,
 directory flush, and cross-process readback. Product durability needs separate evidence.
 """
 
@@ -32,6 +32,9 @@ COMPETITOR = b"owned competing file\r\n\x1a"
 APPEND_PREFIX = b"owned append prefix\x00\r\n\x1a"
 APPEND_BLOCK = b"\x00\r\n\x1afirst binary block\xff"
 APPEND_TAIL = b"\x1a\r\n\x00second binary block\x80"
+RETIRE_PAYLOAD = b"owned stage retirement\x00\r\n\x1a\xff"
+RETIRE_STAGE = "retirement-stage.bin"
+RETIRE_TARGET = "retirement-published.bin"
 ABRUPT_EXIT = 91
 ERROR_SHARING_VIOLATION = 32
 
@@ -57,7 +60,38 @@ def file_receipts(root: Path) -> dict:
     return {"stage": receipt(root / "staged.bin", PAYLOAD, 2),
             "published": receipt(root / "published.bin", PAYLOAD, 2),
             "competitor": receipt(root / "competing.bin", COMPETITOR, 1),
-            "append": receipt(root / "appended.bin", APPEND_PREFIX + APPEND_BLOCK + APPEND_TAIL, 1)}
+            "append": receipt(root / "appended.bin", APPEND_PREFIX + APPEND_BLOCK + APPEND_TAIL, 1),
+            "retirement": retired_file_receipt(root)}
+
+
+def retired_file_receipt(root: Path) -> dict:
+    try:
+        (root / RETIRE_STAGE).lstat()
+    except FileNotFoundError:
+        return receipt(root / RETIRE_TARGET, RETIRE_PAYLOAD, 1)
+    raise RuntimeError("The exact staging name remains after retirement")
+
+
+def probe_retirement(root: Path, pinned_parent: int) -> dict:
+    stage, target = root / RETIRE_STAGE, root / RETIRE_TARGET
+    write_exclusive(stage, RETIRE_PAYLOAD)
+    with windows_files.open_leaf(stage, links=1) as sealed:
+        expected_id = sealed.file_id
+        signature = sealed.signature
+    windows_files.link_leaf(stage, target, expected_file_id=expected_id, expected_signature=signature)
+    before = receipt(target, RETIRE_PAYLOAD, 2)
+    windows_files.flush_pinned_directory(root, pinned_parent)
+    retired = windows_files.retire_stage_link(stage, target, expected_file_id=expected_id,
+                                              expected_signature=signature, expected_bytes=RETIRE_PAYLOAD)
+    after = retired_file_receipt(root)
+    if retired != signature or {**before, "links": 1} != after:
+        raise RuntimeError("Stage retirement did not preserve the published link identity and exact bytes")
+    windows_files.flush_pinned_directory(root, pinned_parent)
+    return {"method": "win32_file_disposition_info", "published_before": before, "published_after": after,
+            "stage_absent": True, "same_native_id_and_bytes": True,
+            "competing_delete_open_winerror": {"stage": ERROR_SHARING_VIOLATION, "published": ERROR_SHARING_VIOLATION},
+            "published_guard_held_through_stage_close_and_reopen": True,
+            "pinned_directory_flushes_before_and_after": True}
 
 
 def probe_append(root: Path) -> dict:
@@ -120,6 +154,7 @@ def child(root: Path, phase: str, nonce: str) -> None:
             print(json.dumps({"pid": os.getpid(), "files": file_receipts(root)}), flush=True)
             return
         append = probe_append(root)
+        retirement = probe_retirement(root, pins.handles[-1])
         stage, competitor = root / "staged.bin", root / "competing.bin"
         write_exclusive(stage, PAYLOAD)
         before = receipt(stage, PAYLOAD, 1)
@@ -149,10 +184,13 @@ def child(root: Path, phase: str, nonce: str) -> None:
             raise RuntimeError("Publication did not preserve the exact file identity")
         if measured["append"] != append["after_checked_prefix_append"]:
             raise RuntimeError("Appended file changed before the writer exit boundary")
+        if measured["retirement"] != retirement["published_after"]:
+            raise RuntimeError("Retired file changed before the writer exit boundary")
         volume, identifier = windows_files.flush_pinned_directory(root, pins.handles[-1])
         hard_link = {"collision_winerror": collision_winerror, "created_with_source_read_handle": True,
                      "verified_signature": linked_signature, "verified_link_count": measured["stage"]["links"]}
         print(json.dumps({"pid": os.getpid(), "files": measured, "append": append, "hard_link": hard_link,
+                          "retirement": retirement,
                           "flushed_directory_id": [volume, identifier.hex()]}), flush=True)
         # Exit before Python finally blocks release the directory pins.
         os._exit(ABRUPT_EXIT)
@@ -199,6 +237,9 @@ def main() -> None:
     if append["after_checked_prefix_append"] != reader["files"]["append"]:
         raise RuntimeError("Fresh reader did not verify the exact appended file")
     hard_link = writer.pop("hard_link")
+    retirement = writer.pop("retirement")
+    if retirement["published_after"] != reader["files"]["retirement"]:
+        raise RuntimeError("Fresh reader did not verify the exact retained file after retirement")
     report = {"python": list(sys.version_info[:3]),
               "module_sha256": hashlib.sha256(Path(windows_files.__file__).read_bytes()).hexdigest(),
               "file_fsync_returned_success": True, "create_only_collision_preserved": True,
@@ -206,7 +247,8 @@ def main() -> None:
               "power_loss_durability_verified": False, "product_backup_durability_qualified": False,
               "writer_exit": ABRUPT_EXIT, "reader_exit": 0, "writer": writer, "reader": reader,
               "append": {**append, "process_exit_reopen_verified": True},
-              "hard_link": {**hard_link, "process_exit_reopen_verified": True}}
+              "hard_link": {**hard_link, "process_exit_reopen_verified": True},
+              "retirement": {**retirement, "process_exit_reopen_verified": True}}
     encoded = json.dumps(report, sort_keys=True)
     with closing(_DirectoryPins(root)):
         write_exclusive(root / "report.json", (encoded + "\n").encode("utf-8"))

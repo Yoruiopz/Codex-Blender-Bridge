@@ -239,5 +239,15 @@ returned Windows error 183 and preserved both existing files. Both names
 retained one native file ID, two links and identical complete 516-byte content
 after the pinned directory flush and the abrupt writer exit. The module hash
 was `5ae4e14143c8353fd06acee71aeb2434eab6d3b26e9b266102e4c61cab790a70`.
-Exact staging link retirement by handle still requires native testing.
-Preserve uncertain files after interrupted publication.
+
+The initial retirement probe stopped before deletion when the staging handle
+alone failed to exclude delete access through the published name. The next
+probe held each name independently. Both names returned sharing error 32
+against competing delete opens. A file disposition on the verified staging
+handle removed that name while the published guard remained open. The
+published file retained its native ID and complete 27-byte content with one
+link. The pinned parent was flushed, and a fresh reader verified the retained
+file after abrupt writer exit. The tested module hash was
+`59976246e52fb4e0ecec58dbe46b7a48932e4270750febf5ff8d4d900e09a40b`.
+The primitive is bounded to 1 MiB in this private probe. Whole-workflow
+Windows integration, larger payloads and host power-loss behavior remain open.
