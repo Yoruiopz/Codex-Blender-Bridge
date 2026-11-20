@@ -100,6 +100,16 @@ an uncertain publication, the job retains the original attempt and every
 verified path. The result describes the historical archive and leaves live
 scene state unknown. Image and helper writes require a separate verified phase.
 
+At `d15e38f2da5edaf6557bc8006403df84a9f7bf63`, both stock Linux builds verified
+the original packed bytes, edited EXR and manifest after reopening all three
+files. The two starts took 0.36–0.63 seconds and the backup jobs took 21–22
+seconds. Both runs verified that the original, helper and protected fixture
+data stayed unchanged. An independent interruption fixture at
+`1ef12c5cdf0126b470a1f2049ed02274a7bf6ff1` cancelled after the first staging
+write on each build. The exact 488-byte original payload remained as one
+owned staging file. Four separate timer observations verified that no
+additional files appeared and the fixture scene stayed unchanged.
+
 The separate read-only graph passed on stock Linux Blender 4.5.14 and 5.2.2
 at clean commit `3805511f571a8acaa2a9c16b6cab07713770348a` (source fingerprint
 `37243a19adccca66c837a9184602e95b68f35fb6bc991b016b301ecb70a4944b`). The capture
