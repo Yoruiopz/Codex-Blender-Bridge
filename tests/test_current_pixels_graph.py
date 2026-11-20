@@ -683,8 +683,9 @@ def make_capture_model(graph, monkeypatch, addon_package, *, build=b"62c1db4208e
         active_index = 0
 
     layers = Layers([Layer(name="UVMap", active=True, active_render=True, active_clone=True)])
+    Mesh.bl_rna.properties.append(Property("uv_layer_clone", "POINTER", fixed_type=Layer.bl_rna))
     mesh = Mesh(name="Mesh", vertices=vertices, edges=edges, polygons=polygons, loops=loops, uv_layers=layers,
-                users=1, shape_keys=None, is_editmode=False, has_custom_normals=False, color_attributes=[],
+                uv_layer_clone=layers[0], users=1, shape_keys=None, is_editmode=False, has_custom_normals=False, color_attributes=[],
                 materials=[material], use_auto_texspace=True)
     attrs = []
 
@@ -925,6 +926,48 @@ def test_52_existing_single_auxiliary_refuses_before_data_even_with_other_flags_
     with pytest.raises(graph.BridgeError) as failure:
         model.capture()
     assert failure.value.context["reason"] == "ATTRIBUTE_SINGLE_OR_UNKNOWN_STORAGE"
+    assert model.counters["pixels"] == model.counters["packed"] == model.counters["attribute_data"] == 0
+
+
+def test_52_unset_clone_role_has_its_own_complete_graph_prefix(graph, monkeypatch, addon_package):
+    model = make_capture_model(graph, monkeypatch, addon_package, build=b"d13f752e3b9c")
+    selected = model.capture()
+    layer = model.mesh.uv_layers[0]
+    layer.active_clone = False
+    model.mesh.uv_layer_clone = None
+    absent = model.capture()
+    assert absent.full_native_prefix_sha256 != selected.full_native_prefix_sha256
+    assert absent.full_portable_prefix_sha256 != selected.full_portable_prefix_sha256
+    assert absent.payloads.facts() == selected.payloads.facts()
+    assert layer.active_render is True and layer.active_clone is False and model.mesh.uv_layer_clone is None
+    layer.active_clone = True
+    model.mesh.uv_layer_clone = layer
+    assert model.capture().summary() == selected.summary()
+
+
+@pytest.mark.parametrize("fault", ["clone_pointer_disagrees", "duplicate_clone", "missing_render", "duplicate_render", "unset_on_45"])
+def test_conflicting_uv_roles_refuse_before_attribute_and_image_payloads(graph, monkeypatch, addon_package, fault):
+    build = b"62c1db4208e8" if fault == "unset_on_45" else b"d13f752e3b9c"
+    model = make_capture_model(graph, monkeypatch, addon_package, build=build)
+    first = model.mesh.uv_layers[0]
+    if fault == "clone_pointer_disagrees":
+        first.active_clone = False
+    elif fault in {"duplicate_clone", "duplicate_render"}:
+        second = model.types.MeshUVLoopLayer(name="OtherUV", active=False, active_render=fault == "duplicate_render",
+                                            active_clone=fault == "duplicate_clone")
+        model.mesh.uv_layers.append(second)
+    elif fault == "missing_render":
+        first.active_render = False
+    else:
+        first.active_clone = False
+
+        def forbidden(_mesh):
+            pytest.fail("The 4.5 graph unexpectedly consulted the 5.2 zero-clone pointer gate")
+
+        monkeypatch.setattr(type(model.mesh), "uv_layer_clone", property(forbidden), raising=False)
+    with pytest.raises(graph.BridgeError) as failure:
+        model.capture()
+    assert failure.value.context["reason"] == "UV_ACTIVE_RENDER_OR_CLONE_ROLE_UNAVAILABLE"
     assert model.counters["pixels"] == model.counters["packed"] == model.counters["attribute_data"] == 0
 
 

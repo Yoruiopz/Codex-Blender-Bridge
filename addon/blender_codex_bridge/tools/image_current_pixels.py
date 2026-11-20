@@ -143,7 +143,10 @@ class CurrentPixelsDriver:
         return self.files.evidence()
 
     def recovery_evidence(self):
-        return dict(self.receipt)
+        # The job controller renews live permissions after each driver step.
+        # Keep the verified backup facts, but a later provider can change Main
+        # before the cached receipt is published to the caller.
+        return contract.unknown_observation(self.receipt)
 
 
 def register_tools(registry):

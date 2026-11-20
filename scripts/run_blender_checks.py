@@ -2078,7 +2078,9 @@ def _loaded_backup_receipt_matches(payload: dict | None, temporary: Path, proces
             return False
         outcome, recovery = job["result"], job["recovery_evidence"]
         if (outcome.get("phase") != "backups_verified" or outcome.get("image_packed") is not False
-                or outcome.get("project_saved") is not False or recovery.get("stage") != "BACKUPS_DURABLE"
+                or outcome.get("project_saved") is not False or recovery.get("stage") != "UNKNOWN"
+                or recovery.get("state_known") is not False or recovery.get("observed_prefix") is not None
+                or recovery.get("observed_prefix_sha256") is not None
                 or recovery.get("helper_record_write_attempted") is not False or recovery.get("image_write_attempted") is not False
                 or recovery.get("durable_backups_verified") is not True or recovery.get("external_write_attempted") is not True):
             return False

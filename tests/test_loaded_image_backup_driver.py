@@ -50,14 +50,19 @@ def test_backup_driver_compares_full_source_before_each_file_turn(driver_fixture
     fixture.resource.prepare_pair_steps = prepare_pair_steps
     generator = fixture.driver.steps(object(), None, None)
     assert next(generator)["phase"] == "write"
-    assert fixture.driver.recovery_evidence()["stage"] == "BACKUPS_PARTIAL"
+    assert fixture.driver.receipt["stage"] == "BACKUPS_PARTIAL"
+    intermediate = fixture.driver.recovery_evidence()
+    assert intermediate["state_known"] is False and intermediate["external_write_attempted"] is True
     with pytest.raises(StopIteration) as done:
         next(generator)
     assert done.value.value == {"phase": "backups_verified", "files": [{"kind": "manifest"}],
                                 "manifest_sha256": "a" * 64, "image_packed": False, "project_saved": False}
     assert fixture.calls == ["grants", "complete source comparison", "file gate"] * 2
     receipt = fixture.driver.recovery_evidence()
-    assert receipt["stage"] == "BACKUPS_DURABLE" and receipt["durable_backups_verified"] is True
+    assert fixture.driver.receipt["stage"] == "BACKUPS_DURABLE"
+    assert receipt["stage"] == "UNKNOWN" and receipt["state_known"] is False
+    assert receipt["observed_prefix"] is None and receipt["observed_prefix_sha256"] is None
+    assert receipt["expected_prefix_sha256"] == "1" * 64 and receipt["durable_backups_verified"] is True
     assert receipt["image_write_attempted"] is False and receipt["helper_record_write_attempted"] is False
     assert receipt["recovery_authorized"] is False
 

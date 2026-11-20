@@ -42,10 +42,12 @@ a replacement baseline.
 runtime. The normal add-on and MCP registries omit them. The fixture drives the
 existing socket and main-thread timer using one connection, a 2 × 2 Float32 FILE
 image and its existing OWNER-bound helper. The preview binds the full source graph,
-current pixels, previous packed bytes and the approved backup plan. The job stops
-at `BACKUPS_DURABLE` after create-only publication and independent complete
-readback of both payloads and the manifest. The driver does not write the image,
-change the helper record or save the project. Reverse methods return `NOT_IMPLEMENTED`.
+current pixels, previous packed bytes and the approved backup plan. The driver
+completes after create-only publication and independent readback of both
+payloads and the manifest. The job reports the completed archive verification
+and leaves current scene state unknown because the controller can renew live
+permissions after the last read. The driver does not write the Image, change
+the helper record or save the project. Reverse methods return `NOT_IMPLEMENTED`.
 
 ```bash
 python scripts/run_loaded_backup_private_display.py --blender /path/to/blender --output /absolute/new/report-directory

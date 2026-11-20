@@ -249,6 +249,10 @@ def native_graph_probe(bpy, graph, before, parent, *, loaded_backup=None):
         # and reacquire the wrapper after the round trip and fixture setup.
         uv_attribute = mesh.attributes["UVMap"]
         assert tuple(tuple(item.vector) for item in uv_attribute.data) == expected_uv
+        if bpy.app.build_hash == b"d13f752e3b9c":
+            uv_roles = mesh.uv_layers["UVMap"]
+            assert uv_roles.active_render is True and uv_roles.active_clone is False
+            assert mesh.uv_layer_clone is None
     assert original.is_dirty and original.has_data and helper.has_data
     provider, manager = runtime.permissions._source, runtime.permissions
     assert type(provider) is FunctionType and provider.__globals__ is vars(runtime_module)
@@ -307,6 +311,9 @@ def native_graph_probe(bpy, graph, before, parent, *, loaded_backup=None):
         if loaded_backup is None and bpy.app.build_hash == b"d13f752e3b9c":
             state["principled_panels"] = [(panel.identifier, panel.is_collapsed, panel.as_pointer())
                                           for panel in shader.panel_states]
+            clone = mesh.uv_layer_clone
+            state["uv_roles"] = {"layers": [(layer.name, layer.active_render, layer.active_clone) for layer in mesh.uv_layers],
+                                 "clone_layer": None if clone is None else clone.name}
         return state
 
     def capture():
@@ -445,7 +452,10 @@ def native_graph_probe(bpy, graph, before, parent, *, loaded_backup=None):
     assertions["no_observation_writes"] = True
     assert source_fingerprints() == before
     assertions["source_unchanged"] = True
-    assert set(assertions) == GRAPH_ASSERTIONS and all(value is True for value in assertions.values())
+    expected_assertions = GRAPH_ASSERTIONS
+    if bpy.app.build_hash == b"d13f752e3b9c":
+        expected_assertions = expected_assertions | {"manual_panel_state_detected"}
+    assert set(assertions) == expected_assertions and all(value is True for value in assertions.values())
     return {"assertions": assertions, "refusals": refusals, "full_read_intervals": timings,
         "checks": control["checks"], "foreign_callbacks": control["foreign"],
         "baseline": first.summary(), "independent_observation": before_read,
@@ -592,7 +602,9 @@ def _loaded_backup_probe(bpy, before, parent, runtime, prefs, original, helper, 
                     assert job["state"] == "SUCCEEDED", job
                     assert job["result"]["phase"] == "backups_verified"
                     assert job["result"]["image_packed"] is False and job["result"]["project_saved"] is False
-                    assert job["recovery_evidence"]["stage"] == "BACKUPS_DURABLE"
+                    assert job["recovery_evidence"]["stage"] == "UNKNOWN"
+                    assert job["recovery_evidence"]["state_known"] is False
+                    assert job["recovery_evidence"]["durable_backups_verified"] is True
                     assert job["recovery_evidence"]["helper_record_write_attempted"] is False
                     assert job["recovery_evidence"]["image_write_attempted"] is False
                     result.update(preview=preview, accepted=accepted, terminal=job, poll_count=count)

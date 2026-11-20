@@ -2349,6 +2349,19 @@ def _mesh(reader: _Reader, stream: _Stream, mesh: Any, materials: tuple[Any, ...
     uv_names = tuple(_text(layer.name) for layer in layers)
     if len(set(uv_names)) != len(uv_names) or mesh.has_custom_normals or len(mesh.color_attributes):
         raise refused("CUSTOM_NORMAL_COLOR_OR_AMBIGUOUS_UV")
+    reader.class_catalog("UVLoopLayers")
+    active_index = (_int(mesh.uv_layers.active_index, len(layers) - 1) if layers
+                    else _int(mesh.uv_layers.active_index, 0, minimum=-1))
+    roles = [[name, _bool(layer.active_render), _bool(layer.active_clone)]
+             for name, layer in zip(uv_names, layers, strict=True)]
+    if layers:
+        render_count = sum(role[1] for role in roles)
+        clone_count = sum(role[2] for role in roles)
+        # Stock 5.2 can leave the clone role unset. Its clone-index getter
+        # also returns zero for that state, so use the pinned pointer getter.
+        if (render_count != 1 or clone_count > 1
+                or (clone_count == 0 and (reader.build != b"d13f752e3b9c" or mesh.uv_layer_clone is not None))):
+            raise refused("UV_ACTIVE_RENDER_OR_CLONE_ROLE_UNAVAILABLE")
     attributes, uv, auxiliary, physical = _attribute_inventory(reader, mesh, counts, uv_names)
     # A data getter can convert a 5.2 SINGLE attribute to ARRAY. This
     # observer only accepts arrays, after the separate metadata pass.
@@ -2411,15 +2424,6 @@ def _mesh(reader: _Reader, stream: _Stream, mesh: Any, materials: tuple[Any, ...
             reader.catalog(item, leaf)
             value = _vector(item.vector, 2) if kind == "FLOAT2" else _bool(item.value)
             stream.emit("uv_attribute", [name, index, value])
-    if layers:
-        reader.class_catalog("UVLoopLayers")
-        active_index = _int(mesh.uv_layers.active_index, len(layers) - 1)
-    else:
-        reader.class_catalog("UVLoopLayers")
-        active_index = _int(mesh.uv_layers.active_index, 0, minimum=-1)
-    roles = [[layer.name, _bool(layer.active_render), _bool(layer.active_clone)] for layer in layers]
-    if layers and (sum(role[1] for role in roles) != 1 or sum(role[2] for role in roles) != 1):
-        raise refused("UV_ACTIVE_RENDER_OR_CLONE_ROLE_UNAVAILABLE")
     stream.emit("uv_roles", {"order": uv_names, "active_index": active_index, "roles": roles})
     stream.end(row)
 
