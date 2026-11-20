@@ -97,12 +97,20 @@ identity, color and alpha roles, direct material bindings, an unrelated
 protected texture and the checkpoint file bytes.
 
 The composed `edited_texture_recovery_large` case also passed on Linux Blender
-4.5.14 with one 4096 × 4096 Float32 FILE image. The public snapshot job took
-132 seconds and the explicit reconstruction took 131 seconds. Peak isolated
-process RSS was approximately 3.4 GiB in both phases. The test requires at least
-8 GiB available memory and 2 GiB free fixture disk before each phase. Windows
-4K, constrained-memory conditions, current pixels on first open and production
-texture portability remain to be qualified.
+4.5.14 and 5.2.2 with one 4096 × 4096 Float32 FILE image. Snapshot jobs took
+127–132 seconds and explicit reconstruction took 131–136 seconds. Peak isolated
+process RSS was approximately 3.4–3.5 GiB. The test requires at least 8 GiB of
+available memory and 2 GiB of free fixture disk before each phase.
+
+The small `edited_texture_recovery_resave` case adds Save As after packed
+reconstruction. A third process opens the new checkpoint, verifies the original
+Image's packed EXR directly, then compares every channel after Blender's normal
+lazy decode. It leaves the original project and its Save As copy intact. This
+passed on Windows Blender 4.5.1 and 5.1.2 and Linux Blender 4.5.14 and 5.2.2.
+The original external path stays absent after the snapshot input has been
+prepared. Windows 4K,
+constrained-memory conditions, Save As after loaded-buffer restoration and
+broader production texture portability remain to be qualified.
 
 The phased interactive native cases `image_recovery_jobs` and
 `image_recovery_jobs_large` exercise the public socket/timer lifecycle and a
