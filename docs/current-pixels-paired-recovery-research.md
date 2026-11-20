@@ -127,4 +127,23 @@ constrained-memory behavior, broader color/alpha roles, protected artist scopes,
 4K production Save, installed packages and complete A04/I02 remain open. The
 helper and external backups are retained owned effects, not exact pre-helper
 rollback. No automatic inverse, Image recreation or native-undo backup is claimed.
-Windows compatibility/testing remains deferred by the user.
+Windows Blender lifecycle qualification remains open.
+
+## Windows filesystem prerequisite
+
+Run the opt-in `windows_backup_file_primitives_probe.py` with an explicit existing
+fixture-owned directory on a fixed NTFS drive. The probe uses the repository's
+Windows leaf and directory helpers in new disposable subprocesses.
+
+```powershell
+py -3 -I -B scripts/windows_backup_file_primitives_probe.py --fixture-parent "C:\path\to\owned test fixtures"
+```
+
+The probe passed on the tested Windows 11 NTFS installation with Python 3.12.4
+and an unelevated token. The writer flushed the binary file, verified a competing
+destination was preserved, published a new hard link, and flushed the exact
+pinned directory. After the abrupt writer exit, a fresh process reopened the
+same file identities and verified the complete bytes. The probe retains the
+owned folder and `report.json`. This evidence covers the tested process-exit
+sequence. The Blender backup driver, host power-loss behavior and Windows 4K
+qualification remain open.
