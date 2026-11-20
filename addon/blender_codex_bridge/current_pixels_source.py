@@ -244,7 +244,7 @@ def _scope(method, parameters):
     result = dict(parameters)
     for key in ("expected_target_fingerprint", "expected_recovery_fingerprint", "confirm_replace_packed_bytes",
                 "confirm_discard_current_buffer", "confirm_restore_previous_packed_bytes",
-                "confirm_restore_original_current_pixels", "time_limit_seconds"):
+                "confirm_restore_original_current_pixels", "confirm_record_backup", "time_limit_seconds"):
         result.pop(key, None)
     return _plain({"mode": "PACK" if method in METHODS[:2] else "RECOVERY", "parameters": result})
 
@@ -282,7 +282,9 @@ class _Registration:
         self.functions, self.bindings, self.constants = [], [], []
         helpers = tuple(importlib.import_module(__package__ + "." + name) for name in (
             "tools.image_portability", "tools.image_recovery_jobs", "pixel_codecs", "uv_edit_guard", "tools._scene_mutation",
-            "state", "permissions", "tool_registry", "task_plans", "request_lifecycle", "preferences", "utils"))
+            "state", "permissions", "tool_registry", "task_plans", "request_lifecycle", "preferences", "utils",
+            "current_pixels_checkpoint", "checkpoints", "checkpoint_completion", "undo_window",
+            "tools._scene_checkpoint_roles", "tools._scene_evaluation_scope"))
         modules = (sys.modules[__name__], self.graph, current_pixels_contract, current_pixels_files, jobs, self.domain, *helpers)
         required_graph_tables = {"_CATALOG_HASHES", "_STATIC_CATALOG_HASHES", "_FIXED_TARGETS", "_RUNTIME_MARKER_ROWS"}
         for module in modules:
@@ -294,6 +296,12 @@ class _Registration:
                     for member, descriptor in tuple(vars(value).items()):
                         facts = _descriptor_facts(descriptor)
                         if facts:
+                            if (module.__name__ == __package__ + ".checkpoints"
+                                    and member in {"before_modification", "after_modification"}):
+                                wrapped = vars(descriptor).get("__wrapped__")
+                                if not any(cell.cell_contents is wrapped for cell in descriptor.__closure__ or ()):
+                                    raise refused("CHECKPOINT_BODY_SOURCE_REQUIRED")
+                                facts += (_function_facts(wrapped),)
                             self.functions.append((value, member, descriptor, facts))
                 elif type(value) in {ModuleType, type}:
                     self.bindings.append((module, name, value))
@@ -314,6 +322,7 @@ class _Registration:
         for module_name, binding_name, members in (
             ("tools.images", "images", ("_summary", "_check", "local_editable")),
             ("tools.pixel_brush", "pixel_brush", ("number", "size", "invalid_argument")),
+            ("current_pixels_checkpoint", "current_pixels_checkpoint", ("capture",)),
         ):
             module = sys.modules.get(__package__ + "." + module_name)
             if type(module) is not ModuleType or vars(jobs).get(binding_name) is not module:
@@ -561,6 +570,11 @@ class CurrentPixelsOrigin:
         return (self.method == PREVIEW_START
                 or (self.method == METHODS[1] and self.binding.methods == FIXTURE_METHODS))
 
+    @property
+    def helper_record_requested(self) -> bool:
+        return (self.method == METHODS[1] and self.input_deferred
+                and self.parameters.get("confirm_record_backup") is True)
+
     def __init__(self, context, params, method):
         if threading.current_thread() is not threading.main_thread() or type(context) is not ToolContext:
             raise refused("MAIN_THREAD_CONTEXT_REQUIRED")
@@ -568,6 +582,8 @@ class CurrentPixelsOrigin:
         self.context, self.params, self.method = context, params, method
         schema_method = METHODS[0] if method == PREVIEW_START else method
         self.parameters = current_pixels_contract.validate_request(schema_method, params)
+        if self.parameters.get("confirm_record_backup") is True and not self.helper_record_requested:
+            raise refused("PRIVATE_HELPER_RECORD_PROFILE_REQUIRED")
         self.normalized_facts = _plain(self.parameters)
         self.parameter_facts, self.scope = _checkpoint_parameters(params), _scope(schema_method, self.parameters)
         self.spec = self.binding.specs[self.binding.methods.index(method)]
@@ -623,6 +639,7 @@ class CurrentPixelsOrigin:
         self.check_job_callbacks()
         self.callbacks = jobs.PreparedJobCallbacks.capture(
             context, origin=self, preview=method == PREVIEW_START, deferred=self.input_deferred,
+            record_helper=self.helper_record_requested,
         )
         self._stop(context)
         self.witness = self._witness()

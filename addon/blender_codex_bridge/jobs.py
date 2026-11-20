@@ -15,6 +15,7 @@ from threading import Event
 from types import CodeType, FunctionType, GeneratorType, GetSetDescriptorType, ModuleType
 from typing import Any
 
+from . import current_pixels_checkpoint
 from . import glb_stage_runtime as _prepared_context_module
 from .errors import BridgeError, ErrorCode, invalid_argument
 from .job_controller import TERMINAL, CooperativeJobController
@@ -242,6 +243,7 @@ class PreparedJobCallbacks:
         "provider",
         "provider_dependencies",
         "provider_facts",
+        "record_helper",
         "recorder",
         "recorder_facts",
         "recovery",
@@ -264,9 +266,10 @@ class PreparedJobCallbacks:
     )
 
     @classmethod
-    def capture(cls, context, *, origin, preview=False, deferred=False):
+    def capture(cls, context, *, origin, preview=False, deferred=False, record_helper=False):
         if (cls is not PreparedJobCallbacks or type(context) is not ToolContext
-                or type(preview) is not bool or type(deferred) is not bool or (preview and not deferred)):
+                or type(preview) is not bool or type(deferred) is not bool or type(record_helper) is not bool
+                or (preview and not deferred) or (record_helper and (preview or not deferred))):
             raise _prepared_refused("PREPARED_ADMISSION_REQUIRED")
         source = sys.modules.get(__package__ + ".current_pixels_source")
         domain = sys.modules.get(__package__ + ".tools.image_current_pixels")
@@ -304,6 +307,7 @@ class PreparedJobCallbacks:
         self.prepare, self.prepare_facts, self.driver_type = prepare, _function_facts(prepare), driver_type
         self.preview_only = preview
         self.input_deferred = deferred
+        self.record_helper = record_helper
         self.methods = {name: (vars(driver_type).get(name), _function_facts(vars(driver_type).get(name)))
                         for name in ("__init__", "steps", "cleanup", "evidence", "recovery_evidence")}
         if not self.methods["steps"][0].__code__.co_flags & inspect.CO_GENERATOR:
@@ -365,8 +369,7 @@ class PreparedJobCallbacks:
             raise _prepared_refused("PREPARED_RUNTIME_CHANGED")
         _prepared_runtime_parts(self.runtime_module, executor_module)
         context_property = inspect.getattr_static(self.executor_type, "context")
-        if (type(self.preview_only) is not bool or type(self.input_deferred) is not bool
-                or getattr(self.origin, "input_deferred", False) is not self.input_deferred):
+        if any(type(flag) is not bool for flag in (self.preview_only, self.input_deferred, self.record_helper)):
             raise _prepared_refused("PREPARED_CALLBACK_ORIGIN_CHANGED")
         prepare_name = "prepare_current_pixels_preview" if self.preview_only else "prepare_current_pixels"
         driver_name = "CurrentPixelsPreviewDriver" if self.preview_only else "CurrentPixelsDriver"
@@ -440,6 +443,9 @@ class PreparedJobCallbacks:
                 raise _prepared_refused("PREPARED_WORK_CHANGED")
         if self.source_check(self.origin) is not None:
             raise _prepared_refused("PREPARED_PURE_CHECK_INVALID")
+        if (getattr(self.origin, "input_deferred", False) is not self.input_deferred
+                or getattr(self.origin, "helper_record_requested", False) is not self.record_helper):
+            raise _prepared_refused("PREPARED_CALLBACK_ORIGIN_CHANGED")
 
     def history_valid(self):
         # Terminal observers may damage the binding. Recheck only owned plain
@@ -877,31 +883,54 @@ class PaintJobs(CooperativeJobController):
         job.in_commit = True
         job.state = "COMMITTING"
         job.revision += 1
-        control = self._prepared_control(job) if type(job) is GuardedPreparedPaintJob else None
-        guarded_callbacks = {}
-        if control is not None:
-            guarded_callbacks = {"before_write": lambda: self._check(job, context),
-                                 "after_read": lambda: control.verify(context=context, job=job)}
         try:
+            control = self._prepared_control(job) if type(job) is GuardedPreparedPaintJob else None
+            guarded_callbacks = {}
+            witness = None
             if control is not None:
                 control.verify(context=context, job=job)
+                guarded_callbacks = {"before_write": lambda: self._check(job, context),
+                                     "after_read": lambda: control.verify(context=context, job=job)}
+                if control.record_helper:
+                    def check_checkpoint():
+                        control.verify(context=context, job=job)
+                        self._lifetime_check(job, context)
+
+                    witness = current_pixels_checkpoint.capture(context, check=check_checkpoint)
+                    witness.check_before_checkpoint()
+                    guarded_callbacks = {"before_write": lambda: witness.with_provider(lambda: self._check(job, context)),
+                                         "after_read": witness.check_after_read,
+                                         "after_native_push": witness.check_after_push}
+                elif control.input_deferred:
+                    raise _prepared_refused("DEFERRED_NATIVE_COMMIT_NOT_AUTHORIZED")
             job.boundary_created = bool(context.checkpoints.before_modification(label, **guarded_callbacks))
             try:
                 if control is not None:
                     control.verify(context=context, job=job)
                 if not job.boundary_created:
                     raise BridgeError(ErrorCode.OPERATION_FAILED, "A recoverable native undo boundary is required before image publication.")
-                self._check(job, context)
-                context.registry.prepare(job.method, context)
+                if witness is None:
+                    self._check(job, context)
+                    context.registry.prepare(job.method, context)
+                else:
+                    witness.bind_before_pending(label)
+                    witness.with_provider(lambda: self._check(job, context))
                 if control is not None:
                     control.verify(context=context, job=job)
-                result = callback()
-                self._check(job, context)
+                result = callback() if witness is None else callback(witness.check_after_read)
+                if witness is None:
+                    self._check(job, context)
+                else:
+                    witness.with_provider(lambda: self._check(job, context))
             finally:
                 if job.boundary_created:
                     if control is not None:
                         control.verify(context=context, job=job)
+                    if witness is not None:
+                        witness.before_finalization()
                     job.boundary_finalized = bool(context.checkpoints.after_modification(label, **guarded_callbacks))
+                    if witness is not None and job.boundary_finalized:
+                        witness.check_finalized()
                     if control is not None:
                         control.verify(context=context, job=job)
             if not job.boundary_finalized:
@@ -1161,7 +1190,7 @@ class PaintJobs(CooperativeJobController):
                     failed("PREPARED_FINAL_AUTHORITY_FAILED", failure)
             try:
                 self._observe_prepared(job, control, current=False)
-                if state == "SUCCEEDED":
+                if state == "SUCCEEDED" or (control.record_helper and job.execution_started):
                     self._observe_prepared(job, control, current=True)
                 elif "recovery_evidence" not in job.evidence_observation_unknown:
                     job.evidence_observation_unknown.append("recovery_evidence")
@@ -1249,8 +1278,11 @@ class PaintJobs(CooperativeJobController):
         if type(job) is GuardedPreparedPaintJob:
             control = self._prepared_control(job)
             control.verify(context=context, job=job)
-            commit = None if control.input_deferred else lambda callback: self._native_commit(job, context, callback)
-            work = control.methods["steps"][0](control.driver, context, job, commit)
+            def commit(callback):
+                return self._native_commit(job, context, callback)
+
+            native_commit = None if control.input_deferred and not control.record_helper else commit
+            work = control.methods["steps"][0](control.driver, context, job, native_commit)
             if type(work) is not GeneratorType or work.gi_code is not control.methods["steps"][0].__code__:
                 raise _prepared_refused("PREPARED_WORK_ORIGIN_CHANGED")
             control.work = work

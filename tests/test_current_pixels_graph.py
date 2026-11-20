@@ -6,7 +6,7 @@ import hashlib
 import importlib
 import json
 import warnings
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from types import ModuleType
 from types import SimpleNamespace as NS
 
@@ -373,6 +373,7 @@ def test_canonical_lifecycle_record_is_exact_bounded_nonauthorizing_metadata(gra
     value = {"schema_version": 1, "profile": graph.PROFILE, "record_uuid": "a" * 32,
              "runtime_nonce": "b" * 32, "manifest_sha256": "c" * 64}
     raw = graph._canonical(value).decode()
+    assert graph.canonical_lifecycle_record("a" * 32, "b" * 32, "c" * 64) == raw
     assert graph.validate_lifecycle_record(raw) == raw
     for changed in ({**value, "recovery_authorized": True}, {**value, "schema_version": True},
                     {**value, "manifest_sha256": "A" * 64}, {**value, "profile": "unknown"}):
@@ -382,6 +383,8 @@ def test_canonical_lifecycle_record_is_exact_bounded_nonauthorizing_metadata(gra
         graph.validate_lifecycle_record(json.dumps(value))
     with pytest.raises(graph.BridgeError):
         graph.validate_lifecycle_record(raw[:-1] + ',"schema_version":1}')
+    with pytest.raises(graph.BridgeError):
+        graph.canonical_lifecycle_record("a" * 31, "b" * 32, "c" * 64)
 
 
 def test_portable_stream_omits_only_native_tokens_and_preserves_signed_zero(graph):
@@ -809,6 +812,125 @@ def test_real_graph_captures_old_packed_and_complete_edited_current_snapshot(cap
     summary["native_identity_rows"][0]["name"] = "Caller changed copy"
     assert result.summary()["native_identity_rows"][0]["name"] != "Caller changed copy"
     assert model.counters["foreach_get"] >= 4
+
+
+def test_helper_record_prediction_matches_only_the_verified_volatile_write(graph, capture_model, monkeypatch):
+    model = capture_model
+    baseline = model.capture()
+    before = baseline.summary()
+    record = graph.canonical_lifecycle_record("1" * 32, "2" * 32, "3" * 64)
+    transition = graph.prepare_helper_record_transition(baseline, record)
+    json.dumps(asdict(transition), allow_nan=False)
+    assert baseline.summary() == before and graph.LIFECYCLE_KEY not in set(model.helper.keys())
+    assert not model.original.keys()
+    previous_attributes = dict(model.helper._custom)
+    getter, setter = model.types.Image.__getitem__, model.types.Image.__setitem__
+    events = []
+
+    def model_setter(image, key, value):
+        assert image is model.helper and key == graph.LIFECYCLE_KEY and value == record
+        assert events[-2:] == ["gate", "attempt"]
+        events.append("set")
+        setter(image, key, value)
+
+    def check():
+        model.check()
+        events.append("gate")
+
+    monkeypatch.setattr(graph, "_image_idproperty_slots", lambda *_: (getter, model_setter))
+    graph.write_helper_record(model.bpy, transition, check=check, on_attempt=lambda: events.append("attempt"))
+    assert events.count("set") == events.count("attempt") == 1 and events[-1] == "gate"
+    assert model.helper._custom == {**previous_attributes, graph.LIFECYCLE_KEY: record}
+    assert not model.original.keys()
+    actual = model.capture(lifecycle_record=record)
+    assert actual.full_native_prefix_sha256 == transition.expected_native_prefix_sha256 != baseline.full_native_prefix_sha256
+    assert actual.full_portable_prefix_sha256 == transition.expected_portable_prefix_sha256 != baseline.full_portable_prefix_sha256
+    assert actual.native_identity_rows == baseline.native_identity_rows
+    assert actual.payloads.facts() == baseline.payloads.facts()
+    assert actual.original_metadata == baseline.original_metadata
+    assert actual.snapshot_metadata == {**baseline.snapshot_metadata,
+        "volatile": {**baseline.snapshot_metadata["volatile"], "lifecycle_record": record}}
+
+
+def test_helper_record_prediction_refuses_prebound_record_and_unverified_prefix(graph, capture_model):
+    model = capture_model
+    baseline = model.capture()
+    record = graph.canonical_lifecycle_record("1" * 32, "2" * 32, "3" * 64)
+    with pytest.raises(graph.BridgeError) as stale:
+        graph.prepare_helper_record_transition(replace(baseline, full_portable_prefix_sha256="f" * 64), record)
+    assert stale.value.context["reason"] == "HELPER_RECORD_BASELINE_CHANGED"
+    model.helper[graph.LIFECYCLE_KEY] = record
+    captured = model.capture(lifecycle_record=record)
+    with pytest.raises(graph.BridgeError) as bound:
+        graph.prepare_helper_record_transition(captured, record)
+    assert bound.value.context["reason"] == "HELPER_RECORD_BASELINE_CHANGED"
+
+
+def test_image_item_slots_require_native_unshadowed_descriptors(graph):
+    assert graph._image_idproperty_slots(NS(types=NS(bpy_struct=dict)), dict) == (dict.__getitem__, dict.__setitem__)
+
+    class SetterShadow(dict):
+        def __setitem__(self, key, value):
+            pytest.fail("Python shadow dispatched")
+
+    class GetterShadow(dict):
+        def __getitem__(self, key):
+            pytest.fail("Python shadow dispatched")
+
+    bpy = NS(types=NS(bpy_struct=dict))
+    for cls, operation in ((SetterShadow, "SETTER"), (GetterShadow, "GETTER")):
+        with pytest.raises(graph.BridgeError) as failure:
+            graph._image_idproperty_slots(bpy, cls)
+        assert failure.value.context["reason"] == f"NATIVE_IMAGE_IDPROPERTY_{operation}_CHANGED"
+
+
+@pytest.mark.parametrize(("fault", "reason"), [
+    ("already_bound", "HELPER_RECORD_KEYS_CHANGED"),
+    ("replaced", "HELPER_RECORD_NATIVE_IDENTITY_CHANGED"),
+    ("wrong_owner", "HELPER_RECORD_NATIVE_IDENTITY_CHANGED"),
+    ("unloaded", "HELPER_RECORD_IMAGE_NOT_LOCAL_LOADED"),
+    ("foreign_metadata", "HELPER_RECORD_SNAPSHOT_METADATA_CHANGED"),
+])
+def test_helper_record_preflight_failures_are_not_native_attempts(graph, capture_model, monkeypatch, fault, reason):
+    model = capture_model
+    record = graph.canonical_lifecycle_record("1" * 32, "2" * 32, "3" * 64)
+    transition = graph.prepare_helper_record_transition(model.capture(), record)
+    getter = model.types.Image.__getitem__
+    monkeypatch.setattr(graph, "_image_idproperty_slots", lambda *_: (getter, lambda *_: pytest.fail("unexpected setter")))
+    if fault == "already_bound":
+        model.helper[graph.LIFECYCLE_KEY] = record
+    elif fault == "replaced":
+        snapshot = native_wrapper_alias(model.helper)
+        snapshot.session_uid += 10000
+        model.bpy.data.images[snapshot.name] = snapshot
+    elif fault == "wrong_owner":
+        model.helper[model.storage.OWNER_KEY] = model.helper
+    elif fault == "unloaded":
+        model.original.has_data = False
+    else:
+        model.helper[model.storage.METADATA_KEY] = "changed"
+    with pytest.raises(graph.BridgeError) as failure:
+        graph.write_helper_record(model.bpy, transition, check=model.check,
+                                  on_attempt=lambda: pytest.fail("unexpected attempt"))
+    assert failure.value.context["reason"] == reason
+
+
+def test_helper_record_retains_attempt_and_observed_property_when_readback_fails(graph, capture_model, monkeypatch):
+    model = capture_model
+    expected = graph.canonical_lifecycle_record("1" * 32, "2" * 32, "3" * 64)
+    different = graph.canonical_lifecycle_record("1" * 32, "2" * 32, "4" * 64)
+    transition = graph.prepare_helper_record_transition(model.capture(), expected)
+    attempts = []
+
+    def altered_setter(image, key, value):
+        assert attempts == [True] and value == expected
+        image[key] = different
+
+    monkeypatch.setattr(graph, "_image_idproperty_slots", lambda *_: (model.types.Image.__getitem__, altered_setter))
+    with pytest.raises(graph.BridgeError) as failure:
+        graph.write_helper_record(model.bpy, transition, check=model.check, on_attempt=lambda: attempts.append(True))
+    assert failure.value.context["reason"] == "HELPER_RECORD_READBACK_CHANGED"
+    assert model.helper[graph.LIFECYCLE_KEY] == different
 
 
 @pytest.mark.parametrize("change", ["geometry", "uv", "pin", "selection", "socket_default", "role", "binding", "mapping", "ramp", "packed", "pixels"])

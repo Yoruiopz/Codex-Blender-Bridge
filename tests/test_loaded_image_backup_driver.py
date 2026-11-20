@@ -24,7 +24,7 @@ def driver_fixture(addon_package, monkeypatch):
 
     origin = SimpleNamespace(
         capture=capture, file_plan=SimpleNamespace(journal_enabled=False),
-        binding=SimpleNamespace(nonce="a" * 32), input_deferred=False,
+        binding=SimpleNamespace(nonce="a" * 32), input_deferred=False, helper_record_requested=False,
         parameters={"expected_target_fingerprint": "6" * 64, "affected_materials": ["Material"],
                     "image_name": "Original", "snapshot_name": "Snapshot"},
         authorize=lambda _context: calls.append("grants"),
@@ -130,3 +130,88 @@ def test_deferred_archive_keeps_verified_original_bytes_after_a_new_scene_edit(d
     assert done.value.value["current_scene_match_verified"] is False
     assert fixture.calls == ["approved plan", "complete source comparison", "file gate", "grants", "file gate"]
     assert driver.recovery_evidence()["durable_backups_verified"] is True
+
+
+@pytest.mark.parametrize("failure", [None, "changed scene", "changed archive", "native readback", "portable prefix"])
+def test_helper_record_compares_and_rereads_inside_native_boundary(driver_fixture, monkeypatch, failure):
+    fixture = driver_fixture
+    origin = fixture.driver.origin
+    original = origin.capture
+    origin.input_deferred = origin.helper_record_requested = True
+    origin.prepare_acquisition = lambda _context: None
+    origin.release_acquisition = lambda: setattr(origin, "capture", None)
+    pair = {"files": [{"kind": "manifest"}], "manifest_sha256": "a" * 64}
+
+    def acquire(_context):
+        yield from ()
+        return original
+
+    def archive(_capture, **_kwargs):
+        fixture.resource.attempted = fixture.resource.verified = True
+        yield from ()
+        return pair
+
+    def renew(_context, **facts):
+        if not facts:
+            fixture.calls.append("full scene before write")
+            if failure == "changed scene":
+                raise RuntimeError(failure)
+            return original
+        fixture.calls.append("full scene after write")
+        assert facts == {"expected_prefix": "b" * 64, "lifecycle_record": "canonical test record"}
+        return SimpleNamespace(full_native_prefix_sha256="b" * 64,
+                               full_portable_prefix_sha256=("0" if failure == "portable prefix" else "c") * 64)
+
+    def reread(candidate, check):
+        assert candidate is pair
+        check()
+        fixture.calls.append("archive reread")
+        if failure == "changed archive":
+            raise RuntimeError(failure)
+
+    transition = SimpleNamespace(record="canonical test record", expected_native_prefix_sha256="b" * 64,
+                                 expected_portable_prefix_sha256="c" * 64)
+    job = SimpleNamespace(execution_started=False)
+
+    def setter(bpy, candidate, *, check, on_attempt):
+        assert bpy is native and candidate is transition
+        check()
+        on_attempt()
+        assert job.execution_started and worker.receipt["stage"] == "HELPER_RECORD_ATTEMPT"
+        fixture.calls.append("native setter")
+        if failure == "native readback":
+            raise RuntimeError(failure)
+
+    native = object()
+    monkeypatch.setattr(fixture.domain.source, "require_blender", lambda: native)
+    origin.acquire_steps, origin.refresh_capture = acquire, renew
+    origin.binding.graph = SimpleNamespace(canonical_lifecycle_record=lambda *_: transition.record,
+        prepare_helper_record_transition=lambda _capture, _record: transition, write_helper_record=setter)
+    fixture.resource.prepare_pair_steps, fixture.resource.verify_record_archive = archive, reread
+    worker = fixture.domain.CurrentPixelsDriver({"origin": origin})
+
+    def commit(callback):
+        fixture.calls.append("native boundary")
+        return callback(lambda: fixture.calls.append("checkpoint gate"))
+
+    stream = worker.steps(object(), job, commit)
+    assert next(stream)["phase"] == "backup_preflight"
+    assert next(stream)["phase"] == "archive_verified"
+    assert worker.receipt["stage"] == "BACKUPS_DURABLE" and not job.execution_started
+    if failure is None:
+        with pytest.raises(StopIteration) as done:
+            next(stream)
+        assert done.value.value["phase"] == "helper_record_verified"
+        assert done.value.value["image_packed"] is False and done.value.value["project_saved"] is False
+        assert fixture.calls == ["grants", "native boundary", "full scene before write", "file gate",
+                                 "archive reread", "checkpoint gate", "file gate", "native setter", "full scene after write"]
+    else:
+        expected = fixture.domain.BridgeError if failure == "portable prefix" else RuntimeError
+        with pytest.raises(expected):
+            next(stream)
+    receipt = worker.recovery_evidence()
+    assert receipt["durable_backups_verified"] is True and receipt["state_known"] is False
+    assert receipt["helper_record_write_attempted"] is (failure not in {"changed scene", "changed archive"})
+    assert receipt.get("helper_record_verified", False) is (failure is None)
+    assert receipt["image_write_attempted"] is False
+    assert origin.capture is None

@@ -858,8 +858,12 @@ def test_acquisition_fixture_requires_observed_progress_and_terminal_cancellatio
         assert controls.count("unchanged") == 5 and controls.count("acquisition_preview_verified") == 1
 
 
-@pytest.mark.parametrize("fault", [None, "late_ack", "frozen_ack", "denial", "same_job", "scene_claim", "artifact"])
-def test_deferred_loaded_backup_requires_both_queued_receipts_and_exact_archive(runner, monkeypatch, tmp_path, fault):
+@pytest.mark.parametrize(("helper_record", "fault"), [
+    *((False, fault) for fault in (None, "late_ack", "frozen_ack", "denial", "same_job", "scene_claim", "artifact")),
+    *((True, fault) for fault in (None, "known_recovery", "bad_record", "marker_unchanged", "helper_pixels_changed",
+                                "missing_checkpoint", "nonboolean_consent", "active_setup")),
+])
+def test_deferred_loaded_backup_requires_both_queued_receipts_and_exact_archive(runner, monkeypatch, tmp_path, helper_record, fault):
     from scripts import blender_current_pixels_lifecycle_smoke as fixture
 
     preview_method = "image.current_pixels_pack_preview_start"
@@ -867,7 +871,8 @@ def test_deferred_loaded_backup_requires_both_queued_receipts_and_exact_archive(
     token, transcript, controls, polls, result = "9" * 32, [], [], [], {}
     folder = tmp_path / "lifecycle-backups"
     folder.mkdir()
-    arguments = {"backup_directory": str(folder), "retain_event_journal": False, "backup_prefix": "archive"}
+    arguments = {"backup_directory": str(folder), "retain_event_journal": False, "backup_prefix": "archive",
+                 "image_name": "Source image", "snapshot_name": "Helper image", "affected_materials": ["Material"]}
     current, previous = b"current archive fixture bytes", b"previous archive fixture bytes"
     content = {"archive.current.exr": current, "archive.oldpacked.bin": previous}
     hashes = {"original_packed_sha256": hashlib.sha256(previous).hexdigest(),
@@ -877,11 +882,19 @@ def test_deferred_loaded_backup_requires_both_queued_receipts_and_exact_archive(
     preview = {"phase": "preview", "profile": "FILE_F32_EXR_DATA_CURRENT_PIXELS_V1",
                "dimensions": [2, 2], "fingerprint": "3" * 64, "consumer_graph_sha256": "4" * 64,
                "backup_files_written": False, "image_packed": False, "payload_facts": hashes}
+    lifecycle_identity = {"record_uuid": "a" * 32, "runtime_nonce": "b" * 32}
     content["archive.manifest.json"] = fixture.canonical_json({"kind": "current_pixels_manifest",
         "profile": preview["profile"], "width": 2, "height": 2,
         "current_pixels_sha256_float32_le": hashes["current_pixels_sha256_float32_le"],
         "previous_packed_sha256": hashes["original_packed_sha256"],
-        "previous_decoded_pixels_sha256": hashes["original_decoded_pixels_sha256"]})
+        "previous_decoded_pixels_sha256": hashes["original_decoded_pixels_sha256"], **lifecycle_identity,
+        **{key: arguments[key] for key in ("image_name", "snapshot_name", "affected_materials", "backup_prefix")},
+        "original_identity": {"pointer": "b", "session_uid": "21"},
+        "snapshot_identity": {"pointer": "c", "session_uid": "22"},
+        "backups": {"oldpacked": {"filename": "archive.oldpacked.bin", "bytes": len(previous),
+                                  "sha256": hashes["original_packed_sha256"]},
+                    "current": {"filename": "archive.current.exr", "bytes": len(current),
+                                "sha256": hashes["snapshot_packed_sha256"]}}})
     records = []
     for name, raw in content.items():
         path = folder / name
@@ -891,6 +904,14 @@ def test_deferred_loaded_backup_requires_both_queued_receipts_and_exact_archive(
                 "current_scene_match_verified": False, "files": records, "manifest_sha256": records[-1]["file_sha256"]}
     recovery = {"stage": "UNKNOWN", "state_known": False, "helper_record_write_attempted": False,
                 "image_write_attempted": False, "durable_backups_verified": True, "external_write_attempted": True}
+    lifecycle_record = fixture.canonical_json({"schema_version": 1, "profile": preview["profile"], **lifecycle_identity,
+                                                "manifest_sha256": archived["manifest_sha256"]}).decode()
+    if helper_record:
+        record_digest = hashlib.sha256(lifecycle_record.encode()).hexdigest()
+        archived.update(phase="helper_record_verified", helper_record_verified=True, lifecycle_record_sha256=record_digest)
+        recovery.update(helper_record_write_attempted=True, helper_record_verified=True, lifecycle_record_sha256=record_digest,
+            project_saved=False, manifest_sha256=archived["manifest_sha256"], expected_target_fingerprint=preview["fingerprint"],
+            image_name=arguments["image_name"], snapshot_name=arguments["snapshot_name"], **lifecycle_identity)
     starts = {preview_method: 0, pack_method: 0}
     accepted = {}
 
@@ -912,8 +933,10 @@ def test_deferred_loaded_backup_requires_both_queued_receipts_and_exact_archive(
         else:
             assert method == "jobs.inspect"
             ack, starter = accepted[params["job_id"]]
+            native_boundary = helper_record and starter == pack_method
             response["result"] = {"job_id": ack["job_id"], "request_id": ack["request_id"], "revision": 3,
-                "terminal": True, "state": "SUCCEEDED", "undo_boundary_created": False, "progress": {},
+                "terminal": True, "state": "SUCCEEDED", "undo_boundary_created": native_boundary,
+                "undo_boundary_finalized": native_boundary, "progress": {},
                 "result": preview if starter == preview_method else archived, "recovery_evidence": recovery}
         row = {"request": frame, "response": response, "elapsed_seconds": .25}
         if retained:
@@ -923,7 +946,8 @@ def test_deferred_loaded_backup_requires_both_queued_receipts_and_exact_archive(
     def control(action, **kwargs):
         controls.append((action, kwargs))
 
-    fixture.loaded_backup_requests(request, control, preview_method, pack_method, arguments, result, transcript, polls)
+    fixture.loaded_backup_requests(request, control, preview_method, pack_method, arguments, result, transcript, polls,
+                                   helper_record=helper_record)
     assert [action for action, _ in controls].count("unchanged") == 8
     assert [details["preference"] for action, details in controls if action == "grant" and not details["enabled"]] == list(fixture.ACQUISITION_GRANTS) * 2
     assert controls[12] == ("preview_verified", {"preview": preview})
@@ -936,8 +960,11 @@ def test_deferred_loaded_backup_requires_both_queued_receipts_and_exact_archive(
                "source_snapshot_sha256": hashlib.sha256(fixture.canonical_json(sources)).hexdigest(),
                "public_tool_acceptance": False, "image_forward_transition_qualified": False,
                "restoration_qualified": False, "windows_qualified": False}
-    baseline = {"backup_files": [], "images": [{"packed": hashes["original_packed_sha256"],
-                "pixels": hashes["current_pixels_sha256_float32_le"]}, {"packed": hashes["snapshot_packed_sha256"]}]}
+    original = {"packed": hashes["original_packed_sha256"], "pixels": hashes["current_pixels_sha256_float32_le"],
+                "name": arguments["image_name"], "pointer": 11, "uid": 21, "keys": []}
+    helper = {"packed": hashes["snapshot_packed_sha256"], "pixels": hashes["current_pixels_sha256_float32_le"],
+              "name": arguments["snapshot_name"], "pointer": 12, "uid": 22, "keys": ["retained_metadata"]}
+    baseline = {"backup_files": [], "images": [original, helper], "owner": original["pointer"], "active": None}
     full = {**compact, "source_fingerprints": sources, "assertions": dict.fromkeys(fixture.LOADED_ASSERTIONS, True),
             "ack_request_timeout_ms": 3000, "control_request_timeout_ms": 10000, "backup_job_limit_seconds": 60.,
             "socket_timeout_seconds": 65, "storage_setup": None, "public_three_second_latency_qualified": False,
@@ -946,6 +973,19 @@ def test_deferred_loaded_backup_requires_both_queued_receipts_and_exact_archive(
             "protected_final": {"pixels": "7" * 64}, "poll_count": 1, "preview_poll_count": 1,
             "peak_rss_bytes": 123, "payload_hashes": hashes, "transport": transcript,
             "terminal": result["terminal"], "backup_files": records}
+    if helper_record:
+        compact.update(profile=fixture.HELPER_RECORD_PROFILE, scope=fixture.HELPER_RECORD_SCOPE, helper_record_qualified=True)
+        checkpoint = {"scene_uid": 3, "scene_pointer": 5, "scene_name": "Scene", "authored_properties": {},
+                      "marker_key": fixture.SCENE_CHECKPOINT_KEY, "marker": None, "filepath": "", "saved": False}
+        full.update(compact, assertions=dict.fromkeys(fixture.HELPER_RECORD_ASSERTIONS, True),
+                    helper_lifecycle_key=fixture.HELPER_LIFECYCLE_KEY, lifecycle_record=lifecycle_record,
+                    helper_commit_poll_timeout_ms=fixture.HELPER_COMMIT_POLL_MS,
+                    polls=polls, maximum_backup_poll_elapsed_seconds=max(row["elapsed_seconds"] for row in polls),
+                    fixture_checkpoint_setup={"scene_self_references_before": 0, "scene_self_references_after": 0,
+                        "active_object_after": None, "particle_object_after": None,
+                        "native_setup_push_completed": True, "baseline_observations_unchanged": True},
+                    scene_checkpoint_before=checkpoint, scene_checkpoint_after={**checkpoint, "marker": "BCB1:" + ("e" * 32) + ":" + ("f" * 32)})
+        full["final"]["images"] = [original.copy(), {**helper, "keys": [fixture.HELPER_LIFECYCLE_KEY, *helper["keys"]]}]
     backup_ack = transcript[10]["response"]["result"]
     if fault == "late_ack":
         transcript[10]["elapsed_seconds"] = 3.01
@@ -959,9 +999,25 @@ def test_deferred_loaded_backup_requires_both_queued_receipts_and_exact_archive(
         archived["current_scene_match_verified"] = True
     elif fault == "artifact":
         (folder / "archive.current.exr").write_bytes(current[::-1])
-    compact["full_receipt"] = fixture.write_receipt(tmp_path / fixture.LOADED_REPORT_NAME, full)
+    elif fault == "known_recovery":
+        recovery.update(stage="HELPER_RECORD_VERIFIED", state_known=True, observed_prefix="HELPER_RECORD_VERIFIED",
+                        expected_prefix_sha256="e" * 64, observed_prefix_sha256="e" * 64)
+    elif fault == "bad_record":
+        full["lifecycle_record"] += " "
+    elif fault == "marker_unchanged":
+        full["scene_checkpoint_after"]["marker"] = full["scene_checkpoint_before"]["marker"]
+    elif fault == "helper_pixels_changed":
+        full["final"]["images"][1]["pixels"] = "f" * 64
+    elif fault == "missing_checkpoint":
+        result["terminal"]["undo_boundary_finalized"] = False
+    elif fault == "nonboolean_consent":
+        transcript[10]["request"]["params"]["confirm_record_backup"] = 1
+    elif fault == "active_setup":
+        full["fixture_checkpoint_setup"]["particle_object_after"] = 11
+    report = fixture.HELPER_RECORD_REPORT_NAME if helper_record else fixture.LOADED_REPORT_NAME
+    compact["full_receipt"] = fixture.write_receipt(tmp_path / report, full)
 
-    assert runner._loaded_backup_receipt_matches(compact, tmp_path, token) is (fault is None)
+    assert runner._loaded_backup_receipt_matches(compact, tmp_path, token, helper_record=helper_record) is (fault is None)
 
 
 @pytest.mark.parametrize("fault", [None, "hardlink_pair", "late_manifest", "bytes_changed", "repeated_tick", "incomplete_cancel"])

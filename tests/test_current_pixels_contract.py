@@ -99,6 +99,33 @@ def test_all_four_request_shapes_have_explicit_confirmations_and_fresh_copies(co
     assert restored["time_limit_seconds"] == 1.5
 
 
+def test_helper_record_opt_in_is_exact_and_available_only_on_pack_start(contract):
+    start = {**pack_request(), "expected_target_fingerprint": "a" * 64,
+             "confirm_replace_packed_bytes": True, "confirm_discard_current_buffer": True}
+    assert contract.validate_request(contract.PACK_START, {**start, "confirm_record_backup": False}) == (
+        contract.validate_request(contract.PACK_START, start))
+    assert contract.validate_request(contract.PACK_START, {**start, "confirm_record_backup": True})[
+        "confirm_record_backup"] is True
+    for value in (None, 1, "true"):
+        with pytest.raises(contract.BridgeError, match="exact Boolean"):
+            contract.validate_request(contract.PACK_START, {**start, "confirm_record_backup": value})
+    with pytest.raises(contract.BridgeError, match="unknown"):
+        contract.validate_request(contract.PACK_PREVIEW, {**pack_request(), "confirm_record_backup": True})
+
+
+def test_historical_helper_record_verification_keeps_its_exact_digest(contract):
+    attempted = prefix_facts("HELPER_RECORD_ATTEMPT")
+    digest = "f" * 64
+    with pytest.raises(contract.BridgeError, match="attempted write and durable backups"):
+        contract.validate_receipt({**attempted, "helper_record_verified": True, "lifecycle_record_sha256": digest})
+    verified = contract.prefix_receipt(attempted, "HELPER_RECORD_VERIFIED",
+                                       helper_record_verified=True, lifecycle_record_sha256=digest)
+    unknown = contract.unknown_observation(verified)
+    assert unknown["state_known"] is False and unknown["helper_record_verified"] is True
+    assert unknown["lifecycle_record_sha256"] == digest
+    with pytest.raises(contract.BridgeError, match="original scope identity"):
+        contract.prefix_receipt(verified, "UNKNOWN", state_known=False, lifecycle_record_sha256="1" * 64)
+
 @pytest.mark.parametrize("key,value", [
     ("image_name", ""), ("image_name", "  "), ("image_name", "é" * 32), ("image_name", "\ud800"),
     ("snapshot_name", "line\nbreak"), ("affected_materials", []), ("affected_materials", ["A", "A"]),

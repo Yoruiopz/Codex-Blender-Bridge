@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 
 from .. import current_pixels_contract as contract
@@ -151,7 +152,7 @@ class CurrentPixelsDriver:
             "consumer_graph_sha256": capture.consumer_graph_sha256, "snapshot_retained": True,
         })
 
-    def steps(self, context, _job, _commit):
+    def steps(self, context, job, commit):
         origin = self.origin
         if origin.input_deferred:
             origin.prepare_acquisition(context)
@@ -200,9 +201,51 @@ class CurrentPixelsDriver:
             self.receipt, "BACKUPS_DURABLE", durable_backups_verified=True,
             manifest_sha256=pair["manifest_sha256"], observed_prefix="BACKUPS_DURABLE",
         )
-        return {"phase": "backups_verified", "files": pair["files"],
-                "manifest_sha256": pair["manifest_sha256"], "image_packed": False, "project_saved": False,
-                **({"historical_archive": True, "current_scene_match_verified": False} if origin.input_deferred else {})}
+        result = {"phase": "backups_verified", "files": pair["files"],
+                  "manifest_sha256": pair["manifest_sha256"], "image_packed": False, "project_saved": False,
+                  **({"historical_archive": True, "current_scene_match_verified": False} if origin.input_deferred else {})}
+        if origin.helper_record_requested:
+            if commit is None:
+                raise source.refused("NATIVE_HELPER_RECORD_BOUNDARY_REQUIRED")
+            yield {"phase": "archive_verified", "completed": 1, "total": 1}
+            origin.authorize(context)
+            result.update(commit(lambda checkpoint_gate: self._write_helper_record(context, job, pair, checkpoint_gate)))
+        return result
+
+    def _write_helper_record(self, context, job, pair, checkpoint_gate):
+        origin = self.origin
+        graph = origin.binding.graph
+        record = graph.canonical_lifecycle_record(self.record_uuid, origin.binding.nonce, pair["manifest_sha256"])
+        record_sha256 = hashlib.sha256(record.encode("utf-8")).hexdigest()
+        try:
+            transition = graph.prepare_helper_record_transition(origin.refresh_capture(context), record)
+            origin.release_acquisition()
+            self.files.verify_record_archive(pair, origin._read_gate)
+            checkpoint_gate()
+
+            def mark_attempt():
+                self.receipt = contract.prefix_receipt(
+                    self.receipt, "HELPER_RECORD_ATTEMPT", helper_record_write_attempted=True,
+                    expected_prefix_sha256=transition.expected_native_prefix_sha256, state_known=False,
+                    observed_prefix=None, observed_prefix_sha256=None,
+                )
+                job.execution_started = True
+
+            graph.write_helper_record(source.require_blender(), transition, check=origin._read_gate,
+                                      on_attempt=mark_attempt)
+            capture = origin.refresh_capture(context, expected_prefix=transition.expected_native_prefix_sha256,
+                                             lifecycle_record=transition.record)
+            if capture.full_portable_prefix_sha256 != transition.expected_portable_prefix_sha256:
+                raise source.refused("EXPECTED_PORTABLE_HELPER_PREFIX_CHANGED")
+            self.receipt = contract.prefix_receipt(
+                self.receipt, "HELPER_RECORD_VERIFIED", helper_record_verified=True,
+                lifecycle_record_sha256=record_sha256, state_known=True,
+                observed_prefix="HELPER_RECORD_VERIFIED", observed_prefix_sha256=capture.full_native_prefix_sha256,
+            )
+            return {"phase": "helper_record_verified", "helper_record_verified": True,
+                    "lifecycle_record_sha256": record_sha256}
+        finally:
+            origin.release_acquisition()
 
     def _record_attempt(self):
         if self.files.attempted and self.receipt["stage"] == "PREPARED":

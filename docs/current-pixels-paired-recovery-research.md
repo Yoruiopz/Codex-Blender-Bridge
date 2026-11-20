@@ -110,6 +110,26 @@ write on each build. The exact 488-byte original payload remained as one
 owned staging file. Four separate timer observations verified that no
 additional files appeared and the fixture scene stayed unchanged.
 
+The separate `current_pixels_helper_record` case requests one canonical manifest
+record on the existing native helper. The default archive operation stops after
+independent file readback. The opt-in case yields once at that boundary so it can
+be cancelled before entering the native checkpoint. Inside the checkpoint it
+compares the loaded Image and consumer graph with the preview, reads back all
+three archive files again, writes the helper record, and checks both native and
+portable graph digests against the predicted single-property change. Terminal
+evidence retains the historical record digest and leaves current scene state
+unknown. The project path, original packing and image pixel buffers stay outside
+this phase.
+
+The fixture uses a disposable Object Mode context with no active Object. It
+performs a labeled ordinary Blender undo push before the preview and compares
+the fixture's authored baseline across that setup push. An earlier 4.5.14 run
+with an active Object stopped after the first checkpoint push changed native
+Particle Edit state. The refusal retained all three verified files and reported
+one completed Scene marker write and one native snapshot. The helper write was
+never attempted. Supporting that context requires a separately verified native
+state transition. The product path does not initialize or rebase those roles.
+
 The separate read-only graph passed on stock Linux Blender 4.5.14 and 5.2.2
 at clean commit `3805511f571a8acaa2a9c16b6cab07713770348a` (source fingerprint
 `37243a19adccca66c837a9184602e95b68f35fb6bc991b016b301ecb70a4944b`). The capture

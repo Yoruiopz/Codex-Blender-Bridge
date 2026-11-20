@@ -30,6 +30,13 @@ LOADED_PROFILE = "CURRENT_PIXELS_QUEUED_LOADED_BACKUP_SMALL_V2"
 LOADED_MARKER = "BLENDER_CURRENT_PIXELS_LOADED_BACKUP_OK "
 LOADED_REPORT_NAME = "current-pixels-loaded-backup.json"
 LOADED_BACKUP_JOB_SECONDS = 60.
+HELPER_RECORD_PROFILE = "CURRENT_PIXELS_QUEUED_HELPER_RECORD_SMALL_V1"
+HELPER_RECORD_SCOPE = "fixture_only_queued_archive_and_helper_record"
+HELPER_RECORD_MARKER = "BLENDER_CURRENT_PIXELS_HELPER_RECORD_OK "
+HELPER_RECORD_REPORT_NAME = "current-pixels-helper-record.json"
+HELPER_COMMIT_POLL_MS = 30000
+HELPER_LIFECYCLE_KEY = "_codex_bridge_current_pixels_lifecycle_v1"
+SCENE_CHECKPOINT_KEY = "_codex_bridge_undo_marker"
 ACQUISITION_PROFILE = "CURRENT_PIXELS_QUEUED_ACQUISITION_SMALL_V1"
 ACQUISITION_MARKER = "BLENDER_CURRENT_PIXELS_ACQUISITION_OK "
 ACQUISITION_REPORT_NAME = "current-pixels-acquisition.json"
@@ -60,6 +67,11 @@ LOADED_ASSERTIONS = frozenset({"fixture_only_registration", "normal_registry_unc
     "terminal_preview_hashes", "preview_files_unchanged",
     "source_helper_and_protected_unchanged", "backup_only_queued_start", "backups_independently_reopened",
     "no_image_or_helper_write", "source_unchanged"})
+HELPER_RECORD_ASSERTIONS = ((LOADED_ASSERTIONS - {"source_helper_and_protected_unchanged",
+    "backup_only_queued_start", "no_image_or_helper_write"}) | {
+    "exact_helper_record_bound_to_manifest", "native_checkpoint_created_and_finalized",
+    "original_helper_content_and_protected_unchanged", "only_helper_record_and_reserved_scene_marker_written",
+})
 GRAPH_ASSERTIONS = frozenset({"positive_complete_graph", "repeat_complete_graph", "four_grant_denials",
     "native_owner_refusal", "unloaded_helper_refusal", "unlisted_consumer_refusal", "instancer_refusal",
     "manual_geometry_detected", "manual_uv_detected", "manual_mapping_detected", "manual_socket_detected",
@@ -92,7 +104,7 @@ def owned_profile(report, *, private_display=None):
     """Accept only the runner's disposable profile and fixed output sibling."""
     assert sys.platform == "linux", "This census currently qualifies official Linux builds only"
     assert report.is_absolute() and report.name in {REPORT_NAME, GRAPH_REPORT_NAME, LOADED_REPORT_NAME,
-                                                   ACQUISITION_REPORT_NAME, INTERRUPTION_REPORT_NAME}
+                                                   ACQUISITION_REPORT_NAME, INTERRUPTION_REPORT_NAME, HELPER_RECORD_REPORT_NAME}
     parent = report.parent
     assert not parent.is_symlink() and parent.resolve(strict=True) == parent
     info = parent.stat()
@@ -339,6 +351,7 @@ def native_graph_probe(bpy, graph, before, parent, *, loaded_backup=None):
                 "filepath": image.filepath, "roles": [image.colorspace_settings.name, image.alpha_mode],
                 "dirty": image.is_dirty if loaded else None, "fake_user": image.use_fake_user,
                 "keys": sorted(image.keys())})
+        active = bpy.context.view_layer.objects.active
         state = {"images": rows, "owner": helper[storage.OWNER_KEY].as_pointer(), "metadata": helper[storage.METADATA_KEY],
             "vertices": [list(item.co) for item in mesh.vertices],
             "uv": [list(item.vector) for item in uv_attribute.data],
@@ -347,7 +360,7 @@ def native_graph_probe(bpy, graph, before, parent, *, loaded_backup=None):
             "nodes": [(node.name, node.bl_idname) for node in tree.nodes],
             "links": [(link.from_node.name, link.from_socket.identifier, link.to_node.name, link.to_socket.identifier) for link in tree.links],
             "matrix": [list(row) for row in obj.matrix_world], "mode": bpy.context.mode,
-            "active": bpy.context.view_layer.objects.active.as_pointer(),
+            "active": None if active is None else active.as_pointer(),
             "selected": selected,
             "frame": bpy.context.scene.frame_current, "backup_files": sorted(path.name for path in backups.iterdir()),
             "seed_sha256": hashlib.sha256(seed.read_bytes()).hexdigest()}
@@ -386,9 +399,28 @@ def native_graph_probe(bpy, graph, before, parent, *, loaded_backup=None):
 
     before_read = observed()
     if loaded_backup is not None:
-        return _loaded_backup_probe(bpy, before, parent, runtime, prefs, original, helper, other,
-            material, backups, previous, current, edited, observed, original_decoded_sha256=digest(old),
-            storage_setup=storage_setup, **loaded_backup)
+        def start_queued():
+            return _loaded_backup_probe(bpy, before, parent, runtime, prefs, original, helper, other,
+                material, backups, previous, current, edited, observed, original_decoded_sha256=digest(old),
+                storage_setup=storage_setup, **loaded_backup)
+
+        if loaded_backup.get("helper_record"):
+            # Factory reset discarded the timer's original window context.
+            # Give the owned editor a turn before taking a fixture-only undo snapshot.
+            def after_factory_reset():
+                from traceback import print_exc
+
+                from blender_artist_sidebar_smoke import owned_process_exit
+
+                try:
+                    return start_queued()
+                except BaseException:
+                    print_exc()
+                    owned_process_exit(1)
+
+            bpy.app.timers.register(after_factory_reset, first_interval=0.25)
+            return None
+        return start_queued()
     first = unchanged(capture)
     second = unchanged(capture)
     assert first.summary() | {"resource_facts": None} == second.summary() | {"resource_facts": None}
@@ -536,11 +568,12 @@ def start_deferred_job(request, method, arguments):
     return ack
 
 
-def wait_for_loaded_success(request, ack, transcript, seconds, polls=None):
+def wait_for_loaded_success(request, ack, transcript, seconds, polls=None, *, helper_record=False):
     params = {"job_id": ack["job_id"]}
+    timeout_ms = HELPER_COMMIT_POLL_MS if helper_record else ACQUISITION_CONTROL_MS
     end, revision, count = time.monotonic() + seconds, ack["revision"], 0
     while time.monotonic() < end:
-        response, row = request("jobs.inspect", params, retained=False, timeout_ms=ACQUISITION_CONTROL_MS)
+        response, row = request("jobs.inspect", params, retained=False, timeout_ms=timeout_ms)
         assert response["ok"] is True, response
         job = response["result"]
         assert job["job_id"] == ack["job_id"] and job["revision"] >= revision
@@ -550,7 +583,9 @@ def wait_for_loaded_success(request, ack, transcript, seconds, polls=None):
                           "elapsed_seconds": row["elapsed_seconds"]})
         if job["terminal"] is True:
             transcript.append(row)
-            assert job["state"] == "SUCCEEDED" and job["undo_boundary_created"] is False, job
+            assert job["state"] == "SUCCEEDED" and job["undo_boundary_created"] is helper_record, job
+            if helper_record:
+                assert job["undo_boundary_finalized"] is True, job
             return job, count
         time.sleep(.02)
     raise AssertionError("Private current-pixels job exceeded the diagnostic deadline")
@@ -570,21 +605,31 @@ def preview_for_backup(request, control, preview_method, arguments, transcript):
     return preview_ack, preview, start, preview_polls
 
 
-def loaded_backup_requests(request, control, preview_method, pack_method, arguments, result, transcript, polls):
+def loaded_backup_requests(request, control, preview_method, pack_method, arguments, result, transcript, polls,
+                           *, helper_record=False):
     """Obtain a reviewed preview then run the separate, deferred backup job."""
     require_starter_grants(request, control, preview_method, arguments)
     preview_ack, preview, start, preview_polls = preview_for_backup(request, control, preview_method, arguments, transcript)
+    if helper_record:
+        start["confirm_record_backup"] = True
     require_starter_grants(request, control, pack_method, start)
     accepted = start_deferred_job(request, pack_method, start)
     assert accepted["job_id"] != preview_ack["job_id"]
-    job, count = wait_for_loaded_success(request, accepted, transcript, LOADED_BACKUP_JOB_SECONDS + 15., polls)
-    assert job["result"]["phase"] == "backups_verified"
+    job, count = wait_for_loaded_success(request, accepted, transcript, LOADED_BACKUP_JOB_SECONDS + 15., polls,
+                                         helper_record=helper_record)
+    assert job["result"]["phase"] == ("helper_record_verified" if helper_record else "backups_verified")
     assert job["result"]["image_packed"] is False and job["result"]["project_saved"] is False
     assert job["result"]["historical_archive"] is True and job["result"]["current_scene_match_verified"] is False
     recovery = job["recovery_evidence"]
     assert recovery["stage"] == "UNKNOWN" and recovery["state_known"] is False
+    assert recovery.get("observed_prefix") is None and recovery.get("observed_prefix_sha256") is None
     assert recovery["durable_backups_verified"] is True
-    assert recovery["helper_record_write_attempted"] is False and recovery["image_write_attempted"] is False
+    assert recovery["helper_record_write_attempted"] is helper_record and recovery["image_write_attempted"] is False
+    if helper_record:
+        digest = job["result"]["lifecycle_record_sha256"]
+        assert re.fullmatch(r"[0-9a-f]{64}", digest) and recovery["lifecycle_record_sha256"] == digest
+        assert job["result"]["helper_record_verified"] is True
+        assert recovery["helper_record_verified"] is True and recovery["project_saved"] is False
     assert len(transcript) == 12
     result.update(preview=preview, terminal=job, preview_poll_count=preview_polls, poll_count=count)
 
@@ -730,9 +775,61 @@ def acquisition_requests(request, control, method, arguments, result, transcript
     assert len(transcript) == 10
 
 
+def scene_checkpoint_observation(bpy):
+    scene = bpy.context.scene
+    keys = list(scene.keys())
+    authored = {name: scene[name] for name in keys if name != SCENE_CHECKPOINT_KEY}
+    assert all(type(value) in {str, int, float, bool} for value in authored.values())
+    return {"scene_uid": scene.session_uid, "scene_pointer": scene.as_pointer(), "scene_name": scene.name,
+            "authored_properties": authored, "marker_key": SCENE_CHECKPOINT_KEY, "marker": scene.get(SCENE_CHECKPOINT_KEY),
+            "filepath": bpy.data.filepath, "saved": bpy.data.is_saved}
+
+
+def fixture_checkpoint_context(bpy, observe, protected_state):
+    """Exercise the fixture's stock no-active-Object undo context before preview."""
+    layer, scene = bpy.context.view_layer, bpy.context.scene
+    layer.objects.active = None
+    before, protected_before = observe(), protected_state()
+    scene_before = scene_checkpoint_observation(bpy)
+    before_self = scene.user_of_id(scene)
+    assert bpy.ops.ed.undo_push.poll()
+    assert bpy.ops.ed.undo_push(message="Fixture setup before Bridge preview") == {"FINISHED"}
+    assert layer.objects.active is None and scene.tool_settings.particle_edit.object is None
+    after_self = scene.user_of_id(scene)
+    assert (before_self, after_self) in {(0, 0), (0, 1), (1, 1)} and SCENE_CHECKPOINT_KEY not in scene
+    assert scene_checkpoint_observation(bpy) == scene_before
+    assert observe() == before and protected_state() == protected_before
+    return {"scene_self_references_before": before_self, "scene_self_references_after": after_self,
+            "active_object_after": None, "particle_object_after": None,
+            "native_setup_push_completed": True, "baseline_observations_unchanged": True}
+
+
+def without_added_helper_record(observation):
+    original, helper = observation["images"]
+    keys = helper["keys"]
+    assert HELPER_LIFECYCLE_KEY not in original["keys"] and keys.count(HELPER_LIFECYCLE_KEY) == 1
+    return {**observation, "images": [original, {**helper, "keys": [key for key in keys if key != HELPER_LIFECYCLE_KEY]}]}
+
+
+def verify_helper_record(raw, manifest, outcome, recovery, baseline):
+    """Compare the native properties against the independently parsed archive."""
+    expected = {"schema_version": 1, "profile": manifest["profile"], "record_uuid": manifest["record_uuid"],
+                "runtime_nonce": manifest["runtime_nonce"], "manifest_sha256": outcome["manifest_sha256"]}
+    assert type(raw) is str and raw == canonical_json(expected).decode()
+    assert hashlib.sha256(raw.encode()).hexdigest() == outcome["lifecycle_record_sha256"] == recovery["lifecycle_record_sha256"]
+    assert recovery["manifest_sha256"] == expected["manifest_sha256"]
+    assert recovery["record_uuid"] == expected["record_uuid"] and recovery["runtime_nonce"] == expected["runtime_nonce"]
+    for image, label, identity in zip(baseline["images"], ("image_name", "snapshot_name"),
+                                      ("original_identity", "snapshot_identity"), strict=True):
+        assert manifest[label] == recovery[label] == image["name"]
+        assert manifest[identity] == {"pointer": format(image["pointer"], "x"), "session_uid": str(image["uid"])}
+    assert baseline["owner"] == baseline["images"][0]["pointer"]
+
+
 def _loaded_backup_probe(bpy, before, parent, runtime, prefs, original, helper, protected,
                          material, backups, previous, current, edited, observe, *, report, token, display,
-                         original_decoded_sha256, storage_setup=None, acquisition=False, interruption=False):
+                         original_decoded_sha256, storage_setup=None, acquisition=False, interruption=False,
+                         helper_record=False):
     """Real socket worker and the registered Runtime timer; no manual dispatch."""
     import queue
     import resource
@@ -778,10 +875,14 @@ def _loaded_backup_probe(bpy, before, parent, runtime, prefs, original, helper, 
             "roles": [protected.colorspace_settings.name, protected.alpha_mode], "filepath": protected.filepath,
             "fake_user": protected.use_fake_user, "keys": sorted(protected.keys())}
 
+    fixture_checkpoint = fixture_checkpoint_context(bpy, observe, protected_state) if helper_record else None
     baseline, protected_before = observe(), protected_state()
     assert baseline["backup_files"] == []
-    if interruption:
+    if interruption or helper_record:
         assert bpy.data.filepath == "" and not bpy.data.is_saved
+    if helper_record:
+        assert HELPER_LIFECYCLE_KEY not in baseline["images"][1]["keys"] and helper.get(HELPER_LIFECYCLE_KEY) is None
+    checkpoint_before = scene_checkpoint_observation(bpy) if helper_record else None
     initial_names = set(runtime.registry._tools)
     controls, done, result = queue.Queue(), threading.Event(), {}
     transcript, polls, assertions = [], [], {key: True for key in (
@@ -838,7 +939,7 @@ def _loaded_backup_probe(bpy, before, parent, runtime, prefs, original, helper, 
                 return
 
             loaded_backup_requests(request, control, source.PREVIEW_START, contract.PACK_START,
-                                  arguments, result, transcript, polls)
+                                  arguments, result, transcript, polls, helper_record=helper_record)
         except BaseException:
             result["failure"] = traceback.format_exc()
         finally:
@@ -848,10 +949,12 @@ def _loaded_backup_probe(bpy, before, parent, runtime, prefs, original, helper, 
                 connection.close()
             done.set()
 
-    def unchanged(*, allow_backups=False):
+    def unchanged(*, allow_backups=False, allow_helper_record=False):
         now = observe()
         if allow_backups:
             now = {**now, "backup_files": []}
+        if allow_helper_record:
+            now = without_added_helper_record(now)
         assert now == baseline and protected_state() == protected_before, "Owned data changed"
         assert set(runtime.registry._tools) == initial_names
 
@@ -887,13 +990,16 @@ def _loaded_backup_probe(bpy, before, parent, runtime, prefs, original, helper, 
     def finish():
         assert done.is_set(), "Worker not finished"
         if "failure" in result:
-            unchanged(allow_backups=not acquisition)
+            if not helper_record:
+                unchanged(allow_backups=not acquisition)
             marker = ("BLENDER_CURRENT_PIXELS_ACQUISITION_REFUSAL " if acquisition
                       else "BLENDER_CURRENT_PIXELS_BACKUP_INTERRUPTION_REFUSAL " if interruption
+                      else "BLENDER_CURRENT_PIXELS_HELPER_RECORD_REFUSAL " if helper_record
                       else "BLENDER_CURRENT_PIXELS_LOADED_BACKUP_REFUSAL ")
             print(marker + canonical_json({
-                "source_helper_and_protected_unchanged": True,
+                "source_helper_and_protected_unchanged": None if helper_record else True,
                 "backup_files_present": len(tuple(backups.iterdir())),
+                **({"lifecycle_record_present": HELPER_LIFECYCLE_KEY in tuple(helper.keys())} if helper_record else {}),
                 "requests": [{"method": row["request"]["method"], "elapsed_seconds": row["elapsed_seconds"],
                               "error_code": row["response"].get("error", {}).get("code")}
                              for row in transcript],
@@ -929,13 +1035,13 @@ def _loaded_backup_probe(bpy, before, parent, runtime, prefs, original, helper, 
             print(ACQUISITION_MARKER + canonical_json(compact).decode(), flush=True)
             owned_process_exit(0)
             return
-        unchanged(allow_backups=True)
+        unchanged(allow_backups=True, allow_helper_record=helper_record)
         assert runtime.jobs.active is None and not runtime.state.snapshot()["is_executing"]
         terminal = result["terminal"]
         files = terminal["result"]["files"]
         assert type(files) is list and len(files) == 3
         expected = {prefix + ".oldpacked.bin": previous, prefix + ".current.exr": current}
-        records = []
+        records, manifest = [], None
         for record in files:
             assert type(record) is dict and set(record) == {"filepath", "file_bytes", "file_sha256"}
             path = Path(record["filepath"])
@@ -957,12 +1063,42 @@ def _loaded_backup_probe(bpy, before, parent, runtime, prefs, original, helper, 
             records.append(record)
         assert {path.name for path in backups.iterdir()} == {*expected, prefix + ".manifest.json"}
         assert source_fingerprints() == before
-        assertions.update(source_helper_and_protected_unchanged=True, backup_only_queued_start=True,
-            backups_independently_reopened=True, no_image_or_helper_write=True, source_unchanged=True,
+        assertions.update(backups_independently_reopened=True, source_unchanged=True,
             real_socket_timer=True, both_starters_four_grant_denials=True,
             both_acknowledgements_unfrozen_under_three_seconds=True, preview_files_unchanged=True)
-        assert set(assertions) == LOADED_ASSERTIONS
-        proof = {"completed": True, "profile": LOADED_PROFILE, "scope": "fixture_only_queued_preview_and_backup",
+        profile, scope, marker = LOADED_PROFILE, "fixture_only_queued_preview_and_backup", LOADED_MARKER
+        helper_proof = {}
+        if helper_record:
+            from blender_codex_bridge.current_pixels_graph import (
+                LIFECYCLE_KEY,
+                validate_lifecycle_record,
+            )
+
+            assert LIFECYCLE_KEY == HELPER_LIFECYCLE_KEY and manifest is not None
+            assert all(bpy.data.images[image.name].as_pointer() == image.as_pointer() for image in (original, helper, protected))
+            raw_record = validate_lifecycle_record(helper[LIFECYCLE_KEY])
+            verify_helper_record(raw_record, manifest, terminal["result"], terminal["recovery_evidence"], baseline)
+            assert terminal["recovery_evidence"]["expected_target_fingerprint"] == result["preview"]["fingerprint"]
+            checkpoint_after = scene_checkpoint_observation(bpy)
+            assert checkpoint_before["filepath"] == "" and checkpoint_before["saved"] is False
+            assert {**checkpoint_after, "marker": checkpoint_before["marker"]} == checkpoint_before
+            assert re.fullmatch(r"BCB1:[0-9a-f]{32}:[0-9a-f]{32}", checkpoint_after["marker"])
+            assert checkpoint_after["marker"] != checkpoint_before["marker"]
+            assertions.update(exact_helper_record_bound_to_manifest=True, native_checkpoint_created_and_finalized=True,
+                original_helper_content_and_protected_unchanged=True, only_helper_record_and_reserved_scene_marker_written=True)
+            assert set(assertions) == HELPER_RECORD_ASSERTIONS
+            profile, scope, marker = HELPER_RECORD_PROFILE, HELPER_RECORD_SCOPE, HELPER_RECORD_MARKER
+            assert len(polls) == result["poll_count"]
+            helper_proof = {"helper_record_qualified": True, "helper_lifecycle_key": HELPER_LIFECYCLE_KEY,
+                            "lifecycle_record": raw_record, "scene_checkpoint_before": checkpoint_before,
+                            "scene_checkpoint_after": checkpoint_after, "fixture_checkpoint_setup": fixture_checkpoint,
+                            "helper_commit_poll_timeout_ms": HELPER_COMMIT_POLL_MS,
+                            "maximum_backup_poll_elapsed_seconds": max(row["elapsed_seconds"] for row in polls)}
+        else:
+            assertions.update(source_helper_and_protected_unchanged=True, backup_only_queued_start=True,
+                              no_image_or_helper_write=True)
+            assert set(assertions) == LOADED_ASSERTIONS
+        proof = {"completed": True, "profile": profile, "scope": scope,
             "process_instance": token, "process_id": os.getpid(), "blender_version": bpy.app.version_string,
             "source_build": bpy.app.build_hash.decode(), "source_fingerprints": before,
             "source_snapshot_sha256": hashlib.sha256(canonical_json(before)).hexdigest(),
@@ -977,13 +1113,15 @@ def _loaded_backup_probe(bpy, before, parent, runtime, prefs, original, helper, 
             "protected_final": protected_state(), "backup_files": records, "terminal": terminal,
             "elapsed_seconds": time.monotonic() - began,
             "peak_rss_bytes": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024,
-            "image_packed": False, "project_saved": False}
+            "image_packed": False, "project_saved": False, **helper_proof}
         receipt = write_receipt(report, proof)
         compact = {key: proof[key] for key in ("completed", "profile", "scope", "process_instance", "process_id",
             "blender_version", "source_build", "source_snapshot_sha256", "public_tool_acceptance",
             "image_forward_transition_qualified", "restoration_qualified", "windows_qualified")}
+        if helper_record:
+            compact["helper_record_qualified"] = True
         compact["full_receipt"] = receipt
-        print(LOADED_MARKER + canonical_json(compact).decode(), flush=True)
+        print(marker + canonical_json(compact).decode(), flush=True)
         owned_process_exit(0)
 
     def supervise():
@@ -1046,11 +1184,14 @@ def main(argv=None):
     modes.add_argument("--bridge-loaded-backup", action="store_true")
     modes.add_argument("--bridge-current-pixels-acquisition", action="store_true")
     modes.add_argument("--bridge-current-pixels-backup-interruption", action="store_true")
+    modes.add_argument("--bridge-current-pixels-helper-record", action="store_true")
     parser.add_argument("--bridge-report", type=Path, required=True)
     arguments = sys.argv[sys.argv.index("--") + 1:] if argv is None and "--" in sys.argv else argv
     args = parser.parse_args(arguments)
-    queued = args.bridge_loaded_backup or args.bridge_current_pixels_acquisition or args.bridge_current_pixels_backup_interruption
-    report_name = (INTERRUPTION_REPORT_NAME if args.bridge_current_pixels_backup_interruption else
+    queued = (args.bridge_loaded_backup or args.bridge_current_pixels_acquisition or args.bridge_current_pixels_backup_interruption
+              or args.bridge_current_pixels_helper_record)
+    report_name = (HELPER_RECORD_REPORT_NAME if args.bridge_current_pixels_helper_record else
+                   INTERRUPTION_REPORT_NAME if args.bridge_current_pixels_backup_interruption else
                    ACQUISITION_REPORT_NAME if args.bridge_current_pixels_acquisition else LOADED_REPORT_NAME
                    if args.bridge_loaded_backup else GRAPH_REPORT_NAME if args.bridge_source_graph else REPORT_NAME)
     assert args.bridge_report.name == report_name
@@ -1088,7 +1229,8 @@ def main(argv=None):
                 return native_graph_probe(bpy, graph, before, args.bridge_report.parent,
                     loaded_backup={"report": args.bridge_report, "token": token, "display": display,
                                    "acquisition": args.bridge_current_pixels_acquisition,
-                                   "interruption": args.bridge_current_pixels_backup_interruption})
+                                   "interruption": args.bridge_current_pixels_backup_interruption,
+                                   "helper_record": args.bridge_current_pixels_helper_record})
             except BaseException:
                 traceback.print_exc()
                 owned_process_exit(1)

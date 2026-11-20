@@ -134,13 +134,16 @@ def prepared(addon_package, monkeypatch):
               stack=stack, state_module=state_module)
 
 
-def start(env, *, delivered=True, legacy=False):
+def start(env, *, delivered=True, legacy=False, record_helper=False):
     context = env.runtime.executor.context
     context.request_id = "prepared-model-start"
     lifetime = env.lifecycle.RequestLifetime(env.lifecycle.ConnectionLifetime())
     context.request_lifecycle = lifetime
     origin = env.source.CurrentPixelsOrigin()
-    control = env.jobs.PreparedJobCallbacks.capture(context, origin=origin)
+    if record_helper:
+        origin.input_deferred = origin.helper_record_requested = True
+    control = env.jobs.PreparedJobCallbacks.capture(context, origin=origin, deferred=record_helper,
+                                                    record_helper=record_helper)
     provider = env.runtime.permissions._source
     accepted = env.manager.start_prepared_driver(context, {}, 60., prepare=env.domain.prepare_current_pixels,
                 required_permissions=env.required, **({} if legacy else {"callback_control": control}))
@@ -155,6 +158,31 @@ def finish(env):
         if not env.manager.tick():
             return env.manager.history[0].summary()
     pytest.fail("Modeled guarded job did not terminate")
+
+
+def test_helper_failure_retains_native_attempt_when_work_raises_without_another_yield(prepared):
+    env = prepared
+    _, control, _ = start(env, record_helper=True)
+    job = control.job
+    assert job.recovery_evidence.get("helper_record_write_attempted") is None
+    job.execution_started = True
+    control.driver.recovery = {
+        "kind": "current_pixels_lifecycle", "schema_version": 1, "method": job.method,
+        "mode": "CURRENT_PIXELS_PACK", "profile": "FILE_F32_EXR_DATA_CURRENT_PIXELS_V1",
+        "stage": "UNKNOWN", "identity_mode": "SAME_SESSION_NATIVE_IDS", "external_write_attempted": True,
+        "helper_record_write_attempted": True, "image_write_attempted": False,
+        "durable_backups_verified": True, "state_known": False, "possible_mutation": True,
+        "verification_required": True, "recovery_authorized": False, "project_saved": False,
+        "source_file_read": False, "automatic_inverse_attempted": False,
+    }
+    failure = env.jobs.BridgeError("OPERATION_FAILED", "Modeled post-setter readback failure")
+    env.manager._finish(job, "FAILED", failure)
+    row = job.summary()
+    assert row["state"] == "FAILED" and row["result"] is None
+    recovery = row["recovery_evidence"]
+    assert recovery["helper_record_write_attempted"] is True and recovery["image_write_attempted"] is False
+    assert recovery["state_known"] is False and "helper_record_verified" not in recovery
+    assert env.flags["final_grants"] == 0
 
 
 @pytest.mark.parametrize("resolve", ["verified", "wrong_path", "missing_hash", "lost_flag"])

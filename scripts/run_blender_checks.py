@@ -46,7 +46,10 @@ CURRENT_PIXELS_LOADED_CASE = "current_pixels_loaded_backup"
 CURRENT_PIXELS_ACQUISITION_CASE = "current_pixels_acquisition"
 CURRENT_PIXELS_INTERRUPTION_CASE = "current_pixels_backup_interruption"
 CURRENT_PIXELS_INTERRUPTION_REPORT = "current-pixels-backup-interruption.json"
-CURRENT_PIXELS_QUEUED_CASES = frozenset({CURRENT_PIXELS_LOADED_CASE, CURRENT_PIXELS_ACQUISITION_CASE, CURRENT_PIXELS_INTERRUPTION_CASE})
+CURRENT_PIXELS_HELPER_RECORD_CASE = "current_pixels_helper_record"
+CURRENT_PIXELS_HELPER_RECORD_REPORT = "current-pixels-helper-record.json"
+CURRENT_PIXELS_QUEUED_CASES = frozenset({CURRENT_PIXELS_LOADED_CASE, CURRENT_PIXELS_ACQUISITION_CASE,
+                                       CURRENT_PIXELS_INTERRUPTION_CASE, CURRENT_PIXELS_HELPER_RECORD_CASE})
 CURRENT_PIXELS_LOADED_PROFILE = "CURRENT_PIXELS_QUEUED_LOADED_BACKUP_SMALL_V2"
 CURRENT_PIXELS_LOADED_REPORT = "current-pixels-loaded-backup.json"
 CURRENT_PIXELS_LOADED_ASSERTIONS = frozenset({"fixture_only_registration", "normal_registry_unchanged", "canonical_runtime",
@@ -148,6 +151,7 @@ CASES = {
     CURRENT_PIXELS_LOADED_CASE: ("blender_current_pixels_lifecycle_smoke.py", "BLENDER_CURRENT_PIXELS_LOADED_BACKUP_OK "),
     CURRENT_PIXELS_ACQUISITION_CASE: ("blender_current_pixels_lifecycle_smoke.py", "BLENDER_CURRENT_PIXELS_ACQUISITION_OK "),
     CURRENT_PIXELS_INTERRUPTION_CASE: ("blender_current_pixels_lifecycle_smoke.py", "BLENDER_CURRENT_PIXELS_BACKUP_INTERRUPTION_OK "),
+    CURRENT_PIXELS_HELPER_RECORD_CASE: ("blender_current_pixels_lifecycle_smoke.py", "BLENDER_CURRENT_PIXELS_HELPER_RECORD_OK "),
     "glb_stage_constructor": ("blender_glb_stage_smoke.py", "BLENDER_GLB_STAGE_CONSTRUCTOR_OK "),
     "glb_stage_structure": ("blender_glb_stage_smoke.py", "BLENDER_GLB_STAGE_STRUCTURE_OK "),
     "glb_stage_runtime": ("blender_glb_stage_runtime_smoke.py", "BLENDER_GLB_STAGE_RUNTIME_OK "),
@@ -1996,20 +2000,33 @@ def _graph_receipt_matches(payload: dict | None, temporary: Path, process_instan
         return False
 
 
-def _loaded_backup_receipt_matches(payload: dict | None, temporary: Path, process_instance: str) -> bool:
+def _loaded_backup_receipt_matches(payload: dict | None, temporary: Path, process_instance: str, *,
+                                  helper_record: bool = False) -> bool:
     """Reopen private queued evidence and all backup bytes; no marker-only pass."""
     try:
         flags = {"completed": True, "profile": CURRENT_PIXELS_LOADED_PROFILE,
                  "scope": "fixture_only_queued_preview_and_backup", "process_instance": process_instance,
                  "public_tool_acceptance": False, "image_forward_transition_qualified": False,
                  "restoration_qualified": False, "windows_qualified": False}
+        report_name, assertions = CURRENT_PIXELS_LOADED_REPORT, CURRENT_PIXELS_LOADED_ASSERTIONS
+        if helper_record:
+            from scripts.blender_current_pixels_lifecycle_smoke import (
+                HELPER_COMMIT_POLL_MS,
+                HELPER_LIFECYCLE_KEY,
+                HELPER_RECORD_ASSERTIONS,
+                HELPER_RECORD_PROFILE,
+                HELPER_RECORD_SCOPE,
+            )
+
+            flags.update(profile=HELPER_RECORD_PROFILE, scope=HELPER_RECORD_SCOPE, helper_record_qualified=True)
+            report_name, assertions = CURRENT_PIXELS_HELPER_RECORD_REPORT, HELPER_RECORD_ASSERTIONS
         if type(payload) is not dict or any(type(payload.get(k)) is not type(v) or payload.get(k) != v for k, v in flags.items()):
             return False
         versions = {"62c1db4208e8": "4.5.14", "d13f752e3b9c": "5.2.2"}
         version = versions[payload["source_build"]]
         if (payload.get("blender_version") not in {version, version + " LTS"}
                 or type(payload.get("process_id")) is not int or payload["process_id"] <= 0
-                or payload["full_receipt"].get("path") != str(temporary / CURRENT_PIXELS_LOADED_REPORT)):
+                or payload["full_receipt"].get("path") != str(temporary / report_name)):
             return False
         raw = _domain_binding(payload["full_receipt"], temporary, 2 * 1024 * 1024, capture=True)
         full = json.loads(raw, object_pairs_hook=_cloth_unique, parse_constant=_cloth_nonfinite)
@@ -2025,9 +2042,10 @@ def _loaded_backup_receipt_matches(payload: dict | None, temporary: Path, proces
             return False
         canonical = json.dumps(expected, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode()
         if (full.get("source_fingerprints") != expected or payload["source_snapshot_sha256"] != hashlib.sha256(canonical).hexdigest()
-                or type(full.get("assertions")) is not dict or set(full["assertions"]) != CURRENT_PIXELS_LOADED_ASSERTIONS
+                or type(full.get("assertions")) is not dict or set(full["assertions"]) != assertions
                 or any(value is not True for value in full["assertions"].values())
                 or full.get("ack_request_timeout_ms") != 3000 or full.get("control_request_timeout_ms") != 10000
+                or (helper_record and full.get("helper_commit_poll_timeout_ms") != HELPER_COMMIT_POLL_MS)
                 or full.get("backup_job_limit_seconds") != 60. or full.get("socket_timeout_seconds") != 65
                 or not _acquisition_storage_setup_matches(full["storage_setup"], payload["source_build"])
                 or full.get("public_three_second_latency_qualified") is not False
@@ -2038,8 +2056,16 @@ def _loaded_backup_receipt_matches(payload: dict | None, temporary: Path, proces
         if private["manifest_path"] != display["path"] or private["manifest_sha256"] != display["sha256"]:
             return False
         baseline, final = full["baseline"], full["final"]
+        normalized = {**final, "backup_files": []}
+        if helper_record:
+            original, helper = final["images"]
+            keys = helper["keys"]
+            if (full["helper_lifecycle_key"] != HELPER_LIFECYCLE_KEY or HELPER_LIFECYCLE_KEY in original["keys"]
+                    or keys.count(HELPER_LIFECYCLE_KEY) != 1):
+                return False
+            normalized["images"] = [original, {**helper, "keys": [key for key in keys if key != HELPER_LIFECYCLE_KEY]}]
         if (type(baseline) is not dict or type(final) is not dict or baseline.get("backup_files") != []
-                or {**final, "backup_files": []} != baseline or full["protected_baseline"] != full["protected_final"]
+                or normalized != baseline or full["protected_baseline"] != full["protected_final"]
                 or type(full.get("preview_poll_count")) is not int or full["preview_poll_count"] < 1
                 or type(full.get("poll_count")) is not int or full["poll_count"] < 1
                 or type(full.get("peak_rss_bytes")) is not int or full["peak_rss_bytes"] <= 0):
@@ -2053,6 +2079,8 @@ def _loaded_backup_receipt_matches(payload: dict | None, temporary: Path, proces
         for index, row in enumerate(transcript):
             request, response = row["request"], row["response"]
             budget = 10000 if methods[index] == "jobs.inspect" else 3000
+            if helper_record and index == 11:
+                budget = HELPER_COMMIT_POLL_MS
             max_latency = 3. if index in {4, 10} else 65.
             if (type(request) is not dict or set(request) != {"id", "method", "params", "protocol_version", "timeout_ms"}
                     or request["method"] != methods[index] or request["protocol_version"] != "1.0"
@@ -2082,7 +2110,9 @@ def _loaded_backup_receipt_matches(payload: dict | None, temporary: Path, proces
                     or job_id in accepted_ids or terminal["job_id"] != job_id or terminal["request_id"] != ack["request_id"]
                     or transcript[index + 1]["request"]["params"] != {"job_id": job_id}
                     or terminal["terminal"] is not True or terminal["state"] != "SUCCEEDED"
-                    or terminal["undo_boundary_created"] is not False or terminal["revision"] <= ack["revision"]):
+                    or terminal["undo_boundary_created"] is not (helper_record and index == 10)
+                    or (helper_record and terminal["undo_boundary_finalized"] is not (index == 10))
+                    or terminal["revision"] <= ack["revision"]):
                 return False
             accepted_ids.add(job_id)
         preview = preview_job["result"]
@@ -2096,20 +2126,27 @@ def _loaded_backup_receipt_matches(payload: dict | None, temporary: Path, proces
         if any(row["request"]["params"] != parameters for row in transcript[:4]):
             return False
         start = transcript[10]["request"]["params"]
-        if start != {**parameters, "expected_target_fingerprint": preview["fingerprint"],
-                     "confirm_replace_packed_bytes": True, "confirm_discard_current_buffer": True, "time_limit_seconds": 60.} or any(
-                row["request"]["params"] != start for row in transcript[6:10]):
+        expected_start = {**parameters, "expected_target_fingerprint": preview["fingerprint"],
+                          "confirm_replace_packed_bytes": True, "confirm_discard_current_buffer": True, "time_limit_seconds": 60.}
+        if helper_record:
+            expected_start["confirm_record_backup"] = True
+            if "confirm_record_backup" in parameters or any(row["request"]["params"].get("confirm_record_backup") is not True
+                                                          for row in transcript[6:11]):
+                return False
+        if start != expected_start or any(row["request"]["params"] != start for row in transcript[6:10]):
             return False
         if full["terminal"] != job:
             return False
         outcome, recovery = job["result"], job["recovery_evidence"]
-        if (outcome.get("phase") != "backups_verified" or outcome.get("image_packed") is not False
+        if (outcome.get("phase") != ("helper_record_verified" if helper_record else "backups_verified")
+                or outcome.get("image_packed") is not False
                 or outcome.get("project_saved") is not False or outcome.get("historical_archive") is not True
-                or outcome.get("current_scene_match_verified") is not False or recovery.get("stage") != "UNKNOWN"
-                or recovery.get("state_known") is not False or recovery.get("observed_prefix") is not None
-                or recovery.get("observed_prefix_sha256") is not None
-                or recovery.get("helper_record_write_attempted") is not False or recovery.get("image_write_attempted") is not False
+                or outcome.get("current_scene_match_verified") is not False
+                or recovery.get("helper_record_write_attempted") is not helper_record or recovery.get("image_write_attempted") is not False
                 or recovery.get("durable_backups_verified") is not True or recovery.get("external_write_attempted") is not True):
+            return False
+        if (recovery.get("stage") != "UNKNOWN" or recovery.get("state_known") is not False
+                or recovery.get("observed_prefix") is not None or recovery.get("observed_prefix_sha256") is not None):
             return False
         facts = preview["payload_facts"]
         hashes = {"original_packed_sha256": baseline["images"][0]["packed"],
@@ -2142,6 +2179,8 @@ def _loaded_backup_receipt_matches(payload: dict | None, temporary: Path, proces
                 or hashlib.sha256(payloads[prefix + ".manifest.json"]).hexdigest() != outcome["manifest_sha256"]):
             return False
         manifest = json.loads(payloads[prefix + ".manifest.json"], object_pairs_hook=_cloth_unique, parse_constant=_cloth_nonfinite)
+        if helper_record and not _helper_record_matches(full, manifest, preview, outcome, recovery, parameters, records):
+            return False
         return (manifest.get("kind") == "current_pixels_manifest" and manifest.get("profile") == preview["profile"]
                 and manifest.get("width") == 2 and manifest.get("height") == 2
                 and manifest.get("current_pixels_sha256_float32_le") == facts["current_pixels_sha256_float32_le"]
@@ -2149,6 +2188,73 @@ def _loaded_backup_receipt_matches(payload: dict | None, temporary: Path, proces
                 and manifest.get("previous_packed_sha256") == facts["original_packed_sha256"])
     except (OSError, ValueError, KeyError, TypeError, AttributeError, IndexError, RecursionError):
         return False
+
+
+def _helper_record_matches(full, manifest, preview, outcome, recovery, arguments, records) -> bool:
+    """Bind the observed ID-property to separately read archive and native identities."""
+    import re
+
+    from scripts.blender_current_pixels_lifecycle_smoke import SCENE_CHECKPOINT_KEY, canonical_json
+
+    setup = full["fixture_checkpoint_setup"]
+    if (type(setup) is not dict or set(setup) != {"scene_self_references_before", "scene_self_references_after",
+                "active_object_after", "particle_object_after", "native_setup_push_completed",
+                "baseline_observations_unchanged"}
+            or setup["native_setup_push_completed"] is not True or setup["baseline_observations_unchanged"] is not True
+            or setup["active_object_after"] is not None or setup["particle_object_after"] is not None
+            or full["baseline"]["active"] is not None
+            or type(setup["scene_self_references_before"]) is not int or type(setup["scene_self_references_after"]) is not int
+            or (setup["scene_self_references_before"], setup["scene_self_references_after"]) not in {(0, 0), (0, 1), (1, 1)}):
+        return False
+    polls = full["polls"]
+    if type(polls) is not list or not 1 <= len(polls) == full["poll_count"] <= 256:
+        return False
+    elapsed = [row["elapsed_seconds"] for row in polls]
+    if (any(type(seconds) not in {int, float} or not 0 <= seconds <= 65. for seconds in elapsed)
+            or full["maximum_backup_poll_elapsed_seconds"] != max(elapsed)):
+        return False
+    before, after = full["scene_checkpoint_before"], full["scene_checkpoint_after"]
+    if (before["marker_key"] != SCENE_CHECKPOINT_KEY or after["marker_key"] != SCENE_CHECKPOINT_KEY
+            or before["filepath"] != "" or before["saved"] is not False
+            or type(before["scene_uid"]) is not int or before["scene_uid"] <= 0
+            or type(before["scene_pointer"]) is not int or before["scene_pointer"] <= 0
+            or type(before["scene_name"]) is not str or not before["scene_name"]
+            or {**after, "marker": before["marker"]} != before or after["marker"] == before["marker"]
+            or type(after["marker"]) is not str or not re.fullmatch(r"BCB1:[0-9a-f]{32}:[0-9a-f]{32}", after["marker"])):
+        return False
+    raw = full["lifecycle_record"]
+    identity = {"record_uuid": manifest["record_uuid"], "runtime_nonce": manifest["runtime_nonce"],
+                "manifest_sha256": outcome["manifest_sha256"]}
+    if (type(raw) is not str or not _domain_hex(identity["record_uuid"], 32) or not _domain_hex(identity["runtime_nonce"], 32)
+            or raw != canonical_json({"schema_version": 1, "profile": manifest["profile"], **identity}).decode()
+            or any(recovery[key] != value for key, value in identity.items())):
+        return False
+    digest = hashlib.sha256(raw.encode()).hexdigest()
+    if (outcome["lifecycle_record_sha256"] != digest or recovery["lifecycle_record_sha256"] != digest
+            or outcome["helper_record_verified"] is not True
+            or recovery["helper_record_verified"] is not True or recovery["project_saved"] is not False
+            or recovery["expected_target_fingerprint"] != preview["fingerprint"]):
+        return False
+    original, helper = full["baseline"]["images"]
+    if (original["pointer"] == helper["pointer"] or original["uid"] == helper["uid"]
+            or full["baseline"]["owner"] != original["pointer"]):
+        return False
+    for image, label, identity_key in ((original, "image_name", "original_identity"),
+                                      (helper, "snapshot_name", "snapshot_identity")):
+        if (image["name"] != arguments[label] or manifest[label] != image["name"] or recovery[label] != image["name"]
+                or manifest[identity_key] != {"pointer": format(image["pointer"], "x"), "session_uid": str(image["uid"])}):
+            return False
+    if manifest["affected_materials"] != arguments["affected_materials"] or manifest["backup_prefix"] != arguments["backup_prefix"]:
+        return False
+    for key, extension in (("oldpacked", ".oldpacked.bin"), ("current", ".current.exr")):
+        candidate = [row for row in records if Path(row["filepath"]).name == arguments["backup_prefix"] + extension]
+        if len(candidate) != 1:
+            return False
+        record = candidate[0]
+        if manifest["backups"][key] != {"filename": Path(record["filepath"]).name, "bytes": record["file_bytes"],
+                                       "sha256": record["file_sha256"]}:
+            return False
+    return True
 
 
 def _acquisition_storage_setup_matches(proof: object, build: str) -> bool:
@@ -4555,6 +4661,7 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
             CURRENT_PIXELS_LOADED_CASE: ("--bridge-loaded-backup", CURRENT_PIXELS_LOADED_REPORT),
             CURRENT_PIXELS_ACQUISITION_CASE: ("--bridge-current-pixels-acquisition", "current-pixels-acquisition.json"),
             CURRENT_PIXELS_INTERRUPTION_CASE: ("--bridge-current-pixels-backup-interruption", CURRENT_PIXELS_INTERRUPTION_REPORT),
+            CURRENT_PIXELS_HELPER_RECORD_CASE: ("--bridge-current-pixels-helper-record", CURRENT_PIXELS_HELPER_RECORD_REPORT),
         }[case]
         command.extend(["--", flag, "--bridge-report", str(temporary / report)])
         timeout = min(timeout, 300)
@@ -4615,7 +4722,7 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
         "status": "failed",
         "exit_code": None,
         "execution_mode": (
-            "private_interactive_display" if case in {CURRENT_PIXELS_ACQUISITION_CASE, CURRENT_PIXELS_INTERRUPTION_CASE, MESH_STORAGE_CASE, MESH_STORAGE_CONTROL_CASE, MESH_STORAGE_TIMING_CASE, MESH_STORAGE_INSPECTION_CASE, MESH_STORAGE_COST_CASE}
+            "private_interactive_display" if case in {CURRENT_PIXELS_ACQUISITION_CASE, CURRENT_PIXELS_INTERRUPTION_CASE, CURRENT_PIXELS_HELPER_RECORD_CASE, MESH_STORAGE_CASE, MESH_STORAGE_CONTROL_CASE, MESH_STORAGE_TIMING_CASE, MESH_STORAGE_INSPECTION_CASE, MESH_STORAGE_COST_CASE}
             else "private_windows_desktop" if interactive and sys.platform == "win32"
             else "interactive_display" if interactive else "background"
         ),
@@ -4743,6 +4850,11 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
     if case == CURRENT_PIXELS_INTERRUPTION_CASE:
         result["qualification_scope"] = {"fixture_only_partial_archive_cancellation": True,
             "ack_request_timeout_ms": 3000, "control_request_timeout_ms": 10000, "complete_archive": False,
+            "public_tool_acceptance": False, "image_forward_transition_qualified": False,
+            "restoration_qualified": False, "windows_qualified": False}
+    if case == CURRENT_PIXELS_HELPER_RECORD_CASE:
+        result["qualification_scope"] = {"fixture_only_queued_archive_and_helper_record": True,
+            "ack_request_timeout_ms": 3000, "control_request_timeout_ms": 10000, "helper_commit_poll_timeout_ms": 30000,
             "public_tool_acceptance": False, "image_forward_transition_qualified": False,
             "restoration_qualified": False, "windows_qualified": False}
     if case == MESH_STORAGE_CASE:
@@ -4919,6 +5031,8 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
         phase_evidence = _acquisition_receipt_matches(payload, temporary, process_instance)
     if case == CURRENT_PIXELS_INTERRUPTION_CASE:
         phase_evidence = _backup_interruption_receipt_matches(payload, temporary, process_instance)
+    if case == CURRENT_PIXELS_HELPER_RECORD_CASE:
+        phase_evidence = _loaded_backup_receipt_matches(payload, temporary, process_instance, helper_record=True)
     if case == MESH_STORAGE_CASE:
         phase_evidence = _mesh_storage_receipt_matches(payload, temporary, process_instance, phase,
             bundle, result.get("os_process_id"), domain_binary, domain_sources, domain_display)
@@ -5583,7 +5697,7 @@ def main() -> int:
     if any(not p.is_file() for p in executables):
         parser.error("Each Blender path must be an existing executable file")
     output = args.output.resolve()
-    defaults = [case for case in CASES if case not in {CURRENT_PIXELS_ACQUISITION_CASE, CURRENT_PIXELS_INTERRUPTION_CASE, "native_project_saving_large", *EDITED_TEXTURE_RECOVERY_PHASES, MESH_STORAGE_CONTROL_CASE, MESH_STORAGE_TIMING_CASE, MESH_STORAGE_INSPECTION_CASE, MESH_STORAGE_COST_CASE}
+    defaults = [case for case in CASES if case not in {CURRENT_PIXELS_ACQUISITION_CASE, CURRENT_PIXELS_INTERRUPTION_CASE, CURRENT_PIXELS_HELPER_RECORD_CASE, "native_project_saving_large", *EDITED_TEXTURE_RECOVERY_PHASES, MESH_STORAGE_CONTROL_CASE, MESH_STORAGE_TIMING_CASE, MESH_STORAGE_INSPECTION_CASE, MESH_STORAGE_COST_CASE}
                 and (args.include_interactive or case not in INTERACTIVE_CASES | OPT_IN_CASES)
                 and (case != "installed_addon_probe" or args.package_probe_config is not None)]
     cases = list(dict.fromkeys(args.cases or defaults))

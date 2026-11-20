@@ -542,6 +542,73 @@ class BackupFiles:
         self.complete_readback_verified = True
         return tuple(records)
 
+    def verify_record_archive(self, pair: dict[str, Any], check: Callable[[], None]
+                              ) -> tuple[FileRecord, ...]:
+        """Revalidate the owned 2x2 archive synchronously at the record boundary."""
+        kinds = ("oldpacked", "current", "manifest")
+        required = set(kinds)
+        if (not self.plan.create_only or self.plan.journal_enabled or self.closed or self.failed
+                or not self.attempted or not self.publication_attempted or not self.complete_readback_verified
+                or self.stage is not None or self.stage_identity is not None
+                or self.stage_status != "successful_stage_retired" or self.uncertain
+                or self.records.keys() != required or self.file_parent_fsync != required):
+            raise refused("BACKUP_RECORD_ARCHIVE_NOT_READY")
+        if type(pair) is not dict or pair.keys() != {"manifest", "manifest_sha256", "files"}:
+            raise refused("BACKUP_RECORD_ARCHIVE_PAIR_INVALID")
+        summaries = pair["files"]
+        if type(summaries) is not list or len(summaries) != len(kinds):
+            raise refused("BACKUP_RECORD_ARCHIVE_PAIR_INVALID")
+
+        prior = tuple(self.records[kind] for kind in kinds)
+        for kind, record, supplied in zip(kinds, prior, summaries, strict=True):
+            if (type(record) is not FileRecord or record.path != str(self.plan.path(kind))
+                    or type(record.identity) is not tuple or len(record.identity) != 5
+                    or any(type(value) is not int for value in record.identity)):
+                raise refused("BACKUP_RECORD_ARCHIVE_RECEIPT_CHANGED")
+            _expected(kind, record.identity[2], record.sha256)
+            # An owning timer turn may only reread one block per 2x2 payload.
+            if record.identity[2] > BLOCK_BYTES:
+                raise refused("BACKUP_RECORD_ARCHIVE_EXCEEDS_SYNC_BUDGET")
+            expected = record.summary()
+            if (type(supplied) is not dict or supplied.keys() != expected.keys()
+                    or any(type(supplied[key]) is not type(value) or supplied[key] != value
+                           for key, value in expected.items())):
+                raise refused("BACKUP_RECORD_ARCHIVE_RECEIPT_CHANGED")
+
+        manifest = pair["manifest"]
+        raw = canonical_manifest(manifest)
+        if ((manifest["width"], manifest["height"]) != (2, 2) or manifest["backup_prefix"] != self.plan.prefix
+                or type(pair["manifest_sha256"]) is not str or pair["manifest_sha256"] != prior[2].sha256
+                or len(raw) != prior[2].identity[2] or hashlib.sha256(raw).hexdigest() != prior[2].sha256):
+            raise refused("BACKUP_RECORD_ARCHIVE_MANIFEST_CHANGED")
+        for kind, record in zip(kinds[:2], prior[:2], strict=True):
+            if manifest["backups"][kind] != {"filename": self.plan.path(kind).name,
+                                              "bytes": record.identity[2], "sha256": record.sha256}:
+                raise refused("BACKUP_RECORD_ARCHIVE_DESCRIPTOR_CHANGED")
+
+        # Drain without yielding the workflow turn. The complete reread binds
+        # the pair's canonical manifest bytes and both retained payload hashes.
+        work = self.verify_steps(check)
+        while True:
+            try:
+                next(work)
+            except StopIteration as completed:
+                observed = completed.value
+                break
+        for kind, before, after in zip(kinds, prior, observed, strict=True):
+            try:
+                self._gate(check)
+                value = self.plan.path(kind).lstat()
+                _regular(value, links=1)
+                if after != before or self.records.get(kind) is not before or _identity(value) != before.identity:
+                    raise refused("BACKUP_RECORD_ARCHIVE_FILE_CHANGED")
+            except BaseException:
+                self.complete_readback_verified = False
+                self.uncertain.add(kind)
+                self.failed = True
+                raise
+        return observed
+
     def append_event_steps(self, event: dict[str, Any], check: Callable[[], None]
                            ) -> Generator[dict[str, Any], None, FileRecord]:
         """Known strict facts only; every append checks the exact owned prefix."""

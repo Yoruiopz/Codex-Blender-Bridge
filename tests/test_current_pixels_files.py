@@ -206,6 +206,137 @@ def test_pair_binds_captured_owner_graph_and_exact_reopened_payloads(files):
     assert not item.plan.journal_enabled
 
 
+def test_record_archive_rereads_the_exact_owned_triplet_synchronously(files, monkeypatch):
+    item = files.make(journal=False)
+    pair, _ = drain(prepared_pair(item, captured_pair(files), files.check))
+    original_open = os.open
+    reopened = []
+
+    def read_only_open(path, flags, *args, **kwargs):
+        assert flags & (os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND) == 0
+        reopened.append(Path(path))
+        return original_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", read_only_open)
+    records = item.verify_record_archive(pair, files.check)
+    kinds = ("oldpacked", "current", "manifest")
+    assert records == tuple(item.records[kind] for kind in kinds)
+    assert reopened == [item.plan.path(kind) for kind in kinds]
+    assert item.evidence()["durable_backups_verified"] and not item.uncertain
+
+
+@pytest.mark.parametrize("kind", ["oldpacked", "current", "manifest"])
+def test_record_archive_refuses_byte_identical_file_replacement(files, kind):
+    item = files.make(journal=False)
+    pair, _ = drain(prepared_pair(item, captured_pair(files), files.check))
+    target = item.plan.path(kind)
+    payload = target.read_bytes()
+    replacement = files.root / "replacement"
+    replacement.write_bytes(payload)
+    os.replace(replacement, target)
+    assert target.stat().st_ino != item.records[kind].identity[1]
+
+    with pytest.raises(files.module.BridgeError) as failure:
+        item.verify_record_archive(pair, files.check)
+    assert failure.value.context["reason"] == "BACKUP_FILE_IDENTITY_CHANGED"
+    assert item.failed and item.uncertain == {kind} and not item.evidence()["durable_backups_verified"]
+    assert len(list(files.root.iterdir())) == 3 and target.read_bytes() == payload
+
+
+def test_record_archive_hashes_all_bytes_even_if_size_inode_and_time_match(files):
+    item = files.make(journal=False)
+    pair, _ = drain(prepared_pair(item, captured_pair(files), files.check))
+    target = item.plan.path("current")
+    before = target.stat()
+    data = target.read_bytes()
+    corrupted = data[:-1] + bytes([data[-1] ^ 1])
+    target.write_bytes(corrupted)
+    os.utime(target, ns=(before.st_atime_ns, before.st_mtime_ns))
+    assert files.module._identity(target.stat()) == item.records["current"].identity
+
+    with pytest.raises(files.module.BridgeError) as failure:
+        item.verify_record_archive(pair, files.check)
+    assert failure.value.context["reason"] == "BACKUP_FULL_READBACK_MISMATCH"
+    assert item.uncertain == {"current"} and not item.evidence()["durable_backups_verified"]
+    assert target.read_bytes() == corrupted
+
+
+@pytest.mark.parametrize("field, reason", [
+    ("files", "BACKUP_RECORD_ARCHIVE_RECEIPT_CHANGED"),
+    ("manifest", "BACKUP_RECORD_ARCHIVE_MANIFEST_CHANGED"),
+    ("manifest_sha256", "BACKUP_RECORD_ARCHIVE_MANIFEST_CHANGED"),
+])
+def test_record_archive_refuses_changed_pair_descriptors_before_io(files, field, reason):
+    item = files.make(journal=False)
+    pair, _ = drain(prepared_pair(item, captured_pair(files), files.check))
+    if field == "files":
+        pair["files"][1]["file_bytes"] += 1
+    elif field == "manifest":
+        pair["manifest"]["backups"]["current"]["sha256"] = "f" * 64
+    else:
+        pair[field] = "f" * 64
+    calls, original = files.live["calls"], item.evidence()
+
+    with pytest.raises(files.module.BridgeError) as failure:
+        item.verify_record_archive(pair, files.check)
+    assert failure.value.context["reason"] == reason
+    assert files.live["calls"] == calls and item.evidence() == original
+
+
+def test_record_archive_refuses_files_alone_and_requires_previous_success(files):
+    item = files.make(journal=False)
+    pair, _ = drain(prepared_pair(item, captured_pair(files), files.check))
+    unverified = files.module.BackupFiles(item.plan)
+    item.complete_readback_verified = False
+    for reader in (unverified, item):
+        with pytest.raises(files.module.BridgeError) as failure:
+            reader.verify_record_archive(pair, files.check)
+        assert failure.value.context["reason"] == "BACKUP_RECORD_ARCHIVE_NOT_READY"
+    assert len(list(files.root.iterdir())) == 3
+
+
+@pytest.mark.parametrize("fault, reason", [
+    ("descriptor", "BACKUP_RECORD_ARCHIVE_DESCRIPTOR_CHANGED"),
+    ("sync_budget", "BACKUP_RECORD_ARCHIVE_EXCEEDS_SYNC_BUDGET"),
+])
+def test_record_archive_checks_retained_records_against_its_manifest_and_budget(files, fault, reason):
+    item = files.make(journal=False)
+    pair, _ = drain(prepared_pair(item, captured_pair(files), files.check))
+    old = item.records["oldpacked"]
+    changed = (replace(old, sha256="f" * 64) if fault == "descriptor" else
+               replace(old, identity=(*old.identity[:2], files.module.BLOCK_BYTES + 1, *old.identity[3:])))
+    item.records["oldpacked"] = changed
+    pair["files"][0] = changed.summary()
+    calls = files.live["calls"]
+
+    with pytest.raises(files.module.BridgeError) as failure:
+        item.verify_record_archive(pair, files.check)
+    assert failure.value.context["reason"] == reason and files.live["calls"] == calls
+
+
+def test_record_archive_rechecks_earlier_inode_after_reading_the_last_sibling(files, monkeypatch):
+    item = files.make(journal=False)
+    pair, _ = drain(prepared_pair(item, captured_pair(files), files.check))
+    target = item.plan.path("oldpacked")
+    replacement = files.root / "replacement"
+    replacement.write_bytes(target.read_bytes())
+    original_read = os.read
+    manifest_inode = item.records["manifest"].identity[1]
+
+    def replace_earlier_after_manifest_read(descriptor, size):
+        data = original_read(descriptor, size)
+        if os.fstat(descriptor).st_ino == manifest_inode:
+            os.replace(replacement, target)
+        return data
+
+    monkeypatch.setattr(os, "read", replace_earlier_after_manifest_read)
+    with pytest.raises(files.module.BridgeError) as failure:
+        item.verify_record_archive(pair, files.check)
+    assert failure.value.context["reason"] == "BACKUP_RECORD_ARCHIVE_FILE_CHANGED"
+    assert item.uncertain == {"oldpacked"} and not item.evidence()["durable_backups_verified"]
+    assert len(list(files.root.iterdir())) == 3
+
+
 @pytest.mark.parametrize("fault", ["scope", "owner", "existing_record", "packed_hash"])
 def test_pair_refuses_changed_capture_before_any_backup(files, fault):
     capture, item = captured_pair(files), files.make()

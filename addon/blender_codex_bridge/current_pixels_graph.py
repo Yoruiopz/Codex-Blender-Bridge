@@ -1465,6 +1465,12 @@ def validate_lifecycle_record(value: Any) -> str:
     return raw
 
 
+def canonical_lifecycle_record(record_uuid: str, runtime_nonce: str, manifest_sha256: str) -> str:
+    value = {"schema_version": 1, "profile": PROFILE, "record_uuid": _text(record_uuid, 32),
+             "runtime_nonce": _text(runtime_nonce, 32), "manifest_sha256": _text(manifest_sha256, 64)}
+    return validate_lifecycle_record(_canonical(value).decode("utf-8"))
+
+
 def _runtime_absent(reader: _Reader, owner: Any, kind: str) -> None:
     """Inspect native storage presence, never a bundled pointer getter."""
     from .uv_edit_guard import _native_method_descriptor
@@ -2604,6 +2610,127 @@ class GraphCapture:
         return json.loads(raw)  # Deep plain copy; never leak mutable retained baselines.
 
 
+def _prefix_digests(native: str, portable: str, original: dict[str, Any], snapshot: dict[str, Any],
+                    payloads: dict[str, Any]) -> tuple[str, str]:
+    volatile = {"original": original, "snapshot": snapshot, "payloads": payloads}
+    return (hashlib.sha256(_canonical([native, volatile])).hexdigest(),
+            hashlib.sha256(_canonical([portable, volatile])).hexdigest())
+
+
+@dataclass(frozen=True, slots=True)
+class HelperRecordTransition:
+    record: str
+    original_identity: tuple[str, str, str]
+    snapshot_identity: tuple[str, str, str]
+    snapshot_metadata: str
+    expected_native_prefix_sha256: str
+    expected_portable_prefix_sha256: str
+
+
+def _image_identity_subject(value: dict[str, Any]) -> tuple[str, str, str]:
+    if value["kind"] != "Image":
+        raise refused("HELPER_RECORD_IDENTITY_UNQUALIFIED")
+    name, pointer, uid = _text(value["name"]), _text(value["pointer"], 16), _text(value["session_uid"], 20)
+    if (pointer[0] == "0" or any(char not in "0123456789abcdef" for char in pointer)
+            or uid[0] == "0" or any(char not in "0123456789" for char in uid) or int(uid) >= 2**64):
+        raise refused("HELPER_RECORD_IDENTITY_UNQUALIFIED")
+    return name, pointer, uid
+
+
+def prepare_helper_record_transition(capture: GraphCapture, record: str) -> HelperRecordTransition:
+    """Predict exactly one volatile helper-record change from a complete loaded capture."""
+    record = validate_lifecycle_record(record)
+    if type(capture) is not GraphCapture or type(capture.payloads) is not PayloadCapture:
+        raise refused("HELPER_RECORD_CAPTURE_REQUIRED")
+    original, snapshot = capture.original_metadata, capture.snapshot_metadata
+    original_id = _image_identity_subject(original["identity"])
+    snapshot_id = _image_identity_subject(snapshot["identity"])
+    if (any(left == right for left, right in zip(original_id, snapshot_id, strict=True))
+            or snapshot["static"]["native_owner"] != {"kind": "Image", "name": original_id[0]}
+            or any(image["volatile"]["has_data"] is not True or image["volatile"]["lifecycle_record"] is not None
+                   for image in (original, snapshot))):
+        raise refused("HELPER_RECORD_BASELINE_CHANGED")
+    payloads = capture.payloads.facts()
+    native, portable = capture.native_graph_sha256, capture.portable_graph_sha256
+    if _prefix_digests(native, portable, original["volatile"], snapshot["volatile"], payloads) != (
+            capture.full_native_prefix_sha256, capture.full_portable_prefix_sha256):
+        raise refused("HELPER_RECORD_BASELINE_CHANGED")
+    after = {**snapshot["volatile"], "lifecycle_record": record}
+    expected_native, expected_portable = _prefix_digests(native, portable, original["volatile"], after, payloads)
+    return HelperRecordTransition(record, original_id, snapshot_id,
+                                  _text(snapshot["static"]["snapshot_metadata"], 4096), expected_native, expected_portable)
+
+
+def _image_idproperty_slots(bpy: Any, image_type: type) -> tuple[Any, Any]:
+    """Select the stock mapping descriptors without dispatching a Python shadow."""
+    base = bpy.types.bpy_struct
+    storage = _class_dict(base)
+    getter, setter = storage.get("__getitem__"), storage.get("__setitem__")
+    if (type(setter) is not WrapperDescriptorType or setter.__objclass__ is not base
+            or setter.__name__ != "__setitem__" or _class_find(image_type, "__setitem__") is not setter):
+        raise refused("NATIVE_IMAGE_IDPROPERTY_SETTER_CHANGED")
+    if (type(getter) not in (WrapperDescriptorType, MethodDescriptorType) or getter.__objclass__ is not base
+            or getter.__name__ != "__getitem__" or _class_find(image_type, "__getitem__") is not getter):
+        raise refused("NATIVE_IMAGE_IDPROPERTY_GETTER_CHANGED")
+    return getter, setter
+
+
+def _live_record_image(image: Any, image_type: type, expected: tuple[str, str, str]) -> None:
+    if (type(image) is not image_type or image.bl_rna.as_pointer() != image_type.bl_rna.as_pointer()
+            or image.library is not None or image.override_library is not None or image.is_editable is not True
+            or image.has_data is not True):
+        raise refused("HELPER_RECORD_IMAGE_NOT_LOCAL_LOADED")
+    identity = (_text(image.name), format(_int(image.as_pointer(), 2**64 - 1, minimum=1), "x"),
+                str(_int(image.session_uid, 2**64 - 1, minimum=1)))
+    if identity != expected:
+        raise refused("HELPER_RECORD_NATIVE_IDENTITY_CHANGED")
+
+
+def _helper_record_target(bpy: Any, transition: HelperRecordTransition, expected: str | None,
+                          check: Callable[[], None]) -> tuple[Any, Any]:
+    from .tools.image_portability import METADATA_KEY, OWNER_KEY
+
+    reader = _Reader(bpy, check)
+    image_type = bpy.types.Image
+    reader.class_catalog("Image")
+    check()
+    if bpy.types.Image is not image_type:
+        raise refused("HELPER_RECORD_IMAGE_CLASS_CHANGED")
+    getter, setter = _image_idproperty_slots(bpy, image_type)
+    keys = _keys_method(bpy, image_type)
+    original = bpy.data.images.get(transition.original_identity[0])
+    helper = bpy.data.images.get(transition.snapshot_identity[0])
+    _live_record_image(original, image_type, transition.original_identity)
+    _live_record_image(helper, image_type, transition.snapshot_identity)
+    if original is helper or helper.use_fake_user is not True or helper.users != 1:
+        raise refused("HELPER_RECORD_OWNER_OR_RETENTION_CHANGED")
+    names = tuple(_text(name, 128) for name in _bounded(keys(helper), 128))
+    expected_keys = {OWNER_KEY, METADATA_KEY} if expected is None else {OWNER_KEY, METADATA_KEY, LIFECYCLE_KEY}
+    if len(names) != len(expected_keys) or set(names) != expected_keys:
+        raise refused("HELPER_RECORD_KEYS_CHANGED")
+    _live_record_image(getter(helper, OWNER_KEY), image_type, transition.original_identity)
+    if _text(getter(helper, METADATA_KEY), 4096) != transition.snapshot_metadata:
+        raise refused("HELPER_RECORD_SNAPSHOT_METADATA_CHANGED")
+    if expected is not None and validate_lifecycle_record(getter(helper, LIFECYCLE_KEY)) != expected:
+        raise refused("HELPER_RECORD_READBACK_CHANGED")
+    return helper, setter
+
+
+def write_helper_record(bpy: Any, transition: HelperRecordTransition, *, check: Callable[[], None],
+                        on_attempt: Callable[[], None]) -> None:
+    """Write one record after the caller's full CAS. Both callbacks are sealed, provider-free gates."""
+    if type(transition) is not HelperRecordTransition:
+        raise refused("HELPER_RECORD_TRANSITION_REQUIRED")
+    record = validate_lifecycle_record(transition.record)
+    helper, setter = _helper_record_target(bpy, transition, None, check)
+    check()
+    on_attempt()  # Mark the exact setter attempt; the sealed callback only updates plain job facts.
+    setter(helper, LIFECYCLE_KEY, record)
+    del helper, setter
+    _helper_record_target(bpy, transition, record, check)
+    check()
+
+
 def _packed(reader: _Reader, image: Any) -> bytes:
     reader.check()
     if image.has_data is not True:
@@ -2744,10 +2871,10 @@ def capture_graph_steps(bpy: Any, image_name: str | None, snapshot_name: str,
     check()
     payloads = PayloadCapture(original_pixels, original_packed, snapshot_packed, current_digest,
                               original_digest, old_digest, snapshot_digest)
-    volatile = {"original": baseline.original_metadata["volatile"], "snapshot": baseline.snapshot_metadata["volatile"],
-                "payloads": payloads.facts()}
-    prefix_native = hashlib.sha256(_canonical([baseline.native_graph_sha256, volatile])).hexdigest()
-    prefix_portable = hashlib.sha256(_canonical([baseline.portable_graph_sha256, volatile])).hexdigest()
+    prefix_native, prefix_portable = _prefix_digests(
+        baseline.native_graph_sha256, baseline.portable_graph_sha256,
+        baseline.original_metadata["volatile"], baseline.snapshot_metadata["volatile"], payloads.facts(),
+    )
     return GraphCapture(last.original, last.snapshot, last.materials, last.objects,
                          baseline.native_graph_sha256, baseline.portable_graph_sha256, prefix_native, prefix_portable,
                          baseline.native_rows, baseline.original_metadata, baseline.snapshot_metadata,

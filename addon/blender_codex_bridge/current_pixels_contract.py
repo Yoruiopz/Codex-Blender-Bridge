@@ -78,13 +78,15 @@ _REQUIRED_RECEIPT = frozenset({
 })
 _BOOL_FACTS = frozenset({
     *ATTEMPT_FLAGS, "state_known", "possible_mutation", "verification_required", "recovery_authorized",
-    "durable_backups_verified", "packed_bytes_verified", "complete_pixels_verified", "snapshot_retained",
+    "durable_backups_verified", "helper_record_verified", "packed_bytes_verified",
+    "complete_pixels_verified", "snapshot_retained",
     "project_saved", "source_file_read", "automatic_inverse_attempted",
 })
 _DIGEST_FIELDS = frozenset({
     "expected_target_fingerprint", "manifest_sha256", "expected_prefix_sha256", "observed_prefix_sha256",
     "current_pixels_sha256_float32_le", "previous_packed_sha256", "current_packed_sha256",
     "consumer_graph_sha256", "previous_decoded_pixels_sha256",
+    "lifecycle_record_sha256",
 })
 _OPTIONAL_RECEIPT = frozenset({
     *_BOOL_FACTS, *_DIGEST_FIELDS, "image_name", "snapshot_name", "record_uuid", "runtime_nonce",
@@ -164,6 +166,8 @@ def validate_request(method: Any, params: Any) -> dict[str, Any]:
                          {"confirm_restore_previous_packed_bytes", "confirm_restore_original_current_pixels"})
         required |= {expected, *confirmations}
         allowed |= {expected, *confirmations, "time_limit_seconds"}
+        if method == PACK_START:
+            allowed.add("confirm_record_backup")
     value = _object(params, "request", allowed, required)
     result = {key: _text(value[key], key, 63) for key in ("image_name", "snapshot_name") if key in value}
     result["affected_materials"] = _materials(value["affected_materials"])
@@ -189,6 +193,11 @@ def validate_request(method: Any, params: Any) -> dict[str, Any]:
         if type(deadline) not in {int, float} or not 1 <= deadline <= 300 or not math.isfinite(deadline):
             raise _fail("time_limit_seconds must be finite and from one through 300.")
         result["time_limit_seconds"] = deadline
+    if "confirm_record_backup" in value:
+        if type(value["confirm_record_backup"]) is not bool:
+            raise _fail("confirm_record_backup must be an exact Boolean.")
+        if value["confirm_record_backup"]:
+            result["confirm_record_backup"] = True
     return result
 
 
@@ -256,6 +265,13 @@ def validate_receipt(value: Any) -> dict[str, Any]:
     if value["identity_mode"] == "UNAVAILABLE" and value["state_known"]:
         raise _fail("a known current target requires an available native identity mode.")
     durable = value.get("durable_backups_verified") is True
+    if value.get("helper_record_verified") is True:
+        if (not pack or not durable or not value["helper_record_write_attempted"]
+                or value.get("lifecycle_record_sha256") is None
+                or stage in FORWARD_STAGES[:FORWARD_STAGES.index("HELPER_RECORD_VERIFIED")]):
+            raise _fail("Verified helper-record evidence requires an attempted write and durable backups.")
+    elif value.get("lifecycle_record_sha256") is not None:
+        raise _fail("A helper-record digest requires verified helper-record evidence.")
     if pack:
         index = FORWARD_STAGES.index(stage) if stage in FORWARD_STAGES else None
         if value["helper_record_write_attempted"] and (not value["external_write_attempted"] or not durable):
@@ -320,12 +336,14 @@ def prefix_receipt(previous: Any, stage: str, **facts: Any) -> dict[str, Any]:
         raise _fail("prefix transitions must record every attempted and verified boundary in order.")
     if any(before[key] and updated[key] is not True for key in ATTEMPT_FLAGS):
         raise _fail("attempt flags are monotonic.")
+    if before.get("helper_record_verified") is True and updated.get("helper_record_verified") is not True:
+        raise _fail("historical helper-record verification cannot be cleared.")
     if before.get("owned_write_attempts", 0) > updated.get("owned_write_attempts", 0):
         raise _fail("owned write attempt counts are monotonic.")
     for key in ("record_uuid", "runtime_nonce", "image_name", "snapshot_name", "expected_target_fingerprint",
                 "same_session_original_pointer", "same_session_original_uid", "previous_packed_sha256",
                 "previous_decoded_pixels_sha256", "current_pixels_sha256_float32_le",
-                "manifest_sha256", "consumer_graph_sha256"):
+                "manifest_sha256", "consumer_graph_sha256", "lifecycle_record_sha256"):
         if key in before and updated.get(key) != before[key]:
             raise _fail("prefix updates cannot replace the original scope identity.")
     return validate_receipt(updated)
