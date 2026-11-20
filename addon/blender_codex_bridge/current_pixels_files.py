@@ -110,6 +110,7 @@ class BackupPlan:
     create_only: bool
     ancestry: tuple[tuple[str, int, int], ...]
     root_ancestry: tuple[tuple[str, int, int], ...]
+    unrestricted: bool = False
 
     def path(self, kind: str) -> Path:
         _limit(kind)
@@ -122,6 +123,7 @@ class BackupPlan:
                 "backup_prefix": self.prefix, "event_journal": self.journal_enabled,
                 "create_only": self.create_only, "ancestry": self.ancestry,
                 "root_ancestry": self.root_ancestry,
+                **({"unrestricted_texture_paths": True} if self.unrestricted else {}),
                 "paths": {kind: str(self.path(kind)) for kind in SUFFIXES
                           if kind != "journal" or self.journal_enabled}}
 
@@ -131,17 +133,19 @@ class BackupPlan:
 
     def check(self, check: Callable[[], None]) -> None:
         check()  # Current native/file grants and caller's exact live root check precede probes.
-        root, current = approved_output(str(self.path("current")), self.approved_root, ".exr")
+        root, current = approved_output(str(self.path("current")), self.approved_root, ".exr",
+                                        unrestricted=self.unrestricted)
         if (root != self.root or current.parent != self.parent
                 or _ancestry(self.parent) != self.ancestry or _ancestry(self.root) != self.root_ancestry):
             raise refused("BACKUP_DIRECTORY_OR_APPROVED_ROOT_CHANGED")
 
 
 def _plan(directory: str, prefix: str, approved_root: str, journal_enabled: bool,
-          create_only: bool, check: Callable[[], None]) -> BackupPlan:
+          create_only: bool, check: Callable[[], None], unrestricted: bool) -> BackupPlan:
     check()
     _text(directory, "Backup directory")
-    _text(approved_root, "Approved texture folder")
+    if unrestricted is not True:
+        _text(approved_root, "Approved texture folder")
     prefix = _prefix(prefix)
     if type(journal_enabled) is not bool:
         raise invalid_argument("Event journal must be an exact Boolean.")
@@ -149,9 +153,10 @@ def _plan(directory: str, prefix: str, approved_root: str, journal_enabled: bool
     if not directory_path.is_absolute() or any(part in {".", ".."} for part in directory.replace("\\", "/").split("/")):
         raise invalid_argument("Backup directory must be exact absolute text without traversal.")
     check()
-    root, current = approved_output(str(directory_path / (prefix + SUFFIXES["current"])), approved_root, ".exr")
+    root, current = approved_output(str(directory_path / (prefix + SUFFIXES["current"])), approved_root, ".exr",
+                                    unrestricted=unrestricted)
     plan = BackupPlan(approved_root, root, current.parent, prefix, journal_enabled, create_only,
-                      _ancestry(current.parent), _ancestry(root))
+                      _ancestry(current.parent), _ancestry(root), unrestricted is True)
     plan.check(check)
     if create_only:
         for kind in SUFFIXES:
@@ -163,20 +168,21 @@ def _plan(directory: str, prefix: str, approved_root: str, journal_enabled: bool
 
 
 def freeze_backup_plan(backup_directory: str, prefix: str, approved_root: str,
-                       journal_enabled: bool, check: Callable[[], None]) -> BackupPlan:
+                       journal_enabled: bool, check: Callable[[], None], *,
+                       unrestricted: bool = False) -> BackupPlan:
     """Read-only future-output plan; caller must already hold current grants."""
-    return _plan(backup_directory, prefix, approved_root, journal_enabled, True, check)
+    return _plan(backup_directory, prefix, approved_root, journal_enabled, True, check, unrestricted)
 
 
 def freeze_recovery_plan(manifest_path: str, approved_root: str,
-                         check: Callable[[], None]) -> BackupPlan:
+                         check: Callable[[], None], *, unrestricted: bool = False) -> BackupPlan:
     """Derive fixed read-only siblings; files alone never authorize recovery."""
     check()
     path = Path(_text(manifest_path, "Backup manifest"))
     suffix = SUFFIXES["manifest"]
     if not path.name.endswith(suffix):
         raise invalid_argument("Recovery needs an exact fixed backup manifest path.")
-    return _plan(str(path.parent), path.name[:-len(suffix)], approved_root, True, False, check)
+    return _plan(str(path.parent), path.name[:-len(suffix)], approved_root, True, False, check, unrestricted)
 
 
 @dataclass(frozen=True, slots=True)

@@ -40,6 +40,19 @@ PREFERENCE_PROPERTIES: dict[Permission, str] = {
     Permission.SAVE_PROJECT: "allow_save_project",
 }
 
+DANGEROUS_PERMISSIONS = (
+    Permission.DELETE_OBJECTS,
+    Permission.EXECUTE_PYTHON,
+    Permission.ACCESS_EXTERNAL_FILES,
+    Permission.SAVE_PROJECT,
+)
+
+
+def unrestricted_project_texture_paths(preferences: Any | None) -> bool:
+    """Require both explicit local opt-ins before dropping folder allowlists."""
+    return (getattr(preferences, "all_dangerous_permissions", False) is True
+            and getattr(preferences, "allow_unrestricted_project_texture_paths", False) is True)
+
 
 def permission_snapshot(preferences: Any | None) -> dict[str, bool]:
     """Read permission flags from Blender add-on preferences."""
@@ -51,6 +64,8 @@ def permission_snapshot(preferences: Any | None) -> dict[str, bool]:
         permission.value: bool(getattr(preferences, property_name, False))
         for permission, property_name in PREFERENCE_PROPERTIES.items()
     })
+    if getattr(preferences, "all_dangerous_permissions", False) is True:
+        result.update({permission.value: True for permission in DANGEROUS_PERMISSIONS})
     # Runtime session authority is never read from a serialized preference.
     result[Permission.NATIVE_SAVE_EFFECTS.value] = False
     return result

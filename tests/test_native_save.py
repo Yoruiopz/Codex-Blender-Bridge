@@ -832,6 +832,7 @@ def local_runtime(addon_package, monkeypatch):
     module = importlib.import_module(f"{addon_package}.runtime")
     runtime = module.BridgeRuntime.__new__(module.BridgeRuntime)
     runtime._registered = True
+    runtime._checkpoint_load = None
     runtime._native_save_generation, runtime._native_save_local_authority = "owned-generation", object()
     runtime.native_save_policy = module.NativeSaveGrant(runtime._native_save_generation,
                                                        runtime._native_save_local_authority)
@@ -913,6 +914,7 @@ def test_grant_mutations_and_construction_require_main_thread(policy_module):
 
     def background():
         for function in (lambda: grant.arm(owner, 900), grant.revoke,
+                         lambda: grant.use_persistent_permission(owner, True),
                          lambda: policy_module.NativeSaveGrant("session", object())):
             try:
                 function()
@@ -922,12 +924,11 @@ def test_grant_mutations_and_construction_require_main_thread(policy_module):
     thread = threading.Thread(target=background)
     thread.start()
     thread.join(2)
-    assert not thread.is_alive() and len(failures) == 3 and not grant.active()
+    assert not thread.is_alive() and len(failures) == 4 and not grant.active()
 
 
 def test_canonical_snapshot_calls_base_once_and_never_broadens_ordinary_flags(local_runtime):
     module, runtime = local_runtime
-    runtime.arm_native_save_effects()
     reads = []
 
     class Preferences:
@@ -937,16 +938,24 @@ def test_canonical_snapshot_calls_base_once_and_never_broadens_ordinary_flags(lo
 
     snapshot = module.permission_snapshot(Preferences())
     properties = module._base_permission_snapshot.__globals__["PREFERENCE_PROPERTIES"]
-    assert reads == list(properties.values())
+    assert reads == [*properties.values(), "all_dangerous_permissions"]
     assert snapshot["NATIVE_SAVE_EFFECTS"] and snapshot["SAVE_PROJECT"]
     assert not snapshot["ACCESS_EXTERNAL_FILES"] and not snapshot["EXECUTE_PYTHON"]
     assert module.native_save_permission_provider_intact()
+    original = runtime.native_save_policy.statement()
+    assert runtime.native_save_policy.status()["remaining_seconds"] is None
+    assert module.permission_snapshot(NS(allow_save_project=True))["NATIVE_SAVE_EFFECTS"]
+    assert runtime.native_save_policy.statement() is original
+    denied = module.permission_snapshot(NS(allow_save_project=False, allow_native_save_effects=True))
+    assert not denied["NATIVE_SAVE_EFFECTS"] and not denied["SAVE_PROJECT"]
+    with pytest.raises(ValueError):
+        runtime.native_save_policy.check(original)
 
 
 @pytest.mark.parametrize("fault", ["singleton", "unregistered", "grant", "origin", "authority", "generation"])
 def test_noncanonical_or_unready_runtime_cannot_compose_native_authority(local_runtime, monkeypatch, fault):
     module, runtime = local_runtime
-    runtime.arm_native_save_effects()
+    assert module.permission_snapshot(NS(allow_save_project=True))["NATIVE_SAVE_EFFECTS"]
     if fault == "singleton":
         monkeypatch.setattr(module, "_RUNTIME", NS(native_save_policy=runtime.native_save_policy))
     elif fault == "unregistered":
@@ -959,13 +968,14 @@ def test_noncanonical_or_unready_runtime_cannot_compose_native_authority(local_r
         runtime._native_save_local_authority = object()
     else:
         runtime._native_save_generation = "new-generation"
-    assert module.permission_snapshot(NS(allow_native_save_effects=True))["NATIVE_SAVE_EFFECTS"] is False
+    assert module.permission_snapshot(NS(allow_save_project=True))["NATIVE_SAVE_EFFECTS"] is False
 
 
-@pytest.mark.parametrize("fault", ["base_alias", "base_code", "active_code", "guard_code", "generation_code"])
+@pytest.mark.parametrize("fault", ["base_alias", "base_code", "active_code", "guard_code", "generation_code",
+                                   "persistent_code"])
 def test_poisoned_composition_helpers_are_detected_before_they_execute(local_runtime, monkeypatch, fault):
-    module, runtime = local_runtime
-    runtime.arm_native_save_effects()
+    module, _runtime = local_runtime
+    assert module.permission_snapshot(NS(allow_save_project=True))["NATIVE_SAVE_EFFECTS"]
 
     def poison(_unused=None):
         raise AssertionError("Poisoned provider helper must not execute")
@@ -976,7 +986,8 @@ def test_poisoned_composition_helpers_are_detected_before_they_execute(local_run
         function = {"base_code": module._base_permission_snapshot,
                     "active_code": module.NativeSaveGrant.active,
                     "guard_code": module.native_save_permission_provider_intact,
-                    "generation_code": module.NativeSaveGrant.generation.fget}[fault]
+                    "generation_code": module.NativeSaveGrant.generation.fget,
+                    "persistent_code": module.NativeSaveGrant.use_persistent_permission}[fault]
         monkeypatch.setattr(function, "__code__", poison.__code__)
     assert module.permission_snapshot(NS(allow_save_project=True))["NATIVE_SAVE_EFFECTS"] is False
 
@@ -989,26 +1000,26 @@ def test_wrapper_code_substitution_is_visible_to_the_pinned_caller_guard(local_r
 
 def test_preinstalled_foreign_provider_is_not_accepted_as_canonical(local_runtime):
     module, runtime = local_runtime
-    runtime.arm_native_save_effects()
+    assert module.permission_snapshot(NS(allow_save_project=True))["NATIVE_SAVE_EFFECTS"]
     runtime.permissions._source = lambda: pytest.fail("Foreign provider must not execute")
     assert not module.native_save_permission_provider_intact()
-    assert module.permission_snapshot(NS())["NATIVE_SAVE_EFFECTS"] is False
+    assert module.permission_snapshot(NS(allow_save_project=True))["NATIVE_SAVE_EFFECTS"] is False
 
 
 def test_same_class_foreign_grant_cannot_substitute_for_the_runtime_origin(local_runtime):
     module, runtime = local_runtime
-    runtime.arm_native_save_effects()
+    assert module.permission_snapshot(NS(allow_save_project=True))["NATIVE_SAVE_EFFECTS"]
     foreign = module.NativeSaveGrant(runtime._native_save_generation, runtime._native_save_local_authority)
-    foreign.arm(runtime._native_save_local_authority, 900)
+    foreign.use_persistent_permission(runtime._native_save_local_authority, True)
     runtime.native_save_policy = foreign
     assert not module.native_save_permission_provider_intact()
-    assert module.permission_snapshot(NS())["NATIVE_SAVE_EFFECTS"] is False
+    assert module.permission_snapshot(NS(allow_save_project=True))["NATIVE_SAVE_EFFECTS"] is False
 
 
 @pytest.mark.parametrize("target", ["preferences_alias", "preferences_code", "constructor_code"])
 def test_rebound_native_preference_getter_or_constructor_invalidates_provider(local_runtime, monkeypatch, target):
-    module, runtime = local_runtime
-    runtime.arm_native_save_effects()
+    module, _runtime = local_runtime
+    assert module.permission_snapshot(NS(allow_save_project=True))["NATIVE_SAVE_EFFECTS"]
 
     def poison(_unused=None):
         raise AssertionError("Poisoned native preference/constructor code must not execute")
@@ -1019,12 +1030,12 @@ def test_rebound_native_preference_getter_or_constructor_invalidates_provider(lo
         function = module._preferences if target == "preferences_code" else module.BridgeRuntime.__init__
         monkeypatch.setattr(function, "__code__", poison.__code__)
     assert not module.native_save_permission_provider_intact()
-    assert module.permission_snapshot(NS())["NATIVE_SAVE_EFFECTS"] is False
+    assert module.permission_snapshot(NS(allow_save_project=True))["NATIVE_SAVE_EFFECTS"] is False
 
 
 def test_provider_from_other_globals_or_closure_is_not_canonical(local_runtime):
     module, runtime = local_runtime
-    runtime.arm_native_save_effects()
+    assert module.permission_snapshot(NS(allow_save_project=True))["NATIVE_SAVE_EFFECTS"]
     runtime.permissions._source = FunctionType(module._PERMISSION_PROVIDER_CODE, dict(vars(module)))
     assert not module.native_save_permission_provider_intact()
 
@@ -1037,22 +1048,22 @@ def test_provider_from_other_globals_or_closure_is_not_canonical(local_runtime):
 
 def test_partial_module_and_uncreated_singleton_stay_disarmed(local_runtime, monkeypatch):
     module, runtime = local_runtime
-    runtime.arm_native_save_effects()
+    assert module.permission_snapshot(NS(allow_save_project=True))["NATIVE_SAVE_EFFECTS"]
     monkeypatch.setattr(module, "_RUNTIME", None)
     assert not module.native_save_permission_provider_intact()
-    assert module.permission_snapshot(NS())["NATIVE_SAVE_EFFECTS"] is False
+    assert module.permission_snapshot(NS(allow_save_project=True))["NATIVE_SAVE_EFFECTS"] is False
     monkeypatch.setattr(module, "_RUNTIME", runtime)
     monkeypatch.setattr(module, "_CANONICAL_RUNTIME_CLASS", None)
     assert not module.native_save_permission_provider_intact()
-    assert module.permission_snapshot(NS())["NATIVE_SAVE_EFFECTS"] is False
+    assert module.permission_snapshot(NS(allow_save_project=True))["NATIVE_SAVE_EFFECTS"] is False
 
 
 @pytest.mark.parametrize("attribute", ["NativeSaveGrant", "GrantStatement", "POLICY_VERSION"])
 def test_rebound_policy_class_or_version_cannot_compose_local_authority(local_runtime, monkeypatch, attribute):
-    module, runtime = local_runtime
-    runtime.arm_native_save_effects()
+    module, _runtime = local_runtime
+    assert module.permission_snapshot(NS(allow_save_project=True))["NATIVE_SAVE_EFFECTS"]
     monkeypatch.setattr(module._native_save_policy_module, attribute, object())
-    assert module.permission_snapshot(NS())["NATIVE_SAVE_EFFECTS"] is False
+    assert module.permission_snapshot(NS(allow_save_project=True))["NATIVE_SAVE_EFFECTS"] is False
 
 
 def test_canonical_constructor_provider_stays_closure_free():
@@ -1068,9 +1079,11 @@ def test_canonical_constructor_provider_stays_closure_free():
 
 @pytest.mark.parametrize("method", ["register", "unregister", "start_server", "stop_server",
                                     "emergency_stop", "prepare_for_file_load", "undo"])
-def test_lifecycle_boundaries_revoke_local_permission(local_runtime, method):
+def test_lifecycle_boundaries_invalidate_the_active_epoch_without_resetting_preferences(local_runtime, method):
     module, runtime = local_runtime
-    runtime.arm_native_save_effects()
+    preferences = NS(allow_save_project=True)
+    assert module.permission_snapshot(preferences)["NATIVE_SAVE_EFFECTS"]
+    original = runtime.native_save_policy.statement()
     if method == "register":
         runtime._registered = False
     if method == "undo":
@@ -1078,37 +1091,37 @@ def test_lifecycle_boundaries_revoke_local_permission(local_runtime, method):
     else:
         getattr(runtime, method)()
     assert not runtime.native_save_policy.active()
+    assert preferences.allow_save_project is True
+    assert module.permission_snapshot(preferences)["NATIVE_SAVE_EFFECTS"] is (method != "unregister")
+    if method != "unregister":
+        assert runtime.native_save_policy.statement().epoch > original.epoch
+        with pytest.raises(ValueError):
+            runtime.native_save_policy.check(original)
 
 
-def test_active_native_save_prevents_renewal_but_not_revocation(local_runtime):
-    _module, runtime = local_runtime
-    first = runtime.native_save_policy.arm(runtime._native_save_local_authority, 900)
-    runtime.jobs.active = NS(kind="project.native_save")
-    with pytest.raises(Exception, match="Finish or cancel"):
+def test_legacy_local_shim_cannot_grant_or_renew_save_authority(local_runtime, monkeypatch):
+    module, runtime = local_runtime
+    preferences = NS(allow_save_project=False)
+    fake_bpy = NS(context=NS(preferences=NS(addons={module.__package__: NS(preferences=preferences)})))
+    monkeypatch.setitem(sys.modules, "bpy", fake_bpy)
+    with pytest.raises(module.BridgeError) as denied:
         runtime.arm_native_save_effects()
+    assert denied.value.code == module.ErrorCode.PERMISSION_DENIED
+    assert not runtime.native_save_policy.active()
+
+    preferences.allow_save_project = True
+    assert runtime.permissions.snapshot()["NATIVE_SAVE_EFFECTS"]
+    first = runtime.native_save_policy.statement()
+    runtime.jobs.active = NS(kind="project.native_save")
+    assert runtime.arm_native_save_effects()["persistent"]
     runtime.native_save_policy.check(first)
-    runtime.revoke_native_save_effects()
+    preferences.allow_save_project = False
+    assert not runtime.permissions.snapshot()["NATIVE_SAVE_EFFECTS"]
     assert not runtime.native_save_policy.active()
 
 
-def test_local_operator_presents_effects_and_uses_only_local_runtime_entry(addon_package, monkeypatch):
-    reports, events = [], []
-
-    class Operator:
-        def report(self, level, message):
-            reports.append((level, message))
-
-    class Layout:
-        def __init__(self):
-            self.labels = []
-
-        def label(self, *, text):
-            self.labels.append(text)
-
-        def prop(self, _preferences, name):
-            assert name == "native_save_duration_seconds"
-
-    fake_bpy = NS(types=NS(Operator=Operator, Panel=object),
+def test_sidebar_does_not_register_the_legacy_arm_or_revoke_operators(addon_package, monkeypatch):
+    fake_bpy = NS(types=NS(Operator=object, Panel=object),
                   props=NS(StringProperty=lambda **_: None, BoolProperty=lambda **_: None))
     monkeypatch.setitem(sys.modules, "bpy", fake_bpy)
     name = f"{addon_package}.ui_native_save_local_test"
@@ -1116,18 +1129,6 @@ def test_local_operator_presents_effects_and_uses_only_local_runtime_entry(addon
     spec = importlib.util.spec_from_file_location(name, source)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    preferences = NS(native_save_duration_seconds=900)
-    local = NS(arm_native_save_effects=lambda seconds: events.append(("arm", seconds)),
-               revoke_native_save_effects=lambda: events.append(("revoke",)))
-    monkeypatch.setattr(module, "get_preferences", lambda _context: preferences)
-    monkeypatch.setattr(module, "get_runtime", lambda: local)
-    context = NS(window_manager=NS(invoke_props_dialog=lambda _operator, **_kwargs: {"RUNNING_MODAL"}))
-    arm = module.BCB_OT_arm_native_save()
-    arm.layout = Layout()
-    assert arm.invoke(context, object()) == {"RUNNING_MODAL"} and not events
-    arm.draw(context)
-    assert any("outside the project folder" in text for text in arm.layout.labels)
-    assert any("connected clients" in text for text in arm.layout.labels)
-    assert arm.execute(context) == {"FINISHED"} and events == [("arm", 900)]
-    assert module.BCB_OT_revoke_native_save().execute(context) == {"FINISHED"}
-    assert events[-1] == ("revoke",) and not reports
+    operator_ids = {cls.bl_idname for cls in module.CLASSES if hasattr(cls, "bl_idname")}
+    assert "blender_codex_bridge.start" in operator_ids
+    assert {"blender_codex_bridge.arm_native_save", "blender_codex_bridge.revoke_native_save"}.isdisjoint(operator_ids)

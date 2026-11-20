@@ -42,7 +42,7 @@ def save_env(addon_package, monkeypatch, tmp_path):
     monkeypatch.setattr(runtime_module, "_RUNTIME", runtime)
     monkeypatch.setattr(source, "qualify_provider", lambda _context: None)  # Pure model; separate canonical-runtime poison tests exist.
     monkeypatch.setattr(source, "snapshot", lambda _resource_directory=None: projection(native.raw, native.identities, native.driven_raw))
-    monkeypatch.setattr(source, "options", lambda: (str(tmp_path), 0, "NONE", False))
+    monkeypatch.setattr(source, "options", lambda _target: (str(tmp_path), 0, "NONE", False, False))
 
     class Data:
         @property
@@ -268,7 +268,7 @@ def test_current_queued_request_cancellation_or_expiry_refuses_before_source_or_
         "filepath": str(env.folder / "denied.blend"), "overwrite_policy": "NO_CLOBBER"})
     reads = []
     monkeypatch.setattr(env.source, "snapshot", lambda _resource_directory=None: reads.append("source"))
-    monkeypatch.setattr(env.source, "options", lambda: reads.append("options"))
+    monkeypatch.setattr(env.source, "options", lambda _target: reads.append("options"))
     if control == "cancelled":
         assert queued.cancel_pending(env.source.BridgeError("TIMEOUT", "Owner cancelled")) is False
     elif control == "queue_expired":
@@ -436,7 +436,7 @@ def test_queue_hook_owner_must_match_the_actual_executed_request_intent(queued_s
                                          else {"params": dict(executed.params)}))
     reads = []
     monkeypatch.setattr(env.source, "snapshot", lambda _resource_directory=None: reads.append("source"))
-    monkeypatch.setattr(env.source, "options", lambda: reads.append("options"))
+    monkeypatch.setattr(env.source, "options", lambda _target: reads.append("options"))
     response = case.executor.execute_request(executed, check_cancelled=queued.check_active)
     assert not response.ok and response.error["context"]["reason"] == "QUEUED_REQUEST_INTENT_CHANGED"
     assert reads == [] and not env.native.calls and not list(env.folder.iterdir())
@@ -628,7 +628,7 @@ def test_unknown_retained_reader_blocks_new_worker_after_approved_folder_change(
     retained = env.manager._save_retained[row["job_id"]]
     other = env.folder / "other approved folder"
     other.mkdir()
-    monkeypatch.setattr(env.source, "options", lambda: (str(other), 0, "NONE", False))
+    monkeypatch.setattr(env.source, "options", lambda _target: (str(other), 0, "NONE", False, False))
     env.native.reader_gate = None
     env.folder = other
     calls_before = list(env.native.calls)

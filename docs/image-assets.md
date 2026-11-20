@@ -4,13 +4,13 @@ Unreleased on `main`; not in the published 0.3.0 packages. These structured tool
 assets and shader binding. Separate [pixel/brush tools](texture-painting.md) create generated
 textures and paint independent versions. [Cooperative export/reimport](texture-delivery.md)
 writes reviewed textures to exact approved paths. Separate [packed versions and raw snapshots](image-portability.md)
-provide bounded portability/recovery; broader packing acceptance, baking and unrestricted file access remain unsupported.
+provide bounded portability and recovery. Broader packing and baking remain unfinished.
 
 ## Set up in Blender
 
 1. In the bridge add-on preferences or sidebar **Permissions**, choose an **Approved Texture
    Folder**: an existing absolute local subdirectory containing the textures you intend to use.
-   An empty setting blocks loading. The agent cannot change this setting through MCP.
+   An empty setting grants no path access. The agent cannot change this setting through MCP.
 2. Enable **Edit Materials** and, only for the intended reads, **Access External Files**.
    Enable the `materials` toolset, and `nodes` for binding. Toolsets do not grant permissions.
    Python, deletion and project saving are not required for loading or binding.
@@ -19,6 +19,12 @@ provide bounded portability/recovery; broader packing acceptance, baking and unr
 
 Mutations require Object Mode and run on Blender's main thread. They do not change selection,
 active object or viewport. Linked/override/read-only data is not silently made local.
+
+In Bridge preferences, **Enable all dangerous permissions** and then **Use project and
+texture paths outside approved folders** to opt out of the texture folder restriction.
+This uses Blender's existing OS access and retains the tool's external-file and material
+permission checks. Turning off either option restores the folder restriction and stops
+work that was authorized under the wider scope. Asset import and delivery use separate folders.
 
 ## Tool contracts
 
@@ -51,8 +57,10 @@ images still require a permitted supported source path for this workflow.
 
 ### Approved sources and limits
 
-Files must resolve canonically inside the Blender-controlled folder. Network/UNC, mapped network
-drives, Blender `//` paths, traversal, alternate streams and resolved symlink escapes are rejected.
+By default, files must resolve canonically inside the Blender-controlled folder, including
+when an input follows a symlink. With the local folder override on, the canonical source
+still has to be an ordinary local file. Explicit network/UNC paths, mapped network drives,
+Blender `//` paths, traversal and alternate streams are rejected.
 Environment variables and `~` are not expanded. The folder cannot be a volume root. This scope
 is specific to these tools, not a sandbox for other file-capable tools or armed raw Python.
 
@@ -84,7 +92,7 @@ or file-sized byte copies are constructed by preflight. Format details follow th
 a reviewed subset, not a general decoder or security sandbox.
 
 The image loader, binding, revision, painting and pixel-inspection paths all use this reader.
-Live external-file permission and the approved-folder setting are rechecked before reads;
+Live external-file permission and the texture path policy are rechecked before reads;
 file identity/hash is checked across preflight and before/after native loading. Pause/stop and
 edit permission are rechecked before further native mutation, including immediately after
 allocation. Cleanup requires live deletion permission and exact owned zero-user/no-fake-user

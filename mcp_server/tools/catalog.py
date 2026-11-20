@@ -203,7 +203,10 @@ CORE_REMOTE_TOOLS: tuple[tuple[str, str, bool, tuple[str, ...]], ...] = (
         (),
     ),
     ("checkpoint.list", "List checkpoint labels, operation history and conservative recovery availability.", False, ()),
-    ("project.save", "Project saving is unavailable until native save side effects can be bounded.", True, ("SAVE_PROJECT",)),
+    ("project.save", "Save the current project or Save As under Blender's granted save and path permissions.", True, ("SAVE_PROJECT",)),
+    ("project.save_dialog_state", "Read Blender's open Save or Save As dialog and its proposed path.", False, ("INSPECT_SCENE", "ACCESS_EXTERNAL_FILES")),
+    ("project.checkpoint_status", "Recheck the latest durable saved project checkpoint.", False, ("INSPECT_SCENE", "ACCESS_EXTERNAL_FILES")),
+    ("project.checkpoint_reopen", "Reopen an explicitly confirmed verified checkpoint from a clean Blender project.", True, ("EDIT_SCENE", "ACCESS_EXTERNAL_FILES")),
 )
 
 LOCAL_TOOLSET_TOOLS: tuple[tuple[str, str, bool], ...] = (
@@ -306,6 +309,7 @@ DESTRUCTIVE_TOOL_NAMES = frozenset(
     | {
         "checkpoint.undo_last",
         "project.save",
+        "project.checkpoint_reopen",
         "project.native_save_start",
         "asset.export",
         "viewport.capture",

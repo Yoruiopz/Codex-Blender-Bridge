@@ -180,6 +180,42 @@ def test_load_new_image_and_preserve_source_file(tools):
     assert len(images) == 1 and path.read_bytes() == png()
 
 
+@pytest.mark.parametrize("master,unrestricted,allowed", [
+    (False, False, False), (True, False, False), (False, True, False), (True, True, True),
+])
+def test_load_requires_both_local_opt_ins_to_use_blank_texture_folder(tools, monkeypatch, master, unrestricted, allowed):
+    module, _, images, _, context, path = tools
+    preferences = NS(texture_directory="", all_dangerous_permissions=master,
+                     allow_unrestricted_project_texture_paths=unrestricted)
+    monkeypatch.setattr(module, "get_preferences", lambda: preferences)
+    request = {"filepath": str(path), "new_name": "Unrestricted"}
+    if allowed:
+        assert module.load_image(context, request)["image"]["filepath"] == str(path)
+        assert len(images) == 1
+    else:
+        with pytest.raises(module.BridgeError) as fail:
+            module.load_image(context, request)
+        assert fail.value.code == "PERMISSION_DENIED" and not images
+
+
+def test_revoking_unrestricted_policy_after_preflight_blocks_native_decode(tools, monkeypatch):
+    module, _, images, _, context, path = tools
+    preferences = NS(texture_directory="", all_dangerous_permissions=True,
+                     allow_unrestricted_project_texture_paths=True)
+    monkeypatch.setattr(module, "get_preferences", lambda: preferences)
+    preflight = module.preflight_file
+
+    def revoke_after_preflight(*args, **kwargs):
+        result = preflight(*args, **kwargs)
+        preferences.allow_unrestricted_project_texture_paths = False
+        return result
+
+    monkeypatch.setattr(module, "preflight_file", revoke_after_preflight)
+    with pytest.raises(module.BridgeError) as fail:
+        module.load_image(context, {"filepath": str(path), "new_name": "Denied"})
+    assert fail.value.code == "PERMISSION_DENIED" and not images
+
+
 @pytest.mark.parametrize("alpha", ["STRAIGHT", "PREMUL", "CHANNEL_PACKED", "NONE"])
 def test_explicit_alpha_role_is_set_before_authorized_buffer_verification(tools, monkeypatch, alpha):
     module, _, images, _, context, path = tools
@@ -545,8 +581,8 @@ def test_permission_is_rechecked_immediately_before_decode(tools, monkeypatch):
     module, _, images, grants, context, path = tools
     preflight = module.preflight_file
 
-    def revoked(*args):
-        result = preflight(*args)
+    def revoked(*args, **kwargs):
+        result = preflight(*args, **kwargs)
         grants["ACCESS_EXTERNAL_FILES"] = False
         return result
 

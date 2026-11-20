@@ -48,18 +48,21 @@ def _absolute(raw: str, label: str) -> Path:
     return candidate
 
 
-def approved_file(raw: str, root_raw: str) -> Path:
+def approved_file(raw: str, root_raw: str, *, unrestricted: bool = False) -> Path:
     """Call only AFTER ACCESS_EXTERNAL_FILES authorization; resolution probes the filesystem."""
-    if not root_raw:
+    if not root_raw and unrestricted is not True:
         raise BridgeError(ErrorCode.PERMISSION_DENIED, "Choose an approved texture folder in Blender's bridge settings first.")
-    root_candidate, candidate = _absolute(root_raw, "Texture folder"), _absolute(raw, "Texture file")
+    root_candidate = None if unrestricted is True else _absolute(root_raw, "Texture folder")
+    candidate = _absolute(raw, "Texture file")
     try:
-        root = root_candidate.resolve(strict=True)
-        if root == Path(root.anchor) or not root.is_dir():
-            raise invalid_argument("The approved texture folder must be an existing subdirectory, not a volume root.")
         target = candidate.resolve(strict=True)
-        if not target.is_relative_to(root):
-            raise BridgeError(ErrorCode.PERMISSION_DENIED, "Texture file is outside Blender's approved texture folder.")
+        if root_candidate is not None:
+            root = root_candidate.resolve(strict=True)
+            if root == Path(root.anchor) or not root.is_dir():
+                raise invalid_argument("The approved texture folder must be an existing subdirectory, not a volume root.")
+            if not target.is_relative_to(root):
+                raise BridgeError(ErrorCode.PERMISSION_DENIED, "Texture file is outside Blender's approved texture folder.")
+        _absolute(str(target), "Resolved texture file")
         if os.name != "nt" and len(target.parts) > 1 and target.parts[1] in {"dev", "proc", "sys"}:
             raise invalid_argument("Device/process files cannot be texture sources.")
         if not _local_drive(target) or not stat.S_ISREG(target.stat().st_mode):
@@ -166,7 +169,8 @@ def _identity(value: os.stat_result) -> tuple:
     return value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns
 
 
-def preflight_steps(raw: str, root: str, *, check: Callable[[], None] = lambda: None) -> Iterator[dict]:
+def preflight_steps(raw: str, root: str, *, check: Callable[[], None] = lambda: None,
+                    unrestricted: bool = False) -> Iterator[dict]:
     """Yield bounded IO/CPU safe points; return a complete file proof, not pixels.
 
     Callers must authorize external-file access BEFORE entry. The callback must
@@ -175,7 +179,7 @@ def preflight_steps(raw: str, root: str, *, check: Callable[[], None] = lambda: 
     from .image_streams import preflight_stream
 
     check()
-    path = approved_file(raw, root)
+    path = approved_file(raw, root, unrestricted=unrestricted)
     try:
         check()
         before = path.stat()
@@ -190,7 +194,7 @@ def preflight_steps(raw: str, root: str, *, check: Callable[[], None] = lambda: 
             check()
             after_handle = os.fstat(stream.fileno())
         check()
-        checked_path = approved_file(raw, root)
+        checked_path = approved_file(raw, root, unrestricted=unrestricted)
         after = path.stat()
     except OSError as exc:
         raise invalid_argument("Texture file could not be read.") from exc
@@ -200,9 +204,10 @@ def preflight_steps(raw: str, root: str, *, check: Callable[[], None] = lambda: 
     return path, {**header, "_identity": _identity(after)}
 
 
-def preflight_file(raw: str, root: str, check: Callable[[], None] = lambda: None) -> tuple[Path, dict]:
+def preflight_file(raw: str, root: str, check: Callable[[], None] = lambda: None, *,
+                   unrestricted: bool = False) -> tuple[Path, dict]:
     """Synchronous compatibility adapter; jobs can drain preflight_steps over ticks."""
-    work = preflight_steps(raw, root, check=check)
+    work = preflight_steps(raw, root, check=check, unrestricted=unrestricted)
     try:
         while True:
             next(work)

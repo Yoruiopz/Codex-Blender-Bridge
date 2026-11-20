@@ -16,6 +16,7 @@ from . import executor as _executor_module
 from . import protocol as _protocol_module
 from .errors import BridgeError, ErrorCode, invalid_argument
 from .geometry_preview_source import semantic
+from .native_save_files import _path
 from .native_save_policy import NativeSaveGrant
 from .native_save_profile import (
     ProfileRefused,
@@ -24,7 +25,7 @@ from .native_save_profile import (
     canonical,
     capture,
 )
-from .permissions import Permission
+from .permissions import Permission, unrestricted_project_texture_paths
 from .preferences import get_preferences
 from .request_lifecycle import RequestLifetime
 from .state import BridgeState
@@ -199,12 +200,14 @@ def qualify_provider(context):
         raise refused("CANONICAL_PERMISSION_PROVIDER_REQUIRED")
 
 
-def options():
+def options(target):
     bpy, prefs = require_blender(), get_preferences()
     if prefs is None:
         raise refused("PREFERENCES_UNAVAILABLE")
     paths = bpy.context.preferences.filepaths
-    values = (prefs.project_directory, paths.save_version, paths.file_preview_type, bpy.data.use_autopack)
+    unrestricted = unrestricted_project_texture_paths(prefs)
+    root = str(_path(target, "Project destination").parent) if unrestricted else prefs.project_directory
+    values = (root, paths.save_version, paths.file_preview_type, bpy.data.use_autopack, unrestricted)
     if type(values[0]) is not str or type(values[1]) is not int or not 0 <= values[1] <= 3:
         raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Native save requires a local Approved Project Folder and backup count 0..3.")
     if values[2] != "NONE" or values[3] is not False:
@@ -287,10 +290,6 @@ class SaveOrigin:
         self.policy = self.manager.native_save_policy
         if type(self.policy) is not NativeSaveGrant:
             raise refused("NATIVE_GRANT_REQUIRED")
-        try:
-            self.statement = self.policy.statement()
-        except ValueError as cause:
-            raise BridgeError(ErrorCode.PERMISSION_DENIED, str(cause)) from cause
         self.store = get_task_plans(context.state)
         self.semantic, self.baseline, self.protection = semantic(self.store), self.store.baseline, self.store.protection
         if self.protection is not None:
@@ -317,12 +316,17 @@ class SaveOrigin:
         # every live permission here before any Blender/source/options read,
         # then recheck identities/policy after that canonical provider returns.
         context.require(*REQUIRED)
+        qualify_provider(context)
+        try:
+            self.statement = self.policy.statement()
+        except ValueError as cause:
+            raise BridgeError(ErrorCode.PERMISSION_DENIED, str(cause)) from cause
         self.static(context)
         bpy = require_blender()
         if sys.platform != "linux" or BUILDS.get(tuple(bpy.app.version)) != bpy.app.build_hash.decode():
             raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Native save is qualified only on the recorded official Linux builds.")
         self.build, self.version, self.binary = bpy.app.build_hash.decode(), bpy.app.version_string, bpy.app.binary_path
-        self.preferences, self.filepath = options(), bpy.data.filepath
+        self.preferences, self.filepath = options(self.target), bpy.data.filepath
         if method == START:
             from .native_save_jobs import SavePreview
 
@@ -383,7 +387,7 @@ class SaveOrigin:
         stop_gate(context, self.lifetime, self.deadline)
 
     def source(self, *, after_native=False):
-        if options() != self.preferences:
+        if options(self.target) != self.preferences:
             raise refused("SAVE_OPTIONS_CHANGED")
         expected_path = self.target if after_native and self.mode == "SAVE_AS" else self.filepath
         if require_blender().data.filepath != expected_path:

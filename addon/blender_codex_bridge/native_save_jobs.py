@@ -101,7 +101,7 @@ class NativeSaveJobs(GeometryPreviewJobs):
         origin.check(context)
         plan = freeze_plan(origin.preferences[0], origin.params["filepath"], origin.params["mode"],
                            origin.params["overwrite_policy"], origin.filepath, origin.preferences[1],
-                           check=lambda: origin.check(context, source=False))
+                           check=lambda: origin.check(context, source=False), unrestricted=origin.preferences[4])
         origin.check(context)
         losses = origin.projection.losses + (() if origin.params["mode"] == "COPY_NEW" else
                                             ("NATIVE_DESTINATION_RACE_NOT_EXCLUDED",))
@@ -380,8 +380,18 @@ class NativeSaveJobs(GeometryPreviewJobs):
             raise refused("CLEANUP_UNKNOWN", started=True)
         self._gate(job)
         self._effects(record)
+        from .project_recovery import record_verified_save, unavailable
+
+        try:
+            recovery = record_verified_save(
+                filepath=str(record.preview.plan.path), file_sha256=saved.sha256, file_bytes=saved.identity[2],
+                fresh_process_reopen_verified=True, check=lambda: self._gate(job, source=False),
+            )
+        except BridgeError as error:
+            recovery = {**unavailable("RECOVERY_RECEIPT_INTERRUPTED"), "error_code": error.code}
         return {"mode": origin.mode, "filepath": origin.target,
                 "profile": "stock_native_project_v1", "fresh_process_reopen_verified": True,
+                "recovery_checkpoint": recovery,
                 "declared_source_verified": True, "native_save_interval_ms": record.native_interval_ms,
                 "source_capture_wall_ms": origin.capture_ms, "reader_evidence": receipt,
                 "source_comparison_count": len(origin.capture_observations),

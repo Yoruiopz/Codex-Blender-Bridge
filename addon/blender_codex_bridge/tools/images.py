@@ -20,7 +20,7 @@ from ..image_files import (
     file_limits,
     preflight_file,
 )
-from ..permissions import Permission
+from ..permissions import Permission, unrestricted_project_texture_paths
 from ..preferences import get_preferences
 from ..tool_registry import ToolContext, ToolRegistry
 from ..utils import bool_param, int_param, reject_unknown_params, require_blender
@@ -75,8 +75,9 @@ def _object_mode(bpy: Any) -> None:
         raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Image asset mutations currently require Object Mode for verified recovery.")
 
 
-def _root() -> str:
-    return getattr(get_preferences(), "texture_directory", "")
+def _policy() -> tuple[str, bool]:
+    preferences = get_preferences()
+    return getattr(preferences, "texture_directory", ""), unrestricted_project_texture_paths(preferences)
 
 
 def _project_anchor() -> tuple[str, Path]:
@@ -126,19 +127,21 @@ class ImageSourceReference:
     path: Path
     project_filepath: str | None
     project_path: Path | None
+    unrestricted: bool = False
 
     def evidence(self) -> dict:
         return {"filepath": self.filepath, "resolved_filepath": str(self.path),
                 "project_filepath": self.project_filepath,
                 "resolved_project_filepath": str(self.project_path) if self.project_path else None,
                 "approved_texture_directory": self.approved_root,
-                "resolved_approved_texture_directory": str(self.resolved_root)}
+                "resolved_approved_texture_directory": None if self.unrestricted else str(self.resolved_root),
+                "unrestricted_texture_paths": self.unrestricted}
 
     def check(self, context: ToolContext) -> None:
         context.require(Permission.ACCESS_EXTERNAL_FILES)
         _check(context)
         context.require(Permission.ACCESS_EXTERNAL_FILES)
-        if (_root() != self.approved_root or str(self.image.filepath) != self.filepath
+        if (_policy() != (self.approved_root, self.unrestricted) or str(self.image.filepath) != self.filepath
                 or self.image.source != "FILE" or not local_editable(self.image)
                 or getattr(self.image, "is_multiview", False)):
             raise BridgeError(ErrorCode.PERMISSION_DENIED, "Stored texture source or approved folder changed; reinspect before reading.")
@@ -148,18 +151,20 @@ class ImageSourceReference:
             if raw != self.project_filepath or project != self.project_path:
                 raise invalid_argument("Saved project anchor changed during texture access; reinspect before retrying.")
         try:
-            root = _absolute(self.approved_root, "Texture folder").resolve(strict=True)
             anchor = Path(self.project_filepath) if self.project_filepath is not None else None
             alias = _stored_alias(self.filepath, anchor).resolve(strict=True)
+            root = alias.parent if self.unrestricted else _absolute(self.approved_root, "Texture folder").resolve(strict=True)
         except (OSError, RuntimeError) as exc:
             raise invalid_argument("Stored texture source or approved folder could not be resolved.") from exc
         if root != self.resolved_root or alias != self.path:
             raise invalid_argument("Stored texture alias or approved folder was retargeted; reinspect before retrying.")
         # Keep the complete approved-path/regular-file policy authoritative,
         # including for a relative alias that resolves beyond its project folder.
-        if approved_file(str(alias), self.approved_root) != self.path:
+        if approved_file(str(alias), self.approved_root, unrestricted=self.unrestricted) != self.path:
             raise invalid_argument("Stored texture source changed during access.")
         context.require(Permission.ACCESS_EXTERNAL_FILES)
+        if _policy() != (self.approved_root, self.unrestricted):
+            raise BridgeError(ErrorCode.PERMISSION_DENIED, "Texture folder policy changed before source access.")
 
 
 def source_reference(context: ToolContext, image: Any) -> ImageSourceReference:
@@ -169,18 +174,19 @@ def source_reference(context: ToolContext, image: Any) -> ImageSourceReference:
     context.require(Permission.ACCESS_EXTERNAL_FILES)
     if not local_editable(image) or image.source != "FILE" or getattr(image, "is_multiview", False):
         raise BridgeError(ErrorCode.NOT_IMPLEMENTED, "Stored texture resolution requires a local editable single-view FILE image.")
-    raw, root = str(image.filepath), _root()
-    if not root:
+    raw = str(image.filepath)
+    root, unrestricted = _policy()
+    if not root and not unrestricted:
         raise BridgeError(ErrorCode.PERMISSION_DENIED, "Choose an approved texture folder in Blender's bridge settings first.")
     project_raw, project = _project_anchor() if raw.startswith("//") else (None, None)
     try:
-        resolved_root = _absolute(root, "Texture folder").resolve(strict=True)
         anchor = Path(project_raw) if project_raw is not None else None
         resolved = _stored_alias(raw, anchor).resolve(strict=True)
-        path = approved_file(str(resolved), root)
+        path = approved_file(str(resolved), root, unrestricted=unrestricted)
+        resolved_root = path.parent if unrestricted else _absolute(root, "Texture folder").resolve(strict=True)
     except (OSError, RuntimeError) as exc:
         raise invalid_argument("Stored texture source could not be resolved.") from exc
-    reference = ImageSourceReference(image, raw, root, resolved_root, path, project_raw, project)
+    reference = ImageSourceReference(image, raw, root, resolved_root, path, project_raw, project, unrestricted)
     reference.check(context)
     return reference
 
@@ -188,22 +194,22 @@ def source_reference(context: ToolContext, image: Any) -> ImageSourceReference:
 def _source_file(context: ToolContext, raw: str, *, source: ImageSourceReference | None = None):
     context.require(Permission.ACCESS_EXTERNAL_FILES)
     _check(context)
-    root = _root()
+    root, unrestricted = _policy()
     def check():
         context.require(Permission.ACCESS_EXTERNAL_FILES)
         _check(context)
-        if _root() != root:
-            raise BridgeError(ErrorCode.PERMISSION_DENIED, "Approved texture folder changed during preflight; reinspect before retrying.")
         context.require(Permission.ACCESS_EXTERNAL_FILES)  # A cancellation callback can also revoke consent.
         if source is not None:
             if raw != str(source.path):
                 raise invalid_argument("Stored source reference does not match the requested texture path.")
             source.check(context)
-    path, proof = preflight_file(raw, root, check)
-    return path, {**proof, "_approved_root": root}
+        if _policy() != (root, unrestricted):
+            raise BridgeError(ErrorCode.PERMISSION_DENIED, "Texture folder policy changed during preflight; reinspect before retrying.")
+    path, proof = preflight_file(raw, root, check, unrestricted=unrestricted)
+    return path, {**proof, "_path_policy": (root, unrestricted)}
 
 
-def _load_gate(context: ToolContext, approved_root: str | None = None, source: ImageSourceReference | None = None) -> None:
+def _load_gate(context: ToolContext, policy: tuple[str, bool] | None = None, source: ImageSourceReference | None = None) -> None:
     context.require(Permission.EDIT_MATERIALS, Permission.ACCESS_EXTERNAL_FILES)
     _check(context)
     if source is not None:
@@ -216,9 +222,9 @@ def _load_gate(context: ToolContext, approved_root: str | None = None, source: I
         raise BridgeError(ErrorCode.EMERGENCY_STOPPED, "Image loading emergency-stopped.")
     if flags.get("paused"):
         raise BridgeError(ErrorCode.AGENT_PAUSED, "Image loading is paused.")
-    if approved_root is not None and _root() != approved_root:
-        raise BridgeError(ErrorCode.PERMISSION_DENIED, "Approved texture folder changed before native loading/mutation; reinspect before retrying.")
     context.require(Permission.EDIT_MATERIALS, Permission.ACCESS_EXTERNAL_FILES)
+    if policy is not None and _policy() != policy:
+        raise BridgeError(ErrorCode.PERMISSION_DENIED, "Texture folder policy changed before native loading/mutation; reinspect before retrying.")
 
 
 def _exr_interpretation(header: dict, color: str, alpha: str | None) -> None:
@@ -287,11 +293,12 @@ def inspect_images(context: ToolContext, params: Mapping[str, Any]) -> dict:
         records.append({**_summary(image), "direct_users": direct, "direct_user_count": len(owners),
                         "direct_users_truncated": len(owners) > limit})
     total = 1 if name is not None else len(bpy.data.images)
-    root = _root()
+    root, unrestricted = _policy()
     return {"images": records, "total_images": total, "offset": 0 if name is not None else offset,
             "truncated": name is None and offset + len(images) < total,
             "next_offset": offset + len(images) if name is None and offset + len(images) < total else None,
             "policy": {"approved_texture_directory": root[:4096], "directory_truncated": len(root) > 4096,
+                       "unrestricted_texture_paths": unrestricted,
                        "max_file_bytes": MAX_FILE_BYTES, "format_file_byte_limits": file_limits(),
                        "max_dimension": MAX_DIMENSION, "max_pixels": MAX_PIXELS,
                        "formats": ["PNG", "8-bit JPEG", "uncompressed RGBA FLOAT32 EXR"], "remote_policy_changes_supported": False},
@@ -322,7 +329,7 @@ def load_image(context: ToolContext, params: Mapping[str, Any], *, source: Image
     path, preflight = _source_file(context, raw, source=source)
     _exr_interpretation(preflight, color, alpha)
     _check(context)
-    _load_gate(context, preflight["_approved_root"], source)
+    _load_gate(context, preflight["_path_policy"], source)
     image = None
     created_image_name = None
     before = len(bpy.data.images)
@@ -330,7 +337,7 @@ def load_image(context: ToolContext, params: Mapping[str, Any], *, source: Image
         _object_mode(bpy)
         image = bpy.data.images.load(str(path), check_existing=False)
         created_image_name = image.name
-        _load_gate(context, preflight["_approved_root"], source)
+        _load_gate(context, preflight["_path_policy"], source)
         image.name = name
         created_image_name = image.name
         image.use_fake_user = False
@@ -339,7 +346,7 @@ def load_image(context: ToolContext, params: Mapping[str, Any], *, source: Image
             apply_assignments(image, prepare_assignments(image, {"alpha_mode": alpha},
                 allowed=frozenset({"alpha_mode"}), object_pointers=frozenset(), bpy=bpy))
         _check(context)
-        _load_gate(context, preflight["_approved_root"], source)
+        _load_gate(context, preflight["_path_policy"], source)
         actual = tuple(int(v) for v in image.size)  # Explicit authorized decode, never a read-only probe.
         allowed_sizes = {(preflight["width"], preflight["height"])}
         if preflight["format"] == "JPEG":
@@ -355,7 +362,7 @@ def load_image(context: ToolContext, params: Mapping[str, Any], *, source: Image
         checked_path, after = _source_file(context, str(image.filepath))
         if checked_path != path or after != preflight:
             raise RuntimeError("Texture source changed during native decoding")
-        _load_gate(context, preflight["_approved_root"], source)
+        _load_gate(context, preflight["_path_policy"], source)
         return {"loaded": True, "reused_existing": False, "image": _summary(image),
                 "source_file": {k: v for k, v in preflight.items() if not k.startswith("_")},
                 "native_decode_interruptible": False, "file_written": False,
@@ -404,7 +411,7 @@ def register_tools(registry: ToolRegistry) -> None:
                       description="Inspect bounded existing image metadata/direct users without loading unloaded buffers.")
     registry.register("image.load", load_image, toolset="materials", modifies=True,
                       permissions=(Permission.EDIT_MATERIALS, Permission.ACCESS_EXTERNAL_FILES),
-                      description="Load a new bounded PNG/JPEG/plain FLOAT RGBA EXR texture from Blender's approved folder; no implicit reuse or file writes.")
+                      description="Load a new bounded PNG/JPEG/plain FLOAT RGBA EXR texture under Blender's live texture path policy. No implicit reuse or file writes.")
     registry.register("image.remove", remove_image, toolset="materials", modifies=True,
                       permissions=(Permission.EDIT_MATERIALS, Permission.DELETE_OBJECTS),
                       description="Remove one explicitly confirmed unused local image datablock, never its source file.")

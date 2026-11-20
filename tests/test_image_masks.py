@@ -200,7 +200,11 @@ def test_file_mask_requires_live_external_grant_even_when_canvas_is_generated(jo
     path.write_bytes(b"fixture mask")
     mask.filepath = str(path)
     monkeypatch.setattr(env.paint.images, "get_preferences", lambda: NS(texture_directory=str(tmp_path)))
-    monkeypatch.setattr(env.paint.images, "preflight_file", lambda *_args: ("approved", {"size": 1}))
+    def preflight(_raw, _root, _check, *, unrestricted):
+        assert unrestricted is False
+        return "approved", {"size": 1}
+
+    monkeypatch.setattr(env.paint.images, "preflight_file", preflight)
     env.manager.start(env.context(), {"image_name": "Original", "new_name": "Output", "strokes": [stroke()],
         "mask": {"image_name": "Mask"}}, 60.)
     env.grants["ACCESS_EXTERNAL_FILES"] = False

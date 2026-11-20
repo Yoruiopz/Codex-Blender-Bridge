@@ -259,7 +259,7 @@ def test_unknown_context_is_rejected_without_attribute_callbacks(addon_package):
 
 @pytest.mark.parametrize("callback", [None, "get", "set", "update", "foreign_key", "foreign_value",
     "missing_attr", "wrong_attr", "foreign_attr", "extra_key"])
-def test_registered_declaration_allows_only_original_callback_free_keywords(addon_package, monkeypatch, callback):
+def test_registered_declaration_allows_only_exact_owned_settings_callback(addon_package, monkeypatch, callback):
     import os
     module = importlib.import_module(addon_package + ".storage_snapshot_approval")
     class Marker:
@@ -404,7 +404,7 @@ def test_declaration_clause_diagnostic_retains_additional_keyword_difference(add
         return
     facts = failure.value.context["declaration_clause"]
     assert facts["function_is_builtin"] and facts["function_matches_original"]
-    assert facts["keywords_exact_dict"] and facts["keyword_count"] == 6
+    assert facts["keywords_exact_dict"] and facts["keyword_count"] == len(module._DECLARATION) + 1
     assert facts["expected_keyword_names"] == [key for key, _ in module._DECLARATION]
     assert facts["keywords"][-1] == {"name": "unexpected", "name_kind": "str", "name_truncated": False,
         "value": "literal", "value_kind": "str", "value_truncated": False}
@@ -466,7 +466,7 @@ def test_registered_declaration_never_adopts_later_attr_or_callback_drift(addon_
     monkeypatch.setattr(module.graph, "_deferred_type", lambda _bpy: (Marker, origins))
     monkeypatch.setattr(module.preferences, "BlenderCodexBridgePreferences", Prefs)
     fact = module._declaration(bpy)
-    assert tuple(marker.keywords) == ("name", "description", "subtype", "default", "attr")
+    assert tuple(marker.keywords) == ("name", "description", "subtype", "default", "update", "attr")
     marker.keywords[drift] = "texture_directory" if drift == "attr" else lambda: pytest.fail("callback invoked")
     with pytest.raises(module.BridgeError) as failure:
         module._declaration_unchanged(bpy, fact)

@@ -51,7 +51,11 @@ def test_float_file_color_uses_actual_associated_buffer_not_file_alpha_label(pai
     monkeypatch.setattr(module.images, "get_preferences", lambda: NS(texture_directory=str(tmp_path)))
     source.pixels.values = array("f", [.0625,.125,.1875,.25])
     images.append(source)
-    monkeypatch.setattr(module.images, "preflight_file", lambda *_args: ("approved", {"size": 1}))
+    def preflight(_raw, _root, _check, *, unrestricted):
+        assert unrestricted is False
+        return "approved", {"size": 1}
+
+    monkeypatch.setattr(module.images, "preflight_file", preflight)
     result = module.paint_version(context, {"image_name": "Float File", "new_name": "Straight", "strokes": [stroke(opacity=0.)]})
     assert result["source_associated_converted_to_straight"] and result["source_pixels_unchanged"]
     assert list(images.get("Straight").pixels.values) == [.25,.5,.75,.25]

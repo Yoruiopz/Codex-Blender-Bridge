@@ -122,7 +122,7 @@ def test_every_native_history_callback_retains_policy_baseline_and_mutator_count
 
 def test_runtime_hooks_register_once_and_unregister(addon_package, monkeypatch):
     runtime = importlib.import_module(f"{addon_package}.runtime")
-    handlers = NS(load_pre=[], undo_pre=[], redo_pre=[])
+    handlers = NS(load_pre=[], load_post=[], undo_pre=[], redo_pre=[])
     monkeypatch.setattr(runtime, "bpy", NS(app=NS(handlers=handlers)))
     instance = runtime.BridgeRuntime()
     assert not instance.native_save_policy.active()
@@ -135,10 +135,51 @@ def test_runtime_hooks_register_once_and_unregister(addon_package, monkeypatch):
     instance.register()
     assert handlers.undo_pre == [runtime._before_external_undo_redo]
     assert handlers.redo_pre == [runtime._before_external_undo_redo]
+    assert handlers.load_post == [runtime._after_file_load]
     instance.native_save_policy.arm(instance._native_save_local_authority, 900)
     instance.unregister()
     assert not instance.native_save_policy.active()
-    assert handlers.load_pre == handlers.undo_pre == handlers.redo_pre == []
+    assert handlers.load_pre == handlers.load_post == handlers.undo_pre == handlers.redo_pre == []
+
+
+@pytest.mark.parametrize("completed", [True, False])
+def test_owned_checkpoint_load_keeps_connection_and_fences_new_work(addon_package, monkeypatch, completed):
+    runtime = importlib.import_module(f"{addon_package}.runtime")
+    handlers = NS(load_pre=[runtime._before_file_load], load_post=[runtime._after_file_load])
+    monkeypatch.setattr(runtime, "bpy", NS(app=NS(handlers=handlers)))
+    instance = runtime.BridgeRuntime()
+    instance._registered = True
+    instance.state = runtime.BridgeState()
+    instance.state.set_server(True)
+    instance.state.client_connected()
+    instance.state.begin_execution("project.checkpoint_reopen", "Previous task")
+    monkeypatch.setattr(runtime, "_RUNTIME", instance)
+
+    events = []
+    monkeypatch.setattr(instance.executor, "start", lambda: events.append("executor started"))
+    monkeypatch.setattr(instance.server, "stop", lambda: pytest.fail("The owning client's reply was disconnected"))
+    monkeypatch.setattr(instance.command_queue, "cancel_all", lambda error: events.append(error.message))
+
+    def native_open():
+        runtime._before_file_load(None)
+        assert instance.state.paused is True
+        assert instance.state.current_task == ""
+        assert instance.state.is_executing is True
+        if completed:
+            runtime._after_file_load(None)
+        return {"FINISHED"}
+
+    if completed:
+        assert instance.run_checkpoint_open(native_open) == {"FINISHED"}
+        assert events[-1] == "executor started"
+    else:
+        with pytest.raises(runtime.BridgeError, match="did not confirm both checkpoint load events"):
+            instance.run_checkpoint_open(native_open)
+        assert len(events) == 2
+    assert len([message for message in events if "project" in message.lower()]) == 2
+    assert instance.state.server_running and instance.state.connected_clients == 1
+    assert instance.state.paused is not completed
+    assert instance._checkpoint_load is None
 
 
 def test_history_callback_fences_writes_before_cancellation_and_fallible_glb_invalidation(

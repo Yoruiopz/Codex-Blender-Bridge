@@ -340,7 +340,7 @@ def test_live_changes_before_native_decode_are_authoritative(image_tools, monkey
             if action == "revoke":
                 grants["ACCESS_EXTERNAL_FILES"] = False
             elif action == "root":
-                monkeypatch.setattr(module, "_root", lambda: "")
+                monkeypatch.setattr(module, "_policy", lambda: ("", False))
             else:
                 flags["paused" if action == "pause" else "emergency_stopped"] = True
     context.check_cancelled = changed
@@ -352,7 +352,7 @@ def test_live_changes_before_native_decode_are_authoritative(image_tools, monkey
 
 def test_consent_revoked_inside_read_checkpoint_is_rechecked_before_io(image_tools, monkeypatch):
     module, _, images, grants, context, path = image_tools
-    def preflight(raw, root, check):
+    def preflight(raw, root, check, *, unrestricted=False):
         context.check_cancelled = lambda: grants.update(ACCESS_EXTERNAL_FILES=False)
         check()
         pytest.fail("Read checkpoint allowed IO after revoking external-file permission")
@@ -373,9 +373,9 @@ def test_native_mutation_gate_rechecks_edit_after_lifecycle_callback(image_tools
 def test_approved_folder_changed_after_proof_stops_before_native_load(image_tools, monkeypatch):
     module, _, images, _, context, path = image_tools
     original = module.preflight_file
-    def preflight(*args):
-        proof = original(*args)
-        context.check_cancelled = lambda: monkeypatch.setattr(module, "_root", lambda: "")
+    def preflight(*args, **kwargs):
+        proof = original(*args, **kwargs)
+        context.check_cancelled = lambda: monkeypatch.setattr(module, "_policy", lambda: ("", False))
         return proof
     monkeypatch.setattr(module, "preflight_file", preflight)
     with pytest.raises(module.BridgeError) as error:

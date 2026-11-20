@@ -25,8 +25,9 @@ from .tools import _cloth_cache_source as sources
 
 REQUIRED = (Permission.INSPECT_SCENE, Permission.SAVE_PROJECT, Permission.ACCESS_EXTERNAL_FILES)
 _DECLARATION = (("name", "Approved Project Folder"),
-                ("description", "Local .blend artifact folder; the separate native-save session permission covers normal callback/catalog effects outside it. Not configurable through MCP"),
-                ("subtype", "DIR_PATH"), ("default", ""), ("attr", "project_directory"))
+                ("description", "Local .blend artifact folder. Blank grants no folder access. Only configurable in Blender preferences"),
+                ("subtype", "DIR_PATH"), ("default", ""), ("update", preferences._permission_setting_changed),
+                ("attr", "project_directory"))
 # Establish CPython's warning-cache binding before immutable source capture.
 __warningregistry__ = {}
 
@@ -228,8 +229,10 @@ def _declaration(bpy):
     props = ModuleType.__getattribute__(origins[1], "__dict__")
     if (type(function) is not BuiltinFunctionType or function is not props.get("StringProperty")
             or type(keywords) is not dict or len(keywords) != len(_DECLARATION)
-            or any(type(key) is not str or type(value) is not str for key, value in keywords.items())
-            or any(keywords.get(key) != value for key, value in _DECLARATION)):
+            or any(type(key) is not str for key in keywords)
+            or any((keywords.get(key) is not value) if key == "update"
+                   else (type(keywords.get(key)) is not str or keywords.get(key) != value)
+                   for key, value in _DECLARATION)):
         error = refused("ROOT_APPROVAL_CALLBACK_OR_DECLARATION_CHANGED")
         try:  # noqa: SIM105 - keep primary without a context-manager dispatch.
             error.context["declaration_clause"] = _declaration_clause_facts(function, props.get("StringProperty"), keywords)
@@ -253,7 +256,7 @@ def _declaration_unchanged(bpy, fact):
             or function_slot.__get__(marker, marker_kind) is not function
             or keyword_slot.__get__(marker, marker_kind) is not keywords
             or type(keywords) is not dict or len(keywords) != len(saved)
-            or any(type(key) is not str or type(value) is not str for key, value in keywords.items())
+            or any(type(key) is not str for key in keywords)
             or any(keywords.get(key) is not value for key, value in saved)):
         raise refused("ROOT_APPROVAL_DECLARATION_CHANGED")
 

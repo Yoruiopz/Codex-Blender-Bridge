@@ -180,9 +180,10 @@ def test_private_glb_candidates_are_absent_from_public_runtime(all_enabled: bool
             tools = {tool.name: tool for tool in (await client.list_tools()).tools}
             assert set(TOOL_NAMES).isdisjoint(tools)
             assert "asset.glb_stage_create" not in tools
-            # Exact public-name set from published v0.9.0 source d756b68.
-            assert len(tools) == 270
-            names_digest = hashlib.sha256(("\n".join(sorted(tools)) + "\n").encode()).hexdigest()
+            project_workflow = {"project.save_dialog_state", "project.checkpoint_status", "project.checkpoint_reopen"}
+            assert len(tools) == 273 and project_workflow <= tools.keys()
+            # Preserve the entire published public-name set alongside the additions.
+            names_digest = hashlib.sha256(("\n".join(sorted(tools.keys() - project_workflow)) + "\n").encode()).hexdigest()
             assert names_digest == "1cb16ea5e7320962bc0be5d886bf76724e59ed548e9bc2808b5bff7e3d3b9c1e"
             assert set(runtime.registry.tool_names(include_disabled=True)) == set(tools)
             for name in TOOL_NAMES:
@@ -191,5 +192,16 @@ def test_private_glb_candidates_are_absent_from_public_runtime(all_enabled: bool
                 assert caught.value.code == "TOOL_NOT_FOUND"
                 assert (await client.call_tool(name, {})).is_error
             assert remote.calls == []
+
+            await client.call_tool("project.save", {"filepath": "C:/work/asset.blend", "overwrite": True})
+            await client.call_tool("project.save_dialog_state", {})
+            await client.call_tool("project.checkpoint_status", {})
+            await client.call_tool("project.checkpoint_reopen", {"checkpoint_id": "checkpoint_example", "confirm_reopen": True})
+            assert remote.calls == [
+                ("project.save", {"filepath": "C:/work/asset.blend", "overwrite": True}),
+                ("project.save_dialog_state", {}),
+                ("project.checkpoint_status", {}),
+                ("project.checkpoint_reopen", {"checkpoint_id": "checkpoint_example", "confirm_reopen": True}),
+            ]
 
     asyncio.run(scenario())

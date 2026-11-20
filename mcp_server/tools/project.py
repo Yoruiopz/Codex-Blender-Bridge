@@ -17,13 +17,33 @@ class ProjectTools:
 
         return await self.registry.call("project.info")
 
-    async def project_save(self, filepath: str | None = None) -> Any:
-        """Unavailable pending bounded native save side effects. Requires existing save/path grants; returns NOT_IMPLEMENTED without saving."""
+    async def project_save(self, filepath: str | None = None, overwrite: bool = False) -> Any:
+        """Save the current Blender project or Save As an absolute .blend path. Supply a path for the first save and set overwrite=True to replace an existing Save As target. Return the actual saved path or a structured error."""
 
-        return await self.registry.call("project.save", params(filepath=filepath))
+        return await self.registry.call("project.save", params(filepath=filepath, overwrite=overwrite))
+
+    async def project_save_dialog_state(self) -> Any:
+        """Read Blender's native Save or Save As dialog and its proposed path if available. Use project.save with the intended absolute .blend path to save."""
+
+        return await self.registry.call("project.save_dialog_state")
+
+    async def project_checkpoint_status(self) -> Any:
+        """Recheck the last retained project checkpoint's bytes and return its ID for recovery."""
+
+        return await self.registry.call("project.checkpoint_status")
+
+    async def project_checkpoint_reopen(self, checkpoint_id: str, confirm_reopen: bool) -> Any:
+        """Reopen a verified checkpoint from a clean Object Mode project. Set confirm_reopen after confirming project replacement with the user."""
+
+        return await self.registry.call("project.checkpoint_reopen", params(
+            checkpoint_id=checkpoint_id, confirm_reopen=confirm_reopen,
+        ))
 
     def bindings(self) -> tuple[MCPToolBinding, ...]:
         return (
             MCPToolBinding("project.info", self.project_info, self.project_info.__doc__ or ""),
             MCPToolBinding("project.save", self.project_save, self.project_save.__doc__ or ""),
+            MCPToolBinding("project.save_dialog_state", self.project_save_dialog_state, self.project_save_dialog_state.__doc__ or ""),
+            MCPToolBinding("project.checkpoint_status", self.project_checkpoint_status, self.project_checkpoint_status.__doc__ or ""),
+            MCPToolBinding("project.checkpoint_reopen", self.project_checkpoint_reopen, self.project_checkpoint_reopen.__doc__ or ""),
         )

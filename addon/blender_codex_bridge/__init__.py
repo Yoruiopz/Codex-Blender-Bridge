@@ -39,6 +39,7 @@ def register() -> None:
         for cls in (*preferences.CLASSES, *ui.CLASSES):
             bpy.utils.register_class(cls)
             registered.append(cls)
+        preferences.restore_permission_settings()
         runtime = get_runtime()
         runtime.register()
         addon_preferences = preferences.get_preferences()

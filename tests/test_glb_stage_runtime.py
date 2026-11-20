@@ -126,8 +126,7 @@ def test_failed_glb_invalidation_revokes_authority_and_stops_existing_and_new_wr
     owner.jobs.active = job
     assert owner.jobs.tick() is True and writes
     writes.clear()
-    owner.arm_native_save_effects()
-    original_grant = owner.native_save_policy.statement()
+    original_grant = owner.native_save_policy.arm(owner._native_save_local_authority, 60)
     # Model a lifecycle callback re-entering an existing scheduler turn. Its
     # cancellation must be retained before the next write boundary is visited.
     job.in_tick = True
@@ -170,12 +169,14 @@ def test_failed_glb_invalidation_revokes_authority_and_stops_existing_and_new_wr
 @pytest.mark.parametrize("paused,stopped", [(False, False), (True, False), (True, True)])
 def test_successful_native_history_invalidation_preserves_prior_stop_intent(runtime_case, paused, stopped):
     module, owner, _context = runtime_case
-    owner.arm_native_save_effects()
+    original = owner.native_save_policy.arm(owner._native_save_local_authority, 60)
     owner.state.set_emergency_stopped(stopped)
     owner.state.set_paused(paused)
     module._before_external_undo_redo(None)
     assert owner.state.paused is paused and owner.state.emergency_stopped is stopped
     assert not owner.native_save_policy.active()
+    with pytest.raises(ValueError):
+        owner.native_save_policy.check(original)
 
 
 def test_protected_legacy_uv_reader_refuses_before_getter_or_iteration(addon_package):

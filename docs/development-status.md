@@ -1,33 +1,13 @@
 # Development status
 
-**0.8.0 alpha source; 1.0 is NOT_READY.** The source has matching 0.8.0 component
-metadata and **270 MCP tools**, including native-save preview/start under a distinct
-local effects grant. Install only matching accepted 0.8.0 packages identified by the
-[release evidence](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.8.0).
-A source checkout or version string alone establishes neither publication nor
-qualification; measured outcomes belong to the exact accepted files.
+Development continues from the published [0.9.1 alpha](releases/0.9.1.md).
+The current source adds persistent permission choices, native Save and Save As,
+and verified checkpoint discovery and reopen. Follow [saving and recovery](project-save-safety.md)
+for the supported workflow, evidence and limits.
 
-The [0.8 scope and qualification requirements](releases/0.8.0.md) retain the canonical
-queued-entry boundary, current permissions and per-write/source checks. Native saving
-requires default-off local consent that the remote client cannot arm. Qualification
-must use the actual installed Runtime and TCP queue; direct or substituted-service
-results do not establish that behavior. Broader native-save project profiles and
-portable production delivery remain required work.
-
-The previous [0.7.0 alpha](releases/0.7.0.md), published 2026-10-25 at 19:16:03 UTC
-from `8d07ad898ba92c5e94db57b1562fefef9c8e0e1c`, and its historical verified downloads
-remain available. Its source-specific evidence is not reassigned to 0.8.0.
-The [blocker plan](releases/0.8.0-blocker-plan.md) records concrete next steps.
-All 29 implementation items and fourteen stable gates remain **OPEN**. Windows
-compatibility/testing remains deferred and unverified. Reviewed neutral-geometry
-previews do not qualify original materials or current viewport appearance.
-
-**Project save safety:** the legacy `project.save` backend is now unavailable for
-both current-file Save and Save As. It retains its schema and permissions but
-returns `NOT_IMPLEMENTED` before Blender/path access because hidden native
-catalog callbacks and runtime bookkeeping cannot be bounded. Fresh-process
-feature fixtures use explicitly labeled fixture-only serialization. Safe saving
-and portable `.blend` delivery remain required; see the [migration and evidence](project-save-safety.md).
+All 29 implementation items and fourteen stable gates remain open. The current
+Windows verification prioritizes saving and recovery. Full installed package
+acceptance and production delivery remain open.
 
 ## What is being developed
 
@@ -40,8 +20,7 @@ and [evidence rules](release-evidence.md) define the work needed for 1.0.
 Linux development checks, including historical 4.3.2 increments and newer
 4.5.14 LTS / 5.2.2 LTS results, are separate from historical Windows
 reports for earlier increments. Windows 11 qualification on Blender 4.5 LTS and stable 5.x,
-installed-package acceptance and scenarios A–F remain required. Windows testing
-is paused at the user's request; those gates remain open. The
+installed-package acceptance and scenarios A–F remain required. Windows workflow and installed release qualification remain open. The
 [2026-10-23 checkpoint](artist-workflow-checkpoint-20261023.md) records selected
 Linux Scene-kernel, artist-entry and composition results separately from shader
 removal research and historical evidence; it is not a complete native matrix.

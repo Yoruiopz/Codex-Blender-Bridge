@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from ..constants import ADDON_VERSION_STRING
-from ..errors import BridgeError, ErrorCode, invalid_argument
+from ..errors import invalid_argument
 from ..permissions import Permission
 from ..scene_inspector import inspect_object, inspect_scene, project_info, scene_summary
 from ..selection import inspect_selection
@@ -16,6 +16,8 @@ from ..viewport import capture_viewport
 
 
 def bridge_status(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
+    from .project_recovery import recovery_hint
+
     del params
     bpy = require_blender()
     state = context.state.snapshot()
@@ -32,6 +34,7 @@ def bridge_status(context: ToolContext, params: Mapping[str, Any]) -> dict[str, 
             "connected_clients": state["connected_clients"],
         },
         "filepath": bpy.data.filepath,
+        "project_checkpoint": recovery_hint(context),
         "mode": bpy.context.mode,
         "scene": scene.name,
         "active_object": active.name if active else None,
@@ -72,30 +75,9 @@ def bridge_task_clear(context: ToolContext, params: Mapping[str, Any]) -> dict[s
 
 
 def save_project(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
-    """Refuse native saving until its external/runtime effects can be bounded."""
-    try:
-        raw_filepath = params.get("filepath")
-        if raw_filepath is not None and (not isinstance(raw_filepath, str) or not raw_filepath.strip()):
-            raise invalid_argument("'filepath' must be a non-empty string.")
-        # One final live snapshot checks all required grants together. No
-        # Blender or caller-path reader follows this provider.
-        required = [Permission.SAVE_PROJECT]
-        if raw_filepath is not None:
-            required.append(Permission.ACCESS_EXTERNAL_FILES)
-        context.require(*required)
-        check_final_mutation(context, "project.save")
-        raise BridgeError(
-            ErrorCode.NOT_IMPLEMENTED,
-            "Project saving is unavailable until Blender's native catalog and runtime save effects can be bounded.",
-            {"reason": "UNOBSERVABLE_NATIVE_SAVE_SIDE_EFFECTS", "safe_project_save_verified": False},
-        )
-    except BridgeError as error:
-        # These facts describe this bridge handler, not arbitrary host/provider
-        # code. Keep canonical denial identity/code and never finalize an old
-        # editor session on behalf of this non-writing save request.
-        error.context.update(execution_started=False, native_save_invoked=False,
-                             project_saved=False, bridge_file_writes=False)
-        raise
+    from ..native_save_standard import save
+
+    return save(context, params)
 
 
 def checkpoint_create(context: ToolContext, params: Mapping[str, Any]) -> dict[str, Any]:
@@ -243,13 +225,19 @@ def register_tools(registry: ToolRegistry) -> None:
         checkpoint_list,
         description="List bounded checkpoint labels, history and conservative native recovery availability.",
     )
+    from ..native_save_standard import scoped_save_parameters
+
     registry.register(
         "project.save",
         save_project,
         permissions=(Permission.SAVE_PROJECT,),
         modifies=True,
         automatic_checkpoint=False,
-        description="Project saving is unavailable until native save side effects can be bounded.",
+        checkpoint_owns_finalization=True,
+        checkpoint_parameter_scope=scoped_save_parameters,
+        exclusive_mutation=True,
+        batchable=False,
+        description="Save the current .blend or Save As with a local destination and an explicit overwrite choice.",
     )
     registry.register("toolsets.list", toolsets_list, description="List Blender-side structured toolsets and tools.")
     registry.register("toolsets.enable", toolsets_enable, description="Enable one Blender-side domain toolset.")

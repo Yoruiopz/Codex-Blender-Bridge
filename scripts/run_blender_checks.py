@@ -273,6 +273,14 @@ CASES = {
     "render_checkpoint_probe": ("blender_render_checkpoint_probe_smoke.py", "BLENDER_RENDER_CHECKPOINT_PROBE_OK "),
 }
 # Each phase must exit successfully before a new process can consume its artifacts.
+PERSISTENT_SAVE_CASES = {"persistent_save_master_off": "off", "persistent_save_master_on": "on"}
+PERSISTENT_SAVE_PHASES = {
+    "writer": "BLENDER_PERSISTENT_SAVE_WRITER_OK ",
+    "normal_restart": "BLENDER_PERSISTENT_SAVE_READER_OK ",
+    "crash_restart": "BLENDER_PERSISTENT_SAVE_READER_OK ",
+}
+CASES.update({name: ("blender_persistent_save_smoke.py", PERSISTENT_SAVE_PHASES["crash_restart"])
+              for name in PERSISTENT_SAVE_CASES})
 PHASED_CASES = {
     "isolated_asset_preview_probe": ("BLENDER_ISOLATED_ASSET_PREVIEW_WRITER_OK ", "BLENDER_ISOLATED_ASSET_PREVIEW_WORKER_OK "),
     "image_reopen": ("BLENDER_IMAGE_REOPEN_WRITER_OK ", "BLENDER_IMAGE_REOPEN_READER_OK "),
@@ -305,6 +313,7 @@ PAIRED_RECOVERY_PROFILES = {
     "image_current_pixels_paired_recovery_large": "LARGE4K",
 }
 OPT_IN_CASES = set(PHASED_CASES)
+OPT_IN_CASES.update(PERSISTENT_SAVE_CASES)
 OPT_IN_CASES.add("current_pixels_lifecycle_census")
 OPT_IN_CASES.add(CLOTH_G0_CATALOG_CASE)
 OPT_IN_CASES.add("current_pixels_source_graph")
@@ -360,6 +369,7 @@ OPT_IN_CASES.add("render_adversarial")
 OPT_IN_CASES.add("render_boundaries_interactive")
 OPT_IN_CASES.add("render_checkpoint_probe")
 INTERACTIVE_CASES = {"undo_lifecycle", "mesh_edit_recovery", "mesh_repair", "uv_authoring", "prop_workflow", "uv_analysis", "mesh_analysis", "image_assets", "shader_groups", "undo_capacity", "shader_settings", "image_revisions", "field_scanner", "texture_paint"}
+INTERACTIVE_CASES.update(PERSISTENT_SAVE_CASES)
 INTERACTIVE_CASES.add("native_project_saving")
 OPT_IN_CASES.add("native_project_saving")
 INTERACTIVE_CASES.add("native_project_saving_large")
@@ -3341,10 +3351,11 @@ def _inspection_fence(value, full):
     except (OSError, KeyError, SyntaxError, ValueError, TypeError, UnicodeError):
         return False
     fields = {"blender_version", "addon_version", "connection_status", "server", "filepath", "mode", "scene", "active_object",
-              "enabled_permissions", "permissions", "enabled_toolsets", "jobs", "agent"}
+              "enabled_permissions", "permissions", "enabled_toolsets", "jobs", "agent", "project_checkpoint"}
     if (type(value) is not dict or set(value) != fields or value["blender_version"] != full["blender_version"]
             or value["addon_version"] != addon_version
             or value["connection_status"] != "connected" or value["filepath"] != "" or value["mode"] != "OBJECT"
+            or value["project_checkpoint"] is not None
             or value["scene"] != full["after"]["context"]["scene"][0]
             or value["active_object"] != full["after"]["snapshot"]["object_identity"][0]):
         return False
@@ -3959,6 +3970,12 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
         if case == "shader_remove_loaded_probe":
             command.append("--bridge-loaded-fixture")
         marker = phase_marker
+    if case in PERSISTENT_SAVE_CASES:
+        if phase not in PERSISTENT_SAVE_PHASES or bundle is None:
+            raise ValueError("Persistent save checks require a private profile and an explicit phase")
+        command.insert(1, "--disable-autoexec")
+        command.extend(["--bridge-master", PERSISTENT_SAVE_CASES[case]])
+        timeout = min(timeout, 180)
     if case == STORAGE_RUNTIME_CONTEXT_CASE:
         command.append("--bridge-runtime-context")
     if case in PAIRED_RECOVERY_PROFILES:
@@ -4023,6 +4040,10 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
     environment["BRIDGE_TEST_PROCESS_TOKEN"] = process_instance
     for key, folder in (("BLENDER_USER_CONFIG", "config"), ("BLENDER_USER_SCRIPTS", "scripts"),
                         ("BLENDER_USER_DATAFILES", "datafiles")):
+        if case in PERSISTENT_SAVE_CASES and key == "BLENDER_USER_CONFIG":
+            assert bundle is not None
+            environment[key] = str(bundle / "bridge-config")
+            continue
         if case == "installed_addon_probe" and key == "BLENDER_USER_SCRIPTS":
             folder = "installed scripts with spaces"
         directory = temporary / folder
@@ -4796,6 +4817,27 @@ def _run_cloth_g0_catalog(blender: Path, output: Path, timeout: int) -> dict:
 
 
 def run_case(blender: Path, case: str, output: Path, timeout: int) -> dict:
+    if case in PERSISTENT_SAVE_CASES:
+        started = time.monotonic()
+        bundle = output / f"{case}-bundle"
+        bundle.mkdir(mode=0o700)
+        (bundle / "bridge-config").mkdir(mode=0o700)
+        phases = []
+        for phase, marker in PERSISTENT_SAVE_PHASES.items():
+            result = _run_process(blender, case, output, timeout, phase=phase,
+                                  bundle=bundle, phase_marker=marker)
+            phases.append(result)
+            if result["status"] != "passed":
+                break
+        passed = (len(phases) == len(PERSISTENT_SAVE_PHASES)
+                  and all(result["status"] == "passed" for result in phases)
+                  and len({result["process_instance"] for result in phases}) == len(phases)
+                  and len({result["blender_version"] for result in phases}) == 1)
+        return {"case": case, "script": CASES[case][0], "status": "passed" if passed else "failed",
+                "execution_mode": phases[0]["execution_mode"], "blender_version": phases[0]["blender_version"],
+                "script_sha256": phases[0]["script_sha256"], "phases": phases,
+                "phase_sequence": [result["phase"] for result in phases], "shared_bundle": str(bundle),
+                "fresh_process_verified": passed, "duration_seconds": round(time.monotonic() - started, 3)}
     if case == STORAGE_ROOT_APPROVAL_CASE:
         return _run_storage_root_approval_case(blender, output, timeout)
     if case == CLOTH_G0_CATALOG_CASE:

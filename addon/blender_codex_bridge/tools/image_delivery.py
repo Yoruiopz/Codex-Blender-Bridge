@@ -36,9 +36,10 @@ def prepare_export(context: Any, params: Mapping[str, Any]) -> dict:
     images.binding_source(context, source)
     role, srgb = image_paint.source_role(source)
     layout = pixel_codecs.interpretation(format, role)
-    root = images._root()
     context.require(*REQUIRED)
-    _folder, path = approved_output(params.get("filepath"), root, layout["extension"])
+    policy = images._policy()
+    root, unrestricted = policy
+    _folder, path = approved_output(params.get("filepath"), root, layout["extension"], unrestricted=unrestricted)
     try:
         path.lstat()
     except FileNotFoundError:
@@ -54,7 +55,7 @@ def prepare_export(context: Any, params: Mapping[str, Any]) -> dict:
     return {"source": source, "source_name": source_name, "name": name, "width": width, "height": height,
             "values": values, "source_digest": brush.digest(values), "source_file": file,
             "role": role, "srgb": srgb, "associated": image_paint.source_associated(source),
-            "format": format, "layout": layout, "filepath": str(path), "approved_root": root,
+            "format": format, "layout": layout, "filepath": str(path), "path_policy": policy,
             "source_identity": image_masks.identity(source), "source_metadata": _metadata(source)}
 
 
@@ -79,7 +80,7 @@ class ExportDriver:
         final_job = getattr(context, "check_final_job", None)
         if final_job is not None:
             final_job()
-        if images._root() != self.prepared["approved_root"]:
+        if images._policy() != self.prepared["path_policy"]:
             raise BridgeError(ErrorCode.PERMISSION_DENIED, "Approved texture folder changed during export; reinspect retained effects.")
 
     def _source(self, context):
@@ -139,7 +140,9 @@ class ExportDriver:
 
     def _file_steps(self, context):
         self._check(context)
-        path, proof = yield from preflight_steps(self.prepared["filepath"], self.prepared["approved_root"], check=lambda: self._check(context))
+        root, unrestricted = self.prepared["path_policy"]
+        path, proof = yield from preflight_steps(self.prepared["filepath"], root,
+                                                check=lambda: self._check(context), unrestricted=unrestricted)
         evidence = self.staging.evidence()
         if (str(path) != self.prepared["filepath"] or proof["file_sha256"] != evidence["file_sha256"]
                 or proof["file_bytes"] != evidence["file_bytes"] or proof["_identity"] != self.staging.stage_id):
@@ -150,7 +153,7 @@ class ExportDriver:
         prepared = self.prepared
         self._check(context)
         yield from texture_verification.normalize_steps(prepared["values"], associated=prepared["associated"], check=lambda: self._check(context))
-        self.staging = TextureStaging(context, prepared["filepath"], images._root, prepared["format"], prepared["role"])
+        self.staging = TextureStaging(context, prepared["filepath"], images._policy, prepared["format"], prepared["role"])
         yield from self.staging.encode_steps(prepared["values"], prepared["width"], prepared["height"], srgb=prepared["srgb"])
         self._source(context)
         self._name_available()

@@ -13,6 +13,12 @@ the requested external output; this tool never saves the `.blend`. MCP cannot gr
 Keep the owning connection open, use Object Mode, and choose an exact unused file path and
 unused image name. Formats are `PNG8`, `PNG16`, `EXR32`, `EXR32_RAW`; extensions must match.
 
+To use a path outside that folder, locally enable **Enable all dangerous permissions** and
+**Use project and texture paths outside approved folders** in Bridge preferences. A blank folder
+setting alone grants no access. The chosen output still needs an existing ordinary local parent
+directory, live permissions and a free name. Turning either option off stops pending work
+authorized under the wider scope. Asset import and delivery keep their separate folder settings.
+
 ```text
 image.export_job_start(
   image_name="Painted Canvas", new_name="Reimported Canvas",

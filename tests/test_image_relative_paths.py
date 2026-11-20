@@ -213,7 +213,7 @@ def test_binding_reuses_the_supplied_source_reference_instead_of_recapturing(sto
 def test_preflight_rechecks_live_stored_reference(stored, monkeypatch, change):
     env = stored
     reference = env.module.source_reference(env.context, env.image)
-    def changed_preflight(raw, root, check):
+    def changed_preflight(raw, root, check, *, unrestricted=False):
         check()
         if change == "permission":
             env.grants["ACCESS_EXTERNAL_FILES"] = False

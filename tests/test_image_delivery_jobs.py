@@ -23,7 +23,7 @@ def delivery(request, monkeypatch, tmp_path):
     env.delivery = importlib.import_module(env.module.__package__ + ".tools.image_delivery")
     env.verification = importlib.import_module(env.module.__package__ + ".texture_verification")
     monkeypatch.setattr(env.delivery, "require_blender", lambda: env.bpy)
-    monkeypatch.setattr(env.delivery.images, "_root", lambda: str(tmp_path))
+    monkeypatch.setattr(env.delivery.images, "get_preferences", lambda: NS(texture_directory=str(tmp_path)))
     env.delivery.register_tools(env.context().registry)
     env.folder = tmp_path
     env.bpy.types.ColorManagedInputColorspaceSettings.bl_rna.properties["name"].enum_items.append(NS(identifier="sRGB"))
@@ -121,6 +121,23 @@ def test_no_export_io_before_acknowledged_handoff_and_one_shared_active_limit(de
     assert not lifetime.connection.background_active.is_set()
 
 
+@pytest.mark.parametrize("revoked", [False, True])
+def test_texture_export_uses_explicit_unrestricted_scope_and_rechecks_it(delivery, monkeypatch, revoked):
+    env = delivery
+    prefs = NS(texture_directory="", all_dangerous_permissions=True,
+               allow_unrestricted_project_texture_paths=True)
+    monkeypatch.setattr(env.delivery.images, "get_preferences", lambda: prefs)
+    accepted = start_export(env)
+    assert accepted["accepted"]
+    prefs.allow_unrestricted_project_texture_paths = not revoked
+    terminal = finish(env)
+    if revoked:
+        assert terminal["state"] == "FAILED" and not env.path.exists() and not env.marks
+    else:
+        assert terminal["state"] == "SUCCEEDED" and env.path.is_file()
+        assert terminal["result"]["pixel_verification"]["pixel_roundtrip_verified"]
+
+
 @pytest.mark.parametrize("permission", ["EDIT_MATERIALS", "ACCESS_EXTERNAL_FILES", "SAVE_PROJECT"])
 def test_each_authoritative_grant_required_before_export_source_or_path_work(delivery, permission):
     delivery.grants[permission] = False
@@ -145,7 +162,7 @@ def test_stale_source_or_scope_never_publishes_a_file(delivery, monkeypatch, cha
     elif change == "name":
         env.images.append(Image("Reimported"))
     elif change == "root":
-        monkeypatch.setattr(env.delivery.images, "_root", lambda: "")
+        monkeypatch.setattr(env.delivery.images, "_policy", lambda: ("", False))
     else:
         env.images[0].animation_data = NS(action=object())
     terminal = finish(env)

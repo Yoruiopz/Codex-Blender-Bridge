@@ -571,6 +571,7 @@ def test_registry_counter_survives_plan_state_and_project_replacement(
             runtime_module = importlib.import_module(f"{addon_package}.runtime")
             monkeypatch.setattr(runtime_module, "clear_selection_references", lambda: None)
             runtime = NS(state=context.state, registry=registry, jobs=NS(cancel_all=lambda _reason: None),
+                _checkpoint_load=None,
                 native_save_policy=native_save_grant,
                 server=NS(stop=lambda: None), command_queue=NS(cancel_all=lambda _reason: None),
                 checkpoints=NS(clear=lambda: None), executor=NS(evidence=NS(clear=lambda: None)))

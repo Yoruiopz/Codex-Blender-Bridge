@@ -2178,7 +2178,7 @@ def test_large_native_save_mode_uses_real_worker_and_registered_main_thread_time
     assert not ({node.id for node in ast.walk(functions["large_save_worker"]) if isinstance(node, ast.Name)} & forbidden)
     assert '.tick(' not in main + worker and '.dispatch(' not in main + worker
     assert 'checkpoint.list' in worker and 'jobs.inspect' in worker
-    assert worker.index('"permission_denial"') < worker.index('control("arm")')
+    assert worker.index('"permission_denial"') < worker.index('control("allow_save")')
     assert 'declared_authored_projection_preserved' in main
     assert 'clear_owned_empty_sequence_editors' not in main + worker
 

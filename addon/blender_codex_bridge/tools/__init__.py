@@ -51,6 +51,7 @@ def register_all(registry: ToolRegistry) -> None:
         nodes,
         objects,
         paint_jobs,
+        project_recovery,
         python_exec,
         render,
         rig_drivers,
@@ -58,6 +59,7 @@ def register_all(registry: ToolRegistry) -> None:
         rigging,
         rigid_body,
         rigid_body_jobs,
+        save_dialog,
         scene_edit,
         scene_variants,
         sculpt_masks,
@@ -79,6 +81,8 @@ def register_all(registry: ToolRegistry) -> None:
     )
 
     core.register_tools(registry)
+    save_dialog.register_tools(registry)
+    project_recovery.register_tools(registry)
     geometry_preview.register_tools(registry)
     native_save.register_tools(registry)
     task_plan.register_tools(registry)

@@ -172,9 +172,9 @@ def test_denied_authority_precedes_every_initial_path_probe(files, monkeypatch):
 def test_existing_output_policy_sees_only_current_exr(files, monkeypatch):
     real_output, seen = files.module.approved_output, []
 
-    def output(raw, root, extension):
+    def output(raw, root, extension, **kwargs):
         seen.append((raw, extension))
-        return real_output(raw, root, extension)
+        return real_output(raw, root, extension, **kwargs)
 
     monkeypatch.setattr(files.module, "approved_output", output)
     files.complete()

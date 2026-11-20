@@ -11,25 +11,18 @@ status, permissions and recovery controls inside Blender.
 [Contribute](CONTRIBUTING.md)
 
 This is **alpha software**. Try it on a disposable scene or a copy of your project.
-The 0.9.1 alpha retains the published **270 MCP tools** and strengthens runtime
-lifecycle and context checks. Its acceptance target is one installed static asset
-carried through creation, transform, structural inspection, geometry preview,
-approved Copy New save and fresh-reader verification. Exact native, installed,
-CI and package-integrity checks must pass before publication.
+The published 0.9.1 alpha includes 270 MCP tools, lifecycle and context checks,
+and an installed static asset workflow tested on Linux. This development checkout
+adds ordinary native save, dialog inspection, and durable checkpoint recovery.
 
 Five unqualified [GLB staging candidates](docs/structured-glb-import.md) are
 excluded from both public registries. Their implementation and explicit development
 tests remain preserved. The full artist-workflow target is deferred for this
 release pass and remains unfinished.
 
-The installation instructions below target **0.9.1**. Use those artifacts only once the
-[0.9.1 release page](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.9.1)
-identifies the accepted commit, package checksums and qualification evidence. Until
-that record is published, 0.9.1 remains a candidate; matching accepted
-[0.9.0 artifacts](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.9.0)
-remain available. The
-[0.9.0 evidence](docs/releases/0.9.0.md) applies to those exact bytes; it does not
-qualify this candidate. Previous releases and their separate evidence remain available.
+The installation instructions below target the published 0.9.1 packages. Use the
+matching checksums and qualification evidence on the release page. The earlier
+versions retain their own downloads and release evidence. [0.9.1 release](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.9.1)
 
 Development targets **official, unmodified Blender only**, without a fork or custom
 distribution. The [geometry preview](docs/geometry-preview.md) renders bounded authored
@@ -40,21 +33,18 @@ Ordinary capture remains available when artist protection is unarmed. Protected
 capture still refuses until a stock-Blender alternative qualifies; see
 [capture status](docs/protected-capture-design.md).
 
-The [native project saving](docs/native-project-saving.md) tools offer Save Copy,
-Save Current and Save As within a finite declared-data profile. They retain canonical
-queued admission and require a distinct locally armed grant for normal native
-callback/catalog effects. The MCP client cannot arm consent. Legacy
-[`project.save`](docs/project-save-safety.md) remains quarantined; the bounded
-alternative does not provide full portable production delivery. The release evidence
-must qualify actual installed queued calls, not a substituted service or classifier.
+The development Bridge can inspect Blender's native Save As dialog, save the
+current project, or save to an explicit new path. **Save Project** is a durable
+local permission. Save As also uses the Bridge's external-file and path policy.
+After reconnect, the Bridge can verify the latest saved project and reopen it
+with explicit confirmation. See [saving and recovery](docs/project-save-safety.md).
 
 **1.0 is not ready.** All 29 implementation items and 14 stable-release gates remain
 open. Follow the [development status](docs/development-status.md),
 [roadmap](docs/roadmap.md), [release plan](docs/plan-1.0.md) and
 [current blocker plan](docs/releases/0.9.0-blocker-plan.md).
-Windows compatibility work and testing are **deferred and unverified** until
-implementation completion. Linux development evidence does not qualify the later
-Windows 11/Blender 4.5 LTS and stable 5.x installed acceptance matrix.
+Windows testing now prioritizes the save and recovery workflows. The complete
+Windows installed acceptance matrix remains open.
 
 ## Install — no source build needed
 
@@ -167,8 +157,7 @@ assignment preserves raw WXYZ components within a strict existing-mode static-me
 See the [0.4.0 notes](docs/releases/0.4.0.md) and each linked domain contract for limits.
 
 Safety changes narrow unsupported ownership, checkpoint, callback and recovery paths.
-**`project.save` is unavailable**, protected viewport capture and shader-interface removal
-remain unsupported, and the known Blender 5.2.2 import quarantine stays in place. The
+Protected viewport capture and shader-interface removal remain unsupported, and the known Blender 5.2.2 import quarantine stays in place. The
 current UV guard retains its separate restricted profile and qualification requirements.
 Published bounded export/weight checks do not establish full production delivery or
 character-workflow acceptance; the tool inventory cannot supply that evidence.
@@ -216,10 +205,10 @@ registry in CI. It does not describe the 108-tool 0.3.0 download.
 The local recovery UI also has an add-on-only action, not an extra MCP tool.
 
 <!-- BEGIN GENERATED MCP TOOLS -->
-Current registry: **270 MCP tools**.
+Current registry: **273 MCP tools**.
 
 <details>
-<summary>core — 38 tools</summary>
+<summary>core — 41 tools</summary>
 
 | Tool | What it does |
 | --- | --- |
@@ -235,10 +224,13 @@ Current registry: **270 MCP tools**.
 | `object.inspect` | Inspect one object without dumping raw vertex coordinates. |
 | `preview.geometry_image` | Retrieve a successful fresh geometry-preview PNG from this session; stale/expired handles refuse. |
 | `preview.geometry_start` | Start one bounded isolated authored-geometry preview job; no source Main or original material appearance is changed. |
+| `project.checkpoint_reopen` | Reopen an explicitly confirmed verified checkpoint from a clean Blender project. |
+| `project.checkpoint_status` | Recheck the latest durable saved project checkpoint. |
 | `project.info` | Inspect project metadata and render settings. |
 | `project.native_save_preview` | Preview an explicitly authorized stock native save with exact source/path/overwrite facts; not a passive read or completed save. |
 | `project.native_save_start` | Accept the identical preview as a bounded native-save/reopen job; native callbacks and saved files can persist after cancellation. |
-| `project.save` | Project saving is unavailable until native save side effects can be bounded. |
+| `project.save` | Save the current project or Save As under Blender's granted save and path permissions. |
+| `project.save_dialog_state` | Read Blender's open Save or Save As dialog and its proposed path. |
 | `scene.compare` | Compare current measured object fields with a session snapshot; report incomplete coverage. |
 | `scene.inspect` | Return a compact authoritative structural scene representation. |
 | `scene.snapshot` | Capture bounded structural evidence for explicitly named objects and fields. |
@@ -417,7 +409,7 @@ Current registry: **270 MCP tools**.
 | `image.export_job_start` | Accept a frozen-source PNG/EXR no-overwrite export and verified reimport job; poll terminal file/image effects, undo never removes files. |
 | `image.inspect` | Inspect bounded image metadata/direct users without loading unloaded buffers. |
 | `image.inspect_pixels` | Inspect complete RGBA digests/samples; default statistics <=1M pixels, explicit include_statistics=false for <=16M (no ranges/nonfinite scan); FILE reads need external-file consent. |
-| `image.load` | Load a new bounded PNG/JPEG/plain FLOAT RGBA EXR from Blender's approved texture folder; no implicit reuse or file writes. |
+| `image.load` | Load a new bounded PNG/JPEG/plain FLOAT RGBA EXR under Blender's live texture path policy. No implicit reuse or file writes. |
 | `image.pack_version` | Create a distinct packed FILE_BYTES version or exact raw CURRENT_PIXELS snapshot, <=1M pixels; no save/binding. |
 | `image.paint_job_start` | Accept one source/mask-frozen tiled paint job up to 16,777,216 pixels; poll evidence, keep owner connected, native commit is not preemptible. |
 | `image.paint_surface_job_start` | Accept one frozen-input surface paint job; private overlap/projection/visibility/painting yields after delivery, poll final pixel/recovery evidence. |

@@ -140,26 +140,32 @@ def test_changed_grant_owner_refuses_before_native_getters(origin_model, field):
         env.reader._ordinary_origin()
 
 
-def test_native_grant_changes_only_native_flag_and_not_ordinary_origin(origin_model):
+def test_persistent_native_authority_preserves_ordinary_point_origin(origin_model):
     env, mod = origin_model, origin_model.mod
     env.runtime._registered = True
-    grant, authority = env.runtime.native_save_policy, env.runtime._native_save_local_authority
-    prefs = NS(allow_edit_animation=True, allow_edit_mesh=True)
+    grant = env.runtime.native_save_policy
+    prefs = NS(allow_edit_animation=True, allow_edit_mesh=True, allow_save_project=False)
     before = env.reader._ordinary_origin()
-    ordinary = mod._permission_module.permission_snapshot(prefs)
+
     def check(expected_native):
+        ordinary = mod._permission_module.permission_snapshot(prefs)
         result = mod._runtime.permission_snapshot(prefs)
         assert result.pop("NATIVE_SAVE_EFFECTS") is expected_native
         assert result == {key: value for key, value in ordinary.items() if key != "NATIVE_SAVE_EFFECTS"}
         now = env.reader._ordinary_origin()
         assert len(now) == len(before) and all(a is b for a, b in zip(now, before, strict=True))
+
     check(False)
-    grant.arm(authority, 60)
+    prefs.allow_save_project = True
     check(True)
+    previous = grant.statement()
     grant.revoke()
+    assert not grant.active()
+    check(True)
+    assert grant.statement().epoch > previous.epoch
+    prefs.allow_save_project = False
     check(False)
-    grant.arm(authority, 1, now=0.)
-    check(False)
+    assert not grant.active()
 
 
 @pytest.mark.parametrize("name", ["bool", "all", "type", "any", "vars", "len", "__import__"])

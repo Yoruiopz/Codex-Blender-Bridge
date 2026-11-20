@@ -92,13 +92,14 @@ class _DirectoryPins:
             self.close_handle(self.handles.pop())
 
 
-def approved_output(raw: str, root_raw: str, extension: str) -> tuple[Path, Path]:
+def approved_output(raw: str, root_raw: str, extension: str, *, unrestricted: bool = False) -> tuple[Path, Path]:
     """Filesystem probes: caller MUST already hold all REQUIRED live grants."""
-    if not root_raw:
+    if not root_raw and unrestricted is not True:
         raise BridgeError(ErrorCode.PERMISSION_DENIED, "Choose an approved texture folder in Blender first.")
     if extension not in {".png", ".exr"}:
         raise invalid_argument("Only reviewed PNG/EXR texture output extensions are supported.")
-    root, target = _absolute(root_raw, "Texture folder"), _absolute(raw, "Texture output")
+    target = _absolute(raw, "Texture output")
+    root = target.parent if unrestricted is True else _absolute(root_raw, "Texture folder")
     for path in (root, target):
         if any(PureWindowsPath(part).is_reserved() or part.endswith((".", " ")) for part in path.parts[1:]):
             raise invalid_argument("Texture paths cannot use reserved devices or trailing dots/spaces.")
@@ -132,8 +133,9 @@ class TextureStaging:
     never silently unlinks it. Only exact owned staging is eligible for cleanup.
     """
 
-    def __init__(self, context: Any, filepath: str, root: Callable[[], str], format: str, role: str):
-        self.context, self.raw, self.root = context, filepath, root
+    def __init__(self, context: Any, filepath: str, live_policy: Callable[[], tuple[str, bool]], format: str, role: str):
+        self.context, self.raw, self.live_policy = context, filepath, live_policy
+        self.path_policy: tuple[str, bool] | None = None
         self.layout = pixel_codecs.interpretation(format, role)
         self.thread = threading.get_ident()
         self.path: Path | None = None
@@ -179,9 +181,16 @@ class TextureStaging:
                 raise BridgeError(ErrorCode.EMERGENCY_STOPPED, "Texture staging emergency-stopped.")
             if flags.get("paused"):
                 raise BridgeError(ErrorCode.AGENT_PAUSED, "Texture staging is paused.")
+        if self.path_policy is not None and self.live_policy() != self.path_policy:
+            raise BridgeError(ErrorCode.PERMISSION_DENIED, "Approved texture folder changed during staging; reinspect before retrying.")
+
+    def _approved_output(self) -> tuple[Path, Path]:
+        assert self.path_policy is not None
+        root, unrestricted = self.path_policy
+        return approved_output(self.raw, root, self.layout["extension"], unrestricted=unrestricted)
 
     def _location(self) -> None:
-        folder, path = approved_output(self.raw, self.root(), self.layout["extension"])
+        folder, path = self._approved_output()
         if (folder, path, _directory_id(path.parent)) != (self.folder, self.path, self.parent_id):
             raise BridgeError(ErrorCode.OPERATION_FAILED, "Approved texture output location changed; reinspect before retrying.", {"stale_output_location": True})
 
@@ -201,7 +210,8 @@ class TextureStaging:
         if self.closed or self.attempted:
             raise invalid_argument("A staging resource can encode only once.")
         self.attempted = True
-        self.folder, self.path = approved_output(self.raw, self.root(), self.layout["extension"])
+        self.path_policy = self.live_policy()
+        self.folder, self.path = self._approved_output()
         self.pins = _DirectoryPins(self.path.parent)
         self.parent_id = _directory_id(self.path.parent)
         self._authorize()

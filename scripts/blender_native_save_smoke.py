@@ -823,7 +823,8 @@ class LargeSaveController:
         prefs = get_preferences()
         assert prefs is not None
         prefs.auto_start = False
-        prefs.allow_inspect_scene = prefs.allow_external_files = prefs.allow_save_project = True
+        prefs.allow_inspect_scene = prefs.allow_external_files = True
+        prefs.allow_save_project = False
         prefs.allow_execute_python = prefs.allow_delete_objects = False
         prefs.project_directory = str(self.artifacts)
         self.proof["setup_scope"] = "Known owned factory-family cleanup then owned mesh/UV/material/packed image; Scene/UI/world IDs retained; no Main reset, Scene/SYSTEM clearing, sequence clear or edit mode"
@@ -875,14 +876,14 @@ class LargeSaveController:
     def control(self, action, payload):
         self._main()
         self.observe()
-        if action == "arm":
-            assert bpy.ops.blender_codex_bridge.arm_native_save("EXEC_DEFAULT") == {"FINISHED"}
-            assert self.runtime.permissions.snapshot()["NATIVE_SAVE_EFFECTS"]
-            return {"armed": True}
-        if action == "revoke":
-            assert bpy.ops.blender_codex_bridge.revoke_native_save("EXEC_DEFAULT") == {"FINISHED"}
-            assert not self.runtime.permissions.snapshot()["NATIVE_SAVE_EFFECTS"]
-            return {"revoked": True}
+        if action in {"allow_save", "revoke"}:
+            from blender_codex_bridge.preferences import get_preferences
+
+            prefs = get_preferences()
+            allowed = action == "allow_save"
+            prefs.allow_save_project = allowed
+            assert self.runtime.permissions.snapshot()["NATIVE_SAVE_EFFECTS"] is allowed
+            return {"save_project": allowed}
         if action == "snapshot":
             current = self.capture()
             return {"identity_preserved": self.identities() == self.baseline_ids,
@@ -990,7 +991,7 @@ def large_save_worker(port, deadline, controls, events, initial):
         assert denied["ok"] is False and denied["error"]["code"] == "PERMISSION_DENIED", denied
         assert control("write_observation") == denial_before
         rows.append({"case": "permission_denial", "job": denied, "write_observation": denial_before})
-        control("arm")
+        control("allow_save")
         pressure = control("pressure")
         if pressure["qualified"]:
             denial_before = control("write_observation")
@@ -1048,7 +1049,7 @@ def large_save_worker(port, deadline, controls, events, initial):
 
         for case in ("cancel", "revoke", "disconnect", "reader_failure"):
             events.put({"kind": "progress", "case": case})
-            control("arm")
+            control("allow_save")
             params, intent = preview("COPY_NEW", artifacts / (case + " retained copy.blend"), "NO_CLOBBER")
             job_id = start(params, intent)
             interrupted = False
@@ -1280,7 +1281,8 @@ def main():
 
         runtime, prefs = get_runtime(), get_preferences()
         prefs.auto_start = False
-        prefs.allow_inspect_scene = prefs.allow_external_files = prefs.allow_save_project = True
+        prefs.allow_inspect_scene = prefs.allow_external_files = True
+        prefs.allow_save_project = False
         prefs.project_directory = str(artifacts)
         proof["inventories"]["factory_before_cleanup"] = data_inventory(bpy.data)
         proof["scene_values"]["before_setup_bindings"] = scene_value_snapshot(bpy.data, build_hash=proof["source_build"])
@@ -1331,7 +1333,7 @@ def main():
             callbacks["count"] += 1
             sentinel.write_text(str(callbacks["count"]) + "\n")
             if callbacks["revoke"]:
-                runtime.revoke_native_save_effects()
+                prefs.allow_save_project = False
 
         bpy.app.handlers.save_post.append(save_post)
 
@@ -1359,10 +1361,10 @@ def main():
         original = artifacts / "original project.blend"
         denied("project.native_save_preview", {"mode": "SAVE_AS", "filepath": str(original),
                                                "overwrite_policy": "NATIVE_NEW_EXPECTED"}, "PERMISSION_DENIED")
-        denied("project.save", {"filepath": str(original)}, "NOT_IMPLEMENTED")
         assert not original.exists() and not runtime.permissions.snapshot()["NATIVE_SAVE_EFFECTS"]
-        assert bpy.ops.blender_codex_bridge.arm_native_save("EXEC_DEFAULT") == {"FINISHED"}
+        prefs.allow_save_project = True
         assert runtime.permissions.snapshot()["NATIVE_SAVE_EFFECTS"]
+        denied("project.save", {"filepath": str(original)}, "NOT_IMPLEMENTED")
         base_params = {"mode": "COPY_NEW", "filepath": str(artifacts / "invalid context.blend"),
                        "overwrite_policy": "NO_CLOBBER"}
         runtime.state.set_paused(True)
@@ -1404,7 +1406,7 @@ def main():
             if task == "as_replace":
                 obj.data.vertices[0].co.z = .25
             if task in {"revoke", "manual"}:
-                assert bpy.ops.blender_codex_bridge.arm_native_save("EXEC_DEFAULT") == {"FINISHED"}
+                prefs.allow_save_project = True
             active["reader_interrupted"] = False
             callbacks["revoke"] = task == "revoke"
             actor.hide_set(False, view_layer=layer)
@@ -1446,7 +1448,7 @@ def main():
                         if active["task"] == "cancel_reader":
                             dispatch("jobs.cancel", {"job_id": active["job"]})
                         else:
-                            assert bpy.ops.blender_codex_bridge.revoke_native_save("EXEC_DEFAULT") == {"FINISHED"}
+                            prefs.allow_save_project = False
                         active["reader_interrupted"] = True
                     if (active["task"] == "manual" and row["progress"].get("phase") == "fresh_process_reopen"
                             and active["manual_edit"] is None):
@@ -1481,7 +1483,7 @@ def main():
                 dispatch("task.plan.enforce", {"enabled": True, "expected_revision": plan["plan"]["revision"]})
                 denied("project.native_save_preview", {"mode": "COPY_NEW", "filepath": str(artifacts / "protected copy.blend"),
                                                        "overwrite_policy": "NO_CLOBBER"}, "NOT_IMPLEMENTED")
-                proof.update(completed=True, real_local_ui_grant_and_runtime_permissions=True,
+                proof.update(completed=True, local_save_preference_and_runtime_permissions=True,
                              callback_kind="OWNED_PYTHON_SAVE_POST_NOT_NATIVE_C_CATALOG",
                              callback_path=str(sentinel), callback_count=callbacks["count"],
                              actual_current_filepath=bpy.data.filepath,

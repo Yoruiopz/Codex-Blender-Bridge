@@ -221,6 +221,9 @@ class MainThreadExecutor:
         task = request.params.get("_task", request.params.get("task_description"))
         if task is not None and not isinstance(task, str):
             task = None
+        # File replacement has no undo boundary in the current project. A
+        # refused reopen must also leave any existing editor group alone.
+        can_finalize_editor = request.method != "project.checkpoint_reopen"
         if not preserve_execution:
             self.state.begin_execution(request.method, task)
         spec = None
@@ -355,8 +358,8 @@ class MainThreadExecutor:
                 undo_finalized = bool(self.checkpoints.after_modification(request.method, before_write=checkpoint_write_gate, after_read=checkpoint_after_read, after_native_push=checkpoint_native_push)
                                       if admission is not None else self.checkpoints.after_modification(request.method))
             if spec.modifies:
-                editor_finalization_attempted = not finalization_owned()
-                undo_group = self._editor_recovery_metadata(finalize=not finalization_owned(),
+                editor_finalization_attempted = can_finalize_editor and not finalization_owned()
+                undo_group = self._editor_recovery_metadata(finalize=editor_finalization_attempted,
                     before_write=checkpoint_write_gate if admission is not None else None,
                     after_read=checkpoint_after_read if admission is not None else None,
                     after_native_push=checkpoint_native_push if admission is not None else None)
@@ -403,7 +406,7 @@ class MainThreadExecutor:
             # measured no-execution result does not authorize finishing an old
             # editor session. The known blocked-save handler similarly reports
             # no native entry; unknown legacy writers remain conservative.
-            finalize_writer = handler_entered and not (
+            finalize_writer = can_finalize_editor and handler_entered and not (
                 (request.method == "batch.execute" and error.context.get("execution_started") is False)
                 or (request.method == "project.save" and error.context.get("execution_started") is False
                     and error.context.get("native_save_invoked") is False)
@@ -512,7 +515,8 @@ class MainThreadExecutor:
                     finalization_denial = secondary
             if spec is not None and spec.modifies:
                 try:
-                    finalize_editor = handler_entered and finalization_denial is None and not finalization_owned() and not editor_finalization_attempted
+                    finalize_editor = (can_finalize_editor and handler_entered and finalization_denial is None
+                                       and not finalization_owned() and not editor_finalization_attempted)
                     editor_finalization_attempted = editor_finalization_attempted or finalize_editor
                     undo_group = self._editor_recovery_metadata(finalize=finalize_editor,
                         before_write=checkpoint_write_gate if admission is not None else None,

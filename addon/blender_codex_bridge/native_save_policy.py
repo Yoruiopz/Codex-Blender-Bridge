@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Runtime-only local authority for ordinary native save side effects."""
+"""Runtime authority for bounded native saves and the live local save grant."""
 from __future__ import annotations
 
 import math
@@ -20,12 +20,12 @@ class GrantStatement:
 
 
 class NativeSaveGrant:
-    """A local session grant; serialized booleans/epochs cannot arm it.
+    """Keep a stable grant statement while the runtime's local policy permits it.
 
     Trusted Python inside Blender is not an adversarial security boundary.
     """
 
-    __slots__ = ("_authority", "_epoch", "_generation", "_sealed", "_statement", "_thread")
+    __slots__ = ("_authority", "_epoch", "_generation", "_persistent", "_sealed", "_statement", "_thread")
 
     def __setattr__(self, name, value):
         if getattr(self, "_sealed", False):
@@ -39,7 +39,7 @@ class NativeSaveGrant:
                 or any(ord(c) < 32 for c in generation)):
             raise ValueError("Native save permission requires an exact local main-thread owner and generation.")
         self._thread, self._authority, self._generation = threading.get_ident(), authority, generation
-        self._epoch, self._statement = 0, None
+        self._epoch, self._statement, self._persistent = 0, None, False
         self._sealed = True
 
     @property
@@ -63,6 +63,8 @@ class NativeSaveGrant:
         if authority is not self._authority or type(seconds) is not int or not 1 <= seconds <= 1800:
             raise ValueError("Only the local owner may arm native save effects for 1..1800 seconds.")
         expires = self._now(now) + seconds
+        if self._persistent:
+            return self._statement
         object.__setattr__(self, "_epoch", self._epoch + 1)
         object.__setattr__(self, "_statement", GrantStatement(self.generation, self._epoch, expires))
         return self._statement
@@ -71,6 +73,22 @@ class NativeSaveGrant:
         self._main()
         object.__setattr__(self, "_epoch", self._epoch + 1)
         object.__setattr__(self, "_statement", None)
+        object.__setattr__(self, "_persistent", False)
+
+    def use_persistent_permission(self, authority: object, allowed: bool):
+        """Synchronize the compatibility grant with Blender's local Save Project setting."""
+        self._main()
+        if authority is not self._authority or type(allowed) is not bool:
+            raise ValueError("Only the local runtime may update persistent save authority.")
+        if not allowed:
+            if self._statement is not None:
+                self.revoke()
+            return None
+        if not self._persistent:
+            object.__setattr__(self, "_epoch", self._epoch + 1)
+            object.__setattr__(self, "_statement", GrantStatement(self.generation, self._epoch, math.inf))
+            object.__setattr__(self, "_persistent", True)
+        return self._statement
 
     def active(self, *, now: float | None = None) -> bool:
         value = self._statement
@@ -80,7 +98,7 @@ class NativeSaveGrant:
 
     def statement(self) -> GrantStatement:
         if not self.active():
-            raise ValueError("Native save effects are disarmed or expired.")
+            raise ValueError("Native save permission is unavailable.")
         assert self._statement is not None
         return self._statement
 
@@ -91,7 +109,7 @@ class NativeSaveGrant:
     def status(self):
         value = self._statement
         now = self._now(None)
-        return {"armed": self.active(now=now), "policy_version": POLICY_VERSION,
-                "remaining_seconds": max(0, math.ceil(value.expires - now)) if value else 0,
+        return {"armed": self.active(now=now), "policy_version": POLICY_VERSION, "persistent": self._persistent,
+                "remaining_seconds": None if self._persistent else max(0, math.ceil(value.expires - now)) if value else 0,
                 "session_generation": self.generation,
                 "normal_native_external_effects_inventory_complete": False}

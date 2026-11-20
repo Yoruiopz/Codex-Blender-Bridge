@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from threading import current_thread, main_thread
 from types import CodeType, FunctionType
 from typing import Any
 from uuid import uuid4
@@ -21,7 +22,7 @@ from .selection import clear_selection_references
 from .server import LocalBridgeServer
 from .state import BridgeState, get_state
 from .storage_snapshot_service import StorageSnapshotService
-from .task_plans import get_task_plans
+from .task_plans import clear_task_plans, get_task_plans
 from .tool_registry import ToolRegistry
 
 _BASE_PERMISSION_SNAPSHOT = _base_permission_snapshot
@@ -32,7 +33,7 @@ _GRANT_STATEMENT_INIT_CODE = GrantStatement.__init__.__code__
 _NATIVE_SAVE_POLICY_VERSION = POLICY_VERSION
 _GRANT_HELPERS = tuple((name, getattr(NativeSaveGrant, name), getattr(NativeSaveGrant, name).__code__)
                       for name in ("__init__", "__setattr__", "_main", "_now", "arm", "revoke",
-                                   "active", "statement", "check", "status"))
+                                   "use_persistent_permission", "active", "statement", "check", "status"))
 _GRANT_GENERATION_PROPERTY = NativeSaveGrant.generation
 _GRANT_GENERATION_GETTER_CODE = NativeSaveGrant.generation.fget.__code__
 _CANONICAL_RUNTIME_CLASS = None
@@ -90,7 +91,7 @@ def native_save_permission_provider_intact() -> bool:
 
 
 def permission_snapshot(preferences: Any | None) -> dict[str, bool]:
-    """Compose one ordinary preference snapshot with only canonical local consent."""
+    """Project save permission also authorizes Blender's ordinary native save effects."""
     if (_base_permission_snapshot is not _BASE_PERMISSION_SNAPSHOT
             or type(_base_permission_snapshot) is not FunctionType
             or _base_permission_snapshot.__code__ is not _BASE_PERMISSION_SNAPSHOT_CODE):
@@ -111,7 +112,10 @@ def permission_snapshot(preferences: Any | None) -> dict[str, bool]:
             or grant._authority is not runtime._native_save_local_authority
             or grant.generation != runtime._native_save_generation):
         return result
-    result["NATIVE_SAVE_EFFECTS"] = grant.active()
+    if current_thread() is main_thread():
+        grant.use_persistent_permission(runtime._native_save_local_authority,
+                                        result[Permission.SAVE_PROJECT.value])
+    result["NATIVE_SAVE_EFFECTS"] = result[Permission.SAVE_PROJECT.value] and grant.active()
     return result
 
 
@@ -140,6 +144,12 @@ def _before_file_load(_unused: Any) -> None:
 
     if _RUNTIME is not None:
         _RUNTIME.prepare_for_file_load()
+
+
+@persistent
+def _after_file_load(_unused: Any) -> None:
+    if _RUNTIME is not None and _RUNTIME._checkpoint_load == "prepared":
+        _RUNTIME._checkpoint_load = "loaded"
 
 
 @persistent
@@ -183,6 +193,7 @@ class BridgeRuntime:
         self.native_save_policy = NativeSaveGrant(self._native_save_generation,
                                                  self._native_save_local_authority)
         self._native_save_policy_origin = self.native_save_policy
+        self._checkpoint_load: str | None = None
         self._registered = False
         self.permissions = PermissionManager(lambda: permission_snapshot(_preferences()))
         self.checkpoints = CheckpointManager()
@@ -224,6 +235,9 @@ class BridgeRuntime:
         if bpy is not None and _before_file_load not in bpy.app.handlers.load_pre:
             bpy.app.handlers.load_pre.append(_before_file_load)
         if bpy is not None:
+            load_post = getattr(bpy.app.handlers, "load_post", None)
+            if load_post is not None and _after_file_load not in load_post:
+                load_post.append(_after_file_load)
             for handlers in (bpy.app.handlers.undo_pre, bpy.app.handlers.redo_pre):
                 if _before_external_undo_redo not in handlers:
                     handlers.append(_before_external_undo_redo)
@@ -235,6 +249,9 @@ class BridgeRuntime:
         self.jobs.cancel_all("runtime unregistered")
         self.glb_stage.invalidate()
         if bpy is not None:
+            load_post = getattr(bpy.app.handlers, "load_post", None)
+            if load_post is not None and _after_file_load in load_post:
+                load_post.remove(_after_file_load)
             for handlers in (bpy.app.handlers.undo_pre, bpy.app.handlers.redo_pre):
                 if _before_external_undo_redo in handlers:
                     handlers.remove(_before_external_undo_redo)
@@ -250,13 +267,15 @@ class BridgeRuntime:
         self._registered = False
 
     def prepare_for_file_load(self) -> None:
-        """Disconnect clients and discard all project-scoped transient state."""
+        """Discard project-scoped state, keeping the reply transport for an owned reopen."""
 
+        owned_reopen = self._checkpoint_load == "opening"
         self.native_save_policy.revoke()
         self.state.set_paused(True)
         self.jobs.cancel_all("project file replacement")
         self.glb_stage.invalidate()
-        self.server.stop()
+        if not owned_reopen:
+            self.server.stop()
         self.command_queue.cancel_all(
             BridgeError(ErrorCode.SERVER_ERROR, "Project file is being replaced in Blender.")
         )
@@ -264,7 +283,42 @@ class BridgeRuntime:
         self.executor.evidence.clear()
         clear_selection_references()
         self.registry.reset_enabled_toolsets()
-        self.state.reset()
+        if owned_reopen:
+            clear_task_plans(self.state)
+            self.state.set_task("")
+            self._checkpoint_load = "prepared"
+        else:
+            self.state.reset()
+
+    def run_checkpoint_open(self, opener: Callable[[], set[str]]) -> set[str]:
+        """Keep one verified checkpoint-open request connected through the native load."""
+        if current_thread() is not main_thread() or not self._registered or self._checkpoint_load is not None:
+            raise BridgeError(ErrorCode.INVALID_ARGUMENT, "Checkpoint reopen needs the idle Blender main thread.")
+        if self.jobs.active is not None or self.state.paused or self.state.emergency_stopped:
+            raise BridgeError(ErrorCode.INVALID_ARGUMENT, "Finish active work and resume the bridge before reopening.")
+        if (bpy is None or _before_file_load not in bpy.app.handlers.load_pre
+                or _after_file_load not in bpy.app.handlers.load_post):
+            raise BridgeError(ErrorCode.OPERATION_FAILED, "Checkpoint load handlers are unavailable.")
+
+        self._checkpoint_load = "opening"
+        loaded = False
+        try:
+            result = opener()
+            loaded = self._checkpoint_load == "loaded" and result == {"FINISHED"}
+            if result == {"FINISHED"} and not loaded:
+                self.state.set_paused(True)
+                raise BridgeError(ErrorCode.OPERATION_FAILED, "Blender did not confirm both checkpoint load events.",
+                                  {"possible_mutation": True, "verification_required": True})
+            return result
+        finally:
+            if self._checkpoint_load in {"prepared", "loaded"}:
+                self.command_queue.cancel_all(BridgeError(
+                    ErrorCode.SERVER_ERROR, "Request arrived while Blender was replacing the project. Retry against the new project.",
+                ))
+            self._checkpoint_load = None
+            if loaded and not self.state.emergency_stopped:
+                self.executor.start()
+                self.state.set_paused(False)
 
     def start_server(
         self,
@@ -303,14 +357,11 @@ class BridgeRuntime:
         self.server.stop()
 
     def arm_native_save_effects(self, seconds: int = 900) -> dict[str, Any]:
-        """Local UI entry only; no ToolRegistry/MCP method grants this authority."""
+        """Compatibility for older local fixture callers; settings supply authority."""
+        del seconds
         if not self._registered:
             raise BridgeError(ErrorCode.SERVER_ERROR, "The Blender add-on is not registered.")
-        active = self.jobs.active
-        if active is not None and (getattr(active, "kind", None) == "project.native_save"
-                                   or getattr(active, "method", None) == "project.native_save_start"):
-            raise BridgeError(ErrorCode.INVALID_ARGUMENT, "Finish or cancel the active native save before renewing permission.")
-        self.native_save_policy.arm(self._native_save_local_authority, seconds)
+        self.permissions.require((Permission.SAVE_PROJECT,))
         return self.native_save_policy.status()
 
     def revoke_native_save_effects(self) -> None:

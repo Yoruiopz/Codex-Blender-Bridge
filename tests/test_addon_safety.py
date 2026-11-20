@@ -102,6 +102,7 @@ def test_checkpoint_undo_requires_explicit_global_undo_confirmation(
 
 def test_snapshot_navigation_is_explicit_opt_in(addon_package):
     core = importlib.import_module(f"{addon_package}.tools.core")
+    errors = importlib.import_module(f"{addon_package}.errors")
     context = SimpleNamespace(
         checkpoints=SimpleNamespace(
             undo_last=lambda: {"legacy": True},
@@ -113,7 +114,7 @@ def test_snapshot_navigation_is_explicit_opt_in(addon_package):
     assert core.checkpoint_undo_last(
         context, {"confirm_global_undo": True, "restore_snapshot": True}
     ) == {"verified_marker": True}
-    with pytest.raises(core.BridgeError):
+    with pytest.raises(errors.BridgeError):
         core.checkpoint_undo_last(
             context, {"confirm_global_undo": True, "restore_snapshot": "true"}
         )
@@ -121,6 +122,7 @@ def test_snapshot_navigation_is_explicit_opt_in(addon_package):
 
 def test_checkpoint_create_obeys_pause_for_scene_metadata(addon_package):
     core = importlib.import_module(f"{addon_package}.tools.core")
+    errors = importlib.import_module(f"{addon_package}.errors")
     registry_module = importlib.import_module(f"{addon_package}.tool_registry")
     registry = registry_module.ToolRegistry()
     core.register_tools(registry)
@@ -129,6 +131,6 @@ def test_checkpoint_create_obeys_pause_for_scene_metadata(addon_package):
         permissions=SimpleNamespace(require=lambda _permissions: None),
         state=SimpleNamespace(snapshot=lambda: {"paused": True, "emergency_stopped": False}),
     )
-    with pytest.raises(core.BridgeError) as caught:
+    with pytest.raises(errors.BridgeError) as caught:
         registry.prepare("checkpoint.create", context)
     assert caught.value.code == "AGENT_PAUSED"

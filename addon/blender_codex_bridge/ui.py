@@ -154,46 +154,6 @@ def _draw_native_save_job(layout, job):
 
 if bpy is not None:
 
-    class BCB_OT_arm_native_save(bpy.types.Operator):
-        bl_idname = "blender_codex_bridge.arm_native_save"
-        bl_label = "Arm Native Save Effects for this Session"
-        bl_description = "Locally permit normal native save callbacks/catalogs/history effects for a bounded session; no automatic renewal"
-
-        def invoke(self, context, event):
-            del event
-            return context.window_manager.invoke_props_dialog(self, width=560)
-
-        def draw(self, context):
-            preferences = get_preferences(context)
-            self.layout.label(text="Normal native Save can synchronize/flush project state.")
-            self.layout.label(text="Callbacks, asset catalogs and history may write outside the project folder.")
-            self.layout.label(text="Native overwrite is not atomic; cancel/undo cannot remove saved files.")
-            self.layout.label(text="Applies to this Bridge session and its connected clients.")
-            if preferences:
-                self.layout.prop(preferences, "native_save_duration_seconds")
-
-        def execute(self, context):
-            preferences = get_preferences(context)
-            if preferences is None:
-                self.report({"ERROR"}, "Add-on preferences are unavailable")
-                return {"CANCELLED"}
-            try:
-                get_runtime().arm_native_save_effects(preferences.native_save_duration_seconds)
-            except (BridgeError, ValueError) as error:
-                self.report({"ERROR"}, error.message if isinstance(error, BridgeError) else str(error))
-                return {"CANCELLED"}
-            return {"FINISHED"}
-
-
-    class BCB_OT_revoke_native_save(bpy.types.Operator):
-        bl_idname = "blender_codex_bridge.revoke_native_save"
-        bl_label = "Revoke Native Save Effects"
-
-        def execute(self, context):
-            del context
-            get_runtime().revoke_native_save_effects()
-            return {"FINISHED"}
-
     class BCB_OT_start_bridge(bpy.types.Operator):
         bl_idname = "blender_codex_bridge.start"
         bl_label = "Start Bridge"
@@ -590,12 +550,9 @@ if bpy is not None:
 
             native_save = layout.box()
             native_save.label(text="Native Project Saving", icon="FILE_BLEND")
-            native_status = runtime.native_save_policy.status()
-            native_save.label(text=(f"Armed: {native_status['remaining_seconds']} seconds remaining"
-                                    if native_status["armed"] else "Session permission disarmed"))
-            native_save.label(text="Includes native callback/catalog effects outside the project folder")
-            native_save.operator("blender_codex_bridge.arm_native_save", icon="UNLOCKED")
-            native_save.operator("blender_codex_bridge.revoke_native_save", icon="LOCKED")
+            save_enabled = runtime.permissions.snapshot().get("SAVE_PROJECT", False)
+            native_save.label(text="Save Project permission enabled" if save_enabled else "Save Project permission disabled")
+            native_save.label(text="Review file access and dangerous permissions in Bridge preferences")
 
             jobs = layout.box()
             jobs.label(text="Jobs", icon="BRUSH_DATA")
@@ -681,8 +638,6 @@ if bpy is not None:
 
 
     CLASSES = (
-        BCB_OT_arm_native_save,
-        BCB_OT_revoke_native_save,
         BCB_OT_start_bridge,
         BCB_OT_stop_bridge,
         BCB_OT_toggle_pause,

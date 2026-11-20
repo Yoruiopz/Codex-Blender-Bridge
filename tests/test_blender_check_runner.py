@@ -5387,6 +5387,7 @@ def test_inspection_fence_rejects_changed_or_malformed_attested_source_version(
     (("terminal", "result", "checkpoint_roles", "initial_roles", 0), True, True),
     (("terminal", "result", "checkpoint_roles", "before_readback", "owners", 0, 0), 999, True),
     (("requests", -1, "response", "result", "permissions", "SAVE_PROJECT"), True, False),
+    (("requests", -1, "response", "result", "project_checkpoint"), {"state": "verification_required"}, False),
     (("requests", -1, "response", "result", "addon_version"), "1.0.0", False),
     (("requests", -1, "response", "result", "addon_version"), "0.9.0", False),
     (("requests", -1, "response", "result", "agent", "is_executing"), False, False),

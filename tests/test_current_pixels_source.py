@@ -194,6 +194,24 @@ def test_authorized_initial_preview_is_plain_after_grants_and_start_binds_same_f
     assert env.flags["writes"] == 0 and list(env.folder.iterdir()) == []
 
 
+def test_current_pixel_preview_cannot_survive_unrestricted_scope_revocation(source_env):
+    env = source_env
+    env.prefs.texture_directory = ""
+    env.prefs.all_dangerous_permissions = True
+    env.prefs.allow_unrestricted_project_texture_paths = True
+    proof = preview(env)
+    plan = json.loads(env.source._PLANS[proof["fingerprint"]].raw)["files"]
+    assert plan["unrestricted_texture_paths"] is True and plan["approved_root"] == ""
+    assert plan["backup_directory"] == str(env.folder)
+    assert start(env, proof)["model_source_only"]
+    before = env.flags["handler"]
+    env.prefs.allow_unrestricted_project_texture_paths = False
+    with pytest.raises(env.source.BridgeError):
+        start(env, proof)
+    assert env.flags["handler"] == before and env.flags["writes"] == 0
+    assert list(env.folder.iterdir()) == []
+
+
 @pytest.mark.parametrize("permission", ["allow_inspect_scene", "allow_edit_materials", "allow_external_files", "allow_save_project"])
 def test_each_actual_permission_denial_prevents_full_capture_and_file_effects(source_env, permission):
     env = source_env

@@ -17,20 +17,27 @@ per-case execution mode, timeout/failure and native success evidence. A clean pr
 without a valid fixture marker is not a pass. Isolated scenes and config/scripts/datafiles/
 temporary recovery folders keep these tests separate from an existing user project.
 
-Current Windows testing is paused at the user's request. Historical Windows
-reports remain source-specific; current Linux checks and the private-desktop
-runner do not establish Windows qualification. The
+Windows testing currently prioritizes saving and recovery. Historical results
+remain specific to the source and builds tested. The
 [2026-10-23 development checkpoint](artist-workflow-checkpoint-20261023.md) separates
 current source/report fingerprints from historical evidence; all fourteen release
 requirements remain open.
 
-The small background `project_save_denial` case proves public save refusals and
-late permission/caller/stop errors without Blender/save entry. Public `project.save`
-is [unavailable](project-save-safety.md). Feature writer/reader cases that need
-`.blend` input first assert that refusal, then use explicit owned fixture-only
-native serialization. Their evidence marks `fixture_native_save=true` and
-`bridge_safe_project_save_verified=false`; a reopen pass cannot qualify safe
-production saving. Historical typed-save results belong to their older sources.
+The small background `project_save_denial` case verifies denied permissions, path
+scope, direct dispatch and expired or stopped requests. Use the following opt-in
+cases to exercise [persistent saving and recovery](project-save-safety.md) with the
+master switch off and on.
+
+```powershell
+py -3 scripts/run_blender_checks.py --blender "C:\Program Files\Blender Foundation\Blender 4.5\blender.exe" --case persistent_save_master_off --case persistent_save_master_on --timeout 125 --output build/persistent-save-windows
+```
+
+Each case uses three Blender processes for first save, normal restart and restart
+after abrupt process exit. The writer and readers share a temporary Bridge config
+folder and use separate temporary scripts, data and recovery folders. On Windows
+each phase requires a private desktop. The fixture uses actual queued TCP calls
+and the registered Blender timer. It reads the live native Save As dialog, and
+checks saved paths and checkpoint bytes against independently read output.
 
 `exclusive_mutation` is an opt-in interactive fixture for the structured-entry
 interlock used by `asset.import`. It attempts nested writes through executor,

@@ -135,10 +135,8 @@ Checksums detect mismatched/corrupt files; they do not independently authenticat
 Upgrade the **Blender add-on and MCP server together**, from the same release.
 For 0.9.0 or earlier → matching 0.9.1 packages, after 0.9.1 acceptance is published:
 
-1. Save and back up your scene using Blender’s own UI. Legacy `project.save` remains
-   quarantined. The typed native-save workflow has bounded project scope and requires
-   explicit local consent; its presence does not establish release acceptance or
-   replace your backup. Stop the bridge and finish active tool calls.
+1. Save and back up your scene using Blender’s own UI. Use the save controls appropriate to the release you are upgrading from.
+   Bridge save receipts describe saved files and do not replace your backup. Stop the bridge and finish active tool calls.
 2. Download the accepted ZIP and matching wheel from the
    [0.9.1 release](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.9.1)
    and verify their hashes against its acceptance record.

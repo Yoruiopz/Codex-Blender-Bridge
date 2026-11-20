@@ -24,7 +24,7 @@ def staging(addon_package, tmp_path):
     root, resources = [str(tmp_path)], []
 
     def factory(name="texture.png", format="PNG16", role="DATA"):
-        item = module.TextureStaging(context, str(tmp_path / name), lambda: root[0], format, role)
+        item = module.TextureStaging(context, str(tmp_path / name), lambda: (root[0], False), format, role)
         resources.append(item)
         return item
 
@@ -66,7 +66,7 @@ def test_denial_precedes_root_and_filesystem_probes(staging, monkeypatch, permis
     item = staging.make()
     staging.grants[permission] = False
     monkeypatch.setattr(staging.module, "approved_output", lambda *_a: pytest.fail("unauthorized path probe"))
-    item.root = lambda: pytest.fail("unauthorized preferences/path probe")
+    item.live_policy = lambda: pytest.fail("unauthorized preferences/path probe")
     with pytest.raises(staging.module.BridgeError) as error:
         encode(item)
     assert error.value.code == "PERMISSION_DENIED"
@@ -336,6 +336,21 @@ def test_changed_approved_root_stops_before_next_streaming_read(staging, monkeyp
     assert error.value.code == "PERMISSION_DENIED" and not item.published_verified
     assert item.cleanup()["staging_cleanup"] == "retained_permission_denied"
     assert item.path.exists() and item.stage.exists()
+
+
+def test_unrestricted_revocation_retains_owned_stage_without_publishing(staging, tmp_path):
+    allowed = [True]
+    staging.root[0] = ""
+    item = staging.make()
+    item.live_policy = lambda: ("", allowed[0])
+    encode(item)
+    assert item.path == tmp_path / "texture.png" and item.stage.is_file()
+    allowed[0] = False
+    with pytest.raises(staging.module.BridgeError) as fail:
+        item.publish()
+    assert fail.value.code == "PERMISSION_DENIED"
+    assert item.cleanup()["staging_cleanup"] == "retained_permission_denied"
+    assert item.stage.is_file() and not item.path.exists()
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows directory pin semantics")

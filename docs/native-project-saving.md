@@ -1,4 +1,4 @@
-# Native project saving with explicit session permission
+# Native project saving with verification jobs
 
 **Published 0.9.0 alpha.** The two typed tools use canonical queued admission,
 retained source/path intent, a distinct local effects grant and bounded shared
@@ -10,10 +10,10 @@ qualifies the finite clean packed 4K profile below; later development source and
 broader artist-project saving require separate qualification. Earlier releases
 remain available with their own evidence.
 
-Legacy `project.save` retains its [quarantined refusal](project-save-safety.md).
-The native-save alternative does not provide an arbitrary-Python fallback or
-complete 1.0 production delivery. Normal native effects require separate local
-consent rather than a claim of exact-path confinement or hidden-Main equality.
+The current `project.save` tool performs ordinary native Save and Save As.
+The job tools below retain their narrower verification profile, including an
+independent Blender reader. Use [saving and recovery](project-save-safety.md)
+for the difference between these receipts and the ordinary project save workflow.
 
 The separate donor at `80ec3cb7dd2f64b5baa4fd8193fa9780fd3d93bf` passed nine
 registered save/interruption scenarios on official Linux 4.5.14/5.2.2. Its
@@ -59,24 +59,16 @@ outside the selected project folder. Native overwrite is not an atomic
 compare-and-swap operation. These effects require explicit Blender-side authority
 rather than silently broadening existing save/path grants.
 
-## Authorize a bounded session
+## Authorize saving in Blender
 
-In Blender's Codex Bridge panel, choose an existing **Approved Project Folder**
-and enable **Inspect Scene**, **Save Project** and **Access External Files**.
-Use **Arm Native Save Effects for this Session** to review and allow the normal
-native effects for this Bridge session and its connected clients. The duration
-defaults to 900 seconds and is bounded to 1–1800. Duration/folder settings alone
-do not arm consent; there is no stored `allow_native_save_effects` preference.
-
-The grant starts off, expires without renewal and can be revoked locally while
-a job is active. Register/unregister, Bridge start/reset/stop, emergency stop,
-project replacement and native undo/redo revoke it. Renewal during an active save
-is refused. Once armed, each save does not require another local popup. MCP cannot
-arm/renew it or change the local folder. Trusted Python inside Blender is not an
-adversarial security boundary.
+Enable **Inspect Scene**, **Save Project** and **Access External Files** in the
+Bridge preferences and choose an existing **Approved Project Folder**. The local
+Save Project setting persists across restarts and covers ordinary native save
+effects. The Bridge rechecks permission as work advances. The MCP client has no
+tool for changing these grants, the approved folder or the scope override.
 
 Both tools require `INSPECT_SCENE`, `SAVE_PROJECT`, `ACCESS_EXTERNAL_FILES` and
-`NATIVE_SAVE_EFFECTS`. Both are modifying operations: preview retains intent and
+`NATIVE_SAVE_EFFECTS` (a compatibility flag derived from Save Project). Both are modifying operations: preview retains intent and
 can perform declared native inspection. Enforced protected scope refuses through
 the registry's pure initial classification before admission, permission providers,
 Blender reads or file access. Protection/baselines are never cleared or rebased.
@@ -84,8 +76,8 @@ Blender reads or file access. Protection/baselines are never cleared or rebased.
 ## Preview, accept, inspect
 
 `project.native_save_preview(mode, filepath, overwrite_policy)` requires an exact
-absolute `.blend` filepath, even when saving the current file. It must be within
-the approved ordinary local folder. Missing parents, aliases/symlinks/reparse
+absolute `.blend` filepath, even when saving the current file. It must be within the approved ordinary local folder, or a verified local
+destination folder when unrestricted project and texture paths are explicitly enabled. Missing parents, aliases/symlinks/reparse
 points, implicit directories, automatic rename and changed paths refuse. Paths
 containing spaces are valid.
 

@@ -134,7 +134,7 @@ def test_non_json_tool_result_is_rejected() -> None:
 
 
 @pytest.mark.parametrize("all_enabled", [False, True])
-def test_public_addon_surface_matches_published_090_and_rejects_private_glb_rpc(
+def test_public_addon_surface_adds_save_tools_and_rejects_private_glb_rpc(
     addon_package, monkeypatch, all_enabled
 ):
     runtime_module = importlib.import_module(addon_package + ".runtime")
@@ -144,9 +144,11 @@ def test_public_addon_surface_matches_published_090_and_rejects_private_glb_rpc(
     runtime = runtime_module.BridgeRuntime()
     names = runtime.registry.list_tools()
     public_names = tuple(name for name in names if runtime.registry.get(name).remote)
-    # Published v0.9.0 source d756b68: exact public names, independent of enablement.
-    assert len(public_names) == 270
-    assert hashlib.sha256(("\n".join(public_names) + "\n").encode()).hexdigest() == (
+    added = {"project.save_dialog_state", "project.checkpoint_status", "project.checkpoint_reopen"}
+    assert len(public_names) == 273 and added <= set(public_names)
+    # Keep the previously published names, independent of toolset enablement.
+    previous = [name for name in public_names if name not in added]
+    assert hashlib.sha256(("\n".join(previous) + "\n").encode()).hexdigest() == (
         "1cb16ea5e7320962bc0be5d886bf76724e59ed548e9bc2808b5bff7e3d3b9c1e"
     )
     assert set(names) - set(public_names) == {"checkpoint.restore_last", "jobs._scene_turn"}

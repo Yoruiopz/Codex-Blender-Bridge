@@ -484,22 +484,28 @@ def test_native_grant_lifecycle_never_becomes_ordinary_weight_authority(ordinary
     assert all(first is second for first, second in zip(original, case.reader._ordinary_origin(), strict=True))
 
 
-def test_only_native_flag_changes_with_registered_grant_lifecycle(ordinary_origin):
+def test_persistent_native_authority_preserves_ordinary_weight_origin(ordinary_origin):
     case = ordinary_origin
     case.active._registered = True
     case.reader._origin = case.reader._ordinary_origin()
-    preferences = NS(allow_edit_mesh=True)
-    base = case.guard._permissions.permission_snapshot(preferences)
-    snapshots = [case.runtime.permission_snapshot(preferences)]
-    case.active.native_save_policy.arm(case.active._native_save_local_authority, 60)
-    case.reader._check_origin()
-    snapshots.append(case.runtime.permission_snapshot(preferences))
-    case.active.native_save_policy.revoke()
-    case.reader._check_origin()
-    snapshots.append(case.runtime.permission_snapshot(preferences))
-    assert [row["NATIVE_SAVE_EFFECTS"] for row in snapshots] == [False, True, False]
-    assert all({key: value for key, value in row.items() if key != "NATIVE_SAVE_EFFECTS"}
-               == {key: value for key, value in base.items() if key != "NATIVE_SAVE_EFFECTS"} for row in snapshots)
+    preferences = NS(allow_edit_mesh=True, allow_save_project=True)
+    grant = case.active.native_save_policy
+
+    def check(expected_native):
+        base = case.guard._permissions.permission_snapshot(preferences)
+        snapshot = case.runtime.permission_snapshot(preferences)
+        assert snapshot.pop("NATIVE_SAVE_EFFECTS") is expected_native
+        assert snapshot == {key: value for key, value in base.items() if key != "NATIVE_SAVE_EFFECTS"}
+        case.reader._check_origin()
+
+    check(True)
+    previous = grant.statement()
+    grant.revoke()
+    assert not grant.active()
+    check(True)
+    assert grant.statement().epoch > previous.epoch
+    case.active._registered = False
+    check(False)  # Save preference still true, but compatibility authority requires a live runtime.
 
 
 def test_h01_dependency_change_after_origin_cannot_pass_final_fence(ordinary_origin, monkeypatch):

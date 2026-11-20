@@ -137,13 +137,17 @@ class FilePlan:
     destination: FileRecord | None
     current: FileRecord | None
     backups: tuple[FileRecord | None, ...]
+    unrestricted: bool = False
 
     @property
     def fingerprint(self) -> str:
         return hashlib.sha256(json.dumps(self.summary(), sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
     def summary(self) -> dict[str, Any]:
-        return {"approved_project_folder": str(self.root), "filepath": str(self.path), "mode": self.mode,
+        return {"approved_project_folder": None if self.unrestricted else str(self.root),
+                **({"unrestricted_project_paths": True, "resource_directory": str(self.root)}
+                   if self.unrestricted else {}),
+                "filepath": str(self.path), "mode": self.mode,
                 "overwrite_policy": self.overwrite_policy, "save_version": self.save_version,
                 "current_filepath": str(self.current_path) if self.current_path else None,
                 "destination": self.destination.summary() if self.destination else None,
@@ -171,8 +175,10 @@ class FilePlan:
 
 def freeze_plan(root_raw: str, filepath: str, mode: str, overwrite_policy: str,
                 current_filepath: str | None, save_version: int,
-                check: Callable[[], None] = lambda: None) -> FilePlan:
+                check: Callable[[], None] = lambda: None, *, unrestricted: bool = False) -> FilePlan:
     check()  # Before even root/path resolution.
+    if type(unrestricted) is not bool:
+        raise invalid_argument("Project folder policy must be a literal boolean.")
     if not root_raw:
         raise BridgeError(ErrorCode.PERMISSION_DENIED, "Choose an Approved Project Folder in Blender first.")
     if type(mode) is not str or mode not in MODES or type(overwrite_policy) is not str or overwrite_policy not in OVERWRITE:
@@ -189,9 +195,10 @@ def freeze_plan(root_raw: str, filepath: str, mode: str, overwrite_policy: str,
         check()
         ancestry = _ancestry(path.parent)
         _ancestry(root)
-        if root == Path(root.anchor) or root.resolve(strict=True) != root or path.parent.resolve(strict=True) != path.parent:
-            raise invalid_argument("Project folders must be ordinary existing subdirectories, not roots or aliases.")
-        if not path.is_relative_to(root) or (current and not current.is_relative_to(root)):
+        if (root.resolve(strict=True) != root or path.parent.resolve(strict=True) != path.parent
+                or (root != path.parent if unrestricted else root == Path(root.anchor))):
+            raise invalid_argument("Project folders must be ordinary existing paths with no filesystem aliases.")
+        if not unrestricted and (not path.is_relative_to(root) or (current and not current.is_relative_to(root))):
             raise BridgeError(ErrorCode.PERMISSION_DENIED, "Project paths must be inside the Approved Project Folder.")
         current_ancestry = _ancestry(current.parent) if current else ()
         if current and (current.suffix != ".blend" or current.parent.resolve(strict=True) != current.parent):
@@ -214,7 +221,7 @@ def freeze_plan(root_raw: str, filepath: str, mode: str, overwrite_policy: str,
             raise invalid_argument("Save As requires explicit expected-new or expected-replacement native policy.")
         backups = tuple(_record(Path(str(path) + str(index)), check) for index in range(1, save_version + 1)) if mode != "COPY_NEW" else ()
         result = FilePlan(root, path, current, mode, overwrite_policy, save_version, ancestry,
-                          current_ancestry, destination, original, backups)
+                          current_ancestry, destination, original, backups, unrestricted)
         result.check(check)
         return result
     except (OSError, RuntimeError) as cause:

@@ -27,7 +27,7 @@ from typing import Any
 
 from . import command_queue, current_pixels_contract, current_pixels_files, executor, jobs, protocol
 from .errors import BridgeError
-from .permissions import Permission
+from .permissions import Permission, unrestricted_project_texture_paths
 from .preferences import get_preferences
 from .request_lifecycle import ConnectionLifetime, RequestLifetime
 from .state import BridgeState
@@ -501,7 +501,7 @@ class CurrentPixelsOrigin:
     """Pre-provider callback/witness and retained full-preview source intent."""
 
     __slots__ = ("_sealed", "authorized", "binding", "bound", "cached", "callback_verifier", "callbacks", "capture", "connection_events",
-                 "context", "deadline", "file_plan", "file_root", "first_full_raw", "gate_context", "generation",
+                 "context", "deadline", "file_plan", "file_policy", "first_full_raw", "gate_context", "generation",
                  "hooks", "invocation", "lifetime", "lifetime_facts", "method", "normalized_facts", "owner",
                  "parameter_facts", "parameters", "params", "request_hooks", "runtime", "scope", "services",
                  "spec", "store", "used", "witness")
@@ -543,7 +543,7 @@ class CurrentPixelsOrigin:
         self.store, self.generation = _store_facts(context.state)
         self.deadline = time.monotonic() + self.parameters.get("time_limit_seconds", 300.)
         self.cached = None
-        self.file_root = None
+        self.file_policy = None
         if method in current_pixels_contract.METHOD_MODES:
             key = self.parameters["expected_target_fingerprint" if method == METHODS[1] else "expected_recovery_fingerprint"]
             cached = _PLANS.get(key)
@@ -553,7 +553,8 @@ class CurrentPixelsOrigin:
                     or time.monotonic() >= cached.expires):
                 raise refused("PREVIEW_MISSING_STALE_OR_FOREIGN")
             self.cached = cached
-            self.file_root = json.loads(cached.raw)["files"]["approved_root"]
+            files = json.loads(cached.raw)["files"]
+            self.file_policy = files["approved_root"], files.get("unrestricted_texture_paths", False)
         self.authorized, self.used, self.bound = False, False, None
         self.capture = self.file_plan = None
         self.first_full_raw = None
@@ -575,12 +576,14 @@ class CurrentPixelsOrigin:
             get_task_plans(context.state)
             self.store, self.generation = _store_facts(context.state)
         try:
-            root = self.approved_root()
+            root, unrestricted = self.approved_file_policy()
             if method in METHODS[:2]:
                 self.file_plan = current_pixels_files.freeze_backup_plan(self.parameters["backup_directory"],
-                    self.parameters["backup_prefix"], root, self.parameters["retain_event_journal"], self.authorize)
+                    self.parameters["backup_prefix"], root, self.parameters["retain_event_journal"], self.authorize,
+                    unrestricted=unrestricted)
             else:
-                self.file_plan = current_pixels_files.freeze_recovery_plan(self.parameters["backup_manifest_path"], root, self.authorize)
+                self.file_plan = current_pixels_files.freeze_recovery_plan(self.parameters["backup_manifest_path"],
+                    root, self.authorize, unrestricted=unrestricted)
             self.refresh_capture(context)
         except BaseException:
             self.capture = None
@@ -691,26 +694,28 @@ class CurrentPixelsOrigin:
         if self._witness() != self.witness:
             raise refused("IDENTITY_OR_CONTEXT_WITNESS_CHANGED")
         self._stop(context)
-        if self.file_root is not None and self._approved_root_value() != self.file_root:
+        if self.file_policy is not None and self._file_policy_value() != self.file_policy:
             raise refused("APPROVED_TEXTURE_ROOT_CHANGED")
         object.__setattr__(self, "authorized", True)
         object.__setattr__(self, "gate_context", context)
 
-    def _approved_root_value(self):
+    def _file_policy_value(self) -> tuple[str, bool]:
         prefs = get_preferences()
-        raw = None if prefs is None else prefs.texture_directory
-        if type(raw) is not str or not raw or len(raw.encode("utf-8")) > 4096 or any(ord(char) < 32 for char in raw):
+        raw = getattr(prefs, "texture_directory", "")
+        unrestricted = unrestricted_project_texture_paths(prefs)
+        if (type(raw) is not str or (not raw and not unrestricted)
+                or len(raw.encode("utf-8")) > 4096 or any(ord(char) < 32 for char in raw)):
             raise refused("APPROVED_TEXTURE_ROOT_REQUIRED")
-        return raw
+        return raw, unrestricted
 
-    def approved_root(self):
-        """Bind the real locally approved folder only after current grants."""
+    def approved_file_policy(self) -> tuple[str, bool]:
+        """Bind the live texture path policy only after current grants."""
         self.authorize()
-        raw = self._approved_root_value()
-        if self.file_root is not None and raw != self.file_root:
+        policy = self._file_policy_value()
+        if self.file_policy is not None and policy != self.file_policy:
             raise refused("APPROVED_TEXTURE_ROOT_CHANGED")
-        object.__setattr__(self, "file_root", raw)
-        return raw
+        object.__setattr__(self, "file_policy", policy)
+        return policy
 
     def check_after_read(self):
         self.check_job_callbacks()
@@ -785,7 +790,7 @@ class CurrentPixelsOrigin:
             value = summary.get(name)
             if type(value) is not str or len(value) != 64 or any(char not in "0123456789abcdef" for char in value):
                 raise refused("COMPLETE_PREFIX_DIGEST_REQUIRED")
-        if self.file_root is None or plan.approved_root != self.file_root:
+        if self.file_policy != (plan.approved_root, plan.unrestricted):
             raise refused("CAPTURE_PLAN_ROOT_CHANGED")
         # Resource measurements are diagnostics, never a changing source
         # baseline. Complete native/prefix digests still cover all authored data.
@@ -794,7 +799,7 @@ class CurrentPixelsOrigin:
 
     def _read_gate(self):
         self._stop(self.gate_context)
-        if self._approved_root_value() != self.file_root:
+        if self._file_policy_value() != self.file_policy:
             raise refused("APPROVED_TEXTURE_ROOT_CHANGED")
         if self._witness() != self.witness:
             raise refused("IDENTITY_OR_CONTEXT_WITNESS_CHANGED")

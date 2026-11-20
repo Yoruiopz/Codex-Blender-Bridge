@@ -127,6 +127,28 @@ def test_empty_root_and_outside_source_do_not_grant_reads(files, tmp_path):
     assert error.value.code == "PERMISSION_DENIED"
 
 
+def test_unrestricted_plan_anchors_resource_and_never_follows_a_destination_alias(files, tmp_path):
+    parent = tmp_path / "destination"
+    parent.mkdir()
+    current = tmp_path / "current.blend"
+    current.write_bytes(b"original")
+    target = parent / "next.blend"
+    frozen = files.freeze_plan(str(parent), str(target), "SAVE_AS", "NATIVE_NEW_EXPECTED",
+                               str(current), 0, unrestricted=True)
+    assert frozen.current.path == str(current) and frozen.current_ancestry
+    assert frozen.summary()["approved_project_folder"] is None
+    assert frozen.summary()["resource_directory"] == str(parent)
+    with pytest.raises(files.BridgeError):
+        files.freeze_plan(str(tmp_path), str(target), "SAVE_AS", "NATIVE_NEW_EXPECTED",
+                          str(current), 0, unrestricted=True)
+    if os.name != "nt":
+        alias = tmp_path / "alias"
+        alias.symlink_to(parent, target_is_directory=True)
+        with pytest.raises(files.BridgeError):
+            files.freeze_plan(str(alias), str(alias / "next.blend"), "SAVE_AS", "NATIVE_NEW_EXPECTED",
+                              str(current), 0, unrestricted=True)
+
+
 def test_plan_binds_directory_identity_and_original_bytes(files, tmp_path):
     frozen = plan(files, tmp_path)
     assert frozen.fingerprint == frozen.fingerprint and frozen.summary()["native_destination_race_excluded"]
