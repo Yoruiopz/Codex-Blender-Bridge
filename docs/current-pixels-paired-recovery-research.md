@@ -38,8 +38,8 @@ a replacement baseline.
 
 ## Queued backup preparation
 
-`current_pixels_loaded_backup` registers four private methods in its own Blender
-runtime. The normal add-on and MCP registries omit them. The fixture drives the
+`current_pixels_loaded_backup` and `current_pixels_acquisition` register five
+private methods in their own Blender runtimes. The normal add-on and MCP registries omit them. The fixtures drive the
 existing socket and main-thread timer using one connection, a 2 × 2 Float32 FILE
 image and its existing OWNER-bound helper. The preview binds the full source graph,
 current pixels, previous packed bytes and the approved backup plan. The driver
@@ -63,14 +63,27 @@ three-second request remains unqualified. A separate instrumented run counted
 counts locate repeated nested verification. The instrumented timings include
 profiler overhead and cannot establish production latency.
 
-Move expensive graph and pixel acquisition into a private cancellable job with
-an acknowledgment inside the normal request deadline. Preserve live identity,
-context and permissions at provider, registered RNA lookup and scheduler
-boundaries. Independently verify frozen backup bytes. Before any Image or helper
-mutation, compare the current complete graph and pixels with the captured prefix.
-A changed source can make an archive stale without making its verified bytes
-invalid. Test cancellation, disconnect and manual edits between scheduler turns
-before exposing any method publicly.
+The acquisition case uses the real socket with a three-second start deadline.
+The acknowledgment precedes filesystem and complete graph/pixel reads. On the
+main-thread scheduler the reader verifies the approved path, copies the packed
+and current data, and drops all native handles before yielding. After payload
+validation it re-resolves the complete graph before the final reads. Only the
+plain preview can survive the last yield. A usable fingerprint also requires a
+successfully completed job retained for the same connection. The synchronous
+native scans and buffer copies still bound how quickly queued cancellation can
+be applied.
+
+```bash
+python scripts/run_loaded_backup_private_display.py --case current_pixels_acquisition --blender /path/to/blender --output /absolute/new/report-directory
+```
+
+On 5.2.2 the owned fixture prepares known Boolean arrays before its baseline.
+An earlier run over stock `SINGLE` storage safely refused. The acquisition
+continues to require passive reads in the live graph. Before an Image or helper
+mutation, compare the current complete graph and pixels with the captured
+prefix. A changed source can make an archive stale while its verified bytes
+remain intact. Test disconnect and manual edits between scheduler turns before
+exposing a method publicly.
 
 The separate read-only graph passed on stock Linux Blender 4.5.14 and 5.2.2
 at clean commit `3805511f571a8acaa2a9c16b6cab07713770348a` (source fingerprint

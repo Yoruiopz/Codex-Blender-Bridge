@@ -2461,11 +2461,9 @@ def _object(reader: _Reader, stream: _Stream, obj: Any, materials: tuple[Any, ..
 
 
 @dataclass(frozen=True, slots=True)
-class _Structure:
-    original: Any
-    snapshot: Any
-    materials: tuple[Any, ...]
-    objects: tuple[Any, ...]
+class _StructureFacts:
+    """Detached projection safe to retain over the pure preparation phase."""
+
     native_graph_sha256: str
     portable_graph_sha256: str
     native_rows: tuple[dict[str, Any], ...]
@@ -2474,6 +2472,15 @@ class _Structure:
     workload: dict[str, int]
     catalog_facts: tuple[tuple[str, str], ...]
     canonical_bytes: int
+
+
+@dataclass(frozen=True, slots=True)
+class _Structure:
+    original: Any
+    snapshot: Any
+    materials: tuple[Any, ...]
+    objects: tuple[Any, ...]
+    facts: _StructureFacts
 
 
 def _preflight_workload(reader: _Reader, objects: tuple[Any, ...], materials: tuple[Any, ...]) -> dict[str, int]:
@@ -2527,9 +2534,9 @@ def _structure(reader: _Reader, image_name: str | None, snapshot_name: str,
         stream.end(row)
     if totals != expected_totals:
         raise refused("WORKLOAD_CHANGED_DURING_CAPTURE")
-    return _Structure(original, helper, materials, objects, stream.native.hexdigest(), stream.portable.hexdigest(),
-                       tuple(stream.rows), original_metadata, snapshot_metadata, totals,
-                       tuple(sorted(reader.catalogs.items())), stream.bytes)
+    facts = _StructureFacts(stream.native.hexdigest(), stream.portable.hexdigest(), tuple(stream.rows),
+                            original_metadata, snapshot_metadata, totals, tuple(sorted(reader.catalogs.items())), stream.bytes)
+    return _Structure(original, helper, materials, objects, facts)
 
 
 @dataclass(frozen=True, slots=True)
@@ -2662,8 +2669,9 @@ def capture_graph_steps(bpy: Any, image_name: str | None, snapshot_name: str,
     ``check`` is the source-qualified provider-free origin/lifetime gate, not an
     arbitrary permission factory. The caller performs current canonical grants
     before entry. Live authored graph passes are synchronous; yielded work is
-    private pixel validation/decoding. A final complete live recapture refuses
-    manual changes while those pure steps yielded. Native reads may block.
+    private pixel validation/decoding. Neither native handles nor a reader can
+    survive those yields. A fresh complete recapture refuses intervening
+    manual changes before re-reading payloads. Each native pass may block.
     """
     from .tools import image_portability as storage
     from .tools.image_recovery_jobs import _decode_steps
@@ -2676,12 +2684,17 @@ def capture_graph_steps(bpy: Any, image_name: str | None, snapshot_name: str,
         expected_record = None
     reader = _Reader(bpy, check)
     first = _structure(reader, *names, expected_record)
-    width, height = first.original_metadata["static"]["width"], first.original_metadata["static"]["height"]
+    baseline = first.facts
+    width, height = baseline.original_metadata["static"]["width"], baseline.original_metadata["static"]["height"]
     resources = validate_resource_facts(width, height, available_memory_bytes, available_disk_bytes)
     original_packed = _packed(reader, first.original)
     snapshot_packed = _packed(reader, first.snapshot)
     original_pixels = _pixels(reader, first.original, width, height)
     snapshot_pixels = _pixels(reader, first.snapshot, width, height)
+    # Drop all native handles and class/leaf wrappers before the first
+    # scheduler boundary. Only detached facts and owned payloads continue.
+    del reader, first
+    yield {"phase": "source_read", "completed": width * height, "total": width * height}
     current_digest = yield from _digest_steps(original_pixels, check)
     helper_digest = yield from _digest_steps(snapshot_pixels, check)
     del snapshot_pixels
@@ -2700,28 +2713,26 @@ def capture_graph_steps(bpy: Any, image_name: str | None, snapshot_name: str,
     if decoded_helper_digest != current_digest:
         raise refused("SNAPSHOT_CANONICAL_CHANNELS_DIFFER")
     check()
-    reader.begin_pass()
-    reader.catalog(first.snapshot, "Image")
-    if first.snapshot.has_data is not True:
+    reader = _Reader(bpy, check)
+    last = _structure(reader, *names, expected_record)
+    if last.facts != baseline:
+        raise refused("GRAPH_CHANGED_DURING_CAPTURE")
+    reader.catalog(last.snapshot, "Image")
+    if last.snapshot.has_data is not True:
         raise refused("TARGET_BUFFER_UNLOADED")
-    reader.catalog(first.snapshot.colorspace_settings, "ColorManagedInputColorspaceSettings")
-    reader.catalog(first.snapshot.packed_file, "PackedFile")
-    metadata = storage._snapshot(first.snapshot, first.original, maximum_pixels=16_777_216, maximum_bytes=MAX_PAYLOAD_BYTES)
+    reader.catalog(last.snapshot.colorspace_settings, "ColorManagedInputColorspaceSettings")
+    reader.catalog(last.snapshot.packed_file, "PackedFile")
+    metadata = storage._snapshot(last.snapshot, last.original, maximum_pixels=16_777_216, maximum_bytes=MAX_PAYLOAD_BYTES)
+    original_digest = hashlib.sha256(original_packed).hexdigest()
+    snapshot_digest = hashlib.sha256(snapshot_packed).hexdigest()
     if (metadata["source"] != "FILE" or metadata["is_float"] is not True or metadata["colorspace"] != "Non-Color"
             or metadata["alpha_mode"] != "CHANNEL_PACKED" or (metadata["width"], metadata["height"]) != (width, height)
             or metadata["pixels_sha256_float32_le"] != current_digest
-            or metadata["packed_sha256"] != hashlib.sha256(snapshot_packed).hexdigest()):
+            or metadata["packed_sha256"] != snapshot_digest):
         raise refused("SNAPSHOT_SCHEMA_OR_COMPLETE_HASHES_DIFFER")
-    last = _structure(reader, *names, expected_record)
-    if (last.native_graph_sha256 != first.native_graph_sha256 or last.native_rows != first.native_rows
-            or last.original_metadata != first.original_metadata or last.snapshot_metadata != first.snapshot_metadata
-            or last.original is not first.original or last.snapshot is not first.snapshot):
-        raise refused("GRAPH_CHANGED_DURING_CAPTURE")
     # Re-read complete current payloads, not just sizes/dirty flags. Private
     # yields must never adopt intervening manual edits as a newer baseline.
-    original_digest = hashlib.sha256(original_packed).hexdigest()
-    snapshot_digest = hashlib.sha256(snapshot_packed).hexdigest()
-    for image, packed_digest in ((first.original, original_digest), (first.snapshot, snapshot_digest)):
+    for image, packed_digest in ((last.original, original_digest), (last.snapshot, snapshot_digest)):
         if hashlib.sha256(_packed(reader, image)).hexdigest() != packed_digest:
             raise refused("PACKED_PAYLOAD_CHANGED_DURING_CAPTURE")
         actual = _pixels(reader, image, width, height)
@@ -2733,14 +2744,14 @@ def capture_graph_steps(bpy: Any, image_name: str | None, snapshot_name: str,
     check()
     payloads = PayloadCapture(original_pixels, original_packed, snapshot_packed, current_digest,
                               original_digest, old_digest, snapshot_digest)
-    volatile = {"original": first.original_metadata["volatile"], "snapshot": first.snapshot_metadata["volatile"],
+    volatile = {"original": baseline.original_metadata["volatile"], "snapshot": baseline.snapshot_metadata["volatile"],
                 "payloads": payloads.facts()}
-    prefix_native = hashlib.sha256(_canonical([first.native_graph_sha256, volatile])).hexdigest()
-    prefix_portable = hashlib.sha256(_canonical([first.portable_graph_sha256, volatile])).hexdigest()
-    return GraphCapture(first.original, first.snapshot, first.materials, first.objects,
-                         first.native_graph_sha256, first.portable_graph_sha256, prefix_native, prefix_portable,
-                         first.native_rows, first.original_metadata, first.snapshot_metadata,
-                         first.workload, resources, first.catalog_facts, first.canonical_bytes, payloads)
+    prefix_native = hashlib.sha256(_canonical([baseline.native_graph_sha256, volatile])).hexdigest()
+    prefix_portable = hashlib.sha256(_canonical([baseline.portable_graph_sha256, volatile])).hexdigest()
+    return GraphCapture(last.original, last.snapshot, last.materials, last.objects,
+                         baseline.native_graph_sha256, baseline.portable_graph_sha256, prefix_native, prefix_portable,
+                         baseline.native_rows, baseline.original_metadata, baseline.snapshot_metadata,
+                         baseline.workload, resources, baseline.catalog_facts, baseline.canonical_bytes, payloads)
 
 
 def capture_graph(bpy: Any, image_name: str | None, snapshot_name: str,

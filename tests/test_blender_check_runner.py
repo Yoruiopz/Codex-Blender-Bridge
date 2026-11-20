@@ -775,6 +775,89 @@ def test_census_uses_owned_opt_in_headless_process_and_complete_receipt(runner, 
     assert result["qualification_scope"]["lifecycle_functional_acceptance"] is False
 
 
+def test_current_pixels_acquisition_requires_attested_private_display(runner, monkeypatch, tmp_path):
+    case = runner.CURRENT_PIXELS_ACQUISITION_CASE
+    assert case in runner.OPT_IN_CASES and case in runner.INTERACTIVE_CASES
+    assert runner.CASES[case][1] != runner.CASES[runner.CURRENT_PIXELS_LOADED_CASE][1]
+    monkeypatch.setattr(runner.sys, "platform", "linux")
+    monkeypatch.delenv("BRIDGE_TEST_PRIVATE_UI_MANIFEST", raising=False)
+    monkeypatch.setattr(runner.subprocess, "run", lambda *_args, **_kwargs: pytest.fail("Unattested launch"))
+    monkeypatch.setattr(runner.subprocess, "Popen", lambda *_args, **_kwargs: pytest.fail("Unattested launch"))
+
+    with pytest.raises(ValueError, match=r"owned|private"):
+        runner.run_case(Path("blender"), case, tmp_path, 120)
+
+
+def test_current_pixels_acquisition_only_accepts_owned_52_boolean_setup(runner):
+    verify = runner._acquisition_storage_setup_matches
+    build_45, build_52 = "62c1db4208e8", "d13f752e3b9c"
+    row = {"name": ".select_edge", "domain": "EDGE", "data_type": "BOOLEAN",
+           "before": "SINGLE", "after": "ARRAY", "count": 3, "uniform_value": False}
+    proof = {"phase": "owned_setup_before_baseline", "geometry_preserved": True,
+             "uv_values_preserved": True, "uv_roles_preserved": True, "transitions": [row]}
+
+    assert verify(proof, build_52)
+    assert verify(None, build_45)
+    assert not verify(proof, build_45)
+    assert not verify(None, build_52)
+    assert not verify(proof, "unreviewed")
+    assert not verify({**proof, "uv_roles_preserved": False}, build_52)
+    assert not verify({**proof, "transitions": [row, row]}, build_52)
+    for wrong in ({"name": "UVMap"}, {"domain": "POINT"}, {"data_type": "INT"}, {"before": "ARRAY"},
+                  {"after": "SINGLE"}, {"count": 1}, {"uniform_value": 0}):
+        assert not verify({**proof, "transitions": [{**row, **wrong}]}, build_52), wrong
+
+
+@pytest.mark.parametrize("missed_cancellation", [False, True])
+def test_acquisition_fixture_requires_observed_progress_and_terminal_cancellation(missed_cancellation):
+    from scripts import blender_current_pixels_lifecycle_smoke as fixture
+
+    method = "image.current_pixels_pack_preview_start"
+    success_id, cancel_id = "job_" + "1" * 32, "job_" + "2" * 32
+    pending = {"terminal": False, "state": "RUNNING", "revision": 2, "progress": {"phase": "capture_preflight"}}
+    preview = {"phase": "preview", "fingerprint": "3" * 64, "consumer_graph_sha256": "4" * 64,
+               "backup_files_written": False, "image_packed": False}
+    terminal = {"terminal": True, "revision": 3, "undo_boundary_created": False}
+    results = iter([{"job_id": success_id, **terminal, "state": "SUCCEEDED", "result": preview},
+                    {"job_id": cancel_id, **(terminal if missed_cancellation else pending),
+                     **({"state": "SUCCEEDED"} if missed_cancellation else {})},
+                    {"job_id": cancel_id, **terminal, "state": "CANCELLED", "result": None, "external_effects": {},
+                     "error": {"code": "TIMEOUT", "context": {"reason": "explicit cancellation"}}}])
+    transcript, controls, starts = [], [], []
+
+    def request(name, params, *, retained=True, timeout_ms):
+        if name == method:
+            assert timeout_ms == fixture.ACQUISITION_ACK_MS
+            starts.append(params)
+            if len(starts) <= 4:
+                response = {"ok": False, "error": {"code": "PERMISSION_DENIED"}}
+            else:
+                response = {"ok": True, "result": {"accepted": True, "job_completed": False, "revision": 1,
+                    "job_id": success_id if len(starts) == 5 else cancel_id,
+                    "input_frozen_at_acceptance": False, "undo_boundary_created": False}}
+        elif name == "jobs.inspect":
+            response = {"ok": True, "result": next(results)}
+        else:
+            assert name == "jobs.cancel" and params == {"job_id": cancel_id}
+            response = {"ok": True, "result": {"job_id": cancel_id, "state": "CANCELLING",
+                                              "terminal": False, "cancel_requested": True}}
+        row = {"method": name, "elapsed_seconds": .25}
+        if retained:
+            transcript.append(row)
+        return response, row
+
+    def control(action, **_params):
+        controls.append(action)
+
+    if missed_cancellation:
+        with pytest.raises(AssertionError):
+            fixture.acquisition_requests(request, control, method, {}, {}, transcript)
+    else:
+        fixture.acquisition_requests(request, control, method, {}, {}, transcript)
+        assert [row["method"] for row in transcript] == [method] * 5 + ["jobs.inspect", method, "jobs.inspect", "jobs.cancel", "jobs.inspect"]
+        assert controls.count("unchanged") == 5 and controls.count("acquisition_preview_verified") == 1
+
+
 @pytest.mark.parametrize("fault", ["profile", "token", "pid", "build", "version", "lifecycle", "windows",
     "missing_file", "symlink", "path", "hash", "size_bool", "oversize", "full_token", "full_false_integer", "source", "source_drift",
     "catalog_schema", "catalog_build", "catalog_count", "catalog_names", "old52", "extra58", "truncated", "exit", "timeout",

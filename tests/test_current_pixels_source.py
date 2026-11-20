@@ -63,7 +63,7 @@ class CurrentPixelsDriver:
 
 
 @pytest.fixture
-def source_env(addon_package, monkeypatch, tmp_path):
+def source_env(addon_package, monkeypatch, tmp_path, request):
     source = importlib.import_module(addon_package + ".current_pixels_source")
     graph = importlib.import_module(addon_package + ".current_pixels_graph")
     runtime_module = importlib.import_module(addon_package + ".runtime")
@@ -111,9 +111,14 @@ def source_env(addon_package, monkeypatch, tmp_path):
         payload = graph.PayloadCapture(array("f", [1.] * 16), b"old", b"current", digest, "b" * 64, "c" * 64, "d" * 64)
         return graph.GraphCapture(native.original, native.helper, (native.material,), (), "a" * 64,
             "e" * 64, digest, digest, ({"kind": "Image", "name": "Original", "pointer": "a", "session_uid": "10", "content_sha256": "f" * 64},),
-            {"name": "Original", "has_data": True}, {"name": "Snapshot", "has_data": True},
+            {"name": "Original", "has_data": True, "static": {"width": 2, "height": 2}},
+            {"name": "Snapshot", "has_data": True},
             {"vertices": 0}, {"available_memory_bytes": available_memory_bytes}, (), 100, payload)
     monkeypatch.setattr(graph, "capture_graph", capture)
+    def capture_steps(*args, **kwargs):
+        yield {"phase": "source_read", "completed": 1, "total": 1}
+        return capture(*args, **kwargs)
+    monkeypatch.setattr(graph, "capture_graph_steps", capture_steps)
     original_identity_witness = graph.identity_witness
     def checked_identity_witness(_bpy, image_name, snapshot_name, affected_materials, *, check=None):
         assert check is not None, "The source must provide a real gate for native identity queries"
@@ -123,19 +128,23 @@ def source_env(addon_package, monkeypatch, tmp_path):
             check()
         return original_identity_witness(_bpy, image_name, snapshot_name, affected_materials, check=check)
     monkeypatch.setattr(graph, "identity_witness", checked_identity_witness)
-    domain = ModuleType(addon_package + ".tools.image_current_pixels")
-    domain.flags = flags
-    domain.image, domain.REQUIRED, domain.METHODS = Image("ModeledJobSource"), source.REQUIRED, source.METHODS
-    exec(DOMAIN, vars(domain))
-    monkeypatch.setitem(sys.modules, domain.__name__, domain)
-    for method in source.METHODS:
-        start = method in source.current_pixels_contract.METHOD_MODES
-        runtime.registry.register(method, vars(domain)[source.HANDLERS[method]], toolset="materials", modifies=start,
-            permissions=source.REQUIRED, automatic_checkpoint=False, batchable=False, record_history=True,
-            checkpoint_owns_finalization=start, protected_scope_resolver=source.protected_scope,
-            checkpoint_admission_factory=source.admission_factory(method), checkpoint_parameter_dependencies=source.initial_dependencies)
     original_registration = source._REGISTRATION
-    source.bind_registry(runtime.registry)
+    if getattr(request, "param", None) == "actual_preview_job":
+        domain = importlib.import_module(addon_package + ".tools.image_current_pixels")
+        domain.register_tools(runtime.registry)
+    else:
+        domain = ModuleType(addon_package + ".tools.image_current_pixels")
+        domain.flags = flags
+        domain.image, domain.REQUIRED, domain.METHODS = Image("ModeledJobSource"), source.REQUIRED, source.METHODS
+        exec(DOMAIN, vars(domain))
+        monkeypatch.setitem(sys.modules, domain.__name__, domain)
+        for method in source.METHODS:
+            start = method in source.current_pixels_contract.METHOD_MODES
+            runtime.registry.register(method, vars(domain)[source.HANDLERS[method]], toolset="materials", modifies=start,
+                permissions=source.REQUIRED, automatic_checkpoint=False, batchable=False, record_history=True,
+                checkpoint_owns_finalization=start, protected_scope_resolver=source.protected_scope,
+                checkpoint_admission_factory=source.admission_factory(method), checkpoint_parameter_dependencies=source.initial_dependencies)
+        source.bind_registry(runtime.registry)
     yield NS(source=source, graph=graph, runtime=runtime, runtime_module=runtime_module, native=native,
              prefs=prefs, flags=flags, domain=domain, folder=tmp_path)
     source._PLANS.clear()
@@ -290,14 +299,15 @@ def test_first_provider_identity_context_and_service_drift_cannot_become_baselin
     assert env.flags["captures"] == env.flags["writes"] == env.flags["foreign"] == 0
 
 
-def queued(env, method, parameters, connection, identifier, *, queue_seconds=60.):
+def queued(env, method, parameters, connection, identifier, *, queue_seconds=60., acknowledge=True):
     life = env.source.RequestLifetime(connection, deadline=time.monotonic() + 60.)
     request = env.source.protocol.Request(identifier, method, parameters, _lifecycle=life)
     item = env.source.command_queue.QueuedRequest(request, deadline=time.monotonic() + queue_seconds)
     assert item.try_start()
     response = env.runtime.executor.execute_request(request, check_cancelled=item.check_active)
     item.resolve(response)
-    life.acknowledge(response.ok)
+    if acknowledge:
+        life.acknowledge(response.ok)
     return response, item, life
 
 
@@ -318,6 +328,96 @@ def finish_model(env):
             break
     assert env.runtime.jobs.active is None
     return env.runtime.jobs.history[0]
+
+
+def acquisition_params(env):
+    return {**params(env), "retain_event_journal": False}
+
+
+@pytest.mark.parametrize("source_env", ["actual_preview_job"], indirect=True)
+def test_acquisition_accepts_before_file_or_payload_work_and_waits_for_delivery(source_env):
+    env = source_env
+    owner = env.source.ConnectionLifetime()
+    response, _request, lifetime = queued(env, env.source.PREVIEW_START, acquisition_params(env), owner, "acquire",
+                                          queue_seconds=3., acknowledge=False)
+    assert response.ok, response.error
+    assert response.result["accepted"] and response.result["input_frozen_at_acceptance"] is False
+    job = env.runtime.jobs.active
+    assert job.prepared["origin"].file_plan is None and job.source_metadata == {}
+    assert env.flags["captures"] == 0 and not env.source._PLANS
+    assert env.runtime.jobs.tick() and job.work is None
+    assert env.flags["captures"] == 0 and job.prepared["origin"].file_plan is None
+    lifetime.acknowledge(True)
+    assert env.runtime.jobs.tick() and job.progress["phase"] == "capture_preflight"
+    assert env.flags["captures"] == 0
+    assert env.runtime.jobs.tick() and job.progress["phase"] == "source_read"
+    assert env.runtime.jobs.tick() and job.progress["phase"] == "capture_complete"
+    assert env.flags["captures"] == 1 and job.prepared["origin"].capture is None
+    assert not env.source._PLANS
+    record = finish_model(env)
+    assert record.state == "SUCCEEDED", record.error
+    assert record.result["phase"] == "preview"
+    fingerprint = record.result["fingerprint"]
+    assert len(fingerprint) == 64 and env.source._PLANS[fingerprint].acquisition_job is record
+    assert not owner.background_active.is_set() and list(env.folder.iterdir()) == []
+    env.runtime.jobs.history.clear()
+    parameters = {**start_parameters(env, record.result), "retain_event_journal": False}
+    response, _request, _life = queued(env, env.source.METHODS[1], parameters, owner, "evicted")
+    assert not response.ok and response.error["context"]["reason"] == "PREVIEW_ACQUISITION_NOT_RETAINED"
+
+
+@pytest.mark.parametrize("source_env", ["actual_preview_job"], indirect=True)
+@pytest.mark.parametrize("interrupt", ["failed_delivery", "disconnect", "cancel_after_capture", "revoke_after_capture"])
+def test_acquisition_interruption_has_no_result_or_external_effects(source_env, interrupt):
+    env = source_env
+    owner = env.source.ConnectionLifetime()
+    response, _request, lifetime = queued(env, env.source.PREVIEW_START, acquisition_params(env), owner, "acquire",
+                                          queue_seconds=3., acknowledge=False)
+    assert response.ok, response.error
+    if interrupt == "failed_delivery":
+        lifetime.acknowledge(False)
+    else:
+        lifetime.acknowledge(True)
+        assert env.runtime.jobs.tick() and env.runtime.jobs.active.progress["phase"] == "capture_preflight"
+        if interrupt == "disconnect":
+            owner.disconnected.set()
+        else:
+            assert env.runtime.jobs.tick() and env.runtime.jobs.active.progress["phase"] == "source_read"
+            assert env.runtime.jobs.tick() and env.runtime.jobs.active.progress["phase"] == "capture_complete"
+            if interrupt == "cancel_after_capture":
+                env.runtime.jobs.cancel(response.result["job_id"])
+            else:
+                env.prefs.allow_save_project = False
+    record = finish_model(env)
+    assert record.state == ("FAILED" if interrupt == "revoke_after_capture" else "CANCELLED"), record.error
+    assert record.result is None and not env.source._PLANS
+    assert not owner.background_active.is_set() and list(env.folder.iterdir()) == []
+
+
+@pytest.mark.parametrize("source_env", ["actual_preview_job"], indirect=True)
+def test_failed_terminal_authority_cannot_publish_a_preview_for_a_later_start(source_env):
+    env = source_env
+    owner = env.source.ConnectionLifetime()
+    response, _request, _lifetime = queued(env, env.source.PREVIEW_START, acquisition_params(env), owner, "acquire")
+    assert response.ok, response.error
+
+    fingerprint = []
+    def revoke_after_result():
+        job = env.runtime.jobs.active
+        if type(job.result) is dict:
+            fingerprint.append(job.result["fingerprint"])
+            env.prefs.allow_save_project = False
+            env.flags["hook"] = None
+
+    env.flags["hook"] = revoke_after_result
+    record = finish_model(env)
+    assert record.state == "FAILED" and record.error["code"] == "PERMISSION_DENIED"
+    assert record.result is None and len(fingerprint) == 1
+    env.prefs.allow_save_project = True
+    parameters = {**start_parameters(env, {"fingerprint": fingerprint[0]}), "retain_event_journal": False}
+    response, _request, _lifetime = queued(env, env.source.METHODS[1], parameters, owner, "use-failed")
+    assert not response.ok and response.error["context"]["reason"] == "PREVIEW_ACQUISITION_NOT_RETAINED"
+    assert list(env.folder.iterdir()) == []
 
 
 @pytest.mark.timeout(30)
@@ -422,12 +522,16 @@ def test_current_provider_cannot_replace_tracked_source_before_first_full_read(s
 @pytest.mark.parametrize("module,slot", [
     ("images", "_summary"), ("images", "_check"), ("images", "local_editable"),
     ("pixel_brush", "number"), ("pixel_brush", "size"), ("pixel_brush", "invalid_argument"),
+    ("texture_staging", "_absolute"), ("texture_staging", "_local_drive"),
+    ("texture_staging", "_ancestors"), ("texture_staging", "_directory_id"),
+    ("texture_staging", "invalid_argument"), ("image_files", "_local_drive"), ("image_files", "invalid_argument"),
 ])
 def test_start_provider_cannot_replace_guarded_job_helpers(source_env, monkeypatch, module, slot):
     env = source_env
     proof = preview(env)
     before = env.flags["captures"]
-    helpers = getattr(env.source.jobs, module)
+    prefix = ".tools." if module in {"images", "pixel_brush"} else "."
+    helpers = importlib.import_module(env.source.__package__ + prefix + module)
 
     def foreign(*_args, **_kwargs):
         pytest.fail("A replacement job helper was called")

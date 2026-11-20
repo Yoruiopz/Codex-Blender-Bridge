@@ -21,23 +21,75 @@ def _origin(context, params, method):
 
 def _enter_small_backup(context, params, method):
     origin = _origin(context, params, method).enter()
-    static = origin.capture.original_metadata["static"]
-    if (static["width"], static["height"]) != (2, 2) or origin.file_plan.journal_enabled:
+    _require_small_backup(origin.capture, origin.file_plan)
+    return origin
+
+
+def _require_small_backup(capture, plan):
+    static = capture.original_metadata["static"]
+    if (static["width"], static["height"]) != (2, 2) or plan.journal_enabled:
         raise BridgeError(
             ErrorCode.NOT_IMPLEMENTED,
             "The private paired-backup fixture admits 2x2 textures with retain_event_journal=false.",
         )
-    return origin
+
+
+def _preview_details(capture):
+    return {"profile": contract.PROFILE, "dimensions": [2, 2], "phase": "preview",
+            "image_packed": False, "backup_files_written": False,
+            "consumer_graph_sha256": capture.consumer_graph_sha256,
+            "payload_facts": capture.payloads.facts()}
 
 
 def pack_preview(context, params):
     origin = _enter_small_backup(context, params, contract.PACK_PREVIEW)
-    capture = origin.capture
-    cached = origin.cache_preview(capture, origin.file_plan)
-    return {**cached, "profile": contract.PROFILE, "dimensions": [2, 2], "phase": "preview",
-            "image_packed": False, "backup_files_written": False,
-            "consumer_graph_sha256": capture.consumer_graph_sha256,
-            "payload_facts": capture.payloads.facts()}
+    return {**origin.cache_preview(origin.capture, origin.file_plan), **_preview_details(origin.capture)}
+
+
+def pack_preview_start(context, params):
+    origin = _origin(context, params, source.PREVIEW_START)
+    return context.jobs.start_prepared_driver(
+        context, params, source.PREVIEW_JOB_SECONDS, prepare=prepare_current_pixels_preview,
+        required_permissions=source.REQUIRED, callback_control=origin.callbacks,
+    )
+
+
+def prepare_current_pixels_preview(context, params):
+    origin = _origin(context, params, source.PREVIEW_START).enter()
+    return {"source_name": origin.parameters["image_name"], "name": origin.parameters["snapshot_name"],
+            "requires_external_files": True, "method": source.PREVIEW_START,
+            "kind": "current_pixels_preview", "driver_type": CurrentPixelsPreviewDriver,
+            "origin": origin, "workload": {"source_capture_pending": True}}
+
+
+class CurrentPixelsPreviewDriver:
+    def __init__(self, prepared):
+        self.origin = prepared["origin"]
+
+    def steps(self, context, _job, _commit):
+        origin = self.origin
+        origin.prepare_acquisition(context)
+        yield {"phase": "capture_preflight", "completed": 1, "total": 3}
+        try:
+            capture = yield from origin.acquire_steps(context)
+            _require_small_backup(capture, origin.file_plan)
+            raw = origin._preview_candidate(capture, origin.file_plan)
+            result = _preview_details(capture)
+            del capture
+        finally:
+            origin.release_acquisition()
+        yield {"phase": "capture_complete", "completed": 2, "total": 3}
+        origin.authorize(context)
+        return {**origin._retain_preview(raw), **result}
+
+    def cleanup(self, _context, _job, *, success):
+        return self.evidence()
+
+    def evidence(self):
+        return {"publication_attempted": False, "file_published": False}
+
+    def recovery_evidence(self):
+        return {"possible_mutation": False, "project_saved": False, "source_file_read": False}
 
 
 def pack_start(context, params):
@@ -151,7 +203,8 @@ class CurrentPixelsDriver:
 
 def register_tools(registry):
     """Explicit native-fixture entry. The shipped registry never calls this."""
-    for method, handler in zip(source.METHODS, (pack_preview, pack_start, recovery_preview, restore_start), strict=True):
+    handlers = (pack_preview, pack_start, recovery_preview, restore_start, pack_preview_start)
+    for method, handler in zip(source.FIXTURE_METHODS, handlers, strict=True):
         modifies = method in contract.METHOD_MODES
         registry.register(
             method, handler, toolset="materials", permissions=source.REQUIRED, modifies=modifies,

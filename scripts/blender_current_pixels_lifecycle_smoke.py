@@ -1,4 +1,4 @@
-"""Opt-in metadata, native graph reads or private queued backup preparation.
+"""Opt-in metadata, native graph reads or private queued image workflows.
 
 Import is inert. The first profile only reads class RNA declarations in a fresh,
 owned, background factory process. It never reads Blender data instances.
@@ -10,6 +10,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import stat
 import sys
 import time
@@ -29,6 +30,20 @@ LOADED_PROFILE = "CURRENT_PIXELS_QUEUED_LOADED_BACKUP_SMALL_V1"
 LOADED_MARKER = "BLENDER_CURRENT_PIXELS_LOADED_BACKUP_OK "
 LOADED_REPORT_NAME = "current-pixels-loaded-backup.json"
 LOADED_REQUEST_MS = 60000
+ACQUISITION_PROFILE = "CURRENT_PIXELS_QUEUED_ACQUISITION_SMALL_V1"
+ACQUISITION_MARKER = "BLENDER_CURRENT_PIXELS_ACQUISITION_OK "
+ACQUISITION_REPORT_NAME = "current-pixels-acquisition.json"
+ACQUISITION_ACK_MS = 3000
+ACQUISITION_CONTROL_MS = 10000
+ACQUISITION_GRANTS = ("allow_inspect_scene", "allow_edit_materials", "allow_external_files", "allow_save_project")
+FIXTURE_BOOLEAN_DOMAINS = {".select_vert": "POINT", ".select_edge": "EDGE", ".select_poly": "FACE",
+    "sharp_face": "FACE", ".pn.UVMap": "CORNER", ".uv_select_vert": "CORNER",
+    ".uv_select_edge": "CORNER", ".uv_select_face": "FACE"}
+ACQUISITION_ASSERTIONS = frozenset({
+    "fixture_only_registration", "normal_registry_unchanged", "canonical_runtime", "real_socket_timer",
+    "four_grant_denials", "prompt_acknowledgement", "terminal_preview_hashes", "observable_nonterminal_progress",
+    "queued_cancellation", "source_helper_and_protected_unchanged", "no_files_written", "source_unchanged",
+})
 LOADED_ASSERTIONS = frozenset({"fixture_only_registration", "normal_registry_unchanged", "canonical_runtime",
     "real_socket_timer", "four_grant_denials", "queued_pack_preview", "preview_files_unchanged",
     "source_helper_and_protected_unchanged", "backup_only_queued_start", "backups_independently_reopened",
@@ -64,7 +79,7 @@ def source_fingerprints():
 def owned_profile(report, *, private_display=None):
     """Accept only the runner's disposable profile and fixed output sibling."""
     assert sys.platform == "linux", "This census currently qualifies official Linux builds only"
-    assert report.is_absolute() and report.name in {REPORT_NAME, GRAPH_REPORT_NAME, LOADED_REPORT_NAME}
+    assert report.is_absolute() and report.name in {REPORT_NAME, GRAPH_REPORT_NAME, LOADED_REPORT_NAME, ACQUISITION_REPORT_NAME}
     parent = report.parent
     assert not parent.is_symlink() and parent.resolve(strict=True) == parent
     info = parent.stat()
@@ -102,6 +117,48 @@ def write_receipt(report, proof):
     assert reopened == payload
     return {"path": str(report), "bytes": len(reopened),
             "sha256": hashlib.sha256(reopened).hexdigest()}
+
+
+def prepare_fixture_boolean_storage(mesh, expected_uv):
+    """Materialize only reviewed native flags on the owned 5.2 triangle during setup."""
+    lengths = {"POINT": len(mesh.vertices), "EDGE": len(mesh.edges),
+               "CORNER": len(mesh.loops), "FACE": len(mesh.polygons)}
+
+    def geometry():
+        return (tuple(tuple(vertex.co) for vertex in mesh.vertices),
+                tuple(tuple(edge.vertices) for edge in mesh.edges),
+                tuple(tuple(face.vertices) for face in mesh.polygons),
+                tuple((loop.vertex_index, loop.edge_index) for loop in mesh.loops))
+
+    def uv_roles():
+        layer = mesh.uv_layers["UVMap"]
+        clone = mesh.uv_layer_clone
+        return layer.active_render, layer.active_clone, None if clone is None else clone.name
+
+    geometry_before = geometry()
+    roles = uv_roles()
+    assert roles == (True, False, None)
+    assert mesh.attributes["UVMap"].storage_type == "ARRAY"
+    assert tuple(tuple(item.vector) for item in mesh.attributes["UVMap"].data) == expected_uv
+    singles = tuple(sorted(attribute.name for attribute in mesh.attributes if attribute.storage_type == "SINGLE"))
+    # Refuse unreviewed storage or declarations before accessing any SINGLE payload.
+    assert all(name in FIXTURE_BOOLEAN_DOMAINS and mesh.attributes[name].data_type == "BOOLEAN"
+               and mesh.attributes[name].domain == FIXTURE_BOOLEAN_DOMAINS[name] for name in singles)
+    transitions = []
+    for name in singles:
+        domain = FIXTURE_BOOLEAN_DOMAINS[name]
+        values = tuple(item.value for item in mesh.attributes[name].data)
+        assert len(values) == lengths[domain] and len(set(values)) == 1 and type(values[0]) is bool
+        materialized = mesh.attributes[name]
+        assert materialized.storage_type == "ARRAY"
+        assert tuple(item.value for item in materialized.data) == values
+        transitions.append({"name": name, "domain": domain, "data_type": "BOOLEAN",
+                            "before": "SINGLE", "after": "ARRAY", "count": len(values), "uniform_value": values[0]})
+    assert geometry() == geometry_before
+    uv_attribute = mesh.attributes["UVMap"]
+    assert tuple(tuple(item.vector) for item in uv_attribute.data) == expected_uv and uv_roles() == roles
+    return uv_attribute, {"phase": "owned_setup_before_baseline", "transitions": transitions,
+                          "geometry_preserved": True, "uv_values_preserved": True, "uv_roles_preserved": True}
 
 
 def native_graph_probe(bpy, graph, before, parent, *, loaded_backup=None):
@@ -209,6 +266,8 @@ def native_graph_probe(bpy, graph, before, parent, *, loaded_backup=None):
     # The existing background graph probe owns this operator-context negative.
     # An interactive timer after factory reset has no Edit Mode operator context;
     # queued preview/backup needs only the ordinary Object Mode data context.
+    acquisition = loaded_backup is not None and loaded_backup.get("acquisition") is True
+    storage_setup = None
     if loaded_backup is None:
         assert bpy.ops.object.mode_set(mode="EDIT") == {"FINISHED"}
         try:
@@ -220,39 +279,11 @@ def native_graph_probe(bpy, graph, before, parent, *, loaded_backup=None):
             raise AssertionError("Edit Mode context was admitted")
         assert bpy.ops.object.mode_set(mode="OBJECT") == {"FINISHED"}
         bpy.context.view_layer.update()
-        if bpy.app.build_hash == b"d13f752e3b9c":
-            # This disposable Edit Mode control can compress Boolean flags.
-            # Normalize only the reviewed existing fixture flags, before the
-            # baseline, without assigning their stored values or creating flags.
-            domains = {".select_vert": "POINT", ".select_edge": "EDGE", ".select_poly": "FACE",
-                       "sharp_face": "FACE", ".pn.UVMap": "CORNER",
-                       ".uv_select_vert": "CORNER", ".uv_select_edge": "CORNER", ".uv_select_face": "FACE"}
-            lengths = {"POINT": len(mesh.vertices), "EDGE": len(mesh.edges),
-                       "CORNER": len(mesh.loops), "FACE": len(mesh.polygons)}
-
-            def geometry():
-                return (tuple(tuple(vertex.co) for vertex in mesh.vertices),
-                        tuple(tuple(edge.vertices) for edge in mesh.edges),
-                        tuple(tuple(face.vertices) for face in mesh.polygons),
-                        tuple((loop.vertex_index, loop.edge_index) for loop in mesh.loops))
-
-            geometry_before = geometry()
-            singles = tuple(attribute.name for attribute in mesh.attributes if attribute.storage_type == "SINGLE")
-            for name in singles:
-                attribute = mesh.attributes[name]
-                assert name in domains and attribute.data_type == "BOOLEAN" and attribute.domain == domains[name]
-                values = tuple(item.value for item in attribute.data)
-                assert len(values) == lengths[domains[name]] and len(set(values)) == 1
-                assert mesh.attributes[name].storage_type == "ARRAY"
-            assert geometry() == geometry_before
-        # Edit Mode replaces attribute storage; retain the declared UV scope,
-        # and reacquire the wrapper after the round trip and fixture setup.
+        # Edit Mode replaces attribute storage. Reacquire the declared UV wrapper.
         uv_attribute = mesh.attributes["UVMap"]
         assert tuple(tuple(item.vector) for item in uv_attribute.data) == expected_uv
-        if bpy.app.build_hash == b"d13f752e3b9c":
-            uv_roles = mesh.uv_layers["UVMap"]
-            assert uv_roles.active_render is True and uv_roles.active_clone is False
-            assert mesh.uv_layer_clone is None
+    if bpy.app.build_hash == b"d13f752e3b9c" and (loaded_backup is None or acquisition):
+        uv_attribute, storage_setup = prepare_fixture_boolean_storage(mesh, expected_uv)
     assert original.is_dirty and original.has_data and helper.has_data
     provider, manager = runtime.permissions._source, runtime.permissions
     assert type(provider) is FunctionType and provider.__globals__ is vars(runtime_module)
@@ -344,7 +375,8 @@ def native_graph_probe(bpy, graph, before, parent, *, loaded_backup=None):
     before_read = observed()
     if loaded_backup is not None:
         return _loaded_backup_probe(bpy, before, parent, runtime, prefs, original, helper, other,
-            material, backups, previous, current, edited, observed, **loaded_backup)
+            material, backups, previous, current, edited, observed, original_decoded_sha256=digest(old),
+            storage_setup=storage_setup, **loaded_backup)
     first = unchanged(capture)
     second = unchanged(capture)
     assert first.summary() | {"resource_facts": None} == second.summary() | {"resource_facts": None}
@@ -471,8 +503,73 @@ def native_graph_probe(bpy, graph, before, parent, *, loaded_backup=None):
             "visual_reviewed": False, "windows_qualified": False}}
 
 
+def acquisition_requests(request, control, method, arguments, result, transcript):
+    """Exercise only real socket operations; retain the two decisive job chains."""
+    for preference in ACQUISITION_GRANTS:
+        control("grant", preference=preference, enabled=False)
+        try:
+            response, _row = request(method, arguments, timeout_ms=ACQUISITION_ACK_MS)
+            assert response["ok"] is False and response["error"]["code"] == "PERMISSION_DENIED", response
+        finally:
+            control("grant", preference=preference, enabled=True)
+        control("unchanged")
+
+    accepted_ids = set()
+    for cancel in (False, True):
+        response, row = request(method, arguments, timeout_ms=ACQUISITION_ACK_MS)
+        assert response["ok"] is True and 0 <= row["elapsed_seconds"] <= 3., response
+        ack = response["result"]
+        assert ack["accepted"] is True and ack["job_completed"] is False
+        assert ack["input_frozen_at_acceptance"] is False and ack["undo_boundary_created"] is False
+        job_id = ack["job_id"]
+        assert re.fullmatch(r"job_[0-9a-f]{32}", job_id) and job_id not in accepted_ids
+        accepted_ids.add(job_id)
+        params = {"job_id": job_id}
+        revision = ack["revision"]
+        requested_cancel = False
+        until = time.monotonic() + 93.
+        while time.monotonic() < until:
+            response, row = request("jobs.inspect", params, retained=False, timeout_ms=ACQUISITION_CONTROL_MS)
+            assert response["ok"] is True, response
+            job = response["result"]
+            assert job["job_id"] == job_id and job["revision"] >= revision
+            revision = job["revision"]
+            if job["terminal"] is True:
+                transcript.append(row)
+                assert job["undo_boundary_created"] is False
+                if cancel:
+                    assert requested_cancel and job["state"] == "CANCELLED", job
+                    assert job["result"] is None and job["error"]["code"] == "TIMEOUT"
+                    assert job["error"]["context"]["reason"] == "explicit cancellation", job
+                    assert not job["external_effects"].get("file_published")
+                    control("unchanged")
+                else:
+                    assert job["state"] == "SUCCEEDED", job
+                    preview = job["result"]
+                    assert preview["phase"] == "preview" and re.fullmatch(r"[0-9a-f]{64}", preview["fingerprint"])
+                    assert re.fullmatch(r"[0-9a-f]{64}", preview["consumer_graph_sha256"])
+                    assert preview["backup_files_written"] is False and preview["image_packed"] is False
+                    control("acquisition_preview_verified", preview=preview)
+                break
+            if (cancel and not requested_cancel and job["terminal"] is False and job["state"] == "RUNNING"
+                    and revision > ack["revision"] and job["progress"]["phase"] == "capture_preflight"):
+                transcript.append(row)
+                response, _row = request("jobs.cancel", params, timeout_ms=ACQUISITION_CONTROL_MS)
+                assert response["ok"] is True, response
+                cancellation = response["result"]
+                assert cancellation["job_id"] == job_id and cancellation["cancel_requested"] is True
+                assert cancellation["state"] == "CANCELLING" and cancellation["terminal"] is False
+                requested_cancel = True
+            else:
+                time.sleep(.01 if cancel else .03)
+        else:
+            raise AssertionError("Private acquisition job exceeded its diagnostic deadline")
+    assert len(transcript) == 10
+
+
 def _loaded_backup_probe(bpy, before, parent, runtime, prefs, original, helper, protected,
-                         material, backups, previous, current, edited, observe, *, report, token, display):
+                         material, backups, previous, current, edited, observe, *, report, token, display,
+                         original_decoded_sha256, storage_setup=None, acquisition=False):
     """Real socket worker and the registered Runtime timer; no manual dispatch."""
     import queue
     import resource
@@ -488,20 +585,23 @@ def _loaded_backup_probe(bpy, before, parent, runtime, prefs, original, helper, 
 
     assert type(runtime.registry._tools) is dict
     normal_names = set(runtime.registry._tools)
-    assert not set(source.METHODS) & normal_names
+    assert not set(source.FIXTURE_METHODS) & normal_names
     image_current_pixels.register_tools(runtime.registry)
-    assert set(runtime.registry._tools) == normal_names | set(source.METHODS)
+    assert set(runtime.registry._tools) == normal_names | set(source.FIXTURE_METHODS)
     fresh_registry = ToolRegistry()
     register_all(fresh_registry)
-    assert not set(source.METHODS) & set(fresh_registry._tools)
+    assert not set(source.FIXTURE_METHODS) & set(fresh_registry._tools)
     assert not (ROOT / "mcp_server/tools/image_current_pixels.py").exists()
     assert source._REGISTRATION.registry is runtime.registry
     assert type(runtime.jobs).__name__ == "NativeSaveJobs" and runtime._registered
-    for method in source.METHODS:
+    assert bpy.app.timers.is_registered(runtime.executor._timer_callback)
+    for method in source.FIXTURE_METHODS:
         spec = runtime.registry.get(method)
         assert spec.handler is vars(image_current_pixels)[source.HANDLERS[method]]
         assert spec.checkpoint_parameter_dependencies is source.initial_dependencies
         assert spec.automatic_checkpoint is False
+    preview_start = runtime.registry.get(source.PREVIEW_START)
+    assert preview_start.remote and preview_start.modifies is False
     # All sample allocations/reads precede the frozen observation window.
     protected_values = array("f", [0.]) * 16
     protected.pixels.foreach_get(protected_values)
@@ -547,11 +647,11 @@ def _loaded_backup_probe(bpy, before, parent, runtime, prefs, original, helper, 
             stream = connection.makefile("rb")
             sequence = 0
 
-            def request(method, params, *, retained=True):
+            def request(method, params, *, retained=True, timeout_ms=LOADED_REQUEST_MS):
                 nonlocal sequence
                 sequence += 1
-                frame = {"id": "loaded_backup_" + str(sequence), "method": method, "params": params,
-                         "protocol_version": "1.0", "timeout_ms": LOADED_REQUEST_MS}
+                frame = {"id": ("acquisition_" if acquisition else "loaded_backup_") + str(sequence),
+                         "method": method, "params": params, "protocol_version": "1.0", "timeout_ms": timeout_ms}
                 started = time.monotonic()
                 connection.sendall(canonical_json(frame) + b"\n")
                 raw = stream.readline(262145)
@@ -563,7 +663,11 @@ def _loaded_backup_probe(bpy, before, parent, runtime, prefs, original, helper, 
                     transcript.append(row)
                 return response, row
 
-            for preference in ("allow_inspect_scene", "allow_edit_materials", "allow_external_files", "allow_save_project"):
+            if acquisition:
+                acquisition_requests(request, control, source.PREVIEW_START, arguments, result, transcript)
+                return
+
+            for preference in ACQUISITION_GRANTS:
                 control("grant", preference=preference, enabled=False)
                 try:
                     response, _row = request(contract.PACK_PREVIEW, arguments)
@@ -631,8 +735,10 @@ def _loaded_backup_probe(bpy, before, parent, runtime, prefs, original, helper, 
     def finish():
         assert done.is_set(), "Worker not finished"
         if "failure" in result:
-            unchanged(allow_backups=True)
-            print("BLENDER_CURRENT_PIXELS_LOADED_BACKUP_REFUSAL " + canonical_json({
+            unchanged(allow_backups=not acquisition)
+            marker = ("BLENDER_CURRENT_PIXELS_ACQUISITION_REFUSAL " if acquisition
+                      else "BLENDER_CURRENT_PIXELS_LOADED_BACKUP_REFUSAL ")
+            print(marker + canonical_json({
                 "source_helper_and_protected_unchanged": True,
                 "backup_files_present": len(tuple(backups.iterdir())),
                 "requests": [{"method": row["request"]["method"], "elapsed_seconds": row["elapsed_seconds"],
@@ -640,6 +746,34 @@ def _loaded_backup_probe(bpy, before, parent, runtime, prefs, original, helper, 
                              for row in transcript],
             }).decode(), flush=True)
             raise AssertionError(result["failure"])
+        if acquisition:
+            unchanged()
+            assert runtime.jobs.active is None and not runtime.state.snapshot()["is_executing"]
+            assert source_fingerprints() == before
+            assertions.update(real_socket_timer=True, four_grant_denials=True, prompt_acknowledgement=True,
+                observable_nonterminal_progress=True, queued_cancellation=True, source_helper_and_protected_unchanged=True,
+                no_files_written=True, source_unchanged=True)
+            assert set(assertions) == ACQUISITION_ASSERTIONS
+            proof = {"completed": True, "profile": ACQUISITION_PROFILE, "scope": "fixture_only_queued_preview_acquisition",
+                "process_instance": token, "process_id": os.getpid(), "blender_version": bpy.app.version_string,
+                "source_build": bpy.app.build_hash.decode(), "source_fingerprints": before,
+                "source_snapshot_sha256": hashlib.sha256(canonical_json(before)).hexdigest(),
+                "assertions": assertions, "ack_request_timeout_ms": ACQUISITION_ACK_MS,
+                "public_tool_acceptance": False, "image_forward_transition_qualified": False,
+                "restoration_qualified": False, "windows_qualified": False, "private_display": display,
+                "transport": transcript, "baseline": baseline, "final": observe(), "protected_baseline": protected_before,
+                "protected_final": protected_state(), "payload_hashes": result["payload_hashes"],
+                "storage_setup": storage_setup,
+                "backup_files": [], "elapsed_seconds": time.monotonic() - began,
+                "peak_rss_bytes": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024,
+                "image_packed": False, "project_saved": False}
+            compact = {key: proof[key] for key in ("completed", "profile", "scope", "process_instance", "process_id",
+                "blender_version", "source_build", "source_snapshot_sha256", "public_tool_acceptance",
+                "image_forward_transition_qualified", "restoration_qualified", "windows_qualified")}
+            compact["full_receipt"] = write_receipt(report, proof)
+            print(ACQUISITION_MARKER + canonical_json(compact).decode(), flush=True)
+            owned_process_exit(0)
+            return
         unchanged(allow_backups=True)
         assert runtime.jobs.active is None and not runtime.state.snapshot()["is_executing"]
         terminal = result["terminal"]
@@ -693,7 +827,7 @@ def _loaded_backup_probe(bpy, before, parent, runtime, prefs, original, helper, 
                 action, parameters, event, answer = controls.get_nowait()
                 try:
                     if action == "grant":
-                        assert parameters["preference"] in {"allow_inspect_scene", "allow_edit_materials", "allow_external_files", "allow_save_project"}
+                        assert parameters["preference"] in ACQUISITION_GRANTS
                         setattr(prefs, parameters["preference"], parameters["enabled"])
                     elif action == "unchanged":
                         unchanged()
@@ -706,6 +840,19 @@ def _loaded_backup_probe(bpy, before, parent, runtime, prefs, original, helper, 
                         assert payload["current_pixels_sha256_float32_le"] == hashlib.sha256(edited.tobytes()).hexdigest()
                         assertions.update(four_grant_denials=True, queued_pack_preview=True,
                                           preview_files_unchanged=True, real_socket_timer=True)
+                    elif action == "acquisition_preview_verified" and acquisition:
+                        unchanged()
+                        preview = parameters["preview"]
+                        assert preview["profile"] == contract.PROFILE and preview["dimensions"] == [2, 2]
+                        expected = {
+                            "original_packed_sha256": hashlib.sha256(previous).hexdigest(),
+                            "original_decoded_pixels_sha256": original_decoded_sha256,
+                            "snapshot_packed_sha256": hashlib.sha256(current).hexdigest(),
+                            "current_pixels_sha256_float32_le": hashlib.sha256(edited.tobytes()).hexdigest(),
+                        }
+                        assert all(preview["payload_facts"][key] == value for key, value in expected.items())
+                        result["payload_hashes"] = expected
+                        assertions["terminal_preview_hashes"] = True
                     else:
                         raise AssertionError(action)
                     answer.append(True)
@@ -732,25 +879,28 @@ def main(argv=None):
     modes.add_argument("--bridge-census-only", action="store_true")
     modes.add_argument("--bridge-source-graph", action="store_true")
     modes.add_argument("--bridge-loaded-backup", action="store_true")
+    modes.add_argument("--bridge-current-pixels-acquisition", action="store_true")
     parser.add_argument("--bridge-report", type=Path, required=True)
     arguments = sys.argv[sys.argv.index("--") + 1:] if argv is None and "--" in sys.argv else argv
     args = parser.parse_args(arguments)
-    report_name = LOADED_REPORT_NAME if args.bridge_loaded_backup else GRAPH_REPORT_NAME if args.bridge_source_graph else REPORT_NAME
+    queued = args.bridge_loaded_backup or args.bridge_current_pixels_acquisition
+    report_name = (ACQUISITION_REPORT_NAME if args.bridge_current_pixels_acquisition else LOADED_REPORT_NAME
+                   if args.bridge_loaded_backup else GRAPH_REPORT_NAME if args.bridge_source_graph else REPORT_NAME)
     assert args.bridge_report.name == report_name
-    if not args.bridge_loaded_backup:
+    if not queued:
         # Original read probes attest their disposable paths before touching
         # bpy mode/build metadata. Keep this fail-closed ordering unchanged.
         token = owned_profile(args.bridge_report)
     import bpy
 
-    if not args.bridge_loaded_backup:
+    if not queued:
         assert bpy.app.background
     assert "--factory-startup" in sys.argv and "--disable-autoexec" in sys.argv
     assert (tuple(bpy.app.version), bpy.app.build_hash) in BUILDS
     assert bpy.app.build_type == b"Release"
     addon = str(ROOT / "addon")
     sys.path.insert(0, addon)
-    if args.bridge_loaded_backup:
+    if queued:
         assert not bpy.app.background
         sys.path[:0] = [str(ROOT), str(ROOT / "scripts")]
         from blender_artist_sidebar_smoke import owned_process_exit, private_display_manifest
@@ -769,7 +919,8 @@ def main(argv=None):
 
             try:
                 return native_graph_probe(bpy, graph, before, args.bridge_report.parent,
-                    loaded_backup={"report": args.bridge_report, "token": token, "display": display})
+                    loaded_backup={"report": args.bridge_report, "token": token, "display": display,
+                                   "acquisition": args.bridge_current_pixels_acquisition})
             except BaseException:
                 traceback.print_exc()
                 owned_process_exit(1)

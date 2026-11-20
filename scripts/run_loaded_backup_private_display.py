@@ -1,4 +1,4 @@
-"""Launch the private loaded-image backup fixture on an input-free Xorg display."""
+"""Launch a private loaded-image lifecycle fixture on an input-free Xorg display."""
 
 from __future__ import annotations
 
@@ -65,9 +65,11 @@ def ready_dimensions(server: subprocess.Popen, env: dict[str, str]) -> tuple[int
     raise RuntimeError("Owned Xorg did not expose the reviewed private dimensions.")
 
 
-def run(blenders: list[Path], output: Path, timeout: int) -> int:
+def run(blenders: list[Path], output: Path, timeout: int, case: str = "current_pixels_loaded_backup") -> int:
     if sys.platform != "linux":
-        raise RuntimeError("The private loaded-image backup launcher requires Linux.")
+        raise RuntimeError("The private loaded-image launcher requires Linux.")
+    if case not in {"current_pixels_loaded_backup", "current_pixels_acquisition"}:
+        raise ValueError("Unreviewed loaded-image fixture case.")
     with tempfile.TemporaryDirectory(prefix="bcb-loaded-backup-display-") as owned:
         profile = Path(owned).resolve()
         runtime = profile / "runtime"
@@ -104,7 +106,7 @@ def run(blenders: list[Path], output: Path, timeout: int) -> int:
                            "launcher_sha256": launcher_sha, "config_sha256": config_sha,
                            "server_pid": server.pid}, stream)
             command = [sys.executable, str(ROOT / "scripts" / "run_blender_checks.py"),
-                       "--case", "current_pixels_loaded_backup", "--timeout", str(timeout), "--output", str(output)]
+                       "--case", case, "--timeout", str(timeout), "--output", str(output)]
             for blender in blenders:
                 command.extend(["--blender", str(blender)])
             return subprocess.run(command, cwd=ROOT, env=env, check=False,
@@ -123,11 +125,13 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--blender", type=Path, action="append", required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--case", choices=("current_pixels_loaded_backup", "current_pixels_acquisition"),
+                        default="current_pixels_loaded_backup")
     parser.add_argument("--timeout", type=int, default=300, help="Case timeout in seconds, from 90 to 300")
     args = parser.parse_args()
     if not 90 <= args.timeout <= 300:
         parser.error("--timeout must be from 90 to 300 seconds")
-    return run(args.blender, args.output, args.timeout)
+    return run(args.blender, args.output, args.timeout, args.case)
 
 
 if __name__ == "__main__":

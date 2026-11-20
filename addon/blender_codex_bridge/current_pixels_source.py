@@ -20,7 +20,7 @@ import threading
 import time
 import uuid
 from _thread import LockType
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from dataclasses import dataclass
 from types import CodeType, FunctionType, MappingProxyType, MethodType, ModuleType
 from typing import Any
@@ -37,9 +37,13 @@ from .utils import require_blender
 
 METHODS = (current_pixels_contract.PACK_PREVIEW, current_pixels_contract.PACK_START,
            current_pixels_contract.RECOVERY_PREVIEW, current_pixels_contract.RESTORE_START)
+PREVIEW_START = "image.current_pixels_pack_preview_start"
+FIXTURE_METHODS = (*METHODS, PREVIEW_START)
+PREVIEW_JOB_SECONDS = 90.
 REQUIRED = (Permission.INSPECT_SCENE, Permission.EDIT_MATERIALS,
             Permission.ACCESS_EXTERNAL_FILES, Permission.SAVE_PROJECT)
-HANDLERS = dict(zip(METHODS, ("pack_preview", "pack_start", "recovery_preview", "restore_start"), strict=True))
+HANDLERS = dict(zip(FIXTURE_METHODS,
+                    ("pack_preview", "pack_start", "recovery_preview", "restore_start", "pack_preview_start"), strict=True))
 MAX_PLANS, MAX_PLAN_BYTES, PLAN_SECONDS = 16, 65536, 60.
 _MISSING = object()
 _REGISTRATION = None
@@ -256,6 +260,7 @@ class _CachedPlan:
     scope: bytes
     raw: bytes
     expires: float
+    acquisition_job: Any = None
 
 
 class _Registration:
@@ -269,7 +274,9 @@ class _Registration:
         self.runtime_constructor = _function_facts(_static(self.runtime_type, "__init__"))
         self.registry, self.nonce = registry, uuid.uuid4().hex
         self.graph = importlib.import_module(__package__ + ".current_pixels_graph")
-        self.specs = tuple(vars(registry).get("_tools", {}).get(method) for method in METHODS)
+        tools = vars(registry).get("_tools", {})
+        self.methods = FIXTURE_METHODS if PREVIEW_START in tools else METHODS
+        self.specs = tuple(tools.get(method) for method in self.methods)
         if any(type(spec) is not ToolSpec for spec in self.specs):
             raise refused("ALL_FOUR_SPECS_REQUIRED")
         self.functions, self.bindings, self.constants = [], [], []
@@ -311,6 +318,21 @@ class _Registration:
             module = sys.modules.get(__package__ + "." + module_name)
             if type(module) is not ModuleType or vars(jobs).get(binding_name) is not module:
                 raise refused("PREPARED_JOB_HELPERS_UNQUALIFIED")
+            for name in members:
+                function = vars(module).get(name)
+                self.functions.append((module, name, function, (_function_facts(function),)))
+        # Their imported entry points are retained above. These sibling
+        # bindings also run before the approved directory can be frozen.
+        texture_paths = importlib.import_module(__package__ + ".texture_staging")
+        image_paths = importlib.import_module(__package__ + ".image_files")
+        if (vars(current_pixels_files).get("approved_output") is not vars(texture_paths).get("approved_output")
+                or vars(texture_paths).get("_absolute") is not vars(image_paths).get("_absolute")
+                or vars(texture_paths).get("_local_drive") is not vars(image_paths).get("_local_drive")):
+            raise refused("BACKUP_PATH_HELPERS_UNQUALIFIED")
+        for module, members in (
+            (texture_paths, ("_absolute", "_local_drive", "_ancestors", "_directory_id", "invalid_argument")),
+            (image_paths, ("_local_drive", "invalid_argument")),
+        ):
             for name in members:
                 function = vars(module).get(name)
                 self.functions.append((module, name, function, (_function_facts(function),)))
@@ -386,7 +408,9 @@ class _Registration:
         tools = vars(self.registry).get("_tools")
         if type(tools) is not dict:
             raise refused("REGISTRY_STORAGE_CHANGED")
-        for method, spec in zip(METHODS, self.specs, strict=True):
+        if self.methods != (FIXTURE_METHODS if PREVIEW_START in tools else METHODS):
+            raise refused("LIFECYCLE_SPEC_CHANGED")
+        for method, spec in zip(self.methods, self.specs, strict=True):
             factory = spec.checkpoint_admission_factory
             code = admission_factory.__code__.co_consts
             expected_codes = tuple(value for value in code if type(value) is CodeType)
@@ -404,7 +428,7 @@ class _Registration:
 
 
 def bind_registry(registry):
-    """Called after all four canonical domain specs at registration, not remotely."""
+    """Bind the exact domain specs once at fixture registration."""
     global _REGISTRATION
     if type(registry) is not ToolRegistry:
         raise refused("CANONICAL_REGISTRY_REQUIRED")
@@ -428,7 +452,7 @@ def _entry(registry):
 
 
 def initial_dependencies(registry, _params):
-    """Pure ALL4 hook: no providers, runtime/store creation, bpy or path probes."""
+    """Resolve domain dependencies without providers, native or file reads."""
     binding, _runtime = _entry(registry)
     return binding.specs
 
@@ -439,7 +463,7 @@ def protected_scope(_context, _params):
 
 
 def admission_factory(method):
-    if method not in METHODS:
+    if method not in FIXTURE_METHODS:
         raise refused("UNKNOWN_LIFECYCLE_METHOD")
     def factory(context, params):
         return CurrentPixelsOrigin(context, params, method)
@@ -537,10 +561,11 @@ class CurrentPixelsOrigin:
             raise refused("MAIN_THREAD_CONTEXT_REQUIRED")
         self.binding, self.runtime = _entry(context.registry)
         self.context, self.params, self.method = context, params, method
-        self.parameters = current_pixels_contract.validate_request(method, params)
+        schema_method = METHODS[0] if method == PREVIEW_START else method
+        self.parameters = current_pixels_contract.validate_request(schema_method, params)
         self.normalized_facts = _plain(self.parameters)
-        self.parameter_facts, self.scope = _checkpoint_parameters(params), _scope(method, self.parameters)
-        self.spec = self.binding.specs[METHODS.index(method)]
+        self.parameter_facts, self.scope = _checkpoint_parameters(params), _scope(schema_method, self.parameters)
+        self.spec = self.binding.specs[self.binding.methods.index(method)]
         entries = vars(context.registry._mutation_interlock).get("_entries")
         if (type(entries) is not list or not entries or entries[-1].context is not context
                 or entries[-1].spec is not self.spec or entries[-1].params is not params):
@@ -559,7 +584,8 @@ class CurrentPixelsOrigin:
                                                                 self.lifetime.rejected, self.lifetime.deadline)
         self.connection_events = None if self.owner is None else (self.owner.disconnected, self.owner.background_active)
         self.store, self.generation = _store_facts(context.state)
-        self.deadline = time.monotonic() + self.parameters.get("time_limit_seconds", 300.)
+        duration = PREVIEW_JOB_SECONDS if method == PREVIEW_START else self.parameters.get("time_limit_seconds", 300.)
+        self.deadline = time.monotonic() + duration
         self.cached = None
         self.file_policy = None
         if method in current_pixels_contract.METHOD_MODES:
@@ -570,6 +596,14 @@ class CurrentPixelsOrigin:
                     or cached.store is not self.store or cached.generation != self.generation or cached.scope != self.scope
                     or time.monotonic() >= cached.expires):
                 raise refused("PREVIEW_MISSING_STALE_OR_FOREIGN")
+            if cached.acquisition_job is not None:
+                job = cached.acquisition_job
+                history = vars(context.jobs).get("history")
+                if (type(history) is not deque or history.maxlen != 32 or type(job) is not jobs.GuardedPreparedPaintJob
+                        or type(job.state) is not str or job.state != "SUCCEEDED" or type(job.result) is not dict
+                        or type(job.result.get("fingerprint")) is not str or job.result["fingerprint"] != key
+                        or not any(candidate is job for candidate in history)):
+                    raise refused("PREVIEW_ACQUISITION_NOT_RETAINED")
             self.cached = cached
             files = json.loads(cached.raw)["files"]
             self.file_policy = files["approved_root"], files.get("unrestricted_texture_paths", False)
@@ -582,7 +616,7 @@ class CurrentPixelsOrigin:
         self.callback_verifier = verifier_type, verifier, _function_facts(verifier), verifier.__kwdefaults__
         self.callbacks = None
         self.check_job_callbacks()
-        self.callbacks = jobs.PreparedJobCallbacks.capture(context, origin=self)
+        self.callbacks = jobs.PreparedJobCallbacks.capture(context, origin=self, preview=method == PREVIEW_START)
         self._stop(context)
         self.witness = self._witness()
         if self.cached is not None and _plain(json.loads(self.cached.raw)["identity_witness"]) != self.witness:
@@ -594,20 +628,36 @@ class CurrentPixelsOrigin:
             get_task_plans(context.state)
             self.store, self.generation = _store_facts(context.state)
         try:
-            root, unrestricted = self.approved_file_policy()
-            if method in METHODS[:2]:
-                self.file_plan = current_pixels_files.freeze_backup_plan(self.parameters["backup_directory"],
-                    self.parameters["backup_prefix"], root, self.parameters["retain_event_journal"], self.authorize,
-                    unrestricted=unrestricted)
+            if method == PREVIEW_START:
+                self.file_policy = self._file_policy_value()
             else:
-                self.file_plan = current_pixels_files.freeze_recovery_plan(self.parameters["backup_manifest_path"],
-                    root, self.authorize, unrestricted=unrestricted)
-            self.refresh_capture(context)
+                self._freeze_file_plan(self.approved_file_policy(), self.authorize)
+                self.refresh_capture(context)
         except BaseException:
             self.capture = None
             self.callbacks = None
             raise
         self._sealed = True
+
+    def _freeze_file_plan(self, policy, check):
+        root, unrestricted = policy
+        if self.method in (*METHODS[:2], PREVIEW_START):
+            plan = current_pixels_files.freeze_backup_plan(self.parameters["backup_directory"],
+                self.parameters["backup_prefix"], root, self.parameters["retain_event_journal"], check,
+                unrestricted=unrestricted)
+        else:
+            plan = current_pixels_files.freeze_recovery_plan(self.parameters["backup_manifest_path"],
+                root, check, unrestricted=unrestricted)
+        object.__setattr__(self, "file_plan", plan)
+
+    def prepare_acquisition(self, context):
+        if self.method != PREVIEW_START or not self.used or self.file_plan is not None:
+            raise refused("PREVIEW_ACQUISITION_NOT_CURRENT")
+        self.authorize(context)
+        self._freeze_file_plan(self.file_policy, self._read_gate)
+
+    def release_acquisition(self):
+        object.__setattr__(self, "capture", None)
 
     def check_job_callbacks(self):
         """Pure source/service identities; never permissions, native or paths."""
@@ -671,7 +721,7 @@ class CurrentPixelsOrigin:
         else:
             self.check_job_callbacks()
         if context is not self.context:
-            self.check_worker_context(context)
+            self._check_worker_context(context)
         elif self.bound is not None and not self.bound.active:
             raise refused("REQUEST_ADMISSION_NO_LONGER_ACTIVE")
         lifetime = context.request_lifecycle
@@ -691,8 +741,6 @@ class CurrentPixelsOrigin:
 
     def authorize(self, context=None):
         context = self.context if context is None else context
-        if context is not self.context:
-            self.check_worker_context(context)
         self._stop(context)
         object.__setattr__(self, "gate_context", context)
         context.require(*REQUIRED)
@@ -754,7 +802,7 @@ class CurrentPixelsOrigin:
         def release():
             # No native, filesystem or provider cleanup after the final read.
             object.__setattr__(self, "capture", None)
-            if self.spec.modifies and (sys.exc_info()[0] is not None or not self.used):
+            if (self.spec.modifies or self.method == PREVIEW_START) and (sys.exc_info()[0] is not None or not self.used):
                 control = self.callbacks
                 lifetime = None if control is None else control.lifetime
                 if type(lifetime) is RequestLifetime:
@@ -765,7 +813,8 @@ class CurrentPixelsOrigin:
         if self.used or self.bound is None or not self.bound.active or self.context.checkpoint_admission is not self.bound:
             raise refused("ADMISSION_NOT_CURRENT")
         self.authorize()
-        self.refresh_capture(self.context)
+        if self.method != PREVIEW_START:
+            self.refresh_capture(self.context)
         object.__setattr__(self, "used", True)
         if self.spec.modifies:
             self.context.checkpoint_finalization_owner = self.context.checkpoint_call_id
@@ -773,6 +822,9 @@ class CurrentPixelsOrigin:
 
     def check_worker_context(self, context):
         self.check_job_callbacks()
+        self._check_worker_context(context)
+
+    def _check_worker_context(self, context):
         control = self.callbacks
         job = None if control is None else control.job
         if (type(context) is not ToolContext or job is None or context.request_lifecycle is not job.lifetime
@@ -822,15 +874,13 @@ class CurrentPixelsOrigin:
         if self._witness() != self.witness:
             raise refused("IDENTITY_OR_CONTEXT_WITNESS_CHANGED")
 
-    def refresh_capture(self, context=None, *, expected_prefix=None, lifecycle_record=_MISSING):
-        """Provider-free complete comparison after the caller's current grants.
+    def _capture_gate(self):
+        # The graph drains in one main-thread turn. Its enclosing gates compare
+        # the full identity and policy; inner reads still check retained source,
+        # worker ownership, and lifecycle without invoking permission providers.
+        self._stop(self.gate_context)
 
-        Fresh OS measurements precede every potentially large native capture.
-        The expected prefix is internal driver state, never request parameters.
-        """
-        context = self.context if context is None else context
-        if context is not self.context:
-            self.check_worker_context(context)
+    def _capture_inputs(self, context, lifecycle_record):
         object.__setattr__(self, "gate_context", context)
         if not self.authorized or self.file_plan is None:
             raise refused("AUTHORIZED_RESOURCE_PLAN_REQUIRED")
@@ -842,7 +892,7 @@ class CurrentPixelsOrigin:
         available_disk = shutil.disk_usage(self.file_plan.parent).free
         self._read_gate()
         if lifecycle_record is _MISSING:
-            if self.method in METHODS[:2]:
+            if self.method in (*METHODS[:2], PREVIEW_START):
                 lifecycle_record = None
             else:
                 bpy = require_blender()
@@ -850,10 +900,47 @@ class CurrentPixelsOrigin:
                 if helper is None or helper.has_data is not True:
                     raise refused("TARGET_BUFFER_UNLOADED")
                 lifecycle_record = self.binding.graph.validate_lifecycle_record(helper.get(self.binding.graph.LIFECYCLE_KEY))
-        current = self.binding.graph.capture_graph(require_blender(), self.parameters.get("image_name"),
-            self.parameters["snapshot_name"], self.parameters["affected_materials"], check=self._read_gate,
-            available_memory_bytes=available_memory, available_disk_bytes=available_disk, lifecycle_record=lifecycle_record)
+        return {"available_memory_bytes": available_memory, "available_disk_bytes": available_disk,
+                "lifecycle_record": lifecycle_record}
+
+    def acquire_steps(self, context):
+        """Recheck the live origin around each scheduled read or pure payload phase."""
+        self.authorize(context)
+        inputs = self._capture_inputs(context, None)
+        work = self.binding.graph.capture_graph_steps(require_blender(), self.parameters["image_name"],
+            self.parameters["snapshot_name"], self.parameters["affected_materials"], check=self._capture_gate, **inputs)
+        try:
+            while True:
+                try:
+                    progress = next(work)
+                except StopIteration as completed:
+                    current = completed.value
+                    break
+                self._read_gate()
+                yield progress
+                self.authorize(context)
+                self._read_gate()
+        finally:
+            work.close()
         self._read_gate()
+        return self._retain_capture(current, None)
+
+    def refresh_capture(self, context=None, *, expected_prefix=None, lifecycle_record=_MISSING):
+        """Provider-free complete comparison after the caller's current grants.
+
+        Fresh OS measurements precede every potentially large native capture.
+        The expected prefix is internal driver state, never request parameters.
+        """
+        context = self.context if context is None else context
+        if context is not self.context:
+            self.check_worker_context(context)
+        inputs = self._capture_inputs(context, lifecycle_record)
+        current = self.binding.graph.capture_graph(require_blender(), self.parameters.get("image_name"),
+            self.parameters["snapshot_name"], self.parameters["affected_materials"], check=self._capture_gate, **inputs)
+        self._read_gate()
+        return self._retain_capture(current, expected_prefix)
+
+    def _retain_capture(self, current, expected_prefix):
         if expected_prefix is None:
             self.compare_capture(current, self.file_plan)
         else:
@@ -884,17 +971,26 @@ class CurrentPixelsOrigin:
         object.__setattr__(self, "first_full_raw", raw)
         return current
 
-    def cache_preview(self, capture, plan, domain_facts=None):
-        if self.method not in {METHODS[0], METHODS[2]} or not self.authorized:
+    def _preview_candidate(self, capture, plan, domain_facts=None):
+        if self.method not in {METHODS[0], METHODS[2], PREVIEW_START} or not self.authorized:
             raise refused("AUTHORIZED_PREVIEW_REQUIRED")
         current = self.compare_capture(capture, plan)
-        store, generation = _store_facts(self.context.state)
-        if store is None or store is not self.store or generation != self.generation:
-            raise refused("AUTHORIZED_PLAN_STORE_REQUIRED")
         data = {**current, "domain": {} if domain_facts is None else domain_facts,
                 "identity_witness": json.loads(self.witness),
                 "runtime_nonce": self.binding.nonce, "scope": json.loads(self.scope)}
-        raw = _plain(data)
+        return _plain(data)
+
+    def _retain_preview(self, raw):
+        job = None
+        if self.method == PREVIEW_START:
+            job = self.callbacks.job
+            if (type(job) is not jobs.GuardedPreparedPaintJob or self.gate_context is self.context
+                    or self.context.jobs.active is not job or not job.lifetime.delivered.is_set()):
+                raise refused("PREVIEW_ACQUISITION_NOT_CURRENT")
+            self.file_plan.check(self._read_gate)
+        store, generation = _store_facts(self.context.state)
+        if store is None or store is not self.store or generation != self.generation:
+            raise refused("AUTHORIZED_PLAN_STORE_REQUIRED")
         key = hashlib.sha256(raw).hexdigest()
         now = time.monotonic()
         for identifier, old in tuple(_PLANS.items()):
@@ -903,9 +999,12 @@ class CurrentPixelsOrigin:
         while len(_PLANS) >= MAX_PLANS:
             _PLANS.popitem(last=False)
         _PLANS[key] = _CachedPlan(self.binding, self.runtime, self.context.registry, self.owner,
-                                  store, generation, self.scope, raw, now + PLAN_SECONDS)
+                                  store, generation, self.scope, raw, now + PLAN_SECONDS, job)
         return {"fingerprint": key, "expires_in_seconds": PLAN_SECONDS, "baseline_established_after_authorization": True,
                 "first_authorization_pixel_only_change_detection": False, "preview_mutation_performed": False}
+
+    def cache_preview(self, capture, plan, domain_facts=None):
+        return self._retain_preview(self._preview_candidate(capture, plan, domain_facts))
 
     def preview_data(self):
         if self.cached is None:

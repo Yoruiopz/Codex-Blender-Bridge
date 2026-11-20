@@ -6,6 +6,7 @@ import hashlib
 import importlib
 import json
 import warnings
+from dataclasses import asdict
 from types import ModuleType
 from types import SimpleNamespace as NS
 
@@ -798,7 +799,8 @@ def test_real_graph_captures_old_packed_and_complete_edited_current_snapshot(cap
     assert result.payloads.current_pixels_sha256_float32_le == expected_current
     assert result.payloads.original_decoded_pixels_sha256 == expected_old
     assert result.payloads.current_pixels == model.current_values
-    assert {step["phase"] for step in progress} == {"decoding_snapshot", "verifying_complete_float32_channels"}
+    assert progress[0] == {"phase": "source_read", "completed": 4, "total": 4}
+    assert {step["phase"] for step in progress[1:]} == {"decoding_snapshot", "verifying_complete_float32_channels"}
     assert result.workload == {"vertices": 3, "edges": 3, "polygons": 1, "loops": 3, "slots": 1, "nodes": 3, "links": 2, "sockets": 7}
     summary = result.summary()
     assert summary["complete_pixels_verified"] and not summary["recovery_authorized"]
@@ -838,6 +840,47 @@ def test_private_yields_never_adopt_late_manual_edits_as_a_new_baseline(graph, c
         model.original._pixels.values[0] = .25
     with pytest.raises(graph.BridgeError):
         drain_capture(steps)
+
+
+def test_capture_suspensions_only_hold_detached_graph_facts(graph, capture_model):
+    work = capture_model.steps()
+    for progress in work:
+        retained = work.gi_frame.f_locals
+        assert "reader" not in retained and "first" not in retained and "last" not in retained
+        assert type(retained["baseline"]) is graph._StructureFacts
+        json.dumps(asdict(retained["baseline"]), allow_nan=False)
+        assert progress["phase"] in {"source_read", "decoding_snapshot", "verifying_complete_float32_channels"}
+
+
+@pytest.mark.parametrize("same_native_id", [True, False], ids=["wrapper_alias", "replacement_id"])
+def test_final_capture_reacquires_snapshot_before_post_yield_payload_access(graph, capture_model, monkeypatch, same_native_id):
+    model = capture_model
+    work = model.steps()
+    assert next(work)["phase"] == "source_read"
+    previous = model.helper
+    current = native_wrapper_alias(previous)
+    if not same_native_id:
+        current.pointer += 50000
+        current.session_uid += 50000
+    model.bpy.data.images[previous.name] = current
+    model.reverse[current] = model.reverse.pop(previous)
+    model.reverse[model.original].remove(previous)
+    model.reverse[model.original].add(current)
+    read_packed = model.types.Image.packed_file.fget
+
+    def packed_file(image):
+        assert same_native_id and image is not previous, "Read a payload before reacquiring and comparing its native identity"
+        return read_packed(image)
+
+    monkeypatch.setattr(model.types.Image, "packed_file", property(packed_file))
+    if same_native_id:
+        captured, _progress = drain_capture(work)
+        assert captured.snapshot is current
+        assert captured.payloads.snapshot_packed == model.edited
+    else:
+        with pytest.raises(graph.BridgeError) as failure:
+            drain_capture(work)
+        assert failure.value.context["reason"] == "GRAPH_CHANGED_DURING_CAPTURE"
 
 
 @pytest.mark.parametrize("case", ["unknown_attribute", "missing_uv", "missing_topology", "unknown_image_user", "unknown_material_user",

@@ -237,6 +237,7 @@ class PreparedJobCallbacks:
         "prepare",
         "prepare_facts",
         "prepared",
+        "preview_only",
         "provider",
         "provider_dependencies",
         "provider_facts",
@@ -262,8 +263,8 @@ class PreparedJobCallbacks:
     )
 
     @classmethod
-    def capture(cls, context, *, origin):
-        if cls is not PreparedJobCallbacks or type(context) is not ToolContext:
+    def capture(cls, context, *, origin, preview=False):
+        if cls is not PreparedJobCallbacks or type(context) is not ToolContext or type(preview) is not bool:
             raise _prepared_refused("PREPARED_ADMISSION_REQUIRED")
         source = sys.modules.get(__package__ + ".current_pixels_source")
         domain = sys.modules.get(__package__ + ".tools.image_current_pixels")
@@ -272,10 +273,12 @@ class PreparedJobCallbacks:
         if any(type(module) is not ModuleType for module in (source, domain, runtime_module, executor_module)):
             raise _prepared_refused("PREPARED_DOMAIN_UNAVAILABLE")
         source_type = vars(source).get("CurrentPixelsOrigin")
-        driver_type = vars(domain).get("CurrentPixelsDriver")
-        prepare = vars(domain).get("prepare_current_pixels")
+        driver_type = vars(domain).get("CurrentPixelsPreviewDriver" if preview else "CurrentPixelsDriver")
+        prepare = vars(domain).get("prepare_current_pixels_preview" if preview else "prepare_current_pixels")
         if type(source_type) is not type or type(origin) is not source_type or type(driver_type) is not type:
             raise _prepared_refused("PREPARED_CONCRETE_DOMAIN_REQUIRED")
+        if preview and getattr(origin, "method", None) != vars(source).get("PREVIEW_START"):
+            raise _prepared_refused("PREPARED_PREVIEW_METHOD_CHANGED")
         check = vars(source_type).get("check_job_callbacks")
         if (type(check) is not FunctionType or check.__globals__ is not vars(source)
                 or type(prepare) is not FunctionType or prepare.__globals__ is not vars(domain)
@@ -297,6 +300,7 @@ class PreparedJobCallbacks:
         self.source_module, self.domain_module, self.source_type = source, domain, source_type
         self.source_check, self.source_facts = check, _function_facts(check)
         self.prepare, self.prepare_facts, self.driver_type = prepare, _function_facts(prepare), driver_type
+        self.preview_only = preview
         self.methods = {name: (vars(driver_type).get(name), _function_facts(vars(driver_type).get(name)))
                         for name in ("__init__", "steps", "cleanup", "evidence", "recovery_evidence")}
         if not self.methods["steps"][0].__code__.co_flags & inspect.CO_GENERATOR:
@@ -358,6 +362,10 @@ class PreparedJobCallbacks:
             raise _prepared_refused("PREPARED_RUNTIME_CHANGED")
         _prepared_runtime_parts(self.runtime_module, executor_module)
         context_property = inspect.getattr_static(self.executor_type, "context")
+        if type(self.preview_only) is not bool:
+            raise _prepared_refused("PREPARED_CALLBACK_ORIGIN_CHANGED")
+        prepare_name = "prepare_current_pixels_preview" if self.preview_only else "prepare_current_pixels"
+        driver_name = "CurrentPixelsPreviewDriver" if self.preview_only else "CurrentPixelsDriver"
         if (type(self) is not PreparedJobCallbacks or self.runtime.jobs is not self.manager
                 or vars(self.runtime_module).get("_RUNTIME") is not self.runtime
                 or vars(self.runtime_module).get("BridgeRuntime") is not self.runtime_type
@@ -378,9 +386,9 @@ class PreparedJobCallbacks:
                 or vars(self.source_type).get("check_job_callbacks") is not self.source_check
                 or inspect.getattr_static(self.origin, "check_job_callbacks") is not self.source_check
                 or not _function_matches(self.source_check, self.source_facts)
-                or vars(self.domain_module).get("prepare_current_pixels") is not self.prepare
+                or vars(self.domain_module).get(prepare_name) is not self.prepare
                 or not _function_matches(self.prepare, self.prepare_facts)
-                or vars(self.domain_module).get("CurrentPixelsDriver") is not self.driver_type):
+                or vars(self.domain_module).get(driver_name) is not self.driver_type):
             raise _prepared_refused("PREPARED_CALLBACK_ORIGIN_CHANGED")
         for name, service in self.services:
             if (getattr(self.executor, name, None) is not service
@@ -751,8 +759,8 @@ class PaintJobs(CooperativeJobController):
         if tuple(required_permissions) != (Permission.INSPECT_SCENE, Permission.EDIT_MATERIALS,
                                            Permission.ACCESS_EXTERNAL_FILES, Permission.SAVE_PROJECT):
             raise _prepared_refused("PREPARED_PERMISSION_CONTRACT_CHANGED")
-        time_limit = pixel_brush.number(time_limit, "time_limit_seconds", 1., 300.)
         control.verify(context=context)
+        time_limit = pixel_brush.number(time_limit, "time_limit_seconds", 1., 300.)
         started = time.monotonic()
         prepared = control.prepare(context, params)
         control.verify(context=context)
@@ -769,9 +777,12 @@ class PaintJobs(CooperativeJobController):
         control.methods["__init__"][0](driver, prepared)
         control.verify(context=context)
         token = object()
+        identity, metadata = (), {}
+        if not control.preview_only:
+            identity, metadata = _identity(prepared["source"]), _metadata(prepared["source"])
         job = GuardedPreparedPaintJob("job_" + uuid.uuid4().hex, context.request_id,
             prepared["source_name"], prepared["name"], context.request_lifecycle or RequestLifetime.local(),
-            started + time_limit, prepared, _identity(prepared["source"]), _metadata(prepared["source"]),
+            started + time_limit, prepared, identity, metadata,
             prepared["requires_external_files"], started=started, method=prepared["method"], kind=prepared["kind"],
             required_permissions=tuple(required_permissions), driver=driver, _callback_token=token)
         job.workload = _prepared_plain(prepared["workload"])
@@ -792,7 +803,7 @@ class PaintJobs(CooperativeJobController):
                 self._finish(job, "FAILED", failure if isinstance(failure, BridgeError) else _prepared_refused("PREPARED_ACCEPT_FAILED"))
             raise
         return {"accepted": True, **job.summary(), "job_completed": False,
-                "input_frozen_at_acceptance": True, "native_commit_interruptible": False}
+                "input_frozen_at_acceptance": not control.preview_only, "native_commit_interruptible": False}
 
     def start_recovery_driver(self, context: Any, params: dict, time_limit: float, *, snapshot: bool) -> dict:
         from .tools.image_recovery_jobs import WRITE, prepare_restore, prepare_snapshot
@@ -1225,8 +1236,8 @@ class PaintJobs(CooperativeJobController):
         if type(job) is GuardedPreparedPaintJob:
             control = self._prepared_control(job)
             control.verify(context=context, job=job)
-            work = control.methods["steps"][0](control.driver, context, job,
-                                              lambda callback: self._native_commit(job, context, callback))
+            commit = None if control.preview_only else lambda callback: self._native_commit(job, context, callback)
+            work = control.methods["steps"][0](control.driver, context, job, commit)
             if type(work) is not GeneratorType or work.gi_code is not control.methods["steps"][0].__code__:
                 raise _prepared_refused("PREPARED_WORK_ORIGIN_CHANGED")
             control.work = work
