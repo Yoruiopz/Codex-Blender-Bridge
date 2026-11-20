@@ -233,6 +233,11 @@ the existing bytes. A fresh reader reopened the final 70-byte file with the
 same native file ID and complete digest after the writer exited abruptly.
 The module hash was
 `8e1dce065661220de5838c393878c8fa17e9fd5995e15ded49d7d5affa00f50d`.
-Create-only linking with the source held and exact staging link retirement
-by handle still require native testing. Preserve uncertain files after
-interrupted publication.
+The next exact probe on the same fixed NTFS volume published a create-only
+sibling hard link while holding the verified no-follow source open. A collision
+returned Windows error 183 and preserved both existing files. Both names
+retained one native file ID, two links and identical complete 516-byte content
+after the pinned directory flush and the abrupt writer exit. The module hash
+was `5ae4e14143c8353fd06acee71aeb2434eab6d3b26e9b266102e4c61cab790a70`.
+Exact staging link retirement by handle still requires native testing.
+Preserve uncertain files after interrupted publication.

@@ -228,6 +228,134 @@ def test_append_preserves_late_failure_without_repeating_write(append_file, faul
 
 
 @pytest.fixture
+def sibling_link(windows_files, tmp_path):
+    fixture = windows_files
+    source = fixture.path
+    source.is_absolute.return_value = True
+    source.parent = tmp_path
+    target = Mock(spec=Path)
+    target.parent = tmp_path
+    source_named = source.lstat.return_value
+    source_open = fixture.os.fstat.return_value
+    target_named = SimpleNamespace(**vars(source_named))
+    target_open = SimpleNamespace(**vars(source_open))
+    target.lstat.return_value = target_named
+    fixture.attributes[19] = 0
+    fixture.identities[19] = fixture.identities[17]
+    fixture.kernel.CreateFileW.side_effect = [17, 19]
+    fixture.crt.open_osfhandle.side_effect = [42, 43]
+    fixture.os.fstat.side_effect = {42: source_open, 43: target_open}.__getitem__
+
+    def create_link(_source, _target, **_options):
+        for metadata in (source_named, source_open, target_named, target_open):
+            metadata.st_nlink = 2
+
+    fixture.os.link = Mock(side_effect=create_link)
+    fixture.os.unlink = Mock()
+    timeline = Mock()
+    timeline.attach_mock(fixture.kernel.CreateFileW, "open")
+    timeline.attach_mock(fixture.os.link, "link")
+    timeline.attach_mock(fixture.os.close, "close")
+    expected = {"expected_file_id": fixture.identities[17], "expected_signature": (1, 9, 23, 37)}
+
+    def publish(path=target, **override):
+        return fixture.module.link_leaf(source, path, **{**expected, **override})
+
+    return SimpleNamespace(api=fixture, source=source, target=target, expected=expected, publish=publish,
+                           timeline=timeline, create_link=create_link, source_open=source_open,
+                           target_named=target_named, target_open=target_open)
+
+
+def test_link_is_create_only_and_verifies_target_with_source_handle_held(sibling_link):
+    model = sibling_link
+    fixture = model.api
+    assert model.publish() == model.expected["expected_signature"]
+    assert model.timeline.mock_calls == [
+        call.open(str(model.source), 0x80000000, 1, None, 3, 0x00200000, None),
+        call.link(model.source, model.target, follow_symlinks=False),
+        call.open(str(model.target), 0x80000000, 1, None, 3, 0x00200000, None),
+        call.close(43), call.close(42),
+    ]
+    fixture.crt.open_osfhandle.assert_has_calls([call(17, 0x8080), call(19, 0x8080)])
+    fixture.kernel.CloseHandle.assert_not_called()
+    fixture.os.unlink.assert_not_called()
+
+
+@pytest.mark.parametrize("fault", ["relative", "same_path", "other_parent", "invalid_identity", "invalid_signature"])
+def test_invalid_link_requires_distinct_sibling_and_typed_expected_facts(sibling_link, fault):
+    model = sibling_link
+    kwargs = {}
+    target = model.target
+    if fault == "relative":
+        model.source.is_absolute.return_value = False
+    elif fault == "same_path":
+        target = model.source
+    elif fault == "other_parent":
+        target.parent /= "subdirectory"
+    elif fault == "invalid_identity":
+        kwargs["expected_file_id"] = (91, bytes(16))
+    else:
+        kwargs["expected_signature"] = (True, 9, 23, 37)
+    with pytest.raises(ValueError):
+        model.publish(target, **kwargs)
+    model.source.lstat.assert_not_called()
+    model.api.os.link.assert_not_called()
+
+
+@pytest.mark.parametrize("fault", ["native_id", "size", "already_linked"])
+def test_link_refuses_changed_source_before_publication(sibling_link, fault):
+    model = sibling_link
+    kwargs = {}
+    if fault == "native_id":
+        kwargs["expected_file_id"] = (91, b"f" * 15 + b"!")
+    elif fault == "size":
+        kwargs["expected_signature"] = (1, 9, 24, 37)
+    else:
+        model.source.lstat.return_value.st_nlink = 2
+    with pytest.raises(OSError, match=r"changed before hard-link publication|ordinary file"):
+        model.publish(**kwargs)
+    model.api.os.link.assert_not_called()
+    model.target.lstat.assert_not_called()
+
+
+@pytest.mark.parametrize("failure", [FileExistsError("occupied"), PermissionError("sharing violation")])
+def test_native_link_failure_is_propagated_without_fallback(sibling_link, failure):
+    model = sibling_link
+    model.api.os.link.side_effect = failure
+    with pytest.raises(type(failure)) as observed:
+        model.publish()
+    assert observed.value is failure
+    model.api.os.link.assert_called_once_with(model.source, model.target, follow_symlinks=False)
+    model.api.os.close.assert_called_once_with(42)
+    model.target.lstat.assert_not_called()
+    model.api.os.unlink.assert_not_called()
+
+
+@pytest.mark.parametrize("fault", ["target_full_id", "target_signature", "source_link_count", "close_failed"])
+def test_late_link_failure_reports_possible_effect_without_unlink_or_retry(sibling_link, fault):
+    model = sibling_link
+
+    def invalid_link(*args, **kwargs):
+        model.create_link(*args, **kwargs)
+        if fault == "target_full_id":
+            model.api.identities[19] = (91, b"f" * 15 + b"!")
+        elif fault == "target_signature":
+            model.target_named.st_mtime_ns = model.target_open.st_mtime_ns = 39
+        elif fault == "source_link_count":
+            model.source_open.st_nlink = 1
+        else:
+            model.api.os.close.side_effect = [None, OSError("source close failed")]
+
+    model.api.os.link.side_effect = invalid_link
+    with pytest.raises(OSError, match="The target may exist") as error:
+        model.publish()
+    assert isinstance(error.value.__cause__, OSError)
+    model.api.os.link.assert_called_once_with(model.source, model.target, follow_symlinks=False)
+    assert model.api.os.close.call_args_list == [call(43), call(42)]
+    model.api.os.unlink.assert_not_called()
+
+
+@pytest.fixture
 def pinned_directory(windows_files):
     fixture = windows_files
     fixture.attributes[17] = 0x10

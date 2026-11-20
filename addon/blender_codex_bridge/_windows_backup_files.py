@@ -102,6 +102,12 @@ def _file_id(handle: int, *, directory: bool) -> FileID:
     return info.volume, bytes(info.identifier)
 
 
+def _valid_file_id(value: FileID) -> bool:
+    return (type(value) is tuple and len(value) == 2
+            and type(value[0]) is int and 0 <= value[0] < 2**64
+            and type(value[1]) is bytes and len(value[1]) == 16 and any(value[1]))
+
+
 def _leaf_signature(info: os.stat_result, links: int) -> LeafSignature:
     if (not stat.S_ISREG(info.st_mode) or info.st_file_attributes & _ATTRIBUTE_REPARSE_POINT
             or not info.st_ino or info.st_nlink != links):
@@ -165,9 +171,7 @@ def append_leaf(path: Path, block: bytes, *, expected_file_id: FileID, prior_siz
         raise ValueError("Backup append requires a nonempty bounded binary block.")
     if type(prior_size) is not int or not 0 <= prior_size <= _MAX_FILE_OFFSET - len(block):
         raise ValueError("Backup append requires an exact representable prior length.")
-    if (type(expected_file_id) is not tuple or len(expected_file_id) != 2
-            or type(expected_file_id[0]) is not int or not 0 <= expected_file_id[0] < 2**64
-            or type(expected_file_id[1]) is not bytes or len(expected_file_id[1]) != 16 or not any(expected_file_id[1])):
+    if not _valid_file_id(expected_file_id):
         raise ValueError("Backup append requires an exact native file identity.")
     if prior_bytes is not None and (type(prior_bytes) is not bytes or len(prior_bytes) != prior_size
                                     or len(prior_bytes) > _MAX_CHECKED_PREFIX_BYTES):
@@ -195,6 +199,42 @@ def append_leaf(path: Path, block: bytes, *, expected_file_id: FileID, prior_siz
         if reopened.file_id != expected_file_id or reopened.signature[:3] != after_write[:3]:
             raise OSError(errno.EIO, "The backup leaf changed after the append handle closed.")
         return reopened.signature
+
+
+def link_leaf(source: Path, target: Path, *, expected_file_id: FileID,
+              expected_signature: LeafSignature) -> LeafSignature:
+    """Create one sibling hard link while the exact single-link source is held.
+
+    Both paths must already be approved. The caller retains live ancestry pins
+    through this call, tracks uncertainty before publication, and owns complete
+    hash verification and parent flushes. The target may exist after an error.
+    """
+    if not source.is_absolute() or source == target or source.parent != target.parent:
+        raise ValueError("Backup hard-link paths must be distinct absolute siblings.")
+    if not _valid_file_id(expected_file_id):
+        raise ValueError("Backup hard-link publication requires an exact native file identity.")
+    if (type(expected_signature) is not tuple or len(expected_signature) != 4
+            or any(type(part) is not int for part in expected_signature)):
+        raise ValueError("Backup hard-link publication requires an exact source signature.")
+
+    published = False
+    try:
+        with _open_verified_leaf(source, links=1) as (handle, leaf):
+            if leaf.file_id != expected_file_id or leaf.signature != expected_signature:
+                raise OSError(errno.EIO, "The backup staging file changed before hard-link publication.")
+            os.link(source, target, follow_symlinks=False)
+            published = True
+            with open_leaf(target, links=2) as linked:
+                if (linked.file_id != expected_file_id or linked.signature != expected_signature
+                        or _file_id(handle, directory=False) != expected_file_id
+                        or _leaf_signature(os.fstat(leaf.fd), 2) != expected_signature
+                        or _leaf_signature(source.lstat(), 2) != expected_signature):
+                    raise OSError(errno.EIO, "The source and target did not verify as the same two-link file.")
+                return linked.signature
+    except OSError as error:
+        if published:
+            raise OSError(errno.EIO, "Backup hard-link verification failed after publication. The target may exist.") from error
+        raise
 
 
 def flush_pinned_directory(path: Path, pinned_handle: int) -> FileID:

@@ -1,8 +1,8 @@
 """Opt-in Windows backup primitive probe on an explicit disposable fixture parent.
 
 Uses local synthetic files and retains one new, owned directory. The receipt
-records binary append, a competing Win32 open, directory flush, and cross-process
-readback. Power-loss behavior and the Blender backup workflow require separate evidence.
+records binary append, create-only hard-link publication with a held source,
+directory flush, and cross-process readback. Product durability needs separate evidence.
 """
 
 from __future__ import annotations
@@ -123,23 +123,36 @@ def child(root: Path, phase: str, nonce: str) -> None:
         stage, competitor = root / "staged.bin", root / "competing.bin"
         write_exclusive(stage, PAYLOAD)
         before = receipt(stage, PAYLOAD, 1)
+        volume, identifier = before["file_id"]
+        expected_id = (volume, bytes.fromhex(identifier))
+        with windows_files.open_leaf(stage, links=1) as sealed:
+            signature = sealed.signature
+            if sealed.file_id != expected_id or signature[2] != before["bytes"]:
+                raise RuntimeError("Staging identity changed before the guarded link probe")
         write_exclusive(competitor, COMPETITOR)
         occupied = receipt(competitor, COMPETITOR, 1)
         try:
-            os.link(stage, competitor, follow_symlinks=False)
+            windows_files.link_leaf(stage, competitor, expected_file_id=expected_id, expected_signature=signature)
         except FileExistsError as error:
-            if receipt(competitor, COMPETITOR, 1) != occupied:
-                raise RuntimeError("The occupied destination changed") from error
+            collision_winerror = getattr(error, "winerror", None)
+            if collision_winerror not in {80, 183}:  # ERROR_FILE_EXISTS / ERROR_ALREADY_EXISTS
+                raise
+            if receipt(competitor, COMPETITOR, 1) != occupied or receipt(stage, PAYLOAD, 1) != before:
+                raise RuntimeError("The occupied destination or staging file changed") from error
         else:
             raise RuntimeError("Create-only hard link replaced the occupied destination")
-        os.link(stage, root / "published.bin", follow_symlinks=False)
+        linked_signature = windows_files.link_leaf(stage, root / "published.bin",
+                                                  expected_file_id=expected_id, expected_signature=signature)
         measured = file_receipts(root)
-        if measured["stage"] != measured["published"] or measured["stage"]["file_id"] != before["file_id"]:
+        if (linked_signature != signature or measured["stage"] != measured["published"]
+                or measured["stage"]["file_id"] != before["file_id"]):
             raise RuntimeError("Publication did not preserve the exact file identity")
         if measured["append"] != append["after_checked_prefix_append"]:
             raise RuntimeError("Appended file changed before the writer exit boundary")
         volume, identifier = windows_files.flush_pinned_directory(root, pins.handles[-1])
-        print(json.dumps({"pid": os.getpid(), "files": measured, "append": append,
+        hard_link = {"collision_winerror": collision_winerror, "created_with_source_read_handle": True,
+                     "verified_signature": linked_signature, "verified_link_count": measured["stage"]["links"]}
+        print(json.dumps({"pid": os.getpid(), "files": measured, "append": append, "hard_link": hard_link,
                           "flushed_directory_id": [volume, identifier.hex()]}), flush=True)
         # Exit before Python finally blocks release the directory pins.
         os._exit(ABRUPT_EXIT)
@@ -185,13 +198,15 @@ def main() -> None:
     append = writer.pop("append")
     if append["after_checked_prefix_append"] != reader["files"]["append"]:
         raise RuntimeError("Fresh reader did not verify the exact appended file")
+    hard_link = writer.pop("hard_link")
     report = {"python": list(sys.version_info[:3]),
               "module_sha256": hashlib.sha256(Path(windows_files.__file__).read_bytes()).hexdigest(),
               "file_fsync_returned_success": True, "create_only_collision_preserved": True,
               "pinned_directory_flush_returned_success": True, "process_exit_reopen_verified": True,
               "power_loss_durability_verified": False, "product_backup_durability_qualified": False,
               "writer_exit": ABRUPT_EXIT, "reader_exit": 0, "writer": writer, "reader": reader,
-              "append": {**append, "process_exit_reopen_verified": True}}
+              "append": {**append, "process_exit_reopen_verified": True},
+              "hard_link": {**hard_link, "process_exit_reopen_verified": True}}
     encoded = json.dumps(report, sort_keys=True)
     with closing(_DirectoryPins(root)):
         write_exclusive(root / "report.json", (encoded + "\n").encode("utf-8"))
