@@ -854,7 +854,7 @@ def graph_model_receipt(runner, command, environment):
     report, full, _compact = census_model_receipt(runner, command, environment)
     full.pop("catalog")
     full.update(profile="CURRENT_PIXELS_NATIVE_SOURCE_GRAPH_V1", scope="native_source_graph_read_only",
-        current_pixels_origin_qualified=False,
+        blender_version="4.5.14 LTS", source_build="62c1db4208e8", current_pixels_origin_qualified=False,
         assertions=dict.fromkeys(runner.CURRENT_PIXELS_GRAPH_ASSERTIONS, True), checks=1,
         foreign_callbacks=0, peak_rss_bytes=1024,
         baseline={"profile": "FILE_F32_EXR_DATA_CURRENT_PIXELS_V1", "complete_pixels_verified": True,
@@ -895,6 +895,25 @@ def test_source_graph_uses_opt_in_owned_process_and_complete_source_bound_receip
     result = runner.run_case(Path("blender"), case, output, requested_timeout)
     assert result["status"] == "passed" and result["execution_mode"] == "background"
     assert result["qualification_scope"]["current_pixels_origin_qualified"] is False
+
+
+@pytest.mark.parametrize("panel_assertion,expected", [(True, "passed"), (None, "failed"), (False, "failed")])
+def test_blender_52_source_graph_requires_manual_panel_evidence(runner, monkeypatch, tmp_path, panel_assertion, expected):
+    output = graph_fixture_root(runner, monkeypatch, tmp_path)
+    monkeypatch.setattr(runner.sys, "platform", "linux")
+
+    def run(command, **kwargs):
+        report, full, compact = graph_model_receipt(runner, command, kwargs["env"])
+        for receipt in (full, compact):
+            receipt.update(blender_version="5.2.2 LTS", source_build="d13f752e3b9c")
+        if panel_assertion is not None:
+            full["assertions"]["manual_panel_state_detected"] = panel_assertion
+        write_census_model(runner, report, full, compact)
+        kwargs["stdout"].write((runner.CASES["current_pixels_source_graph"][1] + json.dumps(compact)).encode())
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(runner.subprocess, "run", run)
+    assert runner.run_case(Path("blender"), "current_pixels_source_graph", output, 1200)["status"] == expected
 
 
 @pytest.mark.parametrize("fault", ["profile", "census", "token", "pid", "build", "version", "lifecycle", "origin", "windows",

@@ -571,7 +571,10 @@ def make_capture_model(graph, monkeypatch, addon_package, *, build=b"62c1db4208e
         define(kind, fields, data=property(data_property))
     for kind in ("FloatVectorAttributeValue", "Int2AttributeValue", "IntAttributeValue", "Float2AttributeValue", "BoolAttributeValue"):
         define(kind)
+    define("Node")
+    define("NodeSocket")
     NodeLink = define("NodeLink")
+    NodePanelState = define("NodePanelState", [field("identifier", "INT", readonly=True), field("is_collapsed", "BOOLEAN")])
     ImageUser = define("ImageUser", primitive_fields(use_auto_refresh=False, frame_duration=1, frame_offset=0))
     mapping_values = dict(vector_type="POINT", translation=(0., 0., 0.), rotation=(0., 0., 0.), scale=(1., 1., 1.),
                           mapping_x="X", mapping_y="Y", mapping_z="Z", use_min=False, use_max=False,
@@ -586,7 +589,12 @@ def make_capture_model(graph, monkeypatch, addon_package, *, build=b"62c1db4208e
     ColorMapping = define("ColorMapping", primitive_fields(**color_values))
     nodes = {}
     for kind in graph.NODES:
-        nodes[kind] = define(kind, primitive_fields(name="Node", label="", mute=False, hide=False, location=(0., 0.), width=140.))
+        nodes[kind] = define(kind, [*primitive_fields(name="Node", label="", mute=False, hide=False, location=(0., 0.), width=140.),
+                                    Property("internal_links", "COLLECTION", readonly=True, fixed_type=NodeLink.bl_rna)])
+        if build == b"d13f752e3b9c":
+            nodes[kind].bl_rna.properties.append(
+                Property("panel_states", "COLLECTION", readonly=True, fixed_type=NodePanelState.bl_rna),
+            )
     nodes["ShaderNodeTexImage"].bl_rna.properties.extend([
         Property("texture_mapping", "POINTER", readonly=True, fixed_type=TexMapping.bl_rna),
         Property("color_mapping", "POINTER", readonly=True, fixed_type=ColorMapping.bl_rna),
@@ -628,7 +636,7 @@ def make_capture_model(graph, monkeypatch, addon_package, *, build=b"62c1db4208e
     material = Material(name="Material", use_nodes=True, node_tree=tree, roughness=.5, metallic=0., diffuse_color=(.8, .8, .8, 1.))
     texture = nodes["ShaderNodeTexImage"](name="Texture", label="", mute=False, hide=False, location=(0., 0.), width=140.,
                  parent=None, id_data=tree, bl_idname="ShaderNodeTexImage", image=original,
-                 image_user=ImageUser(use_auto_refresh=False, frame_duration=1, frame_offset=0))
+                 image_user=ImageUser(use_auto_refresh=False, frame_duration=1, frame_offset=0), internal_links=[])
     texture.texture_mapping = TexMapping(**mapping_values)
     texture.color_mapping = ColorMapping(**color_values)
     texture.color_mapping.color_ramp = ColorRamp(**ramp_values)
@@ -638,9 +646,13 @@ def make_capture_model(graph, monkeypatch, addon_package, *, build=b"62c1db4208e
                    *texture.color_mapping.color_ramp.elements):
         nested.id_data = tree
     principled = nodes["ShaderNodeBsdfPrincipled"](name="Principled", label="", mute=False, hide=False, location=(200., 0.), width=140.,
-                                                parent=None, id_data=tree, bl_idname="ShaderNodeBsdfPrincipled")
+                                                parent=None, id_data=tree, bl_idname="ShaderNodeBsdfPrincipled", internal_links=[])
     output = nodes["ShaderNodeOutputMaterial"](name="Output", label="", mute=False, hide=False, location=(400., 0.), width=140.,
-                                             parent=None, id_data=tree, bl_idname="ShaderNodeOutputMaterial")
+                                             parent=None, id_data=tree, bl_idname="ShaderNodeOutputMaterial", internal_links=[])
+    if build == b"d13f752e3b9c":
+        texture.panel_states, output.panel_states = [], []
+        principled.panel_states = [NodePanelState(id_data=tree, identifier=identifier, is_collapsed=True)
+                                   for identifier in (9, 11, 18, 25, 27, 33, 37, 40)]
 
     def socket(kind, name, node, default=None):
         value = getattr(types, kind)(name=name, identifier=name, bl_idname=kind, node=node, id_data=tree,
@@ -657,7 +669,8 @@ def make_capture_model(graph, monkeypatch, addon_package, *, build=b"62c1db4208e
     links = []
     for source, target in ((texture.outputs[0], principled.inputs[0]), (principled.outputs[0], output.inputs[0])):
         source.is_linked = target.is_linked = True
-        links.append(NodeLink(from_node=source.node, to_node=target.node, from_socket=source, to_socket=target, is_valid=True, is_muted=False))
+        links.append(NodeLink(id_data=tree, from_node=source.node, to_node=target.node, from_socket=source,
+                              to_socket=target, is_valid=True, is_muted=False))
     tree.nodes, tree.links = [texture, principled, output], links
     vertices = [Vertex(index=index, co=co, select=index == 0, hide=False, groups=[])
                 for index, co in enumerate(((0., -0., 0.), (1., 0., 0.), (0., 1., 0.)))]
@@ -725,6 +738,12 @@ def make_capture_model(graph, monkeypatch, addon_package, *, build=b"62c1db4208e
     for owner in (original, helper, material, tree, mesh, obj, collection, scene):
         owner.id_data = owner
     install_model_catalogs(graph, monkeypatch, bpy)
+
+    def modeled_native_keys(owner_bpy, cls):
+        assert owner_bpy is bpy and issubclass(cls, Native)
+        return Native.keys
+
+    monkeypatch.setattr(graph, "_keys_method", modeled_native_keys)
 
     def modeled_native_mesh_policy(_bpy, target):
         assert target is mesh and target.use_auto_texspace is True
@@ -820,16 +839,16 @@ def test_private_yields_never_adopt_late_manual_edits_as_a_new_baseline(graph, c
         drain_capture(steps)
 
 
-@pytest.mark.parametrize("case", ["unknown_attribute", "missing_pin", "missing_selection", "unknown_image_user", "unknown_material_user",
+@pytest.mark.parametrize("case", ["unknown_attribute", "missing_uv", "missing_topology", "unknown_image_user", "unknown_material_user",
     "nested_group", "foreign_link", "linked", "override", "helper_unloaded", "original_unloaded", "shared_mesh", "object_mode", "single_storage"])
 def test_invalid_scope_refuses_before_pixel_or_packed_payload_acquisition(graph, capture_model, case):
     model = capture_model
     if case == "unknown_attribute":
         model.attribute("Unknown", "POINT", "BOOLEAN", "BoolAttribute", "BoolAttributeValue", [True] * 3)
-    elif case == "missing_pin":
-        model.attributes.remove(model.pin)
-    elif case == "missing_selection":
-        model.attributes.remove(model.selections[0])
+    elif case == "missing_uv":
+        model.attributes.remove(model.uv)
+    elif case == "missing_topology":
+        model.attributes.remove(next(row for row in model.attributes if row.name == ".corner_edge"))
     elif case == "unknown_image_user":
         model.reverse[model.original].add(object())
     elif case == "unknown_material_user":
@@ -857,6 +876,56 @@ def test_invalid_scope_refuses_before_pixel_or_packed_payload_acquisition(graph,
     with pytest.raises(graph.BridgeError):
         model.capture()
     assert model.counters["pixels"] == model.counters["packed"] == 0
+    assert model.counters["attribute_data"] == 0
+
+
+def test_optional_uv_presence_distinguishes_absent_all_false_and_mixed(graph, capture_model, monkeypatch):
+    model = capture_model
+    optional = (model.pin, *model.selections)
+    for row in optional:
+        for item in row._data:
+            item.value = False
+
+    def forbidden(_layer):
+        pytest.fail("Read-only graph capture called a possibly materializing UV getter")
+
+    for prop in ("pin", "vertex_selection", "edge_selection"):
+        monkeypatch.setattr(type(model.mesh.uv_layers[0]), prop, property(forbidden), raising=False)
+
+    def observe(present):
+        reader = graph._Reader(model.bpy, model.check)
+        expected = tuple(sorted((row.name, row in present) for row in optional))
+        inventory_before = tuple(model.attributes)
+        reads_before = model.counters["attribute_data"]
+        _headers, views, auxiliary, _physical = graph._attribute_inventory(
+            reader, model.mesh, {"vertices": 3, "edges": 3, "polygons": 1, "loops": 3}, ("UVMap",),
+        )
+        assert auxiliary == expected and set(views) == {"UVMap", *(row.name for row in present)}
+        assert model.counters["attribute_data"] == reads_before
+        result = model.capture()
+        assert tuple(model.attributes) == inventory_before
+        assert model.counters["attribute_data"] - reads_before == 2 * (1 + len(present))
+        return result
+
+    all_false = observe(optional)
+    for row in model.selections:
+        model.attributes.remove(row)
+    mixed = observe((model.pin,))
+    model.attributes.remove(model.pin)
+    absent = observe(())
+    for field in ("native_graph_sha256", "portable_graph_sha256", "full_native_prefix_sha256", "full_portable_prefix_sha256"):
+        assert len({getattr(result, field) for result in (all_false, mixed, absent)}) == 3
+
+
+def test_52_existing_single_auxiliary_refuses_before_data_even_with_other_flags_absent(graph, monkeypatch, addon_package):
+    model = make_capture_model(graph, monkeypatch, addon_package, build=b"d13f752e3b9c")
+    model.pin.storage_type = "SINGLE"
+    for row in model.selections:
+        model.attributes.remove(row)
+    with pytest.raises(graph.BridgeError) as failure:
+        model.capture()
+    assert failure.value.context["reason"] == "ATTRIBUTE_SINGLE_OR_UNKNOWN_STORAGE"
+    assert model.counters["pixels"] == model.counters["packed"] == model.counters["attribute_data"] == 0
 
 
 def test_resource_refusal_reports_measured_facts_before_payloads(graph, capture_model):
@@ -1878,12 +1947,165 @@ def test_legacy_keys_keep_two_argument_semantics_and_new_sdna_policy_is_separate
     assert calls == ["legacy"]
 
 
-def native_wrapper_alias(owner):
+def native_wrapper_alias(owner, wrapper_type=None):
     """Separate Python wrapper with the same synthetic native ID/address."""
-    alias = object.__new__(type(owner))
+    alias = object.__new__(type(owner) if wrapper_type is None else wrapper_type)
     alias.__dict__.update(vars(owner))
     assert alias is not owner and alias.as_pointer() == owner.as_pointer()
     return alias
+
+
+def test_stock_52_panel_changes_reach_native_and_portable_prefixes(graph, monkeypatch, addon_package):
+    model = make_capture_model(graph, monkeypatch, addon_package, build=b"d13f752e3b9c")
+    baseline = model.capture()
+    panel = native_wrapper_alias(model.principled.panel_states[0])
+    panel.id_data = native_wrapper_alias(model.tree)
+    model.principled.panel_states[0] = panel
+    assert model.capture().summary() == baseline.summary()
+
+    panel.pointer += 50000
+    relocated = model.capture()
+    assert relocated.full_native_prefix_sha256 != baseline.full_native_prefix_sha256
+    assert relocated.full_portable_prefix_sha256 == baseline.full_portable_prefix_sha256
+    panel.pointer -= 50000
+    panel.is_collapsed = False
+    expanded = model.capture()
+    assert expanded.full_native_prefix_sha256 != baseline.full_native_prefix_sha256
+    assert expanded.full_portable_prefix_sha256 != baseline.full_portable_prefix_sha256
+    assert expanded.payloads.facts() == baseline.payloads.facts()
+    assert panel.is_collapsed is False
+    panel.is_collapsed = True
+    assert model.capture().summary() == baseline.summary()
+
+
+@pytest.mark.parametrize(("fault", "reason"), [
+    ("truncated", "PRINCIPLED_PANEL_LAYOUT_CHANGED"),
+    ("empty", "PRINCIPLED_PANEL_LAYOUT_CHANGED"),
+    ("wrong_order", "PRINCIPLED_PANEL_LAYOUT_CHANGED"),
+    ("wrong_id", "PRINCIPLED_PANEL_LAYOUT_CHANGED"),
+    ("duplicate_address", "PRINCIPLED_PANEL_IDENTITY_CHANGED"),
+    ("foreign_owner", "RNA_NATIVE_OWNER_CHANGED"),
+    ("wrong_class", "EXACT_RNA_CLASS_REQUIRED"),
+])
+def test_52_panel_layout_and_owners_are_proven_before_collapse_reads(graph, monkeypatch, addon_package, fault, reason):
+    model = make_capture_model(graph, monkeypatch, addon_package, build=b"d13f752e3b9c")
+    panels = model.principled.panel_states
+    if fault == "truncated":
+        panels.pop()
+    elif fault == "empty":
+        panels.clear()
+    elif fault == "wrong_order":
+        panels[0], panels[1] = panels[1], panels[0]
+    elif fault == "wrong_id":
+        panels[-1].identifier = 41
+    elif fault == "duplicate_address":
+        panels[-1].pointer = panels[0].pointer
+    elif fault == "foreign_owner":
+        panels[-1].id_data = native_wrapper_alias(model.tree)
+        panels[-1].id_data.session_uid += 1
+    else:
+        panels[-1] = native_wrapper_alias(model.texture)
+
+    def forbidden(_panel):
+        pytest.fail("Unqualified panel layout reached a collapse value getter")
+
+    monkeypatch.setattr(model.types.NodePanelState, "is_collapsed", property(forbidden), raising=False)
+    with pytest.raises(graph.BridgeError) as failure:
+        model.capture()
+    assert failure.value.context["reason"] == reason
+    assert model.counters["packed"] == model.counters["pixels"] == 0
+
+
+@pytest.mark.parametrize(("build", "kind"), [(b"62c1db4208e8", "ShaderNodeBsdfPrincipled"),
+                                             (b"d13f752e3b9c", "ShaderNodeTexImage")])
+def test_unqualified_build_or_node_never_iterates_panel_payloads(graph, monkeypatch, addon_package, build, kind):
+    model = make_capture_model(graph, monkeypatch, addon_package, build=build)
+    node = model.principled if kind == "ShaderNodeBsdfPrincipled" else model.texture
+
+    class UnexpectedPanels:
+        def __len__(self):
+            return 1
+
+        def __iter__(self):
+            pytest.fail("Unexpected node reached a panel payload")
+
+    node.panel_states = UnexpectedPanels()
+    if build == b"62c1db4208e8":
+        node.bl_rna.properties.append(
+            Property("panel_states", "COLLECTION", readonly=True, fixed_type=model.types.NodePanelState.bl_rna))
+        install_model_catalogs(graph, monkeypatch, model.bpy)
+    reader = graph._Reader(model.bpy, model.check)
+    with pytest.raises(graph.BridgeError) as failure:
+        graph._panel_states(reader, graph._Stream(), node, kind, model.tree, [])
+    assert failure.value.context["reason"] == "NONEMPTY_NODE_PANEL_STATE_UNQUALIFIED"
+
+
+def test_material_aliases_keep_complete_native_and_portable_projections(capture_model):
+    model = capture_model
+    internal = model.types.NodeLink(id_data=model.tree,
+                                    from_socket=model.texture.inputs[0], to_socket=model.texture.outputs[0])
+    model.texture.internal_links.append(internal)
+    expected = model.capture()
+    model.texture.image = native_wrapper_alias(model.original)
+    for node in model.tree.nodes:
+        node.id_data = native_wrapper_alias(model.tree)
+        for socket in (*node.inputs, *node.outputs):
+            socket.id_data = native_wrapper_alias(model.tree)
+            socket.node = native_wrapper_alias(node, model.types.Node)
+    for link in (*model.tree.links, internal):
+        link.id_data = native_wrapper_alias(model.tree)
+        link.from_socket = native_wrapper_alias(link.from_socket, model.types.NodeSocket)
+        link.to_socket = native_wrapper_alias(link.to_socket, model.types.NodeSocket)
+    for link in model.tree.links:
+        link.from_node = native_wrapper_alias(link.from_node, model.types.Node)
+        link.to_node = native_wrapper_alias(link.to_node)
+    mapping = model.texture.color_mapping
+    for nested in (model.texture.texture_mapping, mapping, mapping.color_ramp, *mapping.color_ramp.elements):
+        nested.id_data = native_wrapper_alias(model.tree)
+
+    observed = model.capture()
+    assert observed.full_native_prefix_sha256 == expected.full_native_prefix_sha256
+    assert observed.full_portable_prefix_sha256 == expected.full_portable_prefix_sha256
+    assert observed.native_identity_rows == expected.native_identity_rows
+
+
+@pytest.mark.parametrize(("fault", "reason"), [
+    ("foreign_tree", "RNA_NATIVE_OWNER_CHANGED"),
+    ("same_name_node_replacement", "LINK_OWNER_UNQUALIFIED"),
+    ("wrong_node_for_socket", "LINK_OWNER_UNQUALIFIED"),
+    ("wrong_socket_direction", "LINK_DIRECTION_UNQUALIFIED"),
+    ("duplicate_socket_identity", "DUPLICATE_NATIVE_SOCKET_IDENTITY"),
+    ("wrong_concrete_socket_alias", "RNA_CONCRETE_IDENTITY_CLASS_CHANGED"),
+    ("unretained_base_alias", "RNA_BASE_ALIAS_NOT_RETAINED"),
+    ("wrong_internal_socket_owner", "INTERNAL_LINK_DIRECTION_UNQUALIFIED"),
+])
+def test_material_rejects_foreign_and_mismatched_native_endpoints(graph, capture_model, fault, reason):
+    model = capture_model
+    link = model.tree.links[0]
+    if fault == "foreign_tree":
+        link.id_data = native_wrapper_alias(model.tree)
+        link.id_data.session_uid += 1
+    elif fault == "same_name_node_replacement":
+        link.from_node = native_wrapper_alias(model.texture)
+        link.from_node.pointer += 50000
+    elif fault == "wrong_node_for_socket":
+        link.from_node = native_wrapper_alias(model.principled, model.types.Node)
+    elif fault == "wrong_socket_direction":
+        link.from_socket = native_wrapper_alias(model.texture.inputs[0], model.types.NodeSocket)
+    elif fault == "duplicate_socket_identity":
+        model.texture.outputs.append(native_wrapper_alias(model.texture.outputs[0]))
+    elif fault == "wrong_concrete_socket_alias":
+        link.from_socket = native_wrapper_alias(model.texture.outputs[0], type(model.texture.outputs[1]))
+    elif fault == "unretained_base_alias":
+        link.from_socket = native_wrapper_alias(model.texture.outputs[0], model.types.NodeSocket)
+        link.from_socket.pointer += 50000
+    else:
+        model.texture.internal_links.append(model.types.NodeLink(id_data=model.tree,
+            from_socket=model.texture.inputs[0], to_socket=model.principled.outputs[0]))
+    with pytest.raises(graph.BridgeError) as failure:
+        model.capture()
+    assert failure.value.context["reason"] == reason
+    assert model.counters["packed"] == model.counters["pixels"] == 0
 
 
 def test_qualified_socket_mode_uses_native_owner_identity_without_changing_legacy_shape(

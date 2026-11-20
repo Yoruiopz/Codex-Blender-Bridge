@@ -142,7 +142,8 @@ def owned_file(path: Path, *, maximum: int, private: bool = False) -> bytes:
     return path.read_bytes()
 
 
-def private_display_manifest() -> dict[str, Any]:
+def private_display_manifest(*, launcher_fingerprints: tuple[str, str] | None = None,
+                             launcher_path: Path | None = None) -> dict[str, Any]:
     """Fail closed before observing any UI; never read Xauthority cookie bytes."""
     assert sys.platform == "linux", "This development fixture requires the reviewed private Linux display launcher"
     assert not os.environ.get("WAYLAND_DISPLAY")
@@ -174,11 +175,15 @@ def private_display_manifest() -> dict[str, Any]:
     metadata = authority.stat()  # Metadata only: never retain the cookie contents.
     assert stat.S_ISREG(metadata.st_mode) and metadata.st_uid == os.getuid() and stat.S_IMODE(metadata.st_mode) == 0o600
     launcher = Path(manifest["launcher_path"])
+    assert (launcher_fingerprints is None) == (launcher_path is None)
+    if launcher_path is not None:
+        assert launcher == launcher_path, "Unexpected private UI launcher"
+    launcher_sha, config_sha = launcher_fingerprints or (PRIVATE_LAUNCHER_SHA256, PRIVATE_XORG_CONFIG_SHA256)
     launcher_raw = owned_file(launcher, maximum=65536)
-    assert sha256(launcher_raw) == manifest["launcher_sha256"] == PRIVATE_LAUNCHER_SHA256
+    assert sha256(launcher_raw) == manifest["launcher_sha256"] == launcher_sha
     config = profile / "xorg.conf"
     config_raw = owned_file(config, maximum=16384)
-    assert sha256(config_raw) == manifest["config_sha256"] == PRIVATE_XORG_CONFIG_SHA256
+    assert sha256(config_raw) == manifest["config_sha256"] == config_sha
     for setting in (b'Option "AutoAddDevices" "false"', b'Option "AutoEnableDevices" "false"', b'Driver "dummy"'):
         assert setting in config_raw
     server_pid = manifest["server_pid"]

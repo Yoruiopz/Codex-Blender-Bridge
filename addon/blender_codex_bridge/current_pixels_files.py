@@ -24,7 +24,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .current_pixels_contract import parse_manifest, validate_receipt
+from .current_pixels_contract import PROFILE, canonical_manifest, parse_manifest, validate_receipt
+from .current_pixels_graph import GraphCapture, PayloadCapture
 from .errors import BridgeError, ErrorCode, invalid_argument
 from .texture_staging import approved_output
 
@@ -98,6 +99,19 @@ def _expected(kind: str, size: Any, digest: Any) -> None:
     if (type(size) is not int or not 1 <= size <= _limit(kind)
             or type(digest) is not str or re.fullmatch(r"[0-9a-f]{64}", digest) is None):
         raise invalid_argument("Backup length and SHA256 must be complete, bounded exact facts.")
+
+
+def _blocks(payload: bytes) -> Iterable[bytes]:
+    for start in range(0, len(payload), BLOCK_BYTES):
+        yield payload[start:start + BLOCK_BYTES]
+
+
+def _image_manifest_metadata(image: dict[str, Any]) -> dict[str, Any]:
+    static, volatile = image["static"], image["volatile"]
+    return {**{key: static[key] for key in ("source", "file_format", "colorspace", "alpha_mode",
+                                           "filepath", "filepath_raw", "channels", "use_fake_user")},
+            "has_data": volatile["has_data"], "is_dirty": volatile["is_dirty"],
+            "record_present": volatile["lifecycle_record"] is not None}
 
 
 @dataclass(frozen=True, slots=True)
@@ -330,6 +344,68 @@ class BackupFiles:
         self.recovery_payloads = {kind: (manifest["backups"][kind]["bytes"], manifest["backups"][kind]["sha256"])
                                   for kind in ("oldpacked", "current")}
         return manifest, record
+
+    def prepare_pair_steps(self, capture: GraphCapture, *, record_uuid: str, runtime_nonce: str,
+                           affected_materials: list[str], check: Callable[[], None]
+                           ) -> Generator[dict[str, Any], None, dict[str, Any]]:
+        """Publish and independently reread the exact admitted backup pair and its manifest."""
+        self._writable(check)
+        if self.attempted or self.records:
+            raise refused("BACKUP_PAIR_NOT_FRESH")
+        if type(capture) is not GraphCapture or type(capture.payloads) is not PayloadCapture:
+            raise invalid_argument("Backup preparation requires the exact admitted graph and payload capture.")
+        graph, payloads = capture.summary(), capture.payloads
+        original, snapshot = graph["original"], graph["snapshot"]
+        original_identity, snapshot_identity = original["identity"], snapshot["identity"]
+        original_name, snapshot_name = original_identity["name"], snapshot_identity["name"]
+        if (snapshot["static"]["native_owner"] != {"kind": "Image", "name": original_name}
+                or snapshot["volatile"]["lifecycle_record"] is not None):
+            raise refused("BACKUP_PAIR_OWNER_OR_RECORD_CHANGED")
+        if (type(affected_materials) is not list or not 1 <= len(affected_materials) <= 2
+                or any(type(name) is not str for name in affected_materials)
+                or sorted(affected_materials) != sorted(row["name"] for row in graph["native_identity_rows"]
+                                                       if row["kind"] == "Material")):
+            raise refused("BACKUP_PAIR_MATERIAL_SCOPE_CHANGED")
+
+        old, current = payloads.original_packed, payloads.snapshot_packed
+        old_hash, current_hash = payloads.original_packed_sha256, payloads.snapshot_packed_sha256
+        rows = (("oldpacked", old, old_hash), ("current", current, current_hash))
+        backups = {}
+        for kind, payload, digest in rows:
+            if type(payload) is not bytes:
+                raise invalid_argument("Backup payloads must be exact frozen bytes.")
+            _expected(kind, len(payload), digest)
+            self._gate(check)
+            if hashlib.sha256(payload).hexdigest() != digest:
+                raise refused("BACKUP_PAIR_CAPTURE_HASH_MISMATCH")
+            backups[kind] = {"filename": self.plan.path(kind).name, "bytes": len(payload), "sha256": digest}
+
+        manifest = {
+            "kind": "current_pixels_manifest", "schema_version": 1, "profile": PROFILE,
+            "record_uuid": record_uuid, "runtime_nonce": runtime_nonce,
+            "image_name": original_name, "snapshot_name": snapshot_name,
+            "width": original["static"]["width"], "height": original["static"]["height"],
+            "affected_materials": affected_materials, "backup_prefix": self.plan.prefix,
+            "current_pixels_sha256_float32_le": payloads.current_pixels_sha256_float32_le,
+            "previous_packed_sha256": old_hash,
+            "previous_decoded_pixels_sha256": payloads.original_decoded_pixels_sha256,
+            "native_graph_sha256": graph["native_graph_sha256"], "portable_graph_sha256": graph["portable_graph_sha256"],
+            "original_identity": {key: original_identity[key] for key in ("pointer", "session_uid")},
+            "snapshot_identity": {key: snapshot_identity[key] for key in ("pointer", "session_uid")},
+            "roles": {key: original["static"][key] for key in ("source", "file_format", "colorspace", "alpha_mode", "is_float")},
+            "native_identity_rows": graph["native_identity_rows"], "portable_identity_rows": graph["portable_identity_rows"],
+            "backups": backups,
+            "image_metadata": _image_manifest_metadata(original),
+            "snapshot_metadata": {**_image_manifest_metadata(snapshot), "owner_image_name": original_name,
+                                  "snapshot_schema_version": 1},
+        }
+        raw = canonical_manifest(manifest)
+        manifest_hash = hashlib.sha256(raw).hexdigest()
+        for kind, payload, digest in (*rows, ("manifest", raw, manifest_hash)):
+            yield from self.publish_steps(kind, _blocks(payload), len(payload), digest, check)
+        records = yield from self.verify_steps(check)
+        return {"manifest": parse_manifest(raw), "manifest_sha256": manifest_hash,
+                "files": [record.summary() for record in records]}
 
     def publish_steps(self, kind: str, blocks: Iterable[bytes], expected_bytes: int,
                       expected_sha256: str, check: Callable[[], None]

@@ -36,6 +36,47 @@ follow forward packing and three follow explicit recovery. The fixture never
 manually invokes timers, runs a custom update loop or adopts observed state as
 a replacement baseline.
 
+## Queued backup preparation
+
+`current_pixels_loaded_backup` registers four private methods in its own Blender
+runtime. The normal add-on and MCP registries omit them. The fixture drives the
+existing socket and main-thread timer using one connection, a 2 × 2 Float32 FILE
+image and its existing OWNER-bound helper. The preview binds the full source graph,
+current pixels, previous packed bytes and the approved backup plan. The job stops
+at `BACKUPS_DURABLE` after create-only publication and independent complete
+readback of both payloads and the manifest. The driver does not write the image,
+change the helper record or save the project. Reverse methods return `NOT_IMPLEMENTED`.
+
+```bash
+python scripts/run_loaded_backup_private_display.py --blender /path/to/blender --output /absolute/new/report-directory
+```
+
+Stock Linux Blender 4.5.14 returned all four expected permission denials over the
+real socket. The fully granted preview exceeded its 60-second diagnostic request
+budget at a cooperative boundary, before any backup files were created. An
+uninstrumented repeat independently rechecked the original, helper and protected
+fixture state after the refusal. The 60-second run is a diagnostic, and the normal
+three-second request remains unqualified. A separate instrumented run counted
+7,004 source verifications and 86 native identity witnesses before expiry. These
+counts locate repeated nested verification. The instrumented timings include
+profiler overhead and cannot establish production latency.
+
+Move expensive graph and pixel acquisition into a private cancellable job with
+an acknowledgment inside the normal request deadline. Preserve live identity,
+context and permissions at provider, registered RNA lookup and scheduler
+boundaries. Independently verify frozen backup bytes. Before any Image or helper
+mutation, compare the current complete graph and pixels with the captured prefix.
+A changed source can make an archive stale without making its verified bytes
+invalid. Test cancellation, disconnect and manual edits between scheduler turns
+before exposing any method publicly.
+
+The separate read-only graph passed on 4.5.14 after changing node/socket ownership
+checks to exact native identities and hashing whether each optional UV flag buffer
+exists. The source binds the owning tree, concrete class and valid link endpoints.
+A physically absent flag hashes differently from a present all-false buffer, and
+5.2 `SINGLE` data still refuses before any attribute payload read. The 5.2.2 graph
+replay reached an unsupported default shader panel state.
+
 ## Exact declared data scope
 
 One local FILE Float32 RGBA OPEN_EXR Image uses Non-Color and CHANNEL_PACKED.
@@ -121,7 +162,7 @@ markers bind the complete receipt by length and hash. Root may evict closed-file
 cache pages or run builds separately to provide headroom; it must not lower the
 limits or erase failed observations.
 
-There is no new public tool, permission, Runtime, job service or schema. Public
+There is no new public tool, permission or schema. Public
 current-pixel packing/recovery, interruption and earned partial recovery,
 constrained-memory behavior, broader color/alpha roles, protected artist scopes,
 4K production Save, installed packages and complete A04/I02 remain open. The
@@ -146,4 +187,8 @@ pinned directory. After the abrupt writer exit, a fresh process reopened the
 same file identities and verified the complete bytes. The probe retains the
 owned folder and `report.json`. This evidence covers the tested process-exit
 sequence. The Blender backup driver, host power-loss behavior and Windows 4K
-qualification remain open.
+qualification remain open. Integrating the helper requires the approved
+ancestry pins and native file IDs to survive each individual I/O operation. Test
+exclusive append, create-only linking with the source held, and exact staging
+link retirement by handle before using the same verified directory flush. Keep
+any uncertain files for inspection after interrupted publication.

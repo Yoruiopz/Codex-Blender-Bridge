@@ -49,6 +49,7 @@ SOCKETS = frozenset({"NodeSocketFloat", "NodeSocketFloatFactor", "NodeSocketFloa
                      "NodeSocketFloatDistance", "NodeSocketFloatAngle", "NodeSocketFloatWavelength", "NodeSocketColor",
                      "NodeSocketVector", "NodeSocketShader", "NodeSocketInt", "NodeSocketBool"})
 NODES = frozenset({"ShaderNodeTexImage", "ShaderNodeBsdfPrincipled", "ShaderNodeOutputMaterial"})
+PRINCIPLED_PANEL_IDS_52 = (9, 11, 18, 25, 27, 33, 37, 40)
 CENSUS_TYPES = ("ID", "BlendData", "Scene", "Collection", "Object", "MaterialSlot", "Mesh", "MeshVertex",
                 "MeshEdge", "MeshPolygon", "MeshLoop", "UVLoopLayers", "MeshUVLoopLayer", "MeshUVLoop",
                 "Attribute", "FloatVectorAttribute", "FloatVectorAttributeValue", "Int2Attribute", "Int2AttributeValue",
@@ -2168,6 +2169,43 @@ def _mapping(reader: _Reader, stream: _Stream, node: Any, tree: Any,
     return result
 
 
+def _panel_states(reader: _Reader, stream: _Stream, node: Any, kind: str, tree: Any,
+                  retained: list[Any]) -> list[tuple[int, bool]] | None:
+    expected = reader.build == b"d13f752e3b9c" and kind == "ShaderNodeBsdfPrincipled"
+    descriptor = next((prop for prop in reader.catalog(node, kind) if prop.identifier == "panel_states"), None)
+    if descriptor is None:
+        if expected:
+            raise refused("PRINCIPLED_PANEL_SCHEMA_CHANGED")
+        return None
+    if (descriptor.type != "COLLECTION" or descriptor.is_readonly is not True or descriptor.is_runtime is not False
+            or descriptor.fixed_type is None or descriptor.fixed_type.identifier != "NodePanelState"):
+        raise refused("PRINCIPLED_PANEL_SCHEMA_CHANGED")
+    reader.check()
+    panels = node.panel_states
+    if not expected:
+        if len(panels):
+            raise refused("NONEMPTY_NODE_PANEL_STATE_UNQUALIFIED")
+        return None
+    if len(panels) != len(PRINCIPLED_PANEL_IDS_52):
+        raise refused("PRINCIPLED_PANEL_LAYOUT_CHANGED")
+    rows = _bounded(panels, len(PRINCIPLED_PANEL_IDS_52))
+    identities = tuple(_rna_identity(reader, panel, "NodePanelState", tree, retained) for panel in rows)
+    if len(set(identities)) != len(PRINCIPLED_PANEL_IDS_52):
+        raise refused("PRINCIPLED_PANEL_IDENTITY_CHANGED")
+    identifiers = []
+    for panel in rows:
+        reader.check()
+        identifiers.append(_int(panel.identifier, 2**31 - 1))
+    if tuple(identifiers) != PRINCIPLED_PANEL_IDS_52:
+        raise refused("PRINCIPLED_PANEL_LAYOUT_CHANGED")
+    result = []
+    for panel, identity, identifier in zip(rows, identities, identifiers, strict=True):
+        reader.check()
+        stream.native_token("node_panel", identity[1])
+        result.append((identifier, _bool(panel.is_collapsed)))
+    return result
+
+
 def _material(reader: _Reader, stream: _Stream, material: Any, original: Any,
               totals: dict[str, int]) -> None:
     row = reader.local_id(material, "Material")
@@ -2184,125 +2222,105 @@ def _material(reader: _Reader, stream: _Stream, material: Any, original: Any,
     stream.emit("tree", _primitive_fields(reader, tree, "ShaderNodeTree"))
     nodes = _bounded(tree.nodes, MAX_NODES)
     links = _bounded(tree.links, MAX_LINKS)
+    retained = [tree]
+    node_ids = set()
     for node in nodes:
         _kind(reader, node, NODES)
+        identity = _node_identity(reader, node, tree, retained)
+        if identity in node_ids:
+            raise refused("DUPLICATE_NATIVE_NODE_IDENTITY")
+        node_ids.add(identity)
     totals["nodes"] += len(nodes)
     totals["links"] += len(links)
     if totals["nodes"] > MAX_NODES or totals["links"] > MAX_LINKS:
         raise refused("NODE_OR_LINK_BUDGET")
     if len({_text(node.name) for node in nodes}) != len(nodes):
         raise refused("AMBIGUOUS_NODE_NAMES")
-    socket_owners: dict[Any, tuple[str, str, str]] = {}
+    socket_owners = {}
+    original_id = reader.local_id(original, "Image")
     source_bindings = 0
     for node in sorted(nodes, key=lambda item: item.name):
         reader.check()
-        kind = _kind(reader, node, NODES)
+        node_id = _node_identity(reader, node, tree, retained)
+        kind = node.bl_rna.identifier
         if node.bl_idname != kind:
             raise refused("NODE_CLASS_OR_NESTED_GROUP_UNQUALIFIED")
         reader.catalog(node, kind)
         _relationships(reader, node, kind,
                        pointers=frozenset({"parent", "image", "image_user", "texture_mapping", "color_mapping"}) if kind == "ShaderNodeTexImage" else frozenset({"parent"}),
                        collections=frozenset({"inputs", "outputs", "internal_links", "panel_states"}))
-        if node.id_data is not tree or node.parent is not None:
+        if node.parent is not None:
             raise refused("NODE_OWNER_OR_PARENT_UNQUALIFIED")
         _keys(node, set())
-        stream.native_token("node", node.as_pointer())
+        stream.native_token("node", node_id[1])
         value = {"name": node.name, "class": kind, "authored": _primitive_fields(reader, node, kind)}
-        if any(prop.identifier == "panel_states" for prop in reader.catalog(node, kind)) and len(node.panel_states):
-            raise refused("NONEMPTY_NODE_PANEL_STATE_UNQUALIFIED")
+        panels = _panel_states(reader, stream, node, kind, tree, retained)
+        if panels is not None:
+            value["panel_states"] = panels
         for direction in ("inputs", "outputs"):
             sockets = _bounded(getattr(node, direction), MAX_SOCKETS)
             totals["sockets"] += len(sockets)
             if totals["sockets"] > MAX_SOCKETS:
                 raise refused("SOCKET_BUDGET")
-            identifiers = [_text(socket.identifier, 128) for socket in sockets]
-            if len(set(identifiers)) != len(identifiers):
-                raise refused("AMBIGUOUS_SOCKET_IDENTIFIERS")
-            value[direction] = [_socket(reader, stream, socket, node) for socket in sockets]
-            socket_owners.update({socket: (node.name, direction, socket.identifier) for socket in sockets})
+            projected, identifiers = [], set()
+            for socket in sockets:
+                _kind(reader, socket, SOCKETS)
+                socket_id = _socket_identity(reader, socket, tree, retained)
+                if socket_id in socket_owners:
+                    raise refused("DUPLICATE_NATIVE_SOCKET_IDENTITY")
+                record = _socket(reader, stream, socket, node, tree, retained)
+                identifier = record["identifier"]
+                if identifier in identifiers:
+                    raise refused("AMBIGUOUS_SOCKET_IDENTIFIERS")
+                identifiers.add(identifier)
+                projected.append(record)
+                socket_owners[socket_id] = node_id, (node.name, direction, identifier)
+            value[direction] = projected
         if kind == "ShaderNodeTexImage":
-            if node.image is not None and node.image is not original:
-                raise refused("UNDECLARED_IMAGE_BINDING")
-            value["image"] = None if node.image is None else _ref(reader, original, "Image")
-            source_bindings += node.image is original
+            bound_image = node.image
+            value["image"] = None
+            if bound_image is not None:
+                if reader.local_id(bound_image, "Image") != original_id:
+                    raise refused("UNDECLARED_IMAGE_BINDING")
+                value["image"] = {"kind": "Image", "name": original_id["name"]}
+                source_bindings += 1
             reader.catalog(node.image_user, "ImageUser")
             if node.image_user.use_auto_refresh:
                 raise refused("AUTOMATIC_IMAGE_REFRESH_UNQUALIFIED")
             value["image_user"] = _primitive_fields(reader, node.image_user, "ImageUser")
-            value["mapping"] = _mapping(reader, stream, node, tree)
+            value["mapping"] = _mapping(reader, stream, node, tree, retained)
         if any(prop.identifier == "internal_links" for prop in reader.catalog(node, kind)):
             internal = []
             for link in _bounded(node.internal_links, MAX_SOCKETS):
-                reader.catalog(link, "NodeLink")
-                if link.from_socket not in socket_owners or link.to_socket not in socket_owners:
+                _rna_identity(reader, link, "NodeLink", tree, retained)
+                source = socket_owners.get(_socket_identity(reader, link.from_socket, tree, retained))
+                target = socket_owners.get(_socket_identity(reader, link.to_socket, tree, retained))
+                if source is None or target is None:
                     raise refused("INTERNAL_LINK_OWNER_UNQUALIFIED")
-                source, target = socket_owners[link.from_socket], socket_owners[link.to_socket]
-                if source[:2] != (node.name, "inputs") or target[:2] != (node.name, "outputs"):
+                source_owner, start = source
+                target_owner, finish = target
+                if source_owner != node_id or target_owner != node_id or start[1] != "inputs" or finish[1] != "outputs":
                     raise refused("INTERNAL_LINK_DIRECTION_UNQUALIFIED")
-                internal.append([source, target])
+                internal.append([start, finish])
             value["internal_links"] = internal
         stream.emit("node", value)
     if source_bindings == 0:
         raise refused("DECLARED_MATERIAL_HAS_NO_SOURCE_BINDING")
     for link in links:
-        reader.catalog(link, "NodeLink")
-        if (link.from_node not in nodes or link.to_node not in nodes
-                or link.from_socket not in socket_owners or link.to_socket not in socket_owners):
+        _rna_identity(reader, link, "NodeLink", tree, retained)
+        source = socket_owners.get(_socket_identity(reader, link.from_socket, tree, retained))
+        target = socket_owners.get(_socket_identity(reader, link.to_socket, tree, retained))
+        if source is None or target is None:
             raise refused("LINK_OWNER_UNQUALIFIED")
-        source, target = socket_owners[link.from_socket], socket_owners[link.to_socket]
-        if source[1] != "outputs" or target[1] != "inputs":
+        source_owner, start = source
+        target_owner, finish = target
+        if (_node_identity(reader, link.from_node, tree, retained) != source_owner
+                or _node_identity(reader, link.to_node, tree, retained) != target_owner):
+            raise refused("LINK_OWNER_UNQUALIFIED")
+        if start[1] != "outputs" or finish[1] != "inputs":
             raise refused("LINK_DIRECTION_UNQUALIFIED")
-        stream.emit("link", {"from": source, "to": target, "valid": _bool(link.is_valid), "muted": _bool(link.is_muted)})
+        stream.emit("link", {"from": start, "to": finish, "valid": _bool(link.is_valid), "muted": _bool(link.is_muted)})
     stream.end(row)
-
-
-def _array_attribute_inventory(reader: _Reader, mesh: Any, counts: dict[str, int],
-                          uv_names: tuple[str, ...]) -> tuple[tuple[Any, ...], dict[str, Any]]:
-    required = {"position": ("POINT", "FLOAT_VECTOR", "FloatVectorAttribute", "FloatVectorAttributeValue", counts["vertices"]),
-                ".edge_verts": ("EDGE", "INT32_2D", "Int2Attribute", "Int2AttributeValue", counts["edges"]),
-                ".corner_vert": ("CORNER", "INT", "IntAttribute", "IntAttributeValue", counts["loops"]),
-                ".corner_edge": ("CORNER", "INT", "IntAttribute", "IntAttributeValue", counts["loops"])}
-    allowed = dict(required)
-    allowed["material_index"] = ("FACE", "INT", "IntAttribute", "IntAttributeValue", counts["polygons"])
-    for name, domain, count in ((".select_vert", "POINT", "vertices"), (".hide_vert", "POINT", "vertices"),
-                                (".select_edge", "EDGE", "edges"), (".hide_edge", "EDGE", "edges"),
-                                ("uv_seam", "EDGE", "edges"), ("sharp_edge", "EDGE", "edges"),
-                                (".select_poly", "FACE", "polygons"), (".hide_poly", "FACE", "polygons"),
-                                ("sharp_face", "FACE", "polygons")):
-        allowed[name] = (domain, "BOOLEAN", "BoolAttribute", "BoolAttributeValue", counts[count])
-    uv = {}
-    for name in uv_names:
-        uv[name] = ("CORNER", "FLOAT2", "Float2Attribute", "Float2AttributeValue", counts["loops"])
-        for prefix in ((".pn.", ".vs.", ".es.") if reader.build == b"62c1db4208e8" else (".pn.",)):
-            uv[prefix + name] = ("CORNER", "BOOLEAN", "BoolAttribute", "BoolAttributeValue", counts["loops"])
-    if uv_names and reader.build == b"d13f752e3b9c":
-        for name, domain, count in ((".uv_select_vert", "CORNER", "loops"), (".uv_select_edge", "CORNER", "loops"),
-                                    (".uv_select_face", "FACE", "polygons")):
-            uv[name] = (domain, "BOOLEAN", "BoolAttribute", "BoolAttributeValue", counts[count])
-    allowed.update(uv)
-    attributes = _bounded(mesh.attributes, 64)
-    observed = {}
-    for attribute in attributes:
-        _kind(reader, attribute, frozenset({"FloatVectorAttribute", "Int2Attribute", "IntAttribute", "Float2Attribute", "BoolAttribute"}))
-        name = _text(attribute.name)
-        if name in observed or name not in allowed:
-            raise refused("UNKNOWN_OR_DUPLICATE_MESH_ATTRIBUTE")
-        domain, data_type, kind, _leaf, _count = allowed[name]
-        props = reader.catalog(attribute, kind)
-        if (attribute.domain, attribute.data_type) != (domain, data_type):
-            raise refused("MESH_ATTRIBUTE_SCHEMA")
-        # In 5.2 a data getter materializes SINGLE storage, so inspect metadata
-        # and ARRAY first. 4.5 COW may occur, but no optional layer is created.
-        storage_present = any(prop.identifier == "storage_type" for prop in props)
-        if reader.build == b"d13f752e3b9c":
-            if not storage_present or attribute.storage_type != "ARRAY":
-                raise refused("ATTRIBUTE_SINGLE_OR_UNKNOWN_STORAGE")
-        elif storage_present:
-            raise refused("ATTRIBUTE_STORAGE_SCHEMA_CHANGED")
-        observed[name] = attribute
-    if any(name not in observed for name in uv) or any(layout[4] and name not in observed for name, layout in required.items()):
-        raise refused("PHYSICAL_GEOMETRY_OR_UV_STORAGE_MISSING")
-    return attributes, {name: (observed[name], allowed[name]) for name in uv}
 
 
 def _mesh(reader: _Reader, stream: _Stream, mesh: Any, materials: tuple[Any, ...],
@@ -2331,7 +2349,11 @@ def _mesh(reader: _Reader, stream: _Stream, mesh: Any, materials: tuple[Any, ...
     uv_names = tuple(_text(layer.name) for layer in layers)
     if len(set(uv_names)) != len(uv_names) or mesh.has_custom_normals or len(mesh.color_attributes):
         raise refused("CUSTOM_NORMAL_COLOR_OR_AMBIGUOUS_UV")
-    attributes, uv = _array_attribute_inventory(reader, mesh, counts, uv_names)
+    attributes, uv, auxiliary, physical = _attribute_inventory(reader, mesh, counts, uv_names)
+    # A data getter can convert a 5.2 SINGLE attribute to ARRAY. This
+    # observer only accepts arrays, after the separate metadata pass.
+    if any(storage == "SINGLE" for _name, _domain, _type, storage, _count in physical):
+        raise refused("ATTRIBUTE_SINGLE_OR_UNKNOWN_STORAGE")
     stream.begin(row, consumer=True)
     fields = _primitive_fields(reader, mesh, "Mesh", exclude=frozenset({"texspace_location", "texspace_size"}))
     auto = policy[-4][0]
@@ -2376,7 +2398,8 @@ def _mesh(reader: _Reader, stream: _Stream, mesh: Any, materials: tuple[Any, ...
         if loop.index != index:
             raise refused("LOOP_INDEX")
         stream.emit("loop", [index, _int(loop.vertex_index, counts["vertices"] - 1), _int(loop.edge_index, counts["edges"] - 1)])
-    stream.emit("attribute_inventory", [[attribute.name, attribute.domain, attribute.data_type] for attribute in attributes])
+    stream.emit("attribute_inventory", attributes)
+    stream.emit("uv_auxiliary_inventory", auxiliary)
     for name in sorted(uv):
         attribute, (_domain, kind, _class, leaf, count) = uv[name]
         reader.check()

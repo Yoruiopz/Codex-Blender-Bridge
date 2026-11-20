@@ -325,9 +325,15 @@ class _Registration:
         if (type(self.registry) is not ToolRegistry or vars(self.runtime_module).get("BridgeRuntime") is not self.runtime_type
                 or not _function_matches(_static(self.runtime_type, "__init__"), self.runtime_constructor)):
             raise refused("CANONICAL_RUNTIME_CLASS_CHANGED")
+        # Every captured row was declared on this module or exact class.
+        # Inspect its live namespace directly, without descriptor dispatch or
+        # repeating MRO lookup for each member of the same owner.
+        previous_owner = None
         for owner, name, value, facts in self.functions:
-            current = vars(owner).get(name, _MISSING) if type(owner) is ModuleType else _static(owner, name)
-            if current is not value:
+            if owner is not previous_owner:
+                namespace = vars(owner) if type(owner) is ModuleType else type.__dict__["__dict__"].__get__(owner)
+                previous_owner = owner
+            if namespace.get(name, _MISSING) is not value:
                 raise refused("DOMAIN_CALLBACK_SOURCE_CHANGED")
             # Keep every captured comparison at every safe point, without a
             # generator and helper dispatch for each descriptor function.

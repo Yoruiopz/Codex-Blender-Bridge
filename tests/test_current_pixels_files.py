@@ -4,6 +4,8 @@ import hashlib
 import importlib
 import json
 import os
+from array import array
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace as NS
 
@@ -112,6 +114,100 @@ def test_three_create_only_backups_have_full_independent_receipts(files, monkeyp
     assert effects["staging_cleanup"] == "successful_stage_retired"
     assert not effects["publication_outcome_unknown"] and not effects["crash_durability_verified"]
     assert not effects["native_undo_removes_external_file"]
+
+
+def captured_pair(files):
+    module = files.module
+    pixel_codecs = importlib.import_module(f"{module.__package__}.pixel_codecs")
+    graph = files.contract.parse_manifest(files.manifest())
+    original_values, edited_values = array("f", [.25]) * 16, array("f", [.5]) * 16
+    old, current = [b"".join(step.data for step in pixel_codecs.encode_steps(
+        values, 2, 2, "EXR32_RAW", "DATA",
+    )) for values in (original_values, edited_values)]
+    pixel_digest = hashlib.sha256(edited_values).hexdigest()
+    payloads = module.PayloadCapture(
+        edited_values, old, current, pixel_digest, hashlib.sha256(old).hexdigest(),
+        hashlib.sha256(original_values).hexdigest(), hashlib.sha256(current).hexdigest(),
+    )
+    roles = {**graph["roles"], "width": 2, "height": 2, "channels": 4}
+    original = {"identity": graph["native_identity_rows"][0],
+                "static": {**roles, "filepath": "//owned.exr", "filepath_raw": "//owned.exr", "use_fake_user": False},
+                "volatile": {"has_data": True, "is_dirty": True, "lifecycle_record": None}}
+    helper = {"identity": graph["native_identity_rows"][1],
+              "static": {**roles, "filepath": "", "filepath_raw": "", "use_fake_user": True,
+                         "native_owner": {"kind": "Image", "name": "Original"}},
+              "volatile": {"has_data": True, "is_dirty": False, "lifecycle_record": None}}
+    return module.GraphCapture(None, None, (), (), graph["native_graph_sha256"], graph["portable_graph_sha256"],
+                               "a" * 64, "b" * 64, tuple(graph["native_identity_rows"]), original, helper,
+                               {}, {}, (), 100, payloads)
+
+
+def prepared_pair(item, capture, check, materials=None):
+    return item.prepare_pair_steps(capture, record_uuid="3" * 32, runtime_nonce="4" * 32,
+                                   affected_materials=["Material"] if materials is None else materials, check=check)
+
+
+def test_pair_binds_captured_owner_graph_and_exact_reopened_payloads(files):
+    item, capture = files.make(journal=False), captured_pair(files)
+    result, _ = drain(prepared_pair(item, capture, files.check))
+    manifest = result["manifest"]
+    assert manifest["image_name"] == "Original" and manifest["snapshot_name"] == "Snapshot"
+    assert manifest["record_uuid"] == "3" * 32 and manifest["runtime_nonce"] == "4" * 32
+    assert manifest["original_identity"] == {"pointer": "1", "session_uid": "1"}
+    assert manifest["snapshot_identity"] == {"pointer": "2", "session_uid": "2"}
+    assert manifest["native_graph_sha256"] == capture.native_graph_sha256
+    assert manifest["portable_graph_sha256"] == capture.portable_graph_sha256
+    assert manifest["native_identity_rows"] == list(capture.native_identity_rows)
+    assert manifest["portable_identity_rows"] == capture.summary()["portable_identity_rows"]
+    assert manifest["image_metadata"]["is_dirty"] and manifest["snapshot_metadata"]["owner_image_name"] == "Original"
+    assert manifest["previous_decoded_pixels_sha256"] == capture.payloads.original_decoded_pixels_sha256
+    assert manifest["current_pixels_sha256_float32_le"] == capture.payloads.current_pixels_sha256_float32_le
+    assert item.evidence()["durable_backups_verified"]
+    assert result["files"] == [item.records[key].summary() for key in ("oldpacked", "current", "manifest")]
+    assert result["manifest_sha256"] == hashlib.sha256(item.plan.path("manifest").read_bytes()).hexdigest()
+
+    reader = files.module.BackupFiles(files.module.freeze_recovery_plan(
+        str(item.plan.path("manifest")), str(files.root), files.check,
+    ))
+    (reopened, _), _ = drain(reader.read_manifest_steps(files.check))
+    assert reopened == manifest
+    for kind, expected in (("oldpacked", capture.payloads.original_packed),
+                           ("current", capture.payloads.snapshot_packed)):
+        descriptor = manifest["backups"][kind]
+        (data, _), _ = drain(reader.read_steps(kind, descriptor["bytes"], descriptor["sha256"], files.check, capture=True))
+        assert data == expected
+    assert not item.plan.journal_enabled
+
+
+@pytest.mark.parametrize("fault", ["scope", "owner", "existing_record", "packed_hash"])
+def test_pair_refuses_changed_capture_before_any_backup(files, fault):
+    capture, item = captured_pair(files), files.make()
+    materials = ["Unexpected Material"] if fault == "scope" else None
+    if fault == "owner":
+        capture.snapshot_metadata["static"]["native_owner"]["name"] = "Other"
+    elif fault == "existing_record":
+        capture.snapshot_metadata["volatile"]["lifecycle_record"] = "existing"
+    elif fault == "packed_hash":
+        capture = replace(capture, payloads=replace(capture.payloads, snapshot_packed_sha256="f" * 64))
+    with pytest.raises(files.module.BridgeError):
+        drain(prepared_pair(item, capture, files.check, materials))
+    assert not item.attempted and not item.evidence()["durable_backups_verified"]
+    assert not list(files.root.iterdir())
+
+
+def test_pair_revoked_after_first_publication_retains_only_exact_old_bytes(files):
+    item, capture = files.make(), captured_pair(files)
+
+    def check():
+        files.check()
+        if item.records:
+            raise files.module.BridgeError("PERMISSION_DENIED", "Permission revoked after first backup.")
+
+    with pytest.raises(files.module.BridgeError, match="revoked"):
+        drain(prepared_pair(item, capture, check))
+    assert list(files.root.iterdir()) == [item.plan.path("oldpacked")]
+    assert item.plan.path("oldpacked").read_bytes() == capture.payloads.original_packed
+    assert item.evidence()["published_bytes_verified"] and not item.evidence()["durable_backups_verified"]
 
 
 def test_descriptors_are_closed_at_every_cooperative_yield(files, monkeypatch):
