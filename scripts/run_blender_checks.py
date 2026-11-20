@@ -287,7 +287,10 @@ PERSISTENT_SAVE_PHASES = {
 }
 CASES.update({name: ("blender_persistent_save_smoke.py", PERSISTENT_SAVE_PHASES["crash_restart"])
               for name in PERSISTENT_SAVE_CASES})
+EDITED_TEXTURE_RECOVERY_CASES = {"edited_texture_recovery", "edited_texture_recovery_large"}
 STOCK_WORKFLOW_PHASES = {
+    **{case: {"writer": PERSISTENT_SAVE_PHASES["writer"], "reader": PERSISTENT_SAVE_PHASES["crash_restart"]}
+       for case in EDITED_TEXTURE_RECOVERY_CASES},
     "project_checkpoint_backup": {
         "writer": PERSISTENT_SAVE_PHASES["writer"], "reader": PERSISTENT_SAVE_PHASES["crash_restart"],
     },
@@ -298,6 +301,9 @@ STOCK_WORKFLOW_PHASES = {
     },
 }
 CASES["project_checkpoint_backup"] = ("blender_checkpoint_backup_smoke.py", STOCK_WORKFLOW_PHASES["project_checkpoint_backup"]["reader"])
+CASES.update({case: ("blender_edited_texture_recovery_smoke.py", STOCK_WORKFLOW_PHASES[case]["reader"])
+              for case in sorted(EDITED_TEXTURE_RECOVERY_CASES)})
+SHARED_BRIDGE_CONFIG_CASES = {*PERSISTENT_SAVE_CASES, *EDITED_TEXTURE_RECOVERY_CASES, "project_checkpoint_backup"}
 CASES["static_asset_delivery"] = ("blender_static_delivery_smoke.py", STOCK_WORKFLOW_PHASES["static_asset_delivery"]["reader"])
 PHASED_CASES = {
     "isolated_asset_preview_probe": ("BLENDER_ISOLATED_ASSET_PREVIEW_WRITER_OK ", "BLENDER_ISOLATED_ASSET_PREVIEW_WORKER_OK "),
@@ -4001,7 +4007,7 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
         if phase not in STOCK_WORKFLOW_PHASES[case] or bundle is None:
             raise ValueError("Stock Blender workflows require a private profile and an explicit phase")
         command.insert(1, "--disable-autoexec")
-        timeout = min(timeout, 180)
+        timeout = min(timeout, 300 if case == "edited_texture_recovery_large" else 180)
     if case == STORAGE_RUNTIME_CONTEXT_CASE:
         command.append("--bridge-runtime-context")
     if case in PAIRED_RECOVERY_PROFILES:
@@ -4066,7 +4072,7 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
     environment["BRIDGE_TEST_PROCESS_TOKEN"] = process_instance
     for key, folder in (("BLENDER_USER_CONFIG", "config"), ("BLENDER_USER_SCRIPTS", "scripts"),
                         ("BLENDER_USER_DATAFILES", "datafiles")):
-        if (case in PERSISTENT_SAVE_CASES or case == "project_checkpoint_backup") and key == "BLENDER_USER_CONFIG":
+        if case in SHARED_BRIDGE_CONFIG_CASES and key == "BLENDER_USER_CONFIG":
             assert bundle is not None
             environment[key] = str(bundle / "bridge-config")
             continue
@@ -4990,7 +4996,7 @@ def run_case(blender: Path, case: str, output: Path, timeout: int, *,
     started = time.monotonic()
     bundle = output / f"{case}-bundle"
     bundle.mkdir(mode=0o700)
-    if case == "project_checkpoint_backup":
+    if case in SHARED_BRIDGE_CONFIG_CASES:
         (bundle / "bridge-config").mkdir(mode=0o700)
     phase_order = (STOCK_WORKFLOW_PHASES[case].items() if case in STOCK_WORKFLOW_PHASES
                    else zip(("writer", "reader"), PHASED_CASES[case], strict=True))
@@ -5064,7 +5070,7 @@ def main() -> int:
     if any(not p.is_file() for p in executables):
         parser.error("Each Blender path must be an existing executable file")
     output = args.output.resolve()
-    defaults = [case for case in CASES if case not in {"native_project_saving_large", MESH_STORAGE_CONTROL_CASE, MESH_STORAGE_TIMING_CASE, MESH_STORAGE_INSPECTION_CASE, MESH_STORAGE_COST_CASE}
+    defaults = [case for case in CASES if case not in {"native_project_saving_large", *EDITED_TEXTURE_RECOVERY_CASES, MESH_STORAGE_CONTROL_CASE, MESH_STORAGE_TIMING_CASE, MESH_STORAGE_INSPECTION_CASE, MESH_STORAGE_COST_CASE}
                 and (args.include_interactive or case not in INTERACTIVE_CASES | OPT_IN_CASES)
                 and (case != "installed_addon_probe" or args.package_probe_config is not None)]
     cases = list(dict.fromkeys(args.cases or defaults))

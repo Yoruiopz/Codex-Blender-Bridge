@@ -1,9 +1,9 @@
 # Cooperative image snapshots and recovery
 
-**Save availability:** `project.save` currently refuses Save and Save As before
-native/path access; see [the safety change](project-save-safety.md). Fresh-process
-results below establish feature serialization through owned fixture setup, not a
-safe bridge project-save capability. Earlier typed-save reports are historical.
+The retained recovery Image can be saved in a `.blend` through ordinary native
+`project.save` with its local Blender permission. Reopen the verified project,
+preview the stored snapshot and explicitly restore it to the original Image.
+[Save and recover a Blender project](project-save-safety.md)
 
 Three typed tools extend current-pixel recovery to ordinary RGBA images up to
 4096 x 4096 pixels, with a 288 MiB packed payload limit. The synchronous
@@ -85,8 +85,24 @@ when evidence or operation recording fails.
 
 A source buffer, private array, fake user or undo history alone is not a backup.
 Successful snapshot jobs retain a complete packed payload in Blender memory.
-Durability requires a safe separately authorized project save, which remains blocked. Save
-again after restoration when the restored result must survive reopening.
+Save the project with `project.save` to persist the helper. Save again after
+restoration when the restored state must survive another reopen.
+
+The opt-in `edited_texture_recovery` test composes these steps for a small
+Float32 FILE image in stock Blender. It passed on Windows Blender 4.5.1 and
+5.1.2 and Linux Blender 4.5.14 and 5.2.2. With the external source path absent,
+a fresh process reopened the verified checkpoint and explicitly reconstructed
+all current channels on the original Image. The check preserved the original
+identity, color and alpha roles, direct material bindings, an unrelated
+protected texture and the checkpoint file bytes.
+
+The composed `edited_texture_recovery_large` case also passed on Linux Blender
+4.5.14 with one 4096 × 4096 Float32 FILE image. The public snapshot job took
+132 seconds and the explicit reconstruction took 131 seconds. Peak isolated
+process RSS was approximately 3.4 GiB in both phases. The test requires at least
+8 GiB available memory and 2 GiB free fixture disk before each phase. Windows
+4K, constrained-memory conditions, current pixels on first open and production
+texture portability remain to be qualified.
 
 The phased interactive native cases `image_recovery_jobs` and
 `image_recovery_jobs_large` exercise the public socket/timer lifecycle and a

@@ -1609,6 +1609,8 @@ def test_phased_version_mismatch_is_failure(runner, monkeypatch, tmp_path):
 
 @pytest.mark.parametrize("case,fail_phase", [
     ("project_checkpoint_backup", None),
+    ("edited_texture_recovery", None),
+    ("edited_texture_recovery_large", None),
     ("static_asset_delivery", None),
     ("static_asset_delivery", "importer"),
 ])
@@ -1617,28 +1619,33 @@ def test_stock_workflow_requires_all_private_phases(runner, monkeypatch, tmp_pat
 
     profiles = []
     phases = runner.STOCK_WORKFLOW_PHASES[case]
+    maximum = 300 if case == "edited_texture_recovery_large" else 180
 
     def run(command, **kwargs):
         assert "--background" not in command and "--disable-autoexec" in command
-        assert "--factory-startup" in command and kwargs["timeout"] == 180
+        assert "--factory-startup" in command and kwargs["timeout"] == maximum
         phase = command[command.index("--bridge-phase") + 1]
         env = kwargs["env"]
         profiles.append((env["BLENDER_USER_CONFIG"], env["BLENDER_USER_SCRIPTS"]))
         payload = {"phase": phase, "process_instance": env["BRIDGE_TEST_PROCESS_TOKEN"],
-                   "process_id": 91, "blender_version": "4.5.1"}
+                   "process_id": 90 + len(profiles), "blender_version": "4.5.1"}
         kwargs["stdout"].write((phases[phase] + json.dumps(payload)).encode())
         return SimpleNamespace(returncode=int(phase == fail_phase))
 
     monkeypatch.setattr(runner.sys, "platform", "win32")
     monkeypatch.setattr(windows_test_process, "run_isolated", run)
     monkeypatch.setattr(runner.subprocess, "run", lambda *_a, **_k: pytest.fail("visible fallback"))
-    result = runner.run_case(Path("blender.exe"), case, tmp_path, 240)
+    result = runner.run_case(Path("blender.exe"), case, tmp_path, 380)
     assert result["status"] == ("passed" if fail_phase is None else "failed")
     assert result["reader_started"] is (fail_phase is None)
     assert result["fresh_process_verified"] is (fail_phase is None)
     assert result["phase_sequence"] == (list(phases) if fail_phase is None else ["writer", "importer"])
     assert len({scripts for _, scripts in profiles}) == len(profiles)
-    assert len({config for config, _ in profiles}) == (1 if case == "project_checkpoint_backup" else len(profiles))
+    shared = {"project_checkpoint_backup", "edited_texture_recovery", "edited_texture_recovery_large"}
+    assert len({config for config, _ in profiles}) == (1 if case in shared else len(profiles))
+    if case in shared:
+        assert all(Path(config) == tmp_path / f"{case}-bundle" / "bridge-config" for config, _ in profiles)
+        assert all(Path(config).is_dir() for config, _ in profiles)
 
 
 def glb_structure_model(runner, binary, environment, *, version=(4, 5, 14)):
