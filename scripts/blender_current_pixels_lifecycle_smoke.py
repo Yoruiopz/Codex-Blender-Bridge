@@ -35,6 +35,17 @@ ACQUISITION_MARKER = "BLENDER_CURRENT_PIXELS_ACQUISITION_OK "
 ACQUISITION_REPORT_NAME = "current-pixels-acquisition.json"
 ACQUISITION_ACK_MS = 3000
 ACQUISITION_CONTROL_MS = 10000
+INTERRUPTION_PROFILE = "CURRENT_PIXELS_QUEUED_BACKUP_INTERRUPTION_SMALL_V1"
+INTERRUPTION_MARKER = "BLENDER_CURRENT_PIXELS_BACKUP_INTERRUPTION_OK "
+INTERRUPTION_REPORT_NAME = "current-pixels-backup-interruption.json"
+INTERRUPTION_PREFIX = "queued-current-pixels"
+INTERRUPTION_SAMPLES = 4
+INTERRUPTION_ASSERTIONS = frozenset({
+    "fixture_only_registration", "normal_registry_unchanged", "canonical_runtime", "real_socket_timer",
+    "both_acknowledgements_unfrozen_under_three_seconds", "terminal_preview_hashes", "observed_oldpacked_staging_write",
+    "queued_explicit_cancellation", "exact_partial_archive_only", "no_late_file_effects",
+    "no_image_helper_or_project_write", "source_helper_and_protected_unchanged", "source_unchanged",
+})
 ACQUISITION_GRANTS = ("allow_inspect_scene", "allow_edit_materials", "allow_external_files", "allow_save_project")
 FIXTURE_BOOLEAN_DOMAINS = {".select_vert": "POINT", ".select_edge": "EDGE", ".select_poly": "FACE",
     "sharp_face": "FACE", ".pn.UVMap": "CORNER", ".uv_select_vert": "CORNER",
@@ -80,7 +91,8 @@ def source_fingerprints():
 def owned_profile(report, *, private_display=None):
     """Accept only the runner's disposable profile and fixed output sibling."""
     assert sys.platform == "linux", "This census currently qualifies official Linux builds only"
-    assert report.is_absolute() and report.name in {REPORT_NAME, GRAPH_REPORT_NAME, LOADED_REPORT_NAME, ACQUISITION_REPORT_NAME}
+    assert report.is_absolute() and report.name in {REPORT_NAME, GRAPH_REPORT_NAME, LOADED_REPORT_NAME,
+                                                   ACQUISITION_REPORT_NAME, INTERRUPTION_REPORT_NAME}
     parent = report.parent
     assert not parent.is_symlink() and parent.resolve(strict=True) == parent
     info = parent.stat()
@@ -524,43 +536,48 @@ def start_deferred_job(request, method, arguments):
     return ack
 
 
-def loaded_backup_requests(request, control, preview_method, pack_method, arguments, result, transcript, polls):
-    """Obtain a reviewed preview then run the separate, deferred backup job."""
-    def wait(ack, seconds, *, collect_polls=False):
-        params = {"job_id": ack["job_id"]}
-        end, revision, count = time.monotonic() + seconds, ack["revision"], 0
-        while time.monotonic() < end:
-            response, row = request("jobs.inspect", params, retained=False, timeout_ms=ACQUISITION_CONTROL_MS)
-            assert response["ok"] is True, response
-            job = response["result"]
-            assert job["job_id"] == ack["job_id"] and job["revision"] >= revision
-            revision, count = job["revision"], count + 1
-            if collect_polls and len(polls) < 256:
-                polls.append({"revision": revision, "state": job["state"], "progress": job["progress"],
-                              "elapsed_seconds": row["elapsed_seconds"]})
-            if job["terminal"] is True:
-                transcript.append(row)
-                assert job["state"] == "SUCCEEDED" and job["undo_boundary_created"] is False, job
-                return job, count
-            time.sleep(.02)
-        raise AssertionError("Private current-pixels job exceeded the diagnostic deadline")
+def wait_for_loaded_success(request, ack, transcript, seconds, polls=None):
+    params = {"job_id": ack["job_id"]}
+    end, revision, count = time.monotonic() + seconds, ack["revision"], 0
+    while time.monotonic() < end:
+        response, row = request("jobs.inspect", params, retained=False, timeout_ms=ACQUISITION_CONTROL_MS)
+        assert response["ok"] is True, response
+        job = response["result"]
+        assert job["job_id"] == ack["job_id"] and job["revision"] >= revision
+        revision, count = job["revision"], count + 1
+        if polls is not None and len(polls) < 256:
+            polls.append({"revision": revision, "state": job["state"], "progress": job["progress"],
+                          "elapsed_seconds": row["elapsed_seconds"]})
+        if job["terminal"] is True:
+            transcript.append(row)
+            assert job["state"] == "SUCCEEDED" and job["undo_boundary_created"] is False, job
+            return job, count
+        time.sleep(.02)
+    raise AssertionError("Private current-pixels job exceeded the diagnostic deadline")
 
-    require_starter_grants(request, control, preview_method, arguments)
+
+def preview_for_backup(request, control, preview_method, arguments, transcript):
     preview_ack = start_deferred_job(request, preview_method, arguments)
-    preview_job, preview_polls = wait(preview_ack, 93.)
+    preview_job, preview_polls = wait_for_loaded_success(request, preview_ack, transcript, 93.)
     preview = preview_job["result"]
     assert preview["phase"] == "preview" and re.fullmatch(r"[0-9a-f]{64}", preview["fingerprint"])
     assert re.fullmatch(r"[0-9a-f]{64}", preview["consumer_graph_sha256"])
     assert preview["backup_files_written"] is False and preview["image_packed"] is False
     control("preview_verified", preview=preview)
-
     start = {**arguments, "expected_target_fingerprint": preview["fingerprint"],
              "confirm_replace_packed_bytes": True, "confirm_discard_current_buffer": True,
              "time_limit_seconds": LOADED_BACKUP_JOB_SECONDS}
+    return preview_ack, preview, start, preview_polls
+
+
+def loaded_backup_requests(request, control, preview_method, pack_method, arguments, result, transcript, polls):
+    """Obtain a reviewed preview then run the separate, deferred backup job."""
+    require_starter_grants(request, control, preview_method, arguments)
+    preview_ack, preview, start, preview_polls = preview_for_backup(request, control, preview_method, arguments, transcript)
     require_starter_grants(request, control, pack_method, start)
     accepted = start_deferred_job(request, pack_method, start)
     assert accepted["job_id"] != preview_ack["job_id"]
-    job, count = wait(accepted, LOADED_BACKUP_JOB_SECONDS + 15., collect_polls=True)
+    job, count = wait_for_loaded_success(request, accepted, transcript, LOADED_BACKUP_JOB_SECONDS + 15., polls)
     assert job["result"]["phase"] == "backups_verified"
     assert job["result"]["image_packed"] is False and job["result"]["project_saved"] is False
     assert job["result"]["historical_archive"] is True and job["result"]["current_scene_match_verified"] is False
@@ -570,6 +587,95 @@ def loaded_backup_requests(request, control, preview_method, pack_method, argume
     assert recovery["helper_record_write_attempted"] is False and recovery["image_write_attempted"] is False
     assert len(transcript) == 12
     result.update(preview=preview, terminal=job, preview_poll_count=preview_polls, poll_count=count)
+
+
+def backup_interruption_requests(request, control, preview_method, pack_method, arguments, result, transcript):
+    preview_ack, preview, start, preview_polls = preview_for_backup(request, control, preview_method, arguments, transcript)
+    ack = start_deferred_job(request, pack_method, start)
+    assert ack["job_id"] != preview_ack["job_id"]
+    params = {"job_id": ack["job_id"]}
+    revision, cancel_requested = ack["revision"], False
+    end = time.monotonic() + LOADED_BACKUP_JOB_SECONDS + 15.
+    while time.monotonic() < end:
+        response, row = request("jobs.inspect", params, retained=False, timeout_ms=ACQUISITION_CONTROL_MS)
+        assert response["ok"] is True, response
+        job = response["result"]
+        assert job["job_id"] == ack["job_id"] and job["revision"] >= revision
+        revision = job["revision"]
+        if job["terminal"] is True:
+            transcript.append(row)
+            assert cancel_requested and job["state"] == "CANCELLED" and job["result"] is None, job
+            assert job["undo_boundary_created"] is False and job["undo_boundary_finalized"] is False
+            assert job["error"]["code"] == "TIMEOUT" and job["error"]["context"]["reason"] == "explicit cancellation"
+            recovery = job["recovery_evidence"]
+            assert recovery["stage"] == "UNKNOWN" and recovery["state_known"] is False
+            assert recovery["external_write_attempted"] is True and recovery.get("durable_backups_verified", False) is False
+            assert recovery["helper_record_write_attempted"] is False and recovery["image_write_attempted"] is False
+            assert recovery["project_saved"] is False
+            break
+        progress = job["progress"]
+        if not cancel_requested and job["state"] == "RUNNING" and progress["phase"] == "writing_oldpacked":
+            assert progress["completed"] == progress["total"] == preview["payload_facts"]["original_packed_bytes"]
+            transcript.append(row)
+            response, _row = request("jobs.cancel", params, timeout_ms=ACQUISITION_CONTROL_MS)
+            assert response["ok"] is True and response["result"]["state"] == "CANCELLING", response
+            cancel = response["result"]
+            assert cancel["job_id"] == ack["job_id"] and cancel["cancel_requested"] is True and cancel["terminal"] is False
+            cancel_requested = True
+        else:
+            time.sleep(.005)
+    else:
+        raise AssertionError("Private archive cancellation exceeded the diagnostic deadline")
+
+    samples = [control("interrupted_stable_sample", effects=job["external_effects"])]
+    for _ in range(INTERRUPTION_SAMPLES - 1):
+        time.sleep(.05)
+        response, _row = request("jobs.inspect", params, timeout_ms=ACQUISITION_CONTROL_MS)
+        assert response["ok"] is True and response["result"] == job, response
+        sample = control("interrupted_stable_sample", effects=job["external_effects"])
+        assert sample["tick"] > samples[-1]["tick"] and sample["artifacts"] == samples[0]["artifacts"]
+        samples.append(sample)
+    result.update(terminal=job, preview=preview, preview_poll_count=preview_polls, stability_samples=samples)
+
+
+def interrupted_backup_artifacts(folder, previous, effects):
+    """Read the owned partial namespace and independently verify old packed bytes."""
+    final = folder / (INTERRUPTION_PREFIX + ".oldpacked.bin")
+    stage = Path(effects["retained_staging_path"]) if effects["retained_staging_path"] is not None else None
+    if stage is not None:
+        assert stage.parent == folder and re.fullmatch(r"\.blender-codex-current-pixels-[a-z0-9_]{8}\.staging", stage.name)
+        assert effects["staging_cleanup"] == "retained_unverified"
+    published, uncertain = effects["file_published"], effects["publication_outcome_unknown"]
+    assert type(published) is bool and type(uncertain) is bool and not (published and uncertain)
+    assert effects["publication_attempted"] is (published or uncertain)
+    assert effects["artifacts_truncated"] is False
+    expected = sorted(path for path in (stage, final if published or uncertain else None) if path is not None)
+    assert expected and sorted(folder.iterdir()) == expected
+    if uncertain:
+        assert stage is not None
+    sha256 = hashlib.sha256(previous).hexdigest()
+    reported = ([{"filepath": str(final), "file_bytes": len(previous) if published else None,
+                  "file_sha256": sha256 if published else None}] if published or uncertain else [])
+    assert effects["artifacts"] == reported
+
+    def stable_identity(info):
+        return (info.st_mode, info.st_size, info.st_dev, info.st_ino, info.st_nlink, info.st_mtime_ns, info.st_ctime_ns)
+
+    artifacts = []
+    for path in expected:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(descriptor, "rb") as stream:
+            info = os.fstat(stream.fileno())
+            assert stat.S_ISREG(info.st_mode)
+            assert info.st_size == len(previous) and info.st_nlink == len(expected)
+            assert stream.read(len(previous) + 1) == previous
+            assert stable_identity(os.fstat(stream.fileno())) == stable_identity(info)
+        assert stable_identity(path.lstat()) == stable_identity(info)
+        artifacts.append({"name": path.name, "bytes": info.st_size, "sha256": sha256, "device": info.st_dev,
+                          "inode": info.st_ino, "links": info.st_nlink, "mtime_ns": info.st_mtime_ns,
+                          "ctime_ns": info.st_ctime_ns})
+    assert len({(row["device"], row["inode"]) for row in artifacts}) == 1
+    return artifacts
 
 
 def acquisition_requests(request, control, method, arguments, result, transcript):
@@ -626,7 +732,7 @@ def acquisition_requests(request, control, method, arguments, result, transcript
 
 def _loaded_backup_probe(bpy, before, parent, runtime, prefs, original, helper, protected,
                          material, backups, previous, current, edited, observe, *, report, token, display,
-                         original_decoded_sha256, storage_setup=None, acquisition=False):
+                         original_decoded_sha256, storage_setup=None, acquisition=False, interruption=False):
     """Real socket worker and the registered Runtime timer; no manual dispatch."""
     import queue
     import resource
@@ -674,11 +780,13 @@ def _loaded_backup_probe(bpy, before, parent, runtime, prefs, original, helper, 
 
     baseline, protected_before = observe(), protected_state()
     assert baseline["backup_files"] == []
+    if interruption:
+        assert bpy.data.filepath == "" and not bpy.data.is_saved
     initial_names = set(runtime.registry._tools)
     controls, done, result = queue.Queue(), threading.Event(), {}
     transcript, polls, assertions = [], [], {key: True for key in (
         "fixture_only_registration", "normal_registry_unchanged", "canonical_runtime")}
-    prefix = "queued-current-pixels"
+    prefix = INTERRUPTION_PREFIX
     arguments = {"image_name": original.name, "snapshot_name": helper.name,
         "affected_materials": [material.name], "backup_directory": str(backups),
         "backup_prefix": prefix, "retain_event_journal": False}
@@ -689,6 +797,7 @@ def _loaded_backup_probe(bpy, before, parent, runtime, prefs, original, helper, 
     host, actual_port = runtime.start_server("127.0.0.1", port, request_timeout=60.)
     assert host == "127.0.0.1" and actual_port == port
     began = time.monotonic()
+    supervisor_ticks = 0
 
     def control(action, **parameters):
         event, answer = threading.Event(), []
@@ -723,6 +832,10 @@ def _loaded_backup_probe(bpy, before, parent, runtime, prefs, original, helper, 
             if acquisition:
                 acquisition_requests(request, control, source.PREVIEW_START, arguments, result, transcript)
                 return
+            if interruption:
+                backup_interruption_requests(request, control, source.PREVIEW_START, contract.PACK_START,
+                                             arguments, result, transcript)
+                return
 
             loaded_backup_requests(request, control, source.PREVIEW_START, contract.PACK_START,
                                   arguments, result, transcript, polls)
@@ -742,11 +855,41 @@ def _loaded_backup_probe(bpy, before, parent, runtime, prefs, original, helper, 
         assert now == baseline and protected_state() == protected_before, "Owned data changed"
         assert set(runtime.registry._tools) == initial_names
 
+    def finish_interruption():
+        terminal = result["terminal"]
+        samples = result["stability_samples"]
+        assert len(samples) == INTERRUPTION_SAMPLES
+        artifacts = interrupted_backup_artifacts(backups, previous, terminal["external_effects"])
+        assert all(sample["artifacts"] == artifacts for sample in samples)
+        unchanged(allow_backups=True)
+        assert bpy.data.filepath == "" and not bpy.data.is_saved
+        assert runtime.jobs.active is None and not runtime.state.snapshot()["is_executing"]
+        assert source_fingerprints() == before
+        assertions.update(dict.fromkeys(INTERRUPTION_ASSERTIONS - {"terminal_preview_hashes"}, True))
+        assert set(assertions) == INTERRUPTION_ASSERTIONS
+        proof = {"completed": True, "profile": INTERRUPTION_PROFILE, "scope": "fixture_only_partial_archive_cancellation",
+            "process_instance": token, "process_id": os.getpid(), "blender_version": bpy.app.version_string,
+            "source_build": bpy.app.build_hash.decode(), "source_fingerprints": before,
+            "source_snapshot_sha256": hashlib.sha256(canonical_json(before)).hexdigest(),
+            "assertions": assertions, "private_display": display, "transport": transcript, "storage_setup": storage_setup,
+            "payload_hashes": result["payload_hashes"], "preview_poll_count": result["preview_poll_count"],
+            "baseline": baseline, "final": observe(), "protected_baseline": protected_before,
+            "protected_final": protected_state(), "stability_samples": samples, "retained_artifacts": artifacts,
+            "public_tool_acceptance": False, "image_forward_transition_qualified": False, "restoration_qualified": False,
+            "windows_qualified": False, "image_packed": False, "project_saved": False, "complete_archive": False}
+        compact = {key: proof[key] for key in ("completed", "profile", "scope", "process_instance", "process_id",
+            "blender_version", "source_build", "source_snapshot_sha256", "public_tool_acceptance",
+            "image_forward_transition_qualified", "restoration_qualified", "windows_qualified", "complete_archive")}
+        compact["full_receipt"] = write_receipt(report, proof)
+        print(INTERRUPTION_MARKER + canonical_json(compact).decode(), flush=True)
+        owned_process_exit(0)
+
     def finish():
         assert done.is_set(), "Worker not finished"
         if "failure" in result:
             unchanged(allow_backups=not acquisition)
             marker = ("BLENDER_CURRENT_PIXELS_ACQUISITION_REFUSAL " if acquisition
+                      else "BLENDER_CURRENT_PIXELS_BACKUP_INTERRUPTION_REFUSAL " if interruption
                       else "BLENDER_CURRENT_PIXELS_LOADED_BACKUP_REFUSAL ")
             print(marker + canonical_json({
                 "source_helper_and_protected_unchanged": True,
@@ -756,6 +899,8 @@ def _loaded_backup_probe(bpy, before, parent, runtime, prefs, original, helper, 
                              for row in transcript],
             }).decode(), flush=True)
             raise AssertionError(result["failure"])
+        if interruption:
+            return finish_interruption()
         if acquisition:
             unchanged()
             assert runtime.jobs.active is None and not runtime.state.snapshot()["is_executing"]
@@ -842,6 +987,8 @@ def _loaded_backup_probe(bpy, before, parent, runtime, prefs, original, helper, 
         owned_process_exit(0)
 
     def supervise():
+        nonlocal supervisor_ticks
+        supervisor_ticks += 1
         try:
             while not controls.empty():
                 action, parameters, event, answer = controls.get_nowait()
@@ -851,6 +998,13 @@ def _loaded_backup_probe(bpy, before, parent, runtime, prefs, original, helper, 
                         setattr(prefs, parameters["preference"], parameters["enabled"])
                     elif action == "unchanged":
                         unchanged()
+                    elif action == "interrupted_stable_sample" and interruption:
+                        unchanged(allow_backups=True)
+                        assert bpy.data.filepath == "" and not bpy.data.is_saved
+                        assert runtime.jobs.active is None and not runtime.state.snapshot()["is_executing"]
+                        answer.extend((True, {"tick": supervisor_ticks,
+                            "artifacts": interrupted_backup_artifacts(backups, previous, parameters["effects"])}))
+                        continue
                     elif action == ("acquisition_preview_verified" if acquisition else "preview_verified"):
                         unchanged()
                         preview = parameters["preview"]
@@ -891,11 +1045,13 @@ def main(argv=None):
     modes.add_argument("--bridge-source-graph", action="store_true")
     modes.add_argument("--bridge-loaded-backup", action="store_true")
     modes.add_argument("--bridge-current-pixels-acquisition", action="store_true")
+    modes.add_argument("--bridge-current-pixels-backup-interruption", action="store_true")
     parser.add_argument("--bridge-report", type=Path, required=True)
     arguments = sys.argv[sys.argv.index("--") + 1:] if argv is None and "--" in sys.argv else argv
     args = parser.parse_args(arguments)
-    queued = args.bridge_loaded_backup or args.bridge_current_pixels_acquisition
-    report_name = (ACQUISITION_REPORT_NAME if args.bridge_current_pixels_acquisition else LOADED_REPORT_NAME
+    queued = args.bridge_loaded_backup or args.bridge_current_pixels_acquisition or args.bridge_current_pixels_backup_interruption
+    report_name = (INTERRUPTION_REPORT_NAME if args.bridge_current_pixels_backup_interruption else
+                   ACQUISITION_REPORT_NAME if args.bridge_current_pixels_acquisition else LOADED_REPORT_NAME
                    if args.bridge_loaded_backup else GRAPH_REPORT_NAME if args.bridge_source_graph else REPORT_NAME)
     assert args.bridge_report.name == report_name
     if not queued:
@@ -931,7 +1087,8 @@ def main(argv=None):
             try:
                 return native_graph_probe(bpy, graph, before, args.bridge_report.parent,
                     loaded_backup={"report": args.bridge_report, "token": token, "display": display,
-                                   "acquisition": args.bridge_current_pixels_acquisition})
+                                   "acquisition": args.bridge_current_pixels_acquisition,
+                                   "interruption": args.bridge_current_pixels_backup_interruption})
             except BaseException:
                 traceback.print_exc()
                 owned_process_exit(1)

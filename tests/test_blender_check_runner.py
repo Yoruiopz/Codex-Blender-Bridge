@@ -964,6 +964,112 @@ def test_deferred_loaded_backup_requires_both_queued_receipts_and_exact_archive(
     assert runner._loaded_backup_receipt_matches(compact, tmp_path, token) is (fault is None)
 
 
+@pytest.mark.parametrize("fault", [None, "hardlink_pair", "late_manifest", "bytes_changed", "repeated_tick", "incomplete_cancel"])
+def test_backup_interruption_requires_exact_stable_partial_archive(runner, monkeypatch, tmp_path, fault):
+    from scripts import blender_current_pixels_lifecycle_smoke as fixture
+
+    prefix = fixture.INTERRUPTION_PREFIX
+    token = "9" * 32
+    folder, seed_folder = tmp_path / "lifecycle-backups", tmp_path / "setup-exr"
+    folder.mkdir()
+    seed_folder.mkdir()
+    old = b"oldpacked bytes from the seed"
+    (seed_folder / "original.exr").write_bytes(old)
+    stage = folder / ".blender-codex-current-pixels-testdata.staging"
+    stage.write_bytes(old)
+    final_path = folder / (prefix + ".oldpacked.bin")
+    uncertainty = fault == "hardlink_pair"
+    if uncertainty:
+        final_path.hardlink_to(stage)
+    effects = {"retained_staging_path": str(stage), "staging_cleanup": "retained_unverified",
+               "file_published": False, "publication_attempted": uncertainty, "publication_outcome_unknown": uncertainty,
+               "artifacts_truncated": False, "artifacts": ([{"filepath": str(final_path), "file_bytes": None,
+                                                               "file_sha256": None}] if uncertainty else [])}
+    hashes = {"original_packed_sha256": hashlib.sha256(old).hexdigest(), "snapshot_packed_sha256": "3" * 64,
+              "current_pixels_sha256_float32_le": "4" * 64,
+              "original_decoded_pixels_sha256": hashlib.sha256(runner.struct.pack("<16f", *([-0., .25, .5, 1.] * 4))).hexdigest()}
+    preview = {"phase": "preview", "profile": "FILE_F32_EXR_DATA_CURRENT_PIXELS_V1", "dimensions": [2, 2],
+               "fingerprint": "5" * 64, "consumer_graph_sha256": "6" * 64, "image_packed": False,
+               "backup_files_written": False, "payload_facts": {**hashes, "original_packed_bytes": len(old)}}
+    arguments = {"backup_directory": str(folder), "retain_event_journal": False, "backup_prefix": prefix}
+    preview_method, pack_method = "image.current_pixels_pack_preview_start", "image.pack_current_pixels_job_start"
+    transcript, result, sampled = [], {}, []
+    preview_id, backup_id = "job_" + "1" * 32, "job_" + "2" * 32
+    recovery = {"stage": "UNKNOWN", "state_known": False, "external_write_attempted": True,
+                "helper_record_write_attempted": False, "image_write_attempted": False, "project_saved": False}
+    terminal = {"job_id": backup_id, "request_id": "wire-2", "revision": 4, "state": "CANCELLED", "terminal": True,
+                "undo_boundary_created": False, "undo_boundary_finalized": False, "result": None,
+                "error": {"code": "TIMEOUT", "context": {"reason": "explicit cancellation"}},
+                "external_effects": effects, "recovery_evidence": recovery}
+
+    def request(method, params, *, retained=True, timeout_ms):
+        index = len(transcript)
+        request_id = f"wire-{index}"
+        frame = {"id": request_id, "protocol_version": "1.0", "method": method, "params": params, "timeout_ms": timeout_ms}
+        if method in {preview_method, pack_method}:
+            data = {"job_id": preview_id if method == preview_method else backup_id, "request_id": request_id,
+                    "accepted": True, "terminal": False, "revision": 1, "undo_boundary_created": False,
+                    "job_completed": False, "input_frozen_at_acceptance": False}
+        elif params["job_id"] == preview_id:
+            data = {"job_id": preview_id, "request_id": "wire-0", "terminal": True, "state": "SUCCEEDED",
+                    "undo_boundary_created": False, "result": preview, "revision": 2}
+        elif method == "jobs.cancel":
+            data = {"job_id": backup_id, "state": "CANCELLING", "terminal": False, "cancel_requested": True}
+        elif index == 3:
+            data = {"job_id": backup_id, "state": "RUNNING", "revision": 2, "terminal": False,
+                    "progress": {"phase": "writing_oldpacked", "completed": len(old), "total": len(old)}}
+        else:
+            data = terminal
+        response = {"id": request_id, "protocol_version": "1.0", "ok": True, "result": data}
+        row = {"request": frame, "response": response, "elapsed_seconds": .25}
+        if retained:
+            transcript.append(row)
+        return response, row
+
+    def control(action, **params):
+        if action == "preview_verified":
+            assert params["preview"] == preview
+            return None
+        assert action == "interrupted_stable_sample" and params["effects"] == effects
+        sampled.append(action)
+        return {"tick": len(sampled), "artifacts": fixture.interrupted_backup_artifacts(folder, old, effects)}
+
+    monkeypatch.setattr(fixture.time, "sleep", lambda _seconds: None)
+    fixture.backup_interruption_requests(request, control, preview_method, pack_method, arguments, result, transcript)
+    assert len(sampled) == fixture.INTERRUPTION_SAMPLES
+    assert [row["request"]["method"] for row in transcript[:6]] == [
+        preview_method, "jobs.inspect", pack_method, "jobs.inspect", "jobs.cancel", "jobs.inspect"]
+    samples = result["stability_samples"]
+    retained = samples[0]["artifacts"]
+    baseline = {"backup_files": [], "seed_sha256": hashes["original_packed_sha256"],
+                "images": [{"packed": hashes["original_packed_sha256"], "pixels": hashes["current_pixels_sha256_float32_le"]},
+                           {"packed": hashes["snapshot_packed_sha256"]}]}
+    sources = fixture.source_fingerprints()
+    monkeypatch.setattr(runner, "_domain_display", lambda **_options: {"path": "owned", "sha256": "8" * 64})
+    compact = {"completed": True, "profile": fixture.INTERRUPTION_PROFILE, "scope": "fixture_only_partial_archive_cancellation",
+               "process_instance": token, "process_id": 31, "blender_version": "4.5.14 LTS", "source_build": "62c1db4208e8",
+               "source_snapshot_sha256": hashlib.sha256(fixture.canonical_json(sources)).hexdigest(),
+               "complete_archive": False, "public_tool_acceptance": False, "image_forward_transition_qualified": False,
+               "restoration_qualified": False, "windows_qualified": False}
+    protected = {"pixels_sha256": "7" * 64}
+    full = {**compact, "source_fingerprints": sources, "assertions": dict.fromkeys(fixture.INTERRUPTION_ASSERTIONS, True),
+            "private_display": {"manifest_path": "owned", "manifest_sha256": "8" * 64}, "transport": transcript,
+            "storage_setup": None, "payload_hashes": hashes, "preview_poll_count": 1, "baseline": baseline,
+            "final": {**baseline, "backup_files": [row["name"] for row in retained]},
+            "protected_baseline": protected, "protected_final": protected, "retained_artifacts": retained,
+            "stability_samples": samples, "image_packed": False, "project_saved": False}
+    if fault == "late_manifest":
+        (folder / (prefix + ".manifest.json")).write_bytes(b"unexpected")
+    elif fault == "bytes_changed":
+        stage.write_bytes(old[::-1])
+    elif fault == "repeated_tick":
+        samples[-1]["tick"] = samples[-2]["tick"]
+    elif fault == "incomplete_cancel":
+        recovery["external_write_attempted"] = False
+    compact["full_receipt"] = fixture.write_receipt(tmp_path / fixture.INTERRUPTION_REPORT_NAME, full)
+    assert runner._backup_interruption_receipt_matches(compact, tmp_path, token) is (fault in {None, "hardlink_pair"})
+
+
 @pytest.mark.parametrize("fault", ["profile", "token", "pid", "build", "version", "lifecycle", "windows",
     "missing_file", "symlink", "path", "hash", "size_bool", "oversize", "full_token", "full_false_integer", "source", "source_drift",
     "catalog_schema", "catalog_build", "catalog_count", "catalog_names", "old52", "extra58", "truncated", "exit", "timeout",

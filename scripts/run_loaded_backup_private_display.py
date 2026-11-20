@@ -68,7 +68,7 @@ def ready_dimensions(server: subprocess.Popen, env: dict[str, str]) -> tuple[int
 def run(blenders: list[Path], output: Path, timeout: int, case: str = "current_pixels_loaded_backup") -> int:
     if sys.platform != "linux":
         raise RuntimeError("The private loaded-image launcher requires Linux.")
-    if case not in {"current_pixels_loaded_backup", "current_pixels_acquisition"}:
+    if case not in {"current_pixels_loaded_backup", "current_pixels_acquisition", "current_pixels_backup_interruption"}:
         raise ValueError("Unreviewed loaded-image fixture case.")
     with tempfile.TemporaryDirectory(prefix="bcb-loaded-backup-display-") as owned:
         profile = Path(owned).resolve()
@@ -125,7 +125,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--blender", type=Path, action="append", required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--case", choices=("current_pixels_loaded_backup", "current_pixels_acquisition"),
+    parser.add_argument("--case", choices=("current_pixels_loaded_backup", "current_pixels_acquisition",
+                                           "current_pixels_backup_interruption"),
                         default="current_pixels_loaded_backup")
     parser.add_argument("--timeout", type=int, default=300, help="Case timeout in seconds, from 90 to 300")
     args = parser.parse_args()

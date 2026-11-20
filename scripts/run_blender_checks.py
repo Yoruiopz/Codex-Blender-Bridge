@@ -44,7 +44,9 @@ CURRENT_PIXELS_GRAPH_ASSERTIONS = frozenset({"positive_complete_graph", "repeat_
 CURRENT_PIXELS_READ_CASES = frozenset({"current_pixels_lifecycle_census", "current_pixels_source_graph"})
 CURRENT_PIXELS_LOADED_CASE = "current_pixels_loaded_backup"
 CURRENT_PIXELS_ACQUISITION_CASE = "current_pixels_acquisition"
-CURRENT_PIXELS_QUEUED_CASES = frozenset({CURRENT_PIXELS_LOADED_CASE, CURRENT_PIXELS_ACQUISITION_CASE})
+CURRENT_PIXELS_INTERRUPTION_CASE = "current_pixels_backup_interruption"
+CURRENT_PIXELS_INTERRUPTION_REPORT = "current-pixels-backup-interruption.json"
+CURRENT_PIXELS_QUEUED_CASES = frozenset({CURRENT_PIXELS_LOADED_CASE, CURRENT_PIXELS_ACQUISITION_CASE, CURRENT_PIXELS_INTERRUPTION_CASE})
 CURRENT_PIXELS_LOADED_PROFILE = "CURRENT_PIXELS_QUEUED_LOADED_BACKUP_SMALL_V2"
 CURRENT_PIXELS_LOADED_REPORT = "current-pixels-loaded-backup.json"
 CURRENT_PIXELS_LOADED_ASSERTIONS = frozenset({"fixture_only_registration", "normal_registry_unchanged", "canonical_runtime",
@@ -145,6 +147,7 @@ CASES = {
     "current_pixels_source_graph": ("blender_current_pixels_lifecycle_smoke.py", "BLENDER_CURRENT_PIXELS_SOURCE_GRAPH_OK "),
     CURRENT_PIXELS_LOADED_CASE: ("blender_current_pixels_lifecycle_smoke.py", "BLENDER_CURRENT_PIXELS_LOADED_BACKUP_OK "),
     CURRENT_PIXELS_ACQUISITION_CASE: ("blender_current_pixels_lifecycle_smoke.py", "BLENDER_CURRENT_PIXELS_ACQUISITION_OK "),
+    CURRENT_PIXELS_INTERRUPTION_CASE: ("blender_current_pixels_lifecycle_smoke.py", "BLENDER_CURRENT_PIXELS_BACKUP_INTERRUPTION_OK "),
     "glb_stage_constructor": ("blender_glb_stage_smoke.py", "BLENDER_GLB_STAGE_CONSTRUCTOR_OK "),
     "glb_stage_structure": ("blender_glb_stage_smoke.py", "BLENDER_GLB_STAGE_STRUCTURE_OK "),
     "glb_stage_runtime": ("blender_glb_stage_runtime_smoke.py", "BLENDER_GLB_STAGE_RUNTIME_OK "),
@@ -2290,6 +2293,157 @@ def _acquisition_receipt_matches(payload: dict | None, temporary: Path, process_
         return False
 
 
+def _backup_interruption_receipt_matches(payload: dict | None, temporary: Path, process_instance: str) -> bool:
+    """Reopen the exact retained partial archive after its queued cancellation."""
+    import re
+
+    from scripts.blender_current_pixels_lifecycle_smoke import (
+        INTERRUPTION_ASSERTIONS,
+        INTERRUPTION_PREFIX,
+        INTERRUPTION_PROFILE,
+        INTERRUPTION_SAMPLES,
+        canonical_json,
+        source_fingerprints,
+    )
+
+    try:
+        flags = {"completed": True, "profile": INTERRUPTION_PROFILE, "scope": "fixture_only_partial_archive_cancellation",
+                 "process_instance": process_instance, "complete_archive": False, "public_tool_acceptance": False,
+                 "image_forward_transition_qualified": False, "restoration_qualified": False, "windows_qualified": False}
+        if type(payload) is not dict or any(type(payload.get(key)) is not type(value) or payload[key] != value
+                                            for key, value in flags.items()):
+            return False
+        version = {"62c1db4208e8": "4.5.14", "d13f752e3b9c": "5.2.2"}[payload["source_build"]]
+        if (payload["blender_version"] not in {version, version + " LTS"}
+                or type(payload["process_id"]) is not int or payload["process_id"] <= 0
+                or payload["full_receipt"]["path"] != str(temporary / CURRENT_PIXELS_INTERRUPTION_REPORT)):
+            return False
+        raw = _domain_binding(payload["full_receipt"], temporary, 2 * 1024**2, capture=True)
+        full = json.loads(raw, object_pairs_hook=_cloth_unique, parse_constant=_cloth_nonfinite)
+        if any(type(full.get(key)) is not type(payload[key]) or full[key] != payload[key]
+               for key in (*flags, "blender_version", "process_id", "source_build", "source_snapshot_sha256")):
+            return False
+        sources, display = source_fingerprints(), _domain_display(loaded_backup=True)
+        if (full["source_fingerprints"] != sources or full["source_snapshot_sha256"] != hashlib.sha256(canonical_json(sources)).hexdigest()
+                or full["private_display"]["manifest_path"] != display["path"]
+                or full["private_display"]["manifest_sha256"] != display["sha256"]
+                or type(full["assertions"]) is not dict or set(full["assertions"]) != INTERRUPTION_ASSERTIONS
+                or any(result is not True for result in full["assertions"].values())
+                or not _acquisition_storage_setup_matches(full["storage_setup"], payload["source_build"])
+                or full["image_packed"] is not False or full["project_saved"] is not False
+                or type(full["preview_poll_count"]) is not int or full["preview_poll_count"] < 1):
+            return False
+        baseline, final = full["baseline"], full["final"]
+        if (baseline["backup_files"] != [] or baseline != {**final, "backup_files": []}
+                or not _domain_hex(full["protected_baseline"]["pixels_sha256"])
+                or full["protected_baseline"] != full["protected_final"]):
+            return False
+        seed, seed_binding = _domain_regular(temporary / "setup-exr" / "original.exr", temporary / "setup-exr", 65536, capture=True)
+        hashes = {"original_packed_sha256": baseline["images"][0]["packed"],
+                  "snapshot_packed_sha256": baseline["images"][1]["packed"],
+                  "current_pixels_sha256_float32_le": baseline["images"][0]["pixels"],
+                  "original_decoded_pixels_sha256": hashlib.sha256(struct.pack("<16f", *([-0., .25, .5, 1.] * 4))).hexdigest()}
+        if (hashes != full["payload_hashes"] or any(not _domain_hex(value) for value in hashes.values())
+                or seed_binding["sha256"] != baseline["seed_sha256"] or seed_binding["sha256"] != hashes["original_packed_sha256"]):
+            return False
+
+        rows = full["transport"]
+        methods = ["image.current_pixels_pack_preview_start", "jobs.inspect", "image.pack_current_pixels_job_start",
+                   "jobs.inspect", "jobs.cancel", *(["jobs.inspect"] * INTERRUPTION_SAMPLES)]
+        if type(rows) is not list or len(rows) != len(methods):
+            return False
+        ids = set()
+        for index, (row, method) in enumerate(zip(rows, methods, strict=True)):
+            request, response, elapsed = row["request"], row["response"], row["elapsed_seconds"]
+            budget, max_latency = (3000, 3.) if index in {0, 2} else (10000, 65.)
+            if (type(request) is not dict or set(request) != {"id", "method", "params", "protocol_version", "timeout_ms"}
+                    or type(request["id"]) is not str or request["id"] in ids or request["method"] != method
+                    or request["timeout_ms"] != budget or request["protocol_version"] != "1.0"
+                    or response.get("id") != request["id"] or response.get("protocol_version") != "1.0"
+                    or response.get("ok") is not True or type(elapsed) not in {int, float} or not 0 <= elapsed <= max_latency):
+                return False
+            ids.add(request["id"])
+        preview_ack, preview_job, backup_ack, observed, cancel, terminal = [row["response"]["result"] for row in rows[:6]]
+        for index, ack, related in ((0, preview_ack, (1,)), (2, backup_ack, tuple(range(3, len(rows))))):
+            job_id = ack["job_id"]
+            if (ack["accepted"] is not True or ack["job_completed"] is not False or ack["terminal"] is not False
+                    or ack["input_frozen_at_acceptance"] is not False or ack["undo_boundary_created"] is not False
+                    or ack["request_id"] != rows[index]["request"]["id"]
+                    or type(job_id) is not str or not job_id.startswith("job_") or not _domain_hex(job_id[4:], 32)
+                    or any(rows[item]["request"]["params"] != {"job_id": job_id}
+                           or rows[item]["response"]["result"]["job_id"] != job_id for item in related)):
+                return False
+        preview, args = preview_job["result"], rows[0]["request"]["params"]
+        folder = temporary / "lifecycle-backups"
+        if (preview_ack["job_id"] == backup_ack["job_id"] or preview_job["request_id"] != preview_ack["request_id"]
+                or preview_job["terminal"] is not True or preview_job["state"] != "SUCCEEDED"
+                or preview_job["undo_boundary_created"] is not False or preview_job["revision"] <= preview_ack["revision"]
+                or preview["phase"] != "preview" or preview["profile"] != "FILE_F32_EXR_DATA_CURRENT_PIXELS_V1"
+                or preview["dimensions"] != [2, 2] or not _domain_hex(preview["fingerprint"])
+                or not _domain_hex(preview["consumer_graph_sha256"]) or preview["backup_files_written"] is not False
+                or preview["image_packed"] is not False or preview["payload_facts"]["original_packed_bytes"] != len(seed)
+                or any(preview["payload_facts"][name] != value for name, value in hashes.items())
+                or args["backup_directory"] != str(folder) or args["retain_event_journal"] is not False
+                or args["backup_prefix"] != INTERRUPTION_PREFIX
+                or rows[2]["request"]["params"] != {**args, "expected_target_fingerprint": preview["fingerprint"],
+                    "confirm_replace_packed_bytes": True, "confirm_discard_current_buffer": True, "time_limit_seconds": 60.}):
+            return False
+        recovery, error = terminal["recovery_evidence"], terminal["error"]
+        if (observed["state"] != "RUNNING" or observed["terminal"] is not False or observed["revision"] <= backup_ack["revision"]
+                or observed["progress"] != {"phase": "writing_oldpacked", "completed": len(seed), "total": len(seed)}
+                or cancel["state"] != "CANCELLING" or cancel["terminal"] is not False or cancel["cancel_requested"] is not True
+                or terminal["request_id"] != backup_ack["request_id"] or terminal["terminal"] is not True
+                or terminal["state"] != "CANCELLED" or terminal["result"] is not None or terminal["revision"] <= observed["revision"]
+                or terminal["undo_boundary_created"] is not False or terminal["undo_boundary_finalized"] is not False
+                or error["code"] != "TIMEOUT" or error["context"]["reason"] != "explicit cancellation"
+                or recovery["stage"] != "UNKNOWN" or recovery["state_known"] is not False
+                or recovery["external_write_attempted"] is not True or recovery.get("durable_backups_verified", False) is not False
+                or recovery["helper_record_write_attempted"] is not False or recovery["image_write_attempted"] is not False
+                or recovery["project_saved"] is not False
+                or any(row["response"]["result"] != terminal for row in rows[6:])):
+            return False
+
+        effects, samples, retained = terminal["external_effects"], full["stability_samples"], full["retained_artifacts"]
+        if type(samples) is not list or len(samples) != INTERRUPTION_SAMPLES or folder.is_symlink() or not folder.is_dir():
+            return False
+        tick = 0
+        for sample in samples:
+            if type(sample["tick"]) is not int or sample["tick"] <= tick or sample["artifacts"] != retained:
+                return False
+            tick = sample["tick"]
+        final_name = INTERRUPTION_PREFIX + ".oldpacked.bin"
+        stage = Path(effects["retained_staging_path"]) if effects["retained_staging_path"] is not None else None
+        if stage is not None and (stage.parent != folder
+                or not re.fullmatch(r"\.blender-codex-current-pixels-[a-z0-9_]{8}\.staging", stage.name)
+                or effects["staging_cleanup"] != "retained_unverified"):
+            return False
+        published, uncertain = effects["file_published"], effects["publication_outcome_unknown"]
+        if (type(published) is not bool or type(uncertain) is not bool or (published and uncertain)
+                or (uncertain and stage is None) or effects["publication_attempted"] is not (published or uncertain)
+                or effects["artifacts_truncated"] is not False):
+            return False
+        expected = sorted(name for name in (stage.name if stage else None, final_name if published or uncertain else None)
+                          if name is not None)
+        reported = ([{"filepath": str(folder / final_name), "file_bytes": len(seed) if published else None,
+                      "file_sha256": seed_binding["sha256"] if published else None}] if published or uncertain else [])
+        if (not expected or effects["artifacts"] != reported or [row["name"] for row in retained] != expected
+                or sorted(path.name for path in folder.iterdir()) != expected or final["backup_files"] != expected):
+            return False
+        inodes = set()
+        for row in retained:
+            path = folder / row["name"]
+            data, _binding = _domain_regular(path, folder, 65536, capture=True)
+            info = path.lstat()
+            if (data != seed or info.st_nlink != len(expected) or row != {"name": path.name, "bytes": len(seed),
+                    "sha256": seed_binding["sha256"], "device": info.st_dev, "inode": info.st_ino,
+                    "links": info.st_nlink, "mtime_ns": info.st_mtime_ns, "ctime_ns": info.st_ctime_ns}):
+                return False
+            inodes.add((info.st_dev, info.st_ino))
+        return len(inodes) == 1
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, IndexError, RecursionError):
+        return False
+
+
 def _domain_binding(binding: object, root: Path, maximum: int, *, capture: bool = False,
                     allow_empty_staging: bool = False) -> bytes:
     if (type(binding) is not dict or set(binding) != {"path", "bytes", "sha256"}
@@ -4397,8 +4551,11 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
         timeout = min(timeout, 300)
     if case in CURRENT_PIXELS_QUEUED_CASES:
         _domain_display(loaded_backup=True)
-        flag, report = (("--bridge-loaded-backup", CURRENT_PIXELS_LOADED_REPORT) if case == CURRENT_PIXELS_LOADED_CASE
-                        else ("--bridge-current-pixels-acquisition", "current-pixels-acquisition.json"))
+        flag, report = {
+            CURRENT_PIXELS_LOADED_CASE: ("--bridge-loaded-backup", CURRENT_PIXELS_LOADED_REPORT),
+            CURRENT_PIXELS_ACQUISITION_CASE: ("--bridge-current-pixels-acquisition", "current-pixels-acquisition.json"),
+            CURRENT_PIXELS_INTERRUPTION_CASE: ("--bridge-current-pixels-backup-interruption", CURRENT_PIXELS_INTERRUPTION_REPORT),
+        }[case]
         command.extend(["--", flag, "--bridge-report", str(temporary / report)])
         timeout = min(timeout, 300)
     environment = dict(os.environ, TEMP=str(temporary), TMP=str(temporary), TMPDIR=str(temporary))
@@ -4458,7 +4615,7 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
         "status": "failed",
         "exit_code": None,
         "execution_mode": (
-            "private_interactive_display" if case in {CURRENT_PIXELS_ACQUISITION_CASE, MESH_STORAGE_CASE, MESH_STORAGE_CONTROL_CASE, MESH_STORAGE_TIMING_CASE, MESH_STORAGE_INSPECTION_CASE, MESH_STORAGE_COST_CASE}
+            "private_interactive_display" if case in {CURRENT_PIXELS_ACQUISITION_CASE, CURRENT_PIXELS_INTERRUPTION_CASE, MESH_STORAGE_CASE, MESH_STORAGE_CONTROL_CASE, MESH_STORAGE_TIMING_CASE, MESH_STORAGE_INSPECTION_CASE, MESH_STORAGE_COST_CASE}
             else "private_windows_desktop" if interactive and sys.platform == "win32"
             else "interactive_display" if interactive else "background"
         ),
@@ -4581,6 +4738,11 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
     if case == CURRENT_PIXELS_ACQUISITION_CASE:
         result["qualification_scope"] = {"fixture_only_queued_preview_acquisition": True,
             "ack_request_timeout_ms": 3000, "maximum_report_bytes": 2 * 1024 * 1024,
+            "public_tool_acceptance": False, "image_forward_transition_qualified": False,
+            "restoration_qualified": False, "windows_qualified": False}
+    if case == CURRENT_PIXELS_INTERRUPTION_CASE:
+        result["qualification_scope"] = {"fixture_only_partial_archive_cancellation": True,
+            "ack_request_timeout_ms": 3000, "control_request_timeout_ms": 10000, "complete_archive": False,
             "public_tool_acceptance": False, "image_forward_transition_qualified": False,
             "restoration_qualified": False, "windows_qualified": False}
     if case == MESH_STORAGE_CASE:
@@ -4755,6 +4917,8 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
         phase_evidence = _loaded_backup_receipt_matches(payload, temporary, process_instance)
     if case == CURRENT_PIXELS_ACQUISITION_CASE:
         phase_evidence = _acquisition_receipt_matches(payload, temporary, process_instance)
+    if case == CURRENT_PIXELS_INTERRUPTION_CASE:
+        phase_evidence = _backup_interruption_receipt_matches(payload, temporary, process_instance)
     if case == MESH_STORAGE_CASE:
         phase_evidence = _mesh_storage_receipt_matches(payload, temporary, process_instance, phase,
             bundle, result.get("os_process_id"), domain_binary, domain_sources, domain_display)
@@ -5419,7 +5583,7 @@ def main() -> int:
     if any(not p.is_file() for p in executables):
         parser.error("Each Blender path must be an existing executable file")
     output = args.output.resolve()
-    defaults = [case for case in CASES if case not in {CURRENT_PIXELS_ACQUISITION_CASE, "native_project_saving_large", *EDITED_TEXTURE_RECOVERY_PHASES, MESH_STORAGE_CONTROL_CASE, MESH_STORAGE_TIMING_CASE, MESH_STORAGE_INSPECTION_CASE, MESH_STORAGE_COST_CASE}
+    defaults = [case for case in CASES if case not in {CURRENT_PIXELS_ACQUISITION_CASE, CURRENT_PIXELS_INTERRUPTION_CASE, "native_project_saving_large", *EDITED_TEXTURE_RECOVERY_PHASES, MESH_STORAGE_CONTROL_CASE, MESH_STORAGE_TIMING_CASE, MESH_STORAGE_INSPECTION_CASE, MESH_STORAGE_COST_CASE}
                 and (args.include_interactive or case not in INTERACTIVE_CASES | OPT_IN_CASES)
                 and (case != "installed_addon_probe" or args.package_probe_config is not None)]
     cases = list(dict.fromkeys(args.cases or defaults))
