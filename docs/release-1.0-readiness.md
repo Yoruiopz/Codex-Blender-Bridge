@@ -1,21 +1,15 @@
 # Working toward 1.0.0
 
-Status: **not release-ready**. This is an acceptance plan, not a feature announcement
-or a promise of a release date. Published [0.9.0 alpha](releases/0.9.0.md) qualifies
-a finite clean packed 4K native-save profile. Its
-[exact-source/package evidence](releases/0.9.0.md#verified-release-evidence) includes
-seven passing CI jobs, selected Linux native/installed checks and verified release
-downloads. This evidence does not qualify later private source or full artist
-workflows. Previous releases remain available with their own evidence. Meaningful
-reviewed prereleases require matching packages, checksums and measured
-source-specific behavior. Tool counts and elapsed time do not establish readiness.
-All fourteen stable gates remain open; Windows compatibility/testing remains
-explicitly deferred and unverified until implementation completion.
+Status: **not release-ready**. All fourteen stable gates remain open. The package
+baseline is published **0.9.1 alpha**, commit `4c1c66ad4d134ed042a3da55deca931def3c898a`.
+Its seven CI jobs, selected Linux native and installed workflows, and six
+downloaded asset hashes qualify that release's exact source and packages.
+[0.9.1 release and evidence](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.9.1)
 
 Follow the [1.0 execution plan](plan-1.0.md) for milestone dependencies, prioritized work,
 end-to-end scenarios and evidence requirements. The [implementation completion
-checklist](implementation-completion.md) defines the finite remaining functional work
-and its Linux completion checks. This document defines the stable-release acceptance gates.
+checklist](implementation-completion.md) defines the remaining functional work.
+This document defines the stable-release acceptance gates.
 
 The [machine-readable ledger](release-1.0-ledger.json) records all fourteen mandatory
 requirements as open. Use the [evidence qualification gate](release-evidence.md) to check
@@ -33,6 +27,40 @@ stable gate or full-artist scope; all 29 implementation items remain open. Logic
 source-qualified, declared bit-preserving ARRAY/COW/cache and empty deform-layer
 observation effects; 5.2 SINGLE preparation and actual native/installed acceptance
 remain separate explicit gates. Rich artist data must not be cleared or excluded.
+
+## Persistent saving and Windows source verification
+
+Development commit `06a2caea88d27ea6800e6e0044ce750532826ae5` passed 15,064 Python
+tests with three platform skips, plus Ruff, mypy and generated inventory checks.
+The Windows 11 x64 source tests verified 214 add-on and runner file fingerprints.
+They ran four scenarios on private Windows desktops, with three phases per
+scenario. Each Blender build passed with the dangerous permissions override both
+off and on. [Runner isolation](native-testing.md#windows-private-desktop-not-just-a-hidden-window-hint)
+
+| Blender build | Override off | Override on | Isolated phases |
+| --- | --- | --- | --- |
+| 4.5.1 LTS (`b0a72b245dcf`) | Passed | Passed | 6 |
+| 5.1.2 (`ec6e62d40fa9`) | Passed | Passed | 6 |
+
+The scenarios covered reading the native Save As dialog, first Save, Save
+Current, Save As, overwrite refusal, checkpoint reopen, normal restart and
+recovery after forced Blender process exit. They verified persisted permissions,
+outside-folder refusal without the separate path opt-in, and immediate revocation
+on disabling the override. A separate source check on each build saved using the
+path from the open native dialog and confirmed that the dialog stayed open.
+
+Follow-up Windows checks cover an installed add-on ZIP through the same 12-phase
+matrix. Each phase verifies the ZIP contents and its loaded module origins. The
+writer saves to the path read from the still-open native dialog. On both builds,
+a separate two-process case reopens Blender's byte-identical `.blend1` after an
+injected checkpoint-receipt failure, preserves the newer project, and saves the
+recovered scene under a new name. A stock Blender 4.5.1 case also verifies typed
+export, import, Save As and fresh reopen for the same material-free static GLB
+and FBX. [Save and recovery contract](project-save-safety.md) · [Asset delivery scope](asset-delivery.md)
+
+Stable qualification still requires production project and edited-pixel verification,
+the full Windows native inventory, matching installed components, scenarios A–F,
+and upgrade, rollback and reconnect checks at the exact candidate versions.
 
 ## 1.0 product direction: a full 3D-artist workflow
 
@@ -77,8 +105,8 @@ No current release should be described as a complete human-equivalent artist.
 | Simulate | Scoped cloth setup/configuration, bounded in-memory bake/free, three rigid-body cache tools and two public [bounded evaluation job tools](rigid-body-evaluation-jobs.md) using the [Scene job kernel](scene-job-kernel.md) | Cooperative bake/coverage proof, broader solvers/dependencies, disk caches, native scale/memory/recovery and installed end-to-end qualification |
 | Stage and light | Collections, world, camera/light settings, layout; [persistent static-scene variants and matched previews](cinematic-variants.md) | Broader composition/navigation and lighting workflows, asset-scale and placement constraints, reviewed artistic acceptance |
 | Render and composite | Render settings/execution, captures; reviewed compositor graph editing | Broader nodes/image assets, passes, color/output workflows, render diagnostics and job/progress management |
-| Deliver production assets | Legacy project saving remains [blocked](project-save-safety.md); a distinct [native-save session-permission workflow](native-project-saving.md) has a finite 0.8 declared-data/local-consent profile whose actual queued/native/installed results require exact release evidence; [cooperative texture export/reimport](texture-delivery.md), fresh texture/project reopen, [packed recovery](image-portability.md), [material-free static/skinned GLB/FBX export and fresh reimport](asset-delivery.md), [approved-source static GLB/material-free FBX import](asset-import.md) | Qualified authorized project save and portable `.blend` delivery; current edited-pixel packing, broader skinned/animated/material asset import, textured FBX exchange, complete dependency packaging, broader recovery/formats and production validation |
-| Operate interactively | Status/history/permissions/stop/pause; [4K painting jobs](painting-jobs.md), [bounded rigid evaluation jobs](rigid-body-evaluation-jobs.md); [persistent plans/exact references/guarded transform previews and corrections](task-plans.md) and [static-scene variants](cinematic-variants.md) | Visual references, wider protected authoring/previews, protected save, broad durable variants and general long-operation/bake jobs |
+| Deliver production assets | [Persistent native Save and Save As and verified checkpoint reopen](native-project-saving.md), [cooperative texture export/reimport](texture-delivery.md), fresh texture/project reopen, [packed recovery](image-portability.md), [material-free static/skinned GLB/FBX export and fresh reimport](asset-delivery.md), [approved-source static GLB/material-free FBX import](asset-import.md) | Production preservation and portable `.blend` qualification, current edited-pixel packing, broader skinned/animated/material asset import, textured FBX exchange, complete dependency packaging, broader recovery/formats and production validation |
+| Operate interactively | Status/history/permissions/stop/pause, Save As dialog inspection and persistent local permission choices, [4K painting jobs](painting-jobs.md), [bounded rigid evaluation jobs](rigid-body-evaluation-jobs.md), [persistent plans/exact references/guarded transform previews and corrections](task-plans.md) and [static-scene variants](cinematic-variants.md) | Visual references, wider protected authoring/previews, protected save, broad durable variants and general long-operation/bake jobs |
 | Work safely and improve results | Checkpoints, batch failure evidence, bounded [structural comparisons](scene-evidence.md) including optional rigs/animation/nested shaders; per-domain ownership guards | Enforced complete preservation, remaining mutator/recovery audits, mixed-editor/pressure evidence, aesthetic iteration and whole-project benchmarks |
 
 Each row needs representative end-to-end tasks with observable success, failure and recovery
@@ -102,17 +130,13 @@ not evidence that every Blender feature has a dependable structured implementati
 The confirmed 1.0 qualification target is Windows 11 x64 on Blender 4.5 LTS and the newest
 compatible stable 5.x at candidate freeze, with exact patch versions recorded. The current
 development manifest still declares 4.2; this is not a newly qualified 1.0 support claim.
-Historical Windows checks exercised 4.5.1 LTS and 5.1.2, while this implementation session
-uses Linux development runners for 4.5.14 LTS and 5.2.2. Their results remain
-separate from Windows qualification; source-matched outcomes and failures are retained in
-the historical [development checkpoint](artist-workflow-checkpoint-20261022.md) and
-the [2026-10-23 checkpoint](artist-workflow-checkpoint-20261023.md). Windows-specific
-compatibility and testing are **DEFERRED until the full functionality is implemented**
-on the available Linux 4.5.14/5.2.2 runners. Windows remains **unverified** and is not
-a blocker to this implementation pass. Complete Windows native and installed-package
-acceptance remains a future stable-release gate; Linux development results do not qualify
-Windows or other platforms for 1.0. Align the manifest and support claims only at
-candidate qualification.
+Selected Windows saving and recovery now have the source evidence above. Prior
+Windows outcomes and failures remain tied to their respective sources.
+[2026-10-22 checkpoint](artist-workflow-checkpoint-20261022.md) · [2026-10-23 checkpoint](artist-workflow-checkpoint-20261023.md)
+
+The Linux 4.5.14/5.2.2 development results are separate. Complete Windows native
+and installed-package acceptance remains a stable-release gate. Align the
+manifest and support claims at candidate qualification.
 
 ## Current native witness blocker
 
@@ -151,11 +175,10 @@ and real enforcement metadata were preserved; the protected-data baseline was nu
 Original material/current viewport appearance and stronger hidden-state/populated-baseline
 guarantees remain unqualified. This does not close H02/F01 or a stable release gate.
 
-Asset-catalog `SAVE_POST` effects extend outside authored Main. The qualified
-native-save alternative requires a separate local grant for normal native
-effects; it does not establish exact-path confinement or complete artist-project
-delivery. A snapshot witness alone cannot provide those guarantees. See [capture design](protected-capture-design.md)
-and [save safety](project-save-safety.md). Existing holds remain in place.
+Asset-catalog `SAVE_POST` effects can extend outside authored Main. The current
+Save Project permission includes Blender's ordinary native save effects. Complete
+effect containment and production delivery remain open alongside protected
+capture. [Capture design](protected-capture-design.md) · [Save safety](project-save-safety.md)
 
 ## Release gates
 

@@ -19,12 +19,21 @@ recovery evidence elsewhere has its own scope. Qualify expanded save/reopen and
 portable delivery at the artwork's original resolution; retain resource and
 recovery gates while implementing the necessary capacity.
 
-**Legacy-save hold:** `project.save` still refuses current-file Save and Save As.
-Its path/permission contract does not bound hidden native callback/catalog
-effects. The distinct qualified native-save alternative requires explicit local
-consent for those effects and supports the finite 0.9 profile. Broader ordinary
-artist-project saving, edited-pixel durability and complete portable `.blend`
-delivery remain mandatory open requirements. See [the safety contract](project-save-safety.md).
+**Persistent saving — 2026-11-20.** Development commit `06a2cae` supports dialog
+inspection, direct native Save and Save As through `project.save`, and verified
+checkpoint discovery and reopen. Local Save Project permission now includes
+ordinary native save effects and persists across Blender restarts. Windows 11
+source tests passed on Blender 4.5.1 LTS and 5.1.2 with the dangerous permissions
+override on and off. The full Python suite passed 15,064 tests with three
+platform skips. Production-scale project saving, edited-pixel durability and
+complete portable `.blend` delivery remain open. [Exact verification scope](release-1.0-readiness.md#persistent-saving-and-windows-source-verification)
+
+## Published 0.9.1 alpha — 2026-10-31
+
+The latest published alpha comes from `4c1c66ad4d134ed042a3da55deca931def3c898a`.
+Seven CI jobs, the matching installers, the Linux static-asset workflow and all
+six downloaded asset hashes were verified for that commit. The later Windows
+persistent-save source evidence is separate. [0.9.1 release and evidence](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.9.1)
 
 ## Published 0.9.0 alpha — 2026-10-28
 
@@ -37,33 +46,28 @@ This qualifies the documented clean packed 4K save profile, not full artist
 saving, current edited-pixel portability or stable 1.0. Earlier releases and their
 source-specific evidence remain available.
 
-The [current blocker plan](releases/0.9.0-blocker-plan.md) defines remaining
-implementation and validation. Legacy `project.save` and protected
-`viewport.capture` remain held. All 29 implementation items and fourteen stable
-gates remain open; Windows remains deferred and unverified.
+At 0.9.0 publication, legacy `project.save` and protected `viewport.capture`
+were held and Windows testing was deferred. [0.9.0 blocker plan](releases/0.9.0-blocker-plan.md)
 
-## Current implementation priorities — 2026-10-29
+## Current implementation priorities — 2026-11-20
 
 The [29-item implementation checklist](implementation-completion.md) is the
 current finite worklist for the full agreed artist workflow. Finish the existing
-safety/recovery boundaries and required save/protected-visual alternatives, then
+safety/recovery boundaries, production-save qualification and protected-visual alternatives, then
 complete asset/look/paint, character and procedural/cinematic workflows in
 parallel as each domain becomes safe. Integrate scenarios A–F through actual
 structured tools and installed packages; do not substitute tool counts, private
 research or isolated happy paths for functional completion.
 
-Implementation checks use available Linux Blender **4.5.14** and **5.2.2**.
-**Windows-specific compatibility/testing is deferred until implementation is
-complete, remains unverified, and is not a blocker to this implementation pass.**
-It remains a mandatory future stable 1.0 qualification gate. Existing save,
+Continue implementation checks on Linux Blender **4.5.14** and **5.2.2** and
+prioritize Windows for saving and recovery. Complete Windows native and
+installed-package validation remains mandatory for stable 1.0. The
 protected-capture, shader REMOVE, animation-provider reproduction and exact-build
-5.2 import holds remain; required capabilities need separately reviewed safe
-designs/alternatives, not retries or weaker evidence.
+5.2 import holds still require qualified alternatives.
 
 Meaningful versioned GitHub **pre-releases are authorized** after a reviewed,
-functional increment. Published [0.9.0](releases/0.9.0.md#verified-release-evidence)
-is the latest accepted alpha; its evidence qualifies only its exact bytes and
-documented profiles. Later source needs separate focused/full checks, applicable
+functional increment. Published 0.9.1 evidence applies to its exact bytes and
+documented workflows. Later source needs separate focused/full checks, applicable
 native and installed acceptance, exact-commit CI, matching packages/checksums and
 verified downloads. Preserve earlier releases. No merge authority or stable
 acceptance follows from release cadence. All 29 items and fourteen gates remain

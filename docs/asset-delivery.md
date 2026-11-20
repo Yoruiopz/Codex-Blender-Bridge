@@ -1,13 +1,10 @@
 # Scoped GLB and FBX asset delivery
 
-**Save availability:** `project.save` currently refuses Save and Save As before
-native/path access; see [the safety change](project-save-safety.md). Fresh-process
-results below establish feature serialization through owned fixture setup, not a
-safe bridge project-save capability. Earlier typed-save reports are historical.
+Development source supports ordinary native Save and Save As through `project.save`
+with persistent Blender-side permission. See [Save and recover a Blender project](project-save-safety.md).
 
-Unreleased development functionality. `asset.export_preview` and `asset.export` use Blender's
-native exporters for a deliberately reviewed subset; this does not complete DELIVER-01,
-production import/export, full artist coverage or release acceptance.
+`asset.export_preview` and `asset.export` use Blender's native exporters for a
+reviewed subset. Production delivery and full artist-workflow acceptance remain open.
 
 Choose **Approved Asset Folder** locally in Blender preferences, then enable the
 `asset_delivery` toolset. Export requires Inspect Scene, Edit Scene, Access External Files
@@ -43,6 +40,8 @@ restored/compared before publication. Export writes to an owned private staging 
 checks that no unexpected sidecars appeared, inspects the native binary envelope and hashes
 every byte. Publication uses a same-filesystem hard link with create-if-absent semantics and
 no overwrite/copy/rename fallback. Unsupported filesystems fail closed.
+Static GLB uses Blender's current-frame export option so the exporter preserves the subframe.
+Animated export retains its existing integer-frame sampling profile.
 
 Published files are never removed by native undo, cancellation or cleanup. An uncertain link
 outcome reports `publication_outcome_unknown`; `file_published=false` does not then prove no
@@ -51,8 +50,8 @@ changed identity/bytes or unexpected entries retain the exact directory for insp
 Terminal operation history retains bounded file evidence and redacts it from MCP recovery
 history without scene-inspection permission. Detailed diagnostics remain local.
 
-Directory pins reuse the texture-staging implementation; this asset workflow has not received
-Windows native qualification. POSIX resolution/identity checks do not eliminate hostile
+Directory pins reuse the texture-staging implementation. Full Windows directory-pin
+qualification remains open. POSIX resolution/identity checks do not eliminate hostile
 filesystem namespace races. No filesystem sandbox, power-loss durability or publication
 latency guarantee is claimed.
 
@@ -63,6 +62,13 @@ uses `anim_offset=0`; its normal importer default shifts the timeline. Blender's
 can add a hidden bone-display Icosphere; target geometry is checked separately from support
 objects. This fixture is bounded geometry/deformation evidence, not material, artistic,
 cross-platform or full-version acceptance. Windows Blender 4.5/5.x acceptance remains open.
+
+The separate `static_asset_delivery` case passed on Windows 11 with Blender 4.5.1 LTS.
+Three isolated stock Blender processes export and then import the same material-free GLB
+and FBX through the public Bridge tools, save the resulting scene, and reopen it with
+the original asset paths absent. The case verifies file hashes, parenting, world-space
+triangle geometry, units, an unrelated material-bearing object, permission denial, stale
+preview and overwrite refusal. The case covers this static profile on the tested build.
 
 Approved-source typed import has a separate [bounded static contract](asset-import.md),
 including source admission, owned native staging and fresh saved-project reopen evidence.

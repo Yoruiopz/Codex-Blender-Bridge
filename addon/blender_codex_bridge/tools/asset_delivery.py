@@ -660,6 +660,8 @@ def _native(bpy, objects, path, format, include, *, transaction):
         if format == "GLB":
             result = bpy.ops.export_scene.gltf(filepath=str(path), check_existing=False,
                 export_format="GLB", use_selection=True, export_materials="NONE", export_apply=False,
+                # Static exports need no frame reset, which drops the user's subframe.
+                export_current_frame=not include,
                 export_animations=include, export_animation_mode="SCENE", export_skins=True,
                 export_cameras=False, export_lights=False, export_extras=False)
         else:

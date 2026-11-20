@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import math
 import os
@@ -15,6 +16,7 @@ import subprocess
 import sys
 import time
 import uuid
+import zipfile
 from contextlib import suppress
 from datetime import datetime, timezone
 from pathlib import Path
@@ -274,6 +276,10 @@ CASES = {
 }
 # Each phase must exit successfully before a new process can consume its artifacts.
 PERSISTENT_SAVE_CASES = {"persistent_save_master_off": "off", "persistent_save_master_on": "on"}
+PERSISTENT_SAVE_ADDON = "blender_codex_bridge"
+PERSISTENT_SAVE_ZIP_MAX = 32 * 1024 * 1024
+PERSISTENT_SAVE_MEMBERS_MAX = 512
+PERSISTENT_SAVE_EXPANDED_MAX = 64 * 1024 * 1024
 PERSISTENT_SAVE_PHASES = {
     "writer": "BLENDER_PERSISTENT_SAVE_WRITER_OK ",
     "normal_restart": "BLENDER_PERSISTENT_SAVE_READER_OK ",
@@ -281,6 +287,18 @@ PERSISTENT_SAVE_PHASES = {
 }
 CASES.update({name: ("blender_persistent_save_smoke.py", PERSISTENT_SAVE_PHASES["crash_restart"])
               for name in PERSISTENT_SAVE_CASES})
+STOCK_WORKFLOW_PHASES = {
+    "project_checkpoint_backup": {
+        "writer": PERSISTENT_SAVE_PHASES["writer"], "reader": PERSISTENT_SAVE_PHASES["crash_restart"],
+    },
+    "static_asset_delivery": {
+        "writer": "BLENDER_STATIC_DELIVERY_WRITER_OK ",
+        "importer": "BLENDER_STATIC_DELIVERY_IMPORTER_OK ",
+        "reader": "BLENDER_STATIC_DELIVERY_READER_OK ",
+    },
+}
+CASES["project_checkpoint_backup"] = ("blender_checkpoint_backup_smoke.py", STOCK_WORKFLOW_PHASES["project_checkpoint_backup"]["reader"])
+CASES["static_asset_delivery"] = ("blender_static_delivery_smoke.py", STOCK_WORKFLOW_PHASES["static_asset_delivery"]["reader"])
 PHASED_CASES = {
     "isolated_asset_preview_probe": ("BLENDER_ISOLATED_ASSET_PREVIEW_WRITER_OK ", "BLENDER_ISOLATED_ASSET_PREVIEW_WORKER_OK "),
     "image_reopen": ("BLENDER_IMAGE_REOPEN_WRITER_OK ", "BLENDER_IMAGE_REOPEN_READER_OK "),
@@ -313,7 +331,7 @@ PAIRED_RECOVERY_PROFILES = {
     "image_current_pixels_paired_recovery_large": "LARGE4K",
 }
 OPT_IN_CASES = set(PHASED_CASES)
-OPT_IN_CASES.update(PERSISTENT_SAVE_CASES)
+OPT_IN_CASES.update(PERSISTENT_SAVE_CASES, STOCK_WORKFLOW_PHASES)
 OPT_IN_CASES.add("current_pixels_lifecycle_census")
 OPT_IN_CASES.add(CLOTH_G0_CATALOG_CASE)
 OPT_IN_CASES.add("current_pixels_source_graph")
@@ -369,7 +387,7 @@ OPT_IN_CASES.add("render_adversarial")
 OPT_IN_CASES.add("render_boundaries_interactive")
 OPT_IN_CASES.add("render_checkpoint_probe")
 INTERACTIVE_CASES = {"undo_lifecycle", "mesh_edit_recovery", "mesh_repair", "uv_authoring", "prop_workflow", "uv_analysis", "mesh_analysis", "image_assets", "shader_groups", "undo_capacity", "shader_settings", "image_revisions", "field_scanner", "texture_paint"}
-INTERACTIVE_CASES.update(PERSISTENT_SAVE_CASES)
+INTERACTIVE_CASES.update(PERSISTENT_SAVE_CASES, STOCK_WORKFLOW_PHASES)
 INTERACTIVE_CASES.add("native_project_saving")
 OPT_IN_CASES.add("native_project_saving")
 INTERACTIVE_CASES.add("native_project_saving_large")
@@ -3919,7 +3937,8 @@ def _run_mesh_storage_timing(blender: Path, output: Path, timeout: int) -> dict:
 def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
                  phase: str | None = None, bundle: Path | None = None,
                  phase_marker: str | None = None, domain_binary: dict | None = None,
-                 domain_sources: dict | None = None, domain_display: dict | None = None) -> dict:
+                 domain_sources: dict | None = None, domain_display: dict | None = None,
+                 persistent_save_package: dict | None = None) -> dict:
     filename, marker = CASES[case]
     if case == STORAGE_ROOT_APPROVAL_CASE:
         if phase != "registered_route" or bundle is None:
@@ -3975,6 +3994,13 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
             raise ValueError("Persistent save checks require a private profile and an explicit phase")
         command.insert(1, "--disable-autoexec")
         command.extend(["--bridge-master", PERSISTENT_SAVE_CASES[case]])
+        if persistent_save_package is not None:
+            command.extend(["--bridge-addon-config", str(persistent_save_package["config_path"])])
+        timeout = min(timeout, 180)
+    if case in STOCK_WORKFLOW_PHASES:
+        if phase not in STOCK_WORKFLOW_PHASES[case] or bundle is None:
+            raise ValueError("Stock Blender workflows require a private profile and an explicit phase")
+        command.insert(1, "--disable-autoexec")
         timeout = min(timeout, 180)
     if case == STORAGE_RUNTIME_CONTEXT_CASE:
         command.append("--bridge-runtime-context")
@@ -4040,7 +4066,7 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
     environment["BRIDGE_TEST_PROCESS_TOKEN"] = process_instance
     for key, folder in (("BLENDER_USER_CONFIG", "config"), ("BLENDER_USER_SCRIPTS", "scripts"),
                         ("BLENDER_USER_DATAFILES", "datafiles")):
-        if case in PERSISTENT_SAVE_CASES and key == "BLENDER_USER_CONFIG":
+        if (case in PERSISTENT_SAVE_CASES or case == "project_checkpoint_backup") and key == "BLENDER_USER_CONFIG":
             assert bundle is not None
             environment[key] = str(bundle / "bridge-config")
             continue
@@ -4361,6 +4387,10 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
         and payload.get("phase") == phase
         and payload.get("process_instance") == process_instance
         and type(payload.get("process_id")) is int and payload["process_id"] > 0)
+    if case in PERSISTENT_SAVE_CASES and persistent_save_package is not None:
+        installed_verified = _persistent_save_installation_matches(payload, temporary, persistent_save_package)
+        result["installed_addon_verified"] = installed_verified
+        phase_evidence = phase_evidence and installed_verified
     if case in PAIRED_RECOVERY_PROFILES:
         phase_evidence = phase_evidence and bool(payload and payload.get("profile") == PAIRED_RECOVERY_PROFILES[case])
     if case == "geometry_preview_populated_protection":
@@ -4816,7 +4846,99 @@ def _run_cloth_g0_catalog(blender: Path, output: Path, timeout: int) -> dict:
     return result
 
 
-def run_case(blender: Path, case: str, output: Path, timeout: int) -> dict:
+def _persistent_addon_members(root: Path, *, source_checkout: bool = False) -> dict[str, str]:
+    """Measure only the exact ordinary files under the source or installed add-on."""
+    expected = {}
+    total = 0
+    pending = [root]
+    seen = 0
+    while pending:
+        path = pending.pop()
+        relative = path.relative_to(root.parent)
+        if source_checkout and ("__pycache__" in relative.parts or path.suffix == ".pyc"):
+            continue
+        seen += 1
+        if seen > 2 * PERSISTENT_SAVE_MEMBERS_MAX:
+            raise ValueError("Add-on exceeds its directory-entry budget")
+        info = path.lstat()
+        if getattr(info, "st_file_attributes", 0) & 0x400:
+            raise ValueError("Add-on contains a reparse point")
+        if stat.S_ISDIR(info.st_mode):
+            for child in path.iterdir():
+                if len(pending) >= 2 * PERSISTENT_SAVE_MEMBERS_MAX:
+                    raise ValueError("Add-on exceeds its directory-entry budget")
+                pending.append(child)
+            continue
+        total += info.st_size
+        if (not stat.S_ISREG(info.st_mode) or total > PERSISTENT_SAVE_EXPANDED_MAX
+                or len(expected) >= PERSISTENT_SAVE_MEMBERS_MAX):
+            raise ValueError("Add-on contains nonordinary files or exceeds its evidence budget")
+        with path.open("rb") as stream:
+            data = stream.read(info.st_size + 1)
+        if len(data) != info.st_size:
+            raise ValueError("Add-on member size changed while reading")
+        expected[relative.as_posix()] = hashlib.sha256(data).hexdigest()
+    if f"{PERSISTENT_SAVE_ADDON}/__init__.py" not in expected:
+        raise ValueError("Add-on is missing its package entry point")
+    return expected
+
+
+def _freeze_persistent_save_package(archive: Path, expected_sha256: str, output: Path) -> dict:
+    """Pin the supplied ZIP and require its payload to match this checkout before launch."""
+    if len(expected_sha256) != 64 or any(ch not in "0123456789abcdef" for ch in expected_sha256):
+        raise ValueError("Expected the complete lowercase SHA-256 for the add-on ZIP")
+    if not archive.is_file() or archive.is_symlink():
+        raise ValueError("Expected an ordinary add-on ZIP")
+    with archive.open("rb") as stream:
+        raw = stream.read(PERSISTENT_SAVE_ZIP_MAX + 1)
+    digest = hashlib.sha256(raw).hexdigest()
+    if len(raw) > PERSISTENT_SAVE_ZIP_MAX or digest != expected_sha256:
+        raise ValueError("Add-on ZIP size or SHA-256 differs from the candidate pin")
+    members = _persistent_addon_members(ROOT / "addon" / PERSISTENT_SAVE_ADDON, source_checkout=True)
+    with zipfile.ZipFile(io.BytesIO(raw)) as candidate:
+        entries = candidate.infolist()
+        names = [item.filename for item in entries]
+        if (len(names) != len(members) or set(names) != set(members)
+                or len({name.casefold() for name in names}) != len(members)
+                or sum(item.file_size for item in entries) > PERSISTENT_SAVE_EXPANDED_MAX
+                or any(stat.S_IFMT(item.external_attr >> 16) not in (0, stat.S_IFREG) for item in entries)):
+            raise ValueError("Add-on ZIP members must match the ordinary checkout payload exactly")
+        for item in entries:
+            if hashlib.sha256(candidate.read(item)).hexdigest() != members[item.filename]:
+                raise ValueError(f"Add-on ZIP contains different bytes for {item.filename}")
+    frozen = output / "persistent-save-addon.zip"
+    config = output / "persistent-save-addon.json"
+    record = {"path": str(frozen), "sha256": digest, "members_sha256": members}
+    with frozen.open("xb") as stream:
+        stream.write(raw)
+    with config.open("x", encoding="utf-8") as stream:
+        json.dump(record, stream, sort_keys=True)
+    return {**record, "config_path": str(config)}
+
+
+def _persistent_save_installation_matches(payload, temporary: Path, package: dict) -> bool:
+    """Check installed payload bytes and the fixture's loaded module origins independently."""
+    try:
+        installation = payload["installed_addon"]
+        root = temporary / "scripts" / "addons" / PERSISTENT_SAVE_ADDON
+        members = package["members_sha256"]
+        origins = installation["module_origins"]
+        if (installation["zip_sha256"] != package["sha256"] or Path(installation["root"]) != root
+                or installation["member_count"] != len(members)
+                or not isinstance(origins, dict) or not 1 <= len(origins) <= len(members)
+                or origins.get(PERSISTENT_SAVE_ADDON) != f"{PERSISTENT_SAVE_ADDON}/__init__.py"
+                or origins.get(f"{PERSISTENT_SAVE_ADDON}.runtime") != f"{PERSISTENT_SAVE_ADDON}/runtime.py"
+                or any(not isinstance(value, str) or value not in members
+                       or value not in (f"{name.replace('.', '/')}.py", f"{name.replace('.', '/')}/__init__.py")
+                       for name, value in origins.items())):
+            return False
+        return _persistent_addon_members(root) == members
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return False
+
+
+def run_case(blender: Path, case: str, output: Path, timeout: int, *,
+             persistent_save_package: dict | None = None) -> dict:
     if case in PERSISTENT_SAVE_CASES:
         started = time.monotonic()
         bundle = output / f"{case}-bundle"
@@ -4825,7 +4947,8 @@ def run_case(blender: Path, case: str, output: Path, timeout: int) -> dict:
         phases = []
         for phase, marker in PERSISTENT_SAVE_PHASES.items():
             result = _run_process(blender, case, output, timeout, phase=phase,
-                                  bundle=bundle, phase_marker=marker)
+                                  bundle=bundle, phase_marker=marker,
+                                  persistent_save_package=persistent_save_package)
             phases.append(result)
             if result["status"] != "passed":
                 break
@@ -4862,29 +4985,35 @@ def run_case(blender: Path, case: str, output: Path, timeout: int) -> dict:
         return _run_mesh_storage_case(blender, output, timeout)
     if case == MESH_STORAGE_CONTROL_CASE:
         return _run_mesh_storage_control(blender, output, timeout)
-    if case not in PHASED_CASES:
+    if case not in PHASED_CASES and case not in STOCK_WORKFLOW_PHASES:
         return _run_process(blender, case, output, timeout)
     started = time.monotonic()
     bundle = output / f"{case}-bundle"
-    bundle.mkdir()
+    bundle.mkdir(mode=0o700)
+    if case == "project_checkpoint_backup":
+        (bundle / "bridge-config").mkdir(mode=0o700)
+    phase_order = (STOCK_WORKFLOW_PHASES[case].items() if case in STOCK_WORKFLOW_PHASES
+                   else zip(("writer", "reader"), PHASED_CASES[case], strict=True))
+    phase_order = list(phase_order)
     phases = []
-    for phase, marker in zip(("writer", "reader"), PHASED_CASES[case], strict=True):
+    for phase, marker in phase_order:
         result = _run_process(blender, case, output, timeout, phase=phase,
                               bundle=bundle, phase_marker=marker)
         phases.append(result)
         if result["status"] != "passed":
             break
-    passed = len(phases) == 2 and all(p["status"] == "passed" for p in phases)
-    same_version = passed and phases[0]["blender_version"] == phases[1]["blender_version"]
+    passed = len(phases) == len(phase_order) and all(p["status"] == "passed" for p in phases)
+    same_version = passed and len({p["blender_version"] for p in phases}) == 1
+    fresh_process = same_version and len({p["process_instance"] for p in phases}) == len(phases)
     return {
         "case": case, "script": CASES[case][0],
         "script_sha256": phases[0]["script_sha256"],
-        "status": "passed" if same_version else phases[-1]["status"] if not passed else "failed",
+        "status": "passed" if fresh_process else phases[-1]["status"] if not passed else "failed",
         "blender_version": phases[-1]["blender_version"],
         "execution_mode": phases[0]["execution_mode"],
         "phase_sequence": [p["phase"] for p in phases], "phases": phases,
-        "reader_started": len(phases) == 2, "shared_bundle": str(bundle),
-        "fresh_process_verified": bool(same_version and phases[0]["process_instance"] != phases[1]["process_instance"]),
+        "reader_started": phases[-1]["phase"] == "reader", "shared_bundle": str(bundle),
+        "fresh_process_verified": fresh_process,
         "duration_seconds": round(time.monotonic() - started, 3),
     }
 
@@ -4916,6 +5045,10 @@ def main() -> int:
     parser.add_argument("--case", action="append", choices=tuple(CASES), dest="cases")
     parser.add_argument("--package-probe-config", type=Path,
                         help="Pinned candidate/previous ZIP configuration for installed_addon_probe")
+    parser.add_argument("--persistent-save-addon-zip", type=Path,
+                        help="Candidate ZIP to install in every persistent-save process")
+    parser.add_argument("--persistent-save-addon-sha256",
+                        help="Expected SHA-256 for --persistent-save-addon-zip")
     parser.add_argument(
         "--include-interactive",
         action="store_true",
@@ -4931,13 +5064,25 @@ def main() -> int:
     if any(not p.is_file() for p in executables):
         parser.error("Each Blender path must be an existing executable file")
     output = args.output.resolve()
-    output.mkdir(parents=True, exist_ok=False)
     defaults = [case for case in CASES if case not in {"native_project_saving_large", MESH_STORAGE_CONTROL_CASE, MESH_STORAGE_TIMING_CASE, MESH_STORAGE_INSPECTION_CASE, MESH_STORAGE_COST_CASE}
                 and (args.include_interactive or case not in INTERACTIVE_CASES | OPT_IN_CASES)
                 and (case != "installed_addon_probe" or args.package_probe_config is not None)]
     cases = list(dict.fromkeys(args.cases or defaults))
     if "installed_addon_probe" in cases and args.package_probe_config is None:
         parser.error("installed_addon_probe requires --package-probe-config")
+    if (args.persistent_save_addon_zip is None) != (args.persistent_save_addon_sha256 is None):
+        parser.error("Pass both --persistent-save-addon-zip and --persistent-save-addon-sha256")
+    if args.persistent_save_addon_zip is not None and (not args.cases or set(cases) - set(PERSISTENT_SAVE_CASES)):
+        parser.error("Installed save proof requires explicit persistent_save_master_off or persistent_save_master_on cases")
+    output.mkdir(parents=True, exist_ok=False)
+    persistent_save_package = None
+    if args.persistent_save_addon_zip is not None:
+        try:
+            persistent_save_package = _freeze_persistent_save_package(
+                args.persistent_save_addon_zip, args.persistent_save_addon_sha256, output,
+            )
+        except (OSError, ValueError, zipfile.BadZipFile, RuntimeError) as exc:
+            parser.error(f"Cannot verify persistent-save add-on: {exc}")
     package_proof = None
     # Pass a frozen configuration through only this runner's child environment.
     # The fixture independently freezes and verifies both named ZIP payloads.
@@ -4966,6 +5111,8 @@ def main() -> int:
         "package_probe": package_proof,
         "results": [],
     }
+    if persistent_save_package is not None:
+        report["persistent_save_addon"] = persistent_save_package
     sources = {
         str(p.relative_to(ROOT)).replace("\\", "/"): hashlib.sha256(p.read_bytes()).hexdigest()
         for folder in ("addon", "mcp_server", "scripts")
@@ -4980,7 +5127,11 @@ def main() -> int:
         target = output / f"blender-{index}"
         target.mkdir()
         for case in cases:
-            result = run_case(blender, case, target, args.timeout)
+            if persistent_save_package is None:
+                result = run_case(blender, case, target, args.timeout)
+            else:
+                result = run_case(blender, case, target, args.timeout,
+                                  persistent_save_package=persistent_save_package)
             result["blender_executable"] = str(blender)
             report["results"].append(result)
             report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")

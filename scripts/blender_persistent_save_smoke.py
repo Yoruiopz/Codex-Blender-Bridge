@@ -66,7 +66,7 @@ def rpc_worker(port, request, outcome):
 
 
 class Scenario:
-    def __init__(self, bpy, prefs, runtime, bundle, phase, master, token):
+    def __init__(self, bpy, prefs, runtime, bundle, phase, master, token, attest_installation=None):
         self.bpy = bpy
         self.prefs = prefs
         self.runtime = runtime
@@ -74,6 +74,7 @@ class Scenario:
         self.phase = phase
         self.master = master
         self.token = token
+        self.attest_installation = attest_installation
         self.deadline = time.monotonic() + 100.
         self.approved = bundle / "approved projects"
         self.outside = bundle / "outside approved root"
@@ -168,6 +169,14 @@ class Scenario:
         assert Path(state["directory"]) == target.parent, state
         proposed_filepath = state["filepath"]
         assert not target.exists() and not bpy.data.filepath, "Reading the open Save As dialog wrote a file"
+        self.evidence["native_dialog"] = {"closed_before": True, "path_read": str(target), "file_not_written": True}
+        if self.attest_installation is None:
+            yield from self.cancel_dialog()
+            assert not target.exists() and not bpy.data.filepath, "Passive dialog inspection wrote a file"
+        return proposed_filepath
+
+    def cancel_dialog(self):
+        bpy = self.bpy
         context = self.dialog_context("FILE_BROWSER")
         assert context is not None
         with bpy.context.temp_override(**context):
@@ -180,10 +189,7 @@ class Scenario:
             yield
         else:
             raise AssertionError("The canceled Save As dialog remained open")
-        assert not target.exists() and not bpy.data.filepath, "Passive dialog inspection wrote a file"
-        self.evidence["native_dialog"] = {"closed_before": True, "path_read": str(target),
-                                          "closed_after_cancel": True, "file_not_written": True}
-        return proposed_filepath
+        self.evidence["native_dialog"]["closed_after_cancel"] = True
 
     def save(self, target, *, current=False, proposed_filepath=None):
         params = {} if current else {"filepath": proposed_filepath or str(target), "overwrite": False}
@@ -270,7 +276,17 @@ class Scenario:
         cube = bpy.data.objects["Cube"]
         assert cube.type == "MESH" and len(cube.data.vertices) == 8
         cube.location = (1., 2., 3.)
+        if self.attest_installation is not None:
+            active = yield from self.call("project.save_dialog_state")
+            assert active["state"] == "open" and Path(active["filepath"]) == self.first, active
         first = yield from self.save(self.first, proposed_filepath=proposed_filepath)
+        if self.attest_installation is not None:
+            active = yield from self.call("project.save_dialog_state")
+            assert active["state"] in {"open", "closed"}, active
+            if active["state"] == "open":
+                yield from self.cancel_dialog()
+            assert fingerprint(self.first) == first and Path(bpy.data.filepath) == self.first
+            self.evidence["native_dialog"].update(saved_while_dialog_open=True, state_after_save=active["state"])
         self.evidence["native_dialog"]["returned_path_used_for_first_save"] = True
         first_id = yield from self.checkpoint(self.first, first)
         cube.location = (2., 3., 4.)
@@ -380,6 +396,8 @@ class Scenario:
             self.evidence["master_revocation_verified"] = False
 
     def finish(self):
+        if self.attest_installation is not None:
+            self.evidence["installed_addon"] = self.attest_installation()
         self.evidence["completed"] = True
         artifact = json.dumps(self.evidence, allow_nan=False, sort_keys=True)
         assert len(artifact) < 64 * 1024
@@ -428,6 +446,50 @@ def clean_reader_baseline(bpy, bundle):
     assert tuple(bpy.data.objects["Cube"].location) == (2., 3., 4.)
 
 
+def install_pinned_addon(bpy, configuration: Path, temporary: Path):
+    """Install only the frozen package into this process's disposable script root."""
+    assert configuration == temporary.parent.parent / "persistent-save-addon.json"
+    assert not configuration.is_symlink() and configuration.is_file()
+    with configuration.open("rb") as stream:
+        raw = stream.read(512 * 1024 + 1)
+    assert 0 < len(raw) <= 512 * 1024, "Unexpected add-on package configuration size"
+    record = json.loads(raw)
+    assert set(record) == {"path", "sha256", "members_sha256"}
+    assert Path(record["path"]) == configuration.with_suffix(".zip")
+    assert not Path(record["path"]).is_symlink()
+    sys.path.insert(0, str(ROOT))
+    from scripts.blender_installed_addon_probe_smoke import _archive, _installed_bytes
+
+    owned = temporary / "package inputs with spaces"
+    owned.mkdir(mode=0o700)
+    archive, members = _archive(record, owned, "persistent save candidate")
+    # Test and runner helpers may originate in the checkout. The product
+    # package must be loaded only from Blender's isolated installed location.
+    sys.path[:] = [entry for entry in sys.path if entry and not Path(entry).resolve().is_relative_to(ROOT)]
+    scripts = Path(os.environ["BLENDER_USER_SCRIPTS"])
+    root = scripts / "addons" / ADDON
+    assert not root.exists() and not root.is_symlink()
+    assert bpy.ops.preferences.addon_install(filepath=str(archive), overwrite=False) == {"FINISHED"}
+    _installed_bytes(root, members)
+
+    def attest():
+        _installed_bytes(root, members)
+        origins = {}
+        for name, module in tuple(sys.modules.items()):
+            if name == ADDON or name.startswith(ADDON + "."):
+                file = Path(module.__file__).resolve(strict=True)
+                assert file.is_relative_to(root.resolve())
+                relative = file.relative_to(root.parent.resolve()).as_posix()
+                assert relative in members
+                origins[name] = relative
+        assert origins.get(ADDON) == f"{ADDON}/__init__.py"
+        assert origins.get(f"{ADDON}.runtime") == f"{ADDON}/runtime.py"
+        return {"zip_sha256": record["sha256"], "member_count": len(members), "root": str(root),
+                "module_origins": origins}
+
+    return attest
+
+
 def main():
     import addon_utils
     import bpy
@@ -436,6 +498,7 @@ def main():
     parser.add_argument("--bridge-phase", choices=PHASES, required=True)
     parser.add_argument("--bridge-master", choices=("on", "off"), required=True)
     parser.add_argument("--bridge-bundle", type=Path, required=True)
+    parser.add_argument("--bridge-addon-config", type=Path)
     args = parser.parse_args(sys.argv[sys.argv.index("--") + 1:])
     token = os.environ["BRIDGE_TEST_PROCESS_TOKEN"]
     bundle = args.bridge_bundle.resolve(strict=True)
@@ -454,17 +517,24 @@ def main():
     assert not any(name == ADDON or name.startswith(ADDON + ".") for name in sys.modules)
     if args.bridge_phase != "writer":
         clean_reader_baseline(bpy, bundle)
-    sys.path.insert(0, str(ROOT / "addon"))
+    attest_installation = None
+    if args.bridge_addon_config is None:
+        sys.path.insert(0, str(ROOT / "addon"))
+    else:
+        attest_installation = install_pinned_addon(bpy, args.bridge_addon_config, temp)
     # Discovery/import goes through Blender's normal add-on registration hook.
     assert addon_utils.enable(ADDON, default_set=True, persistent=True) is not None
     from blender_codex_bridge.preferences import get_preferences
     from blender_codex_bridge.runtime import get_runtime
 
+    if attest_installation is not None:
+        attest_installation()
     bpy.context.preferences.use_preferences_save = False
     bpy.context.preferences.filepaths.use_auto_save_temporary_files = False
     prefs = get_preferences()
     assert prefs is not None
-    scenario = Scenario(bpy, prefs, get_runtime(), bundle, args.bridge_phase, args.bridge_master == "on", token)
+    scenario = Scenario(bpy, prefs, get_runtime(), bundle, args.bridge_phase, args.bridge_master == "on", token,
+                        attest_installation)
     bpy.app.timers.register(scenario.tick, first_interval=.05, persistent=True)
 
 

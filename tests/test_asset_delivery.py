@@ -546,6 +546,28 @@ def test_native_context_restores_only_the_predicted_owned_selection_prefix(asset
     assert writes == [("Asset", False), ("Protected", False), ("Asset", True), ("Asset", False), ("Protected", True)]
 
 
+@pytest.mark.parametrize("include_animation", [False, True])
+def test_static_glb_avoids_native_frame_reset(asset, monkeypatch, include_animation):
+    env = asset
+    scene = env.bpy.context.scene
+    scene.frame_current = 2
+    scene.frame_subframe = 0. if include_animation else .25
+    before = env.module._context(env.bpy)
+    native_context_case(env, monkeypatch, lambda _writes: None)
+
+    def exported(**kwargs):
+        assert kwargs["export_animations"] is include_animation
+        assert kwargs["export_current_frame"] is (not include_animation)
+        if not kwargs["export_current_frame"]:
+            scene.frame_subframe = 0.
+        Path(kwargs["filepath"]).write_bytes(artifact("GLB"))
+        return {"FINISHED"}
+
+    env.bpy.ops.export_scene.gltf = exported
+    assert env.module.export_asset(env.context, request(env, include_animation=include_animation))["exported"]
+    assert env.module._context(env.bpy) == before
+
+
 @pytest.mark.parametrize("mode", ["pause", "stop", "cancel", "disconnect", "expired", "rejected", "toolset", "spec", "registry", "revoke"])
 def test_late_grant_provider_stops_context_restore_and_filesystem_cleanup(asset, monkeypatch, mode):
     env = asset

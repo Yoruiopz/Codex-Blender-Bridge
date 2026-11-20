@@ -1,16 +1,23 @@
 # Full artist implementation checklist
 
-The current release pass targets **0.9.1 alpha**: a frozen 270-tool public
-surface, runtime reliability and one exact-package static-asset workflow.
-[Its release contract](releases/0.9.1.md) requires native, installed and CI
-qualification before publication. Broader implementation work is paused at
-preserved checkpoints for this release; the full target below is deferred,
-not removed or marked complete. Windows remains deferred and unverified.
+Published **0.9.1 alpha** (`4c1c66ad`) is the package baseline. Its release page
+records exact-source CI, package integrity and the installed Linux static-asset
+workflow. [0.9.1 release and evidence](https://github.com/Yoruiopz/Codex-Blender-Bridge/releases/tag/v0.9.1)
 
-Current direction, **2026-10-29**: finish the entire agreed artist workflow through
-structured tools. The 29 items below define the remaining implementation work;
-they are not a tool-count target, a scope reduction or release acceptance.
-All fourteen [release requirements](release-1.0-ledger.json) remain **OPEN**.
+The **2026-11-20** persistent-save increment (`06a2cae`) replaces repeated save
+arming with Blender-side permission settings. It adds dialog inspection,
+direct Save and Save As, and verified checkpoint discovery and reopen after
+restart. Four Windows 11 source scenarios passed across Blender 4.5.1 LTS and
+5.1.2 with the dangerous permissions override on and off. The full Python suite
+passed 15,064 tests with three platform skips. [Exact scope and remaining qualification](release-1.0-readiness.md#persistent-saving-and-windows-source-verification)
+
+Follow-up Windows checks exercised the installed add-on on both builds and both
+permission settings, recovered a measured `.blend1` without replacing the newer
+project, and verified typed static GLB/FBX delivery in Blender 4.5.1.
+[Verification scope](release-1.0-readiness.md#persistent-saving-and-windows-source-verification)
+
+The 29 items below cover the remaining work for the full structured artist
+workflow. All fourteen [release requirements](release-1.0-ledger.json) remain **OPEN**.
 
 The completion target remains normal human artist work in standard Blender.
 Ordinary textured/rigged projects, existing animation and procedural data, 4K
@@ -22,10 +29,9 @@ Keep current save-profile limits separate from other tools' 4K evidence, and
 include ordinary 4K save/reopen and current-pixel preservation in H01/A04/I02.
 
 Use the available Linux Blender **4.5.14** (`62c1db4208e8`) and **5.2.2**
-(`d13f752e3b9c`) for implementation checks. **Windows-specific compatibility and
-testing are deferred until implementation is complete, remain unverified, and do
-not block this implementation pass.** Windows 11 and installed-package acceptance
-remain mandatory for the later stable 1.0 candidate.
+(`d13f752e3b9c`) for implementation checks. Prioritize Windows checks for saving
+and recovery. The complete Windows 11 and installed-package matrices remain
+mandatory for the stable 1.0 candidate.
 
 Published [**0.9.0 alpha**](releases/0.9.0.md) dates to 2026-10-28 at
 **16:09:45 UTC**, from `d756b68bc8b44a4da69862214a19ebb25034d1eb`. Its
@@ -37,8 +43,8 @@ aggregate pixels, 80 MiB packed bytes and 256 MiB saved files. It does not quali
 current edited pixels, paired 4K recovery or complete artist-project delivery.
 Earlier releases and evidence remain available.
 
-The [current blocker plan](releases/0.9.0-blocker-plan.md) gives concrete work
-beyond that profile. All 29 items and fourteen gates stay **OPEN**. Meaningful
+The [0.9.0 blocker plan](releases/0.9.0-blocker-plan.md) records work identified
+at that release. All 29 items and fourteen gates stay **OPEN**. Meaningful
 tested prereleases are authorized, but elapsed time does not require publication,
 and stable 1.0 criteria remain unchanged.
 
@@ -110,8 +116,9 @@ redesign options are explicit synchronization with clearly declared mutation
 semantics, or a separate Scene/process snapshot preview. Each must qualify matched
 parent authored-data/context preservation without clearing or rebasing armed
 protection or restoring over manual edits. Current protected capture still
-refuses. Safe-save catalog effects remain separately unresolved; H01/H02 and all
-29 items remain mandatory.
+refuses. Ordinary Save accepts Blender's native callbacks and catalog effects
+under local Save Project consent. H01 still needs production preservation,
+effect/recovery evidence and complete portable delivery.
 
 The geometry-only preview in published 0.6.0 passed selected registered-tool checks on both
 Linux builds, including denial, stale handles, cancellation and running-worker
@@ -151,7 +158,7 @@ still incomplete.
 
 | ID | Requirements | Remaining contract and completion check | Scenarios |
 | --- | --- | --- | --- |
-| H01 | DELIVER-01, REC-01, UX-01 | Provide safe current-file Save, Save As and complete portable `.blend` delivery with bounded native callbacks/effects, approved paths, explicit overwrite policy and full fresh-process reopen. Legacy [save refusal](project-save-safety.md) stays held; extend the separately qualified finite native-save alternative to ordinary artist projects and edited pixels. | A–C, E–F |
+| H01 | DELIVER-01, REC-01, UX-01 | Qualify the [persistent save and checkpoint workflow](project-save-safety.md) on ordinary artist projects, including protected data, native callback/catalog effects, edited pixels at original resolution, and portable `.blend` delivery with fresh-process reopen and measured recovery. The bounded Windows source tests establish basic Save, Save As and restart recovery. | A–C, E–F |
 | H02 | UX-01, EVID-02, LOOK-01 | Provide a supported protected visual-verification strategy with qualified native witnesses and predicted evaluation/isolation/restoration effects. Keep [protected capture](protected-capture-design.md) refused until then; solid-only evidence cannot certify materials. | A–C, E |
 | H03 | DELIVER-01, SAFE-01 | Provide a separately qualified strategy for required 5.2 import workflows without invoking or bypassing the [exact-build quarantine](asset-import.md). Prove source/dependency consent, destination ownership, complete content and recovery. | F |
 | H04 | SAFE-01, LOOK-01 | Complete required shader removal/conversion through a separately reviewed lifecycle/consumer-migration design. Held REMOVE work stays held; preserve declared nested users, identifiers, links, defaults, animation and recovery. | B, E |
@@ -202,11 +209,11 @@ I03 establishes source integration and I04 verifies installed-package replay.
 
 ## Pre-release delivery and later stable qualification
 
-1. Keep development documentation honest about implemented limits, holds and
-   deferred/unverified Windows testing.
+1. Record implemented limits, held work and the exact Windows versions, source
+   and workflows tested.
 2. At a meaningful reviewed increment, choose matching three-integer component
    versions and build add-on ZIP, MCP wheel, plugin ZIP and checksums from one clean
-   reviewed commit. Run appropriate focused/full portable and Linux checks.
+   reviewed commit. Run the focused, full portable and applicable native checks.
 3. Publish a versioned GitHub **pre-release**, retaining exact source/package
    evidence and clear verified limitations. Preserve previous releases. A merge
    requires its exact proposal first where the established flow needs it.

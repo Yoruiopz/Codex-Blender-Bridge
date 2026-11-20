@@ -4,6 +4,7 @@ import hashlib
 import importlib.util
 import json
 import subprocess
+import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -1407,6 +1408,105 @@ def test_interactive_case_uses_isolated_temporary_recovery(runner, monkeypatch, 
     assert result["execution_mode"] == "private_windows_desktop"
 
 
+def save_addon_package_model(runner, monkeypatch, tmp_path):
+    source = tmp_path / "checkout"
+    addon = source / "addon" / "blender_codex_bridge"
+    addon.mkdir(parents=True)
+    script = source / "scripts" / "blender_persistent_save_smoke.py"
+    script.parent.mkdir()
+    script.write_text("# fixture test only\n")
+    members = {"blender_codex_bridge/__init__.py": b"# real package member\n",
+               "blender_codex_bridge/runtime.py": b"# measured runtime\n"}
+    for name, value in members.items():
+        (addon.parent / name).write_bytes(value)
+    archive = tmp_path / "candidate addon.zip"
+    with zipfile.ZipFile(archive, "x") as candidate:
+        for name, value in members.items():
+            candidate.writestr(name, value)
+    out = tmp_path / "report with spaces"
+    out.mkdir()
+    monkeypatch.setattr(runner, "ROOT", source)
+    return archive, out, members
+
+
+def test_persistent_save_archive_requires_pin_and_matches_addon_source(runner, monkeypatch, tmp_path):
+    archive, out, members = save_addon_package_model(runner, monkeypatch, tmp_path)
+    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+    with pytest.raises(ValueError, match="candidate pin"):
+        runner._freeze_persistent_save_package(archive, "0" * 64, out)
+    assert not list(out.iterdir())
+    runtime = runner.ROOT / "addon" / "blender_codex_bridge" / "runtime.py"
+    runtime.write_bytes(b"# a different checkout\n")
+    with pytest.raises(ValueError, match="different bytes"):
+        runner._freeze_persistent_save_package(archive, digest, out)
+    assert not list(out.iterdir())
+    runtime.write_bytes(members["blender_codex_bridge/runtime.py"])
+    pinned = runner._freeze_persistent_save_package(archive, digest, out)
+    assert Path(pinned["path"]).read_bytes() == archive.read_bytes()
+    record = json.loads(Path(pinned["config_path"]).read_text())
+    assert record == {"path": pinned["path"], "sha256": digest,
+                      "members_sha256": {name: hashlib.sha256(value).hexdigest() for name, value in members.items()}}
+
+
+@pytest.mark.parametrize("mode", ["source", "installed", "installed_byte_drift", "source_origin"])
+def test_persistent_save_attests_each_private_desktop_phase(runner, monkeypatch, tmp_path, mode):
+    from scripts import windows_test_process
+
+    archive, out, members = save_addon_package_model(runner, monkeypatch, tmp_path)
+    package = None if mode == "source" else runner._freeze_persistent_save_package(
+        archive, hashlib.sha256(archive.read_bytes()).hexdigest(), out)
+    output = out / "blender-0"
+    output.mkdir()
+    phases = []
+    config_dirs = []
+    scripts_dirs = []
+
+    def run(command, **kwargs):
+        assert "--background" not in command and "--disable-autoexec" in command
+        assert "--factory-startup" in command and command[command.index("--bridge-master") + 1] == "off"
+        phase = command[command.index("--bridge-phase") + 1]
+        env = kwargs["env"]
+        phases.append(phase)
+        config_dirs.append(Path(env["BLENDER_USER_CONFIG"]))
+        scripts_dirs.append(Path(env["BLENDER_USER_SCRIPTS"]))
+        payload = {"phase": phase, "process_instance": env["BRIDGE_TEST_PROCESS_TOKEN"],
+                   "process_id": len(phases), "blender_version": "5.1.2"}
+        if package is None:
+            assert "--bridge-addon-config" not in command
+        else:
+            assert command[command.index("--bridge-addon-config") + 1] == package["config_path"]
+            installed = scripts_dirs[-1] / "addons" / "blender_codex_bridge"
+            installed.mkdir(parents=True)
+            for name, value in members.items():
+                (installed.parent / name).write_bytes(value)
+            runtime = (installed / "runtime.py")
+            origins = {"blender_codex_bridge": "blender_codex_bridge/__init__.py",
+                       "blender_codex_bridge.runtime": "blender_codex_bridge/runtime.py"}
+            if mode == "installed_byte_drift":
+                runtime.write_bytes(b"# unexpected installed bytes\n")
+            if mode == "source_origin":
+                origins["blender_codex_bridge.runtime"] = str(runner.ROOT / "addon" / "blender_codex_bridge" / "runtime.py")
+            payload["installed_addon"] = {"zip_sha256": package["sha256"], "member_count": len(members),
+                                          "root": str(installed), "module_origins": origins}
+        kwargs["stdout"].write((runner.PERSISTENT_SAVE_PHASES[phase] + json.dumps(payload)).encode())
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(runner.sys, "platform", "win32")
+    monkeypatch.setattr(windows_test_process, "run_isolated", run)
+    monkeypatch.setattr(runner.subprocess, "run", lambda *_a, **_k: pytest.fail("visible fallback"))
+    result = runner.run_case(Path("blender.exe"), "persistent_save_master_off", output, 60,
+                             persistent_save_package=package)
+    passed = mode in {"source", "installed"}
+    assert result["status"] == ("passed" if passed else "failed")
+    assert result["execution_mode"] == "private_windows_desktop" and result["fresh_process_verified"] is passed
+    assert phases == (list(runner.PERSISTENT_SAVE_PHASES) if passed else ["writer"])
+    assert len(set(scripts_dirs)) == len(phases) and len(set(config_dirs)) == 1
+    if package is None:
+        assert all("installed_addon_verified" not in row for row in result["phases"])
+    else:
+        assert all(row["installed_addon_verified"] is passed for row in result["phases"])
+
+
 def test_private_desktop_failure_never_launches_visible_fallback(runner, monkeypatch, tmp_path):
     from scripts import windows_test_process
 
@@ -1505,6 +1605,40 @@ def test_phased_version_mismatch_is_failure(runner, monkeypatch, tmp_path):
     monkeypatch.setattr(runner.subprocess, "run", run)
     result = runner.run_case(Path("blender"), "image_reopen", tmp_path, 1)
     assert result["status"] == "failed" and not result["fresh_process_verified"]
+
+
+@pytest.mark.parametrize("case,fail_phase", [
+    ("project_checkpoint_backup", None),
+    ("static_asset_delivery", None),
+    ("static_asset_delivery", "importer"),
+])
+def test_stock_workflow_requires_all_private_phases(runner, monkeypatch, tmp_path, case, fail_phase):
+    from scripts import windows_test_process
+
+    profiles = []
+    phases = runner.STOCK_WORKFLOW_PHASES[case]
+
+    def run(command, **kwargs):
+        assert "--background" not in command and "--disable-autoexec" in command
+        assert "--factory-startup" in command and kwargs["timeout"] == 180
+        phase = command[command.index("--bridge-phase") + 1]
+        env = kwargs["env"]
+        profiles.append((env["BLENDER_USER_CONFIG"], env["BLENDER_USER_SCRIPTS"]))
+        payload = {"phase": phase, "process_instance": env["BRIDGE_TEST_PROCESS_TOKEN"],
+                   "process_id": 91, "blender_version": "4.5.1"}
+        kwargs["stdout"].write((phases[phase] + json.dumps(payload)).encode())
+        return SimpleNamespace(returncode=int(phase == fail_phase))
+
+    monkeypatch.setattr(runner.sys, "platform", "win32")
+    monkeypatch.setattr(windows_test_process, "run_isolated", run)
+    monkeypatch.setattr(runner.subprocess, "run", lambda *_a, **_k: pytest.fail("visible fallback"))
+    result = runner.run_case(Path("blender.exe"), case, tmp_path, 240)
+    assert result["status"] == ("passed" if fail_phase is None else "failed")
+    assert result["reader_started"] is (fail_phase is None)
+    assert result["fresh_process_verified"] is (fail_phase is None)
+    assert result["phase_sequence"] == (list(phases) if fail_phase is None else ["writer", "importer"])
+    assert len({scripts for _, scripts in profiles}) == len(profiles)
+    assert len({config for config, _ in profiles}) == (1 if case == "project_checkpoint_backup" else len(profiles))
 
 
 def glb_structure_model(runner, binary, environment, *, version=(4, 5, 14)):

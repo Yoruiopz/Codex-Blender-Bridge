@@ -198,6 +198,99 @@ def test_failed_index_replacement_preserves_prior_receipt(recovery_env, monkeypa
     assert [item.name for item in env.config.iterdir()] == [env.store.INDEX_NAME]
 
 
+def test_native_overwrite_with_failed_receipt_can_recover_the_verified_backup(recovery_env, monkeypatch):
+    env = recovery_env
+    prior = _record(env)
+    backup = env.project.with_name(env.project.name + "1")
+    env.project.replace(backup)
+    newer = env.data[:-1] + b"!"
+    env.project.write_bytes(newer)
+
+    def fail_index_replace(*args):
+        raise PermissionError("simulated replacement failure after project save")
+
+    monkeypatch.setattr(env.store.os, "replace", fail_index_replace)
+    assert _record(env) == {"state": "unavailable", "reason": "RECOVERY_INDEX_WRITE_FAILED"}
+    assert env.store.read_index()["checkpoint_id"] == prior["checkpoint_id"]
+    assert env.tools.recovery_hint(env.context)["state"] == "verification_required"
+    available = env.status()
+    assert available == {**prior, "state": "backup_available", "recovery_source": "blender_backup",
+                         "recovery_filepath": str(backup), "save_as_required": True}
+
+    with pytest.raises(env.error.BridgeError) as denied:
+        env.reopen(_reopen_args(prior))
+    assert denied.value.context["reason"] == "RECOVERY_FILE_CHANGED"
+    assert env.calls == []
+    result = env.reopen({**_reopen_args(prior), "use_verified_backup": True})
+    assert result["reopened"] is True
+    assert result["filepath"] == result["recovery_filepath"] == str(backup)
+    assert result["original_filepath"] == str(env.project)
+    assert result["save_as_required"] is True and result["file_sha256"] == prior["file_sha256"]
+    assert env.calls == [{"filepath": str(backup), "load_ui": False, "use_scripts": False}]
+    assert env.project.read_bytes() == newer
+    assert backup.read_bytes() == env.data
+
+
+@pytest.mark.parametrize("backup_shape", ["missing", "directory", "same_size_mismatch"])
+def test_stale_receipt_never_selects_other_backups_or_unmatched_bytes(recovery_env, backup_shape):
+    env = recovery_env
+    prior = _record(env)
+    env.project.unlink()
+    backup = env.project.with_name(env.project.name + "1")
+    env.project.with_name(env.project.name + "2").write_bytes(env.data)
+    if backup_shape == "directory":
+        backup.mkdir()
+    if backup_shape == "same_size_mismatch":
+        backup.write_bytes(env.data[:-1] + b"!")
+    assert env.status() == {"state": "unavailable", "reason": "RECOVERY_FILE_MISSING"}
+    with pytest.raises(env.error.BridgeError) as denied:
+        env.reopen({**_reopen_args(prior), "use_verified_backup": True})
+    assert denied.value.context["reason"] == "RECOVERY_VERIFIED_BACKUP_UNAVAILABLE"
+    assert env.calls == []
+
+
+def test_backup_selection_requires_a_literal_opt_in_and_an_unavailable_primary(recovery_env, monkeypatch):
+    env = recovery_env
+    prior = _record(env)
+    env.project.with_name(env.project.name + "1").write_bytes(env.data)
+    verify = env.tools._verify
+    reads = []
+
+    def record_verify(record, path, check):
+        reads.append(path)
+        return verify(record, path, check)
+
+    monkeypatch.setattr(env.tools, "_verify", record_verify)
+    with pytest.raises(env.error.BridgeError) as denied:
+        env.reopen({**_reopen_args(prior), "use_verified_backup": "true"})
+    assert denied.value.code == "INVALID_ARGUMENT"
+    assert reads == []
+    with pytest.raises(env.error.BridgeError) as denied:
+        env.reopen({**_reopen_args(prior), "use_verified_backup": True})
+    assert denied.value.context["reason"] == "RECOVERY_PRIMARY_AVAILABLE"
+    assert reads == [env.project]
+    assert env.calls == []
+
+
+def test_backup_selection_cannot_outlive_primary_replacement_before_native_open(recovery_env):
+    env = recovery_env
+    prior = _record(env)
+    backup = env.project.with_name(env.project.name + "1")
+    env.project.replace(backup)
+    assert env.status()["state"] == "backup_available"
+    assert env.tools.recovery_hint(env.context) == {"state": "unavailable", "reason": "RECOVERY_FILE_MISSING"}
+
+    def restore_primary_then_open(opener):
+        env.project.write_bytes(env.data)
+        return opener()
+
+    env.runtime.run_checkpoint_open = restore_primary_then_open
+    with pytest.raises(env.error.BridgeError) as denied:
+        env.reopen({**_reopen_args(prior), "use_verified_backup": True})
+    assert denied.value.context["reason"] == "RECOVERY_FILE_OR_CONTEXT_CHANGED"
+    assert env.calls == []
+
+
 def test_corrupt_index_does_not_reveal_a_path(recovery_env):
     env = recovery_env
     index = env.config / env.store.INDEX_NAME

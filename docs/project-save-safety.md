@@ -43,9 +43,14 @@ provides no equivalent public dirty-state check for asset catalogs.
 
 Ordinary save receipts identify one actual saved `.blend` of up to 4 GiB. The
 receipt records byte verification, while a successful reopen confirms the file
-was loadable. Recovery uses the saved file on disk. It carries the changes that
-were saved to that file. If the file changes or is replaced outside the Bridge,
-verification fails.
+was loadable. If the original file is missing or its bytes changed,
+`project.checkpoint_status` can return `backup_available`. This means Blender's
+adjacent `.blend1` backup matches the receipt exactly and the original project
+is within the current folder policy. To open the backup, also pass
+`use_verified_backup: true`. The result reports the `.blend1` file Blender
+actually opened and the original path. Use Save As to give the recovered
+project a `.blend` filename. Recovery leaves both files on disk. If no matching
+`.blend1` exists, the Bridge cannot recover the old checkpoint from that receipt.
 The separate [verification jobs](native-project-saving.md) use a fresh Blender
 reader for their supported source profiles.
 

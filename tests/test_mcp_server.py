@@ -197,11 +197,20 @@ def test_private_glb_candidates_are_absent_from_public_runtime(all_enabled: bool
             await client.call_tool("project.save_dialog_state", {})
             await client.call_tool("project.checkpoint_status", {})
             await client.call_tool("project.checkpoint_reopen", {"checkpoint_id": "checkpoint_example", "confirm_reopen": True})
+            await client.call_tool("project.checkpoint_reopen", {
+                "checkpoint_id": "checkpoint_example", "confirm_reopen": True, "use_verified_backup": True,
+            })
+            invalid = await client.call_tool("project.checkpoint_reopen", {
+                "checkpoint_id": "checkpoint_example", "confirm_reopen": True, "use_verified_backup": "true",
+            })
+            assert invalid.is_error
             assert remote.calls == [
                 ("project.save", {"filepath": "C:/work/asset.blend", "overwrite": True}),
                 ("project.save_dialog_state", {}),
                 ("project.checkpoint_status", {}),
                 ("project.checkpoint_reopen", {"checkpoint_id": "checkpoint_example", "confirm_reopen": True}),
+                ("project.checkpoint_reopen", {"checkpoint_id": "checkpoint_example", "confirm_reopen": True,
+                                               "use_verified_backup": True}),
             ]
 
     asyncio.run(scenario())

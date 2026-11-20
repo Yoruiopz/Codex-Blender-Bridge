@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from pydantic import StrictBool
+
 from ..tool_registry import ToolRegistry
 from ._common import MCPToolBinding, params
 
@@ -32,11 +34,14 @@ class ProjectTools:
 
         return await self.registry.call("project.checkpoint_status")
 
-    async def project_checkpoint_reopen(self, checkpoint_id: str, confirm_reopen: bool) -> Any:
-        """Reopen a verified checkpoint from a clean Object Mode project. Set confirm_reopen after confirming project replacement with the user."""
+    async def project_checkpoint_reopen(
+        self, checkpoint_id: str, confirm_reopen: bool, use_verified_backup: StrictBool = False,
+    ) -> Any:
+        """Reopen a verified checkpoint from a clean Object Mode project. Set confirm_reopen after confirming project replacement. Set use_verified_backup only to select the exact Blender backup reported by checkpoint status."""
 
         return await self.registry.call("project.checkpoint_reopen", params(
             checkpoint_id=checkpoint_id, confirm_reopen=confirm_reopen,
+            use_verified_backup=True if use_verified_backup else None,
         ))
 
     def bindings(self) -> tuple[MCPToolBinding, ...]:

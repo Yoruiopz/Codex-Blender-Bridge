@@ -38,6 +38,24 @@ folder and use separate temporary scripts, data and recovery folders. On Windows
 each phase requires a private desktop. The fixture uses actual queued TCP calls
 and the registered Blender timer. It reads the live native Save As dialog, and
 checks saved paths and checkpoint bytes against independently read output.
+To exercise the installed extension, supply both `--persistent-save-addon-zip`
+and `--persistent-save-addon-sha256` with these explicit cases. Each process installs
+the pinned ZIP into its own scripts folder, checks its members and verifies that
+loaded Bridge modules came from the installation. The writer saves while the
+native dialog is still open. This qualifies the add-on package and Bridge socket
+path. The MCP wheel and plugin have separate installed-package checks.
+
+`project_checkpoint_backup` uses a real Blender overwrite with Save Versions set
+to one and injects an error when the Bridge records the new receipt. A fresh
+process verifies the previous `.blend1`, checks that normal reopen refuses it,
+then explicitly reopens it and saves a separate `.blend`. It compares both prior
+files' bytes before and after recovery.
+
+Run `--case static_asset_delivery` on official Blender 4.5 LTS for the composed
+static delivery check. Three private processes use public Bridge tools to export,
+reimport and save a material-free GLB and FBX pair, then reopen the `.blend` with
+the original import paths absent. The fixture includes a nonzero subframe to test
+context preservation and stops the sequence at the first failed phase.
 
 `exclusive_mutation` is an opt-in interactive fixture for the structured-entry
 interlock used by `asset.import`. It attempts nested writes through executor,
