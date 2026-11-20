@@ -1611,6 +1611,8 @@ def test_phased_version_mismatch_is_failure(runner, monkeypatch, tmp_path):
     ("project_checkpoint_backup", None),
     ("edited_texture_recovery", None),
     ("edited_texture_recovery_large", None),
+    ("edited_texture_recovery_resave", None),
+    ("edited_texture_recovery_resave", "recover"),
     ("static_asset_delivery", None),
     ("static_asset_delivery", "importer"),
 ])
@@ -1639,9 +1641,15 @@ def test_stock_workflow_requires_all_private_phases(runner, monkeypatch, tmp_pat
     assert result["status"] == ("passed" if fail_phase is None else "failed")
     assert result["reader_started"] is (fail_phase is None)
     assert result["fresh_process_verified"] is (fail_phase is None)
-    assert result["phase_sequence"] == (list(phases) if fail_phase is None else ["writer", "importer"])
+    expected_phases = list(phases)
+    if case == "edited_texture_recovery_resave":
+        assert expected_phases == ["writer", "recover", "reader"]
+    if fail_phase is not None:
+        expected_phases = expected_phases[:expected_phases.index(fail_phase) + 1]
+    assert result["phase_sequence"] == expected_phases
     assert len({scripts for _, scripts in profiles}) == len(profiles)
-    shared = {"project_checkpoint_backup", "edited_texture_recovery", "edited_texture_recovery_large"}
+    shared = {"project_checkpoint_backup", "edited_texture_recovery", "edited_texture_recovery_large",
+              "edited_texture_recovery_resave"}
     assert len({config for config, _ in profiles}) == (1 if case in shared else len(profiles))
     if case in shared:
         assert all(Path(config) == tmp_path / f"{case}-bundle" / "bridge-config" for config, _ in profiles)

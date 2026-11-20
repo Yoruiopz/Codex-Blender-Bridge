@@ -28,7 +28,8 @@ from scripts.blender_current_pixels_paired_recovery_smoke import (  # noqa: E402
 )
 from scripts.blender_persistent_save_smoke import ADDON, Scenario  # noqa: E402
 
-CASES = {"edited_texture_recovery": "SMALL2X2", "edited_texture_recovery_large": "LARGE4K"}
+PORTABLE_CASE = "edited_texture_recovery_resave"
+CASES = {"edited_texture_recovery": "SMALL2X2", "edited_texture_recovery_large": "LARGE4K", PORTABLE_CASE: "SMALL2X2"}
 ORIGINAL = "Owned edited FILE original"
 SNAPSHOT = "Owned edited-pixel recovery helper"
 PROTECTED = "Owned unrelated FILE image"
@@ -208,14 +209,14 @@ class EditedTextureScenario(Scenario):
 
             self.evidence["process_memory_at_completion"] = process_memory()
 
-    def save_owned_project(self):
-        result = yield from self.call("project.save", {"filepath": str(self.first), "overwrite": False})
+    def save_owned_project(self, target):
+        result = yield from self.call("project.save", {"filepath": str(target), "overwrite": False})
         assert result["saved"] is True and result["project_saved"] is True, result
-        assert Path(result["filepath"]) == Path(self.bpy.data.filepath) == self.first, result
-        proof = file_proof(self.first)
+        assert Path(result["filepath"]) == Path(self.bpy.data.filepath) == target, result
+        proof = file_proof(target)
         receipt = result["recovery_checkpoint"]
         assert receipt["state"] == "available", receipt
-        assert Path(receipt["filepath"]) == self.first and receipt["verification"] == "saved_bytes", receipt
+        assert Path(receipt["filepath"]) == target and receipt["verification"] == "saved_bytes", receipt
         assert receipt["file_sha256"] == proof["sha256"] and result["file_bytes"] == receipt["file_bytes"] == proof["bytes"], receipt
         return proof
 
@@ -280,7 +281,7 @@ class EditedTextureScenario(Scenario):
         assert packed_hash(original) == old_packed and bindings(bpy, original, protected) == before
 
         self.stage = "ordinary queued Save to approved project path with a persistent individual grant"
-        proof = yield from self.save_owned_project()
+        proof = yield from self.save_owned_project(self.first)
         checkpoint = yield from self.checkpoint(self.first, proof)
         assert file_proof(self.check_missing_source(original))["sha256"] == old_packed
         assert protected_packed == packed_hash(protected)
@@ -375,12 +376,123 @@ class EditedTextureScenario(Scenario):
                              scene_save_unchanged=True, source_path_unavailable=True)
 
 
+class PortableEditedTextureScenario(EditedTextureScenario):
+    @property
+    def restored_project(self):
+        return self.approved / "restored original.blend"
+
+    def reader(self):
+        if self.phase == "reader":
+            yield from self.verify_saved_original()
+            return
+
+        assert self.phase == "recover"
+        yield from super().reader()
+        self.stage = "Save As a new project with the restored packed original"
+        assert self.evidence["restoration_mode"] == "PACKED_RECONSTRUCTION", self.evidence["restoration_mode"]
+        original = self.bpy.data.images[ORIGINAL]
+        target = self.restored_project
+        assert not target.exists()
+        proof = yield from self.save_owned_project(target)
+        checkpoint = yield from self.checkpoint(target, proof)
+        assert checkpoint != self.evidence["checkpoint_id"]
+        assert file_proof(self.first) == self.evidence["checkpoint_file"]
+        assert self.bpy.data.images[ORIGINAL].as_pointer() == original.as_pointer()
+        assert packed_hash(original) == self.evidence["restored_packed_sha256"]
+        self.check_missing_source(original)
+        self.evidence.update(saved_as=str(target), saved_as_file=proof, saved_as_checkpoint_id=checkpoint)
+
+    def verify_saved_original(self):
+        bpy = self.bpy
+        self.stage = "open the new verified Save As from a third clean factory process"
+        previous = {}
+        for phase in ("writer", "recover"):
+            with (self.bundle / f"{phase}.json").open("rb") as stream:
+                previous[phase] = json.loads(stream.read(64 * 1024))
+        writer, recovered = previous["writer"], previous["recover"]
+        assert writer["checkpoint_id"] == recovered["checkpoint_id"] and writer["checkpoint_file"] == recovered["checkpoint_file"]
+        assert len({writer["process_instance"], recovered["process_instance"], self.token}) == 3
+        assert len({writer["process_id"], recovered["process_id"], os.getpid()}) == 3
+        assert recovered["restoration_mode"] == "PACKED_RECONSTRUCTION"
+        target = self.restored_project
+        assert not bpy.data.filepath and bpy.data.images.get(ORIGINAL) is None
+        assert target == Path(recovered["saved_as"]) and target != self.first
+        first_proof, proof = file_proof(self.first), file_proof(target)
+        assert first_proof == writer["checkpoint_file"] and proof == recovered["saved_as_file"] and proof != first_proof
+        checkpoint = yield from self.checkpoint(target, proof)
+        assert checkpoint == recovered["saved_as_checkpoint_id"] and checkpoint != writer["checkpoint_id"]
+        result = yield from self.call("project.checkpoint_reopen", {"checkpoint_id": checkpoint, "confirm_reopen": True})
+        assert result["reopened"] is True and result["auto_replayed"] is False, result
+        assert Path(result["filepath"]) == Path(bpy.data.filepath) == target
+        assert bpy.app.timers.is_registered(self.runtime.executor._timer_callback)
+        yield from self.call("toolsets.enable", {"name": "materials"})
+
+        from blender_codex_bridge.tools import image_portability as storage
+        from blender_codex_bridge.tools.image_recovery_jobs import _decode_steps
+
+        self.stage = "inspect the original ID and decode its own stored bytes before asking Blender for pixels"
+        original, helper, protected = (bpy.data.images[name] for name in (ORIGINAL, SNAPSHOT, PROTECTED))
+        assert original != helper and helper[storage.OWNER_KEY] == original
+        assert original.library is original.override_library is None
+        roles_before = tuple(roles(image) for image in (original, protected))
+        assert roles_before == (("FILE", "Non-Color", "CHANNEL_PACKED"),) * 2
+        native_before = bindings(bpy, original, protected)
+        missing = self.check_missing_source(original)
+        assert file_proof(missing)["sha256"] == writer["original_packed_sha256"]
+        loaded_before = bool(original.has_data)
+        helper_loaded_before = bool(helper.has_data)
+        inspected = (yield from self.call("image.inspect", {"image_name": ORIGINAL}))["images"]
+        assert len(inspected) == 1
+        record = inspected[0]
+        assert record["name"] == ORIGINAL and record["packed"] and not record["pixel_contents_verified"], record
+        assert record["has_data"] is bool(original.has_data) is loaded_before
+        assert (record["source"], record["colorspace"], record["alpha_mode"]) == roles_before[0]
+        assert record["filepath"] == original.filepath and not record["filepath_truncated"], record
+        expected_users = {("Image", SNAPSHOT), *(("Material", name + " Material") for name in BINDINGS[:2])}
+        assert not record["direct_users_truncated"] and record["direct_user_count"] == len(expected_users), record
+        assert {(item["type"], item["name"]) for item in record["direct_users"]} == expected_users, record
+        assert len(original.packed_files) == 1 and original.packed_file is not None
+        payload = bytes(original.packed_file.data)
+        packed_sha256 = hashlib.sha256(payload).hexdigest()
+        assert 0 < len(payload) == original.packed_file.size <= 64 * 1024
+        assert packed_sha256 == recovered["restored_packed_sha256"] == writer["snapshot_packed_sha256"]
+        assert packed_sha256 != writer["original_packed_sha256"]
+        width, height = self.dimensions
+        stored = yield from _decode_steps(payload, {"width": width, "height": height}, lambda: None)
+        expected = edited_oracle(width, height)
+        assert raw_digest(stored) == expected == recovered["original_raw_sha256"] == writer["current_raw_sha256"]
+        assert bool(original.has_data) is loaded_before
+
+        self.stage = "verify native lazy decode and preservation without restoring, reloading or saving"
+        assert tuple(original.size) == self.dimensions
+        assert original.type == "IMAGE" and original.file_format == "OPEN_EXR"
+        native_digest = raw_digest(pixels(original, self.dimensions))
+        assert native_digest == expected and packed_hash(original) == packed_sha256
+        assert bool(helper.has_data) is helper_loaded_before
+        assert tuple(roles(image) for image in (original, protected)) == roles_before
+        assert packed_hash(protected) == writer["protected_packed_sha256"]
+        assert tuple(protected.size) == PROTECTED_DIMENSIONS
+        assert raw_digest(pixels(protected, PROTECTED_DIMENSIONS)) == raw_digest(array("f", PROTECTED_CHANNELS) * 4)
+        assert bindings(bpy, original, protected) == native_before
+        assert file_proof(self.check_missing_source(original))["sha256"] == writer["original_packed_sha256"]
+        assert file_proof(self.first) == first_proof and file_proof(target) == proof
+        assert [item["method"] for item in self.evidence["methods"]] == [
+            "project.checkpoint_status", "project.checkpoint_reopen", "toolsets.enable", "image.inspect",
+        ]
+        self.evidence.update(checkpoint_id=checkpoint, saved_as=str(target), saved_as_file=proof, first_save_file=first_proof,
+                             original_packed_bytes=len(payload), original_packed_sha256=packed_sha256,
+                             packed_original_raw_sha256=expected, native_original_raw_sha256=native_digest,
+                             original_loaded_before_native_read=loaded_before, original_loaded_after_native_read=True,
+                             original_image_metadata=record, protected_consumer_preserved=True, shared_bindings_preserved=True,
+                             saved_projects_unchanged=True, source_path_unavailable=True, dimensions=self.dimensions)
+
+
 def main():
     import addon_utils
     import bpy
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--bridge-phase", choices=("writer", "reader"), required=True)
+    parser.add_argument("--bridge-phase", choices=("writer", "recover", "reader"), required=True)
     parser.add_argument("--bridge-bundle", type=Path, required=True)
     args = parser.parse_args(sys.argv[sys.argv.index("--") + 1:])
     phase = args.bridge_phase
@@ -391,6 +503,7 @@ def main():
     case = bundle.name.removesuffix("-bundle")
     assert args.bridge_bundle == bundle and bundle.is_dir() and bundle.name == f"{case}-bundle" and case in CASES
     profile = CASES[case]
+    assert phase != "recover" or case == PORTABLE_CASE
     assert not (bundle / (phase + ".json")).exists()
     config = Path(os.environ["BLENDER_USER_CONFIG"])
     assert config == bundle / "bridge-config" and config.is_dir() and not config.is_symlink()
@@ -410,7 +523,8 @@ def main():
     bpy.context.preferences.filepaths.use_auto_save_temporary_files = False
     prefs = get_preferences()
     assert prefs is not None
-    scenario = EditedTextureScenario(bpy, prefs, get_runtime(), bundle, phase, False, token)
+    scenario_type = PortableEditedTextureScenario if case == PORTABLE_CASE else EditedTextureScenario
+    scenario = scenario_type(bpy, prefs, get_runtime(), bundle, phase, False, token)
     scenario.client_factory = Client
     scenario.dimensions = PROFILES[profile]
     scenario.job_limit = 240. if profile == "LARGE4K" else 25.
