@@ -129,6 +129,15 @@ Particle Edit state. The refusal retained all three verified files and reported
 one completed Scene marker write and one native snapshot. The helper write was
 never attempted. Supporting that context requires a separately verified native
 state transition. The product path does not initialize or rebase those roles.
+One exact-source run also exceeded the original 30-second diagnostic status
+timeout while the helper record was being verified. The helper fixture now
+allows 45 seconds for a status request queued behind the synchronous commit and
+records the longest wait. It retains the 3-second start acknowledgments and
+the 60-second backup job deadline.
+
+```bash
+python scripts/run_loaded_backup_private_display.py --case current_pixels_helper_record --blender /path/to/blender --output /absolute/new/report-directory
+```
 
 The separate read-only graph passed on stock Linux Blender 4.5.14 and 5.2.2
 at clean commit `3805511f571a8acaa2a9c16b6cab07713770348a` (source fingerprint

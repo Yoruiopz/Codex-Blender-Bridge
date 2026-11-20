@@ -34,7 +34,9 @@ HELPER_RECORD_PROFILE = "CURRENT_PIXELS_QUEUED_HELPER_RECORD_SMALL_V1"
 HELPER_RECORD_SCOPE = "fixture_only_queued_archive_and_helper_record"
 HELPER_RECORD_MARKER = "BLENDER_CURRENT_PIXELS_HELPER_RECORD_OK "
 HELPER_RECORD_REPORT_NAME = "current-pixels-helper-record.json"
-HELPER_COMMIT_POLL_MS = 30000
+# This diagnostic can queue behind a synchronous native checkpoint and both
+# complete graph comparisons. Keep the start ACK and the job deadline separate.
+HELPER_COMMIT_POLL_MS = 45000
 HELPER_LIFECYCLE_KEY = "_codex_bridge_current_pixels_lifecycle_v1"
 SCENE_CHECKPOINT_KEY = "_codex_bridge_undo_marker"
 ACQUISITION_PROFILE = "CURRENT_PIXELS_QUEUED_ACQUISITION_SMALL_V1"
