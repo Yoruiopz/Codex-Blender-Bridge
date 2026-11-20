@@ -96,10 +96,11 @@ Rules:
 - MCP client approvals are an additional user-control layer, not a replacement.
 - Deletion, arbitrary Python, and external file access remain off by default. Scene/render editing is separately revocable through `EDIT_SCENE` and `EDIT_RENDER`. Python is a declared super-permission path: it requires `EXECUTE_PYTHON`, `DELETE_OBJECTS`, `ACCESS_EXTERNAL_FILES`, and `SAVE_PROJECT` together because raw `bpy` can bypass narrower structured domain gates.
 
-### Approved texture reads (unreleased)
+### Approved texture reads
 
 `image.load` and FILE-source `nodes.set_image` also constrain paths to the local **Approved
-Texture Folder** chosen in Blender. Empty scope blocks reads; no MCP tool changes that folder.
+Texture Folder** chosen in Blender unless the separate unrestricted path option below is
+enabled. Blank scope alone grants no access. Blender preferences own the folder policy.
 Live external-file permission remains independently required alongside material editing.
 Read-only inspection does not reload unloaded buffers or read file/pixel contents. See the
 [format/byte/pixel bounds, source checks and recovery contract](image-assets.md). Native decoding
@@ -132,7 +133,28 @@ The project exposes no shell or network tool. Adding a generic shell tool would 
 
 ## Filesystem and saving
 
-Reading or writing a user-chosen external path through a structured tool requires `ACCESS_EXTERNAL_FILES` in addition to the domain permission. `project.save` retains `SAVE_PROJECT` and the additional path grant, but now refuses both Save and Save As before native/path access: [native save side effects remain unbounded](project-save-safety.md). Those grants do not make the unavailable backend safe. Render settings require `EDIT_RENDER`; a managed temporary still requires `EDIT_RENDER` and `CAPTURE_VIEWPORT`, while an explicit render path additionally checks `ACCESS_EXTERNAL_FILES`. An armed Python script does not re-enter these per-handler checks, which is why `python.execute` requires both `ACCESS_EXTERNAL_FILES` and `SAVE_PROJECT` even when its declared expected effect does not mention files.
+Reading or writing a user-chosen external path through a structured tool requires
+`ACCESS_EXTERNAL_FILES` in addition to the domain permission. `project.save` uses
+persistent `SAVE_PROJECT` for Save Current at the existing approved path. First Save,
+Save As and saves under unrestricted path policy also require `ACCESS_EXTERNAL_FILES`.
+Save As takes an explicit absolute `.blend` path and requires `overwrite: true` to
+replace an existing target. The **Approved Project Folder** applies unless the
+separate unrestricted path option is enabled. Native save can write backups,
+catalogs and callback output. An enforced protected scope still refuses saving.
+[Save and recovery contract](project-save-safety.md)
+
+The local **Enable all dangerous permissions** control can enable deletion, raw Python,
+external files and saving together. To remove the project and texture folder allowlists,
+also enable **Use project and texture paths outside approved folders**. Both controls
+are off by default. Turning off the master override also removes unrestricted path
+access and restores the individually chosen grants. Blank approved folders grant no
+access by themselves. These settings govern the Bridge within Blender's existing OS
+access. Codex permissions remain managed separately.
+
+Render settings require `EDIT_RENDER`. A managed temporary also requires
+`CAPTURE_VIEWPORT`, while an explicit render path checks `ACCESS_EXTERNAL_FILES`.
+Raw Python bypasses these per-handler checks, so `python.execute` requires both
+`ACCESS_EXTERNAL_FILES` and `SAVE_PROJECT` even when the expected effect omits files.
 
 Path-handling requirements:
 

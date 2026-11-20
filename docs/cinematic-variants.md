@@ -1,9 +1,10 @@
 # Cinematic variants
 
-**Save availability:** `project.save` currently refuses Save and Save As before
-native/path access; see [the safety change](project-save-safety.md). Fresh-process
-results below establish feature serialization through owned fixture setup, not a
-safe bridge project-save capability. Earlier typed-save reports are historical.
+**Project saving.** The current `project.save` supports Save and Save As under
+persistent Blender-side permissions and project-folder rules. Saving still
+refuses while protected scope is enforced. The fresh-process results below
+apply to the owned fixture setup and source described in each report.
+[Save and recovery contract](project-save-safety.md)
 
 The development `scene_edit` toolset contains a bounded camera and lighting iteration
 workflow. It is a partial implementation of UX-01 and cinematic scenario E, not
@@ -80,8 +81,9 @@ are retained. Reopening or changing context requires a newly authorized toolset,
 exact reference rebind and a new preview. Changed protected assets or render/world/
 time settings require capturing a newly reviewed variant.
 
-Capture, preview and apply never save a project. Persisting the library to disk is
-a safe separately authorized project-save backend, which remains blocked. A logical checkpoint is not a disk backup.
+Capture, preview and apply never save a project. To persist the variant library
+to disk, use a separately authorized `project.save`. A logical checkpoint only
+retains its in-session recovery state. [Save and recovery contract](project-save-safety.md)
 
 ## Matched previews and recovery
 

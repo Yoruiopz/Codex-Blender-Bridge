@@ -25,8 +25,9 @@ checkpoint receipt are reported separately.
 
 **Enable all dangerous permissions** in Bridge preferences enables the individual
 Delete Objects, Execute Python, Access External Files and Save Project grants as
-one explicit local choice. A separate **Allow unrestricted project and texture
-paths** checkbox removes those folder allowlists while the master choice is on.
+one explicit local choice. The separate **Use project and texture paths outside
+approved folders** checkbox removes those folder allowlists while the master
+choice is on.
 Without that opt-in, blank folders grant no path access. Asset Source and Asset
 Delivery folders are separate. Turning off the master choice removes unrestricted
 path access and restores the individual choices. The setting controls Bridge

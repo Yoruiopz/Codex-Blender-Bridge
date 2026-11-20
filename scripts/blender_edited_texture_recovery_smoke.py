@@ -28,8 +28,11 @@ from scripts.blender_current_pixels_paired_recovery_smoke import (  # noqa: E402
 )
 from scripts.blender_persistent_save_smoke import ADDON, Scenario  # noqa: E402
 
-PORTABLE_CASE = "edited_texture_recovery_resave"
-CASES = {"edited_texture_recovery": "SMALL2X2", "edited_texture_recovery_large": "LARGE4K", PORTABLE_CASE: "SMALL2X2"}
+PORTABLE_CASES = {
+    "edited_texture_recovery_resave": "SMALL2X2",
+    "edited_texture_recovery_resave_large": "LARGE4K",
+}
+CASES = {"edited_texture_recovery": "SMALL2X2", "edited_texture_recovery_large": "LARGE4K", **PORTABLE_CASES}
 ORIGINAL = "Owned edited FILE original"
 SNAPSHOT = "Owned edited-pixel recovery helper"
 PROTECTED = "Owned unrelated FILE image"
@@ -90,6 +93,20 @@ def file_proof(path):
             remaining -= len(block)
         assert not stream.read(1), "Owned fixture file grew"
     return {"bytes": size, "sha256": digest.hexdigest()}
+
+
+def decode_packed_pixels(payload, width, height):
+    """Decode the owned packed payload in batches of rows between fixture timer turns."""
+    from blender_codex_bridge.tools.image_recovery_jobs import _decode_steps
+
+    steps = _decode_steps(payload, {"width": width, "height": height}, lambda: None)
+    try:
+        while True:
+            for _ in range(64):
+                next(steps)
+            yield
+    except StopIteration as completed:
+        return completed.value
 
 
 def make_surface(bpy, name, image, offset):
@@ -393,6 +410,7 @@ class PortableEditedTextureScenario(EditedTextureScenario):
         original = self.bpy.data.images[ORIGINAL]
         target = self.restored_project
         assert not target.exists()
+        started = time.monotonic()
         proof = yield from self.save_owned_project(target)
         checkpoint = yield from self.checkpoint(target, proof)
         assert checkpoint != self.evidence["checkpoint_id"]
@@ -400,11 +418,14 @@ class PortableEditedTextureScenario(EditedTextureScenario):
         assert self.bpy.data.images[ORIGINAL].as_pointer() == original.as_pointer()
         assert packed_hash(original) == self.evidence["restored_packed_sha256"]
         self.check_missing_source(original)
-        self.evidence.update(saved_as=str(target), saved_as_file=proof, saved_as_checkpoint_id=checkpoint)
+        self.capture_peak_memory()
+        self.evidence.update(saved_as=str(target), saved_as_file=proof, saved_as_checkpoint_id=checkpoint,
+                             save_as_with_receipt_seconds=round(time.monotonic() - started, 3))
 
     def verify_saved_original(self):
         bpy = self.bpy
-        self.stage = "open the new verified Save As from a third clean factory process"
+        self.stage = "preflight and open the new verified Save As from a third clean factory process"
+        self.check_capacity()
         previous = {}
         for phase in ("writer", "recover"):
             with (self.bundle / f"{phase}.json").open("rb") as stream:
@@ -427,8 +448,8 @@ class PortableEditedTextureScenario(EditedTextureScenario):
         assert bpy.app.timers.is_registered(self.runtime.executor._timer_callback)
         yield from self.call("toolsets.enable", {"name": "materials"})
 
+        from blender_codex_bridge.pixel_codecs import MAX_ENCODED_BYTES
         from blender_codex_bridge.tools import image_portability as storage
-        from blender_codex_bridge.tools.image_recovery_jobs import _decode_steps
 
         self.stage = "inspect the original ID and decode its own stored bytes before asking Blender for pixels"
         original, helper, protected = (bpy.data.images[name] for name in (ORIGINAL, SNAPSHOT, PROTECTED))
@@ -452,21 +473,29 @@ class PortableEditedTextureScenario(EditedTextureScenario):
         assert not record["direct_users_truncated"] and record["direct_user_count"] == len(expected_users), record
         assert {(item["type"], item["name"]) for item in record["direct_users"]} == expected_users, record
         assert len(original.packed_files) == 1 and original.packed_file is not None
+        packed_size = original.packed_file.size
+        assert 0 < packed_size <= MAX_ENCODED_BYTES
+        started = time.monotonic()
         payload = bytes(original.packed_file.data)
+        assert len(payload) == packed_size
         packed_sha256 = hashlib.sha256(payload).hexdigest()
-        assert 0 < len(payload) == original.packed_file.size <= 64 * 1024
         assert packed_sha256 == recovered["restored_packed_sha256"] == writer["snapshot_packed_sha256"]
         assert packed_sha256 != writer["original_packed_sha256"]
         width, height = self.dimensions
-        stored = yield from _decode_steps(payload, {"width": width, "height": height}, lambda: None)
+        stored = yield from decode_packed_pixels(payload, width, height)
+        stored_digest = raw_digest(stored)
+        del payload, stored  # Release both complete arrays before requesting Blender's native buffer.
+        packed_decode_seconds = round(time.monotonic() - started, 3)
         expected = edited_oracle(width, height)
-        assert raw_digest(stored) == expected == recovered["original_raw_sha256"] == writer["current_raw_sha256"]
+        assert stored_digest == expected == recovered["original_raw_sha256"] == writer["current_raw_sha256"]
         assert bool(original.has_data) is loaded_before
 
         self.stage = "verify native lazy decode and preservation without restoring, reloading or saving"
+        started = time.monotonic()
         assert tuple(original.size) == self.dimensions
         assert original.type == "IMAGE" and original.file_format == "OPEN_EXR"
         native_digest = raw_digest(pixels(original, self.dimensions))
+        native_decode_seconds = round(time.monotonic() - started, 3)
         assert native_digest == expected and packed_hash(original) == packed_sha256
         assert bool(helper.has_data) is helper_loaded_before
         assert tuple(roles(image) for image in (original, protected)) == roles_before
@@ -479,9 +508,12 @@ class PortableEditedTextureScenario(EditedTextureScenario):
         assert [item["method"] for item in self.evidence["methods"]] == [
             "project.checkpoint_status", "project.checkpoint_reopen", "toolsets.enable", "image.inspect",
         ]
+        self.capture_peak_memory()
         self.evidence.update(checkpoint_id=checkpoint, saved_as=str(target), saved_as_file=proof, first_save_file=first_proof,
-                             original_packed_bytes=len(payload), original_packed_sha256=packed_sha256,
-                             packed_original_raw_sha256=expected, native_original_raw_sha256=native_digest,
+                             original_packed_bytes=packed_size, original_packed_sha256=packed_sha256,
+                             packed_original_raw_sha256=stored_digest, native_original_raw_sha256=native_digest,
+                             packed_decode_with_hash_seconds=packed_decode_seconds,
+                             native_decode_with_hash_seconds=native_decode_seconds,
                              original_loaded_before_native_read=loaded_before, original_loaded_after_native_read=True,
                              original_image_metadata=record, protected_consumer_preserved=True, shared_bindings_preserved=True,
                              saved_projects_unchanged=True, source_path_unavailable=True, dimensions=self.dimensions)
@@ -503,7 +535,7 @@ def main():
     case = bundle.name.removesuffix("-bundle")
     assert args.bridge_bundle == bundle and bundle.is_dir() and bundle.name == f"{case}-bundle" and case in CASES
     profile = CASES[case]
-    assert phase != "recover" or case == PORTABLE_CASE
+    assert phase != "recover" or case in PORTABLE_CASES
     assert not (bundle / (phase + ".json")).exists()
     config = Path(os.environ["BLENDER_USER_CONFIG"])
     assert config == bundle / "bridge-config" and config.is_dir() and not config.is_symlink()
@@ -523,7 +555,7 @@ def main():
     bpy.context.preferences.filepaths.use_auto_save_temporary_files = False
     prefs = get_preferences()
     assert prefs is not None
-    scenario_type = PortableEditedTextureScenario if case == PORTABLE_CASE else EditedTextureScenario
+    scenario_type = PortableEditedTextureScenario if case in PORTABLE_CASES else EditedTextureScenario
     scenario = scenario_type(bpy, prefs, get_runtime(), bundle, phase, False, token)
     scenario.client_factory = Client
     scenario.dimensions = PROFILES[profile]

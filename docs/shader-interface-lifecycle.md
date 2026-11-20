@@ -1,9 +1,10 @@
 # Shader interface lifecycle and native evidence
 
-**Save availability:** `project.save` currently refuses Save and Save As before
-native/path access; see [the safety change](project-save-safety.md). Fresh-process
-results below establish feature serialization through owned fixture setup, not a
-safe bridge project-save capability. Earlier typed-save reports are historical.
+**Project saving.** The current `project.save` supports Save and Save As under
+persistent Blender-side permissions and project-folder rules. Saving still
+refuses while protected scope is enforced. The fresh-process results below
+apply to the owned fixture setup and source described in each report.
+[Save and recovery contract](project-save-safety.md)
 
 Unreleased development now includes two typed tools, following the native research
 below. `shader_group.interface_add` remains the existing structured append operation.
@@ -71,8 +72,8 @@ or disabled toolset prevents new writes, including compensation. A completed fir
 assignment may therefore remain and is reported as possible mutation requiring
 explicit fresh-authority recovery. An ordinary native verification failure can
 restore the exact owned output only while all authority remains valid.
-Recovery history is finite and is not
-a durable backup. These tools do not save; safe project saving remains separately blocked.
+Recovery history is finite. Persist the result and create a saved project file
+through a separately authorized `project.save`. [Save and recovery contract](project-save-safety.md)
 
 All user custom-property keys on supported shader owners enter the proof, including
 the literal `_codex_bridge_undo_marker`. That name grants no checkpoint authority

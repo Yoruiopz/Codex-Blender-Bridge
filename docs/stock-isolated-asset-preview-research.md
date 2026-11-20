@@ -5,7 +5,8 @@ bounded named Mesh Object's authored geometry and XYZ transform values into a
 small data transfer object (DTO). A fresh worker builds and renders its own
 scene. It is not registered in the add-on or MCP server, does not enable protected
 `viewport.capture`, and supplies no current-project save or delivery capability.
-`project.save` remains unavailable under the [save safety contract](project-save-safety.md).
+Ordinary project saving in current development builds uses a separate native
+path. [Save and recovery contract](project-save-safety.md)
 
 The selected isolated experiment passed on official Linux Blender 4.5.14 and
 5.2.2 at source `ea1da49f7069ad3552c393b88148b56fc32b436d`, before integration.

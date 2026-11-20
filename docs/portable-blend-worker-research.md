@@ -1,9 +1,9 @@
 # Portable asset .blend helper research
 
-This is an opt-in native experiment, not a public delivery tool or a safe project
-saver. `project.save` remains unavailable under the [save safety contract](project-save-safety.md).
-There is no worker backend in the add-on or MCP server. Full production `.blend`
-delivery and authorized current-file saving remain required for 1.0.
+This opt-in native experiment tests fresh-worker serialization of a bounded
+asset. Current development builds save ordinary projects through Blender's
+native Save and Save As path. Full production `.blend` delivery and protected
+saving remain open for 1.0. [Save and recovery contract](project-save-safety.md)
 
 ## Three fresh processes
 

@@ -1,9 +1,10 @@
 # Armature binding safety increment
 
-**Save availability:** `project.save` currently refuses Save and Save As before
-native/path access; see [the safety change](project-save-safety.md). Fresh-process
-results below establish feature serialization through owned fixture setup, not a
-safe bridge project-save capability. Earlier typed-save reports are historical.
+**Project saving.** The current `project.save` supports Save and Save As under
+persistent Blender-side permissions and project-folder rules. Saving still
+refuses while protected scope is enforced. The fresh-process results below
+apply to the owned fixture setup and source described in each report.
+[Save and recovery contract](project-save-safety.md)
 
 `rig.bind_mesh` retains its existing `EMPTY_GROUPS` / `AUTOMATIC` arguments and
 adds optional `affected_objects`. The named mesh and rig are the two explicit

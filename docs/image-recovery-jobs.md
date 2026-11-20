@@ -108,9 +108,17 @@ Image's packed EXR directly, then compares every channel after Blender's normal
 lazy decode. It leaves the original project and its Save As copy intact. This
 passed on Windows Blender 4.5.1 and 5.1.2 and Linux Blender 4.5.14 and 5.2.2.
 The original external path stays absent after the snapshot input has been
-prepared. Windows 4K,
-constrained-memory conditions, Save As after loaded-buffer restoration and
-broader production texture portability remain to be qualified.
+prepared.
+
+`edited_texture_recovery_resave_large` passed the same three-process workflow
+with one 4096 × 4096 Float32 FILE texture on Linux Blender 4.5.14 (`62c1db4208e8`)
+and 5.2.2 (`d13f752e3b9c`). The third process matched the complete Float32 hash
+from the original's packed EXR and from Blender's native decode. It preserved
+both project files, the original Image's bindings and the protected consumer.
+The three phases took 342 and 344 seconds total, respectively. Peak isolated
+process RSS was 3.4–3.5 GiB. Windows 4K, constrained memory, Save As after
+loaded-buffer restoration and broader production portability remain open.
+[Reproduce the three-process test](native-testing.md)
 
 The phased interactive native cases `image_recovery_jobs` and
 `image_recovery_jobs_large` exercise the public socket/timer lifecycle and a

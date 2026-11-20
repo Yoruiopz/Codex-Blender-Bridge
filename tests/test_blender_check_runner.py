@@ -1613,6 +1613,8 @@ def test_phased_version_mismatch_is_failure(runner, monkeypatch, tmp_path):
     ("edited_texture_recovery_large", None),
     ("edited_texture_recovery_resave", None),
     ("edited_texture_recovery_resave", "recover"),
+    ("edited_texture_recovery_resave_large", None),
+    ("edited_texture_recovery_resave_large", "reader"),
     ("static_asset_delivery", None),
     ("static_asset_delivery", "importer"),
 ])
@@ -1621,7 +1623,7 @@ def test_stock_workflow_requires_all_private_phases(runner, monkeypatch, tmp_pat
 
     profiles = []
     phases = runner.STOCK_WORKFLOW_PHASES[case]
-    maximum = 300 if case == "edited_texture_recovery_large" else 180
+    maximum = 300 if case in {"edited_texture_recovery_large", "edited_texture_recovery_resave_large"} else 180
 
     def run(command, **kwargs):
         assert "--background" not in command and "--disable-autoexec" in command
@@ -1639,17 +1641,17 @@ def test_stock_workflow_requires_all_private_phases(runner, monkeypatch, tmp_pat
     monkeypatch.setattr(runner.subprocess, "run", lambda *_a, **_k: pytest.fail("visible fallback"))
     result = runner.run_case(Path("blender.exe"), case, tmp_path, 380)
     assert result["status"] == ("passed" if fail_phase is None else "failed")
-    assert result["reader_started"] is (fail_phase is None)
     assert result["fresh_process_verified"] is (fail_phase is None)
     expected_phases = list(phases)
-    if case == "edited_texture_recovery_resave":
+    if case in {"edited_texture_recovery_resave", "edited_texture_recovery_resave_large"}:
         assert expected_phases == ["writer", "recover", "reader"]
     if fail_phase is not None:
         expected_phases = expected_phases[:expected_phases.index(fail_phase) + 1]
     assert result["phase_sequence"] == expected_phases
+    assert result["reader_started"] is (expected_phases[-1] == "reader")
     assert len({scripts for _, scripts in profiles}) == len(profiles)
     shared = {"project_checkpoint_backup", "edited_texture_recovery", "edited_texture_recovery_large",
-              "edited_texture_recovery_resave"}
+              "edited_texture_recovery_resave", "edited_texture_recovery_resave_large"}
     assert len({config for config, _ in profiles}) == (1 if case in shared else len(profiles))
     if case in shared:
         assert all(Path(config) == tmp_path / f"{case}-bundle" / "bridge-config" for config, _ in profiles)

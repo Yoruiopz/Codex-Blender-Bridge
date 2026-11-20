@@ -11,10 +11,18 @@ restart. Four Windows 11 source scenarios passed across Blender 4.5.1 LTS and
 5.1.2 with the dangerous permissions override on and off. The full Python suite
 passed 15,064 tests with three platform skips. [Exact scope and remaining qualification](release-1.0-readiness.md#persistent-saving-and-windows-source-verification)
 
-Follow-up Windows checks exercised the installed add-on on both builds and both
-permission settings, recovered a measured `.blend1` without replacing the newer
-project, and verified typed static GLB/FBX delivery in Blender 4.5.1.
-[Verification scope](release-1.0-readiness.md#persistent-saving-and-windows-source-verification)
+The saving checkpoint at `0e71ad3` passed all seven GitHub CI jobs and 19
+isolated Windows phases. Installed add-on checks exercised both Blender builds
+and permission settings, recovered a verified `.blend1` while preserving the
+newer project, and verified typed static GLB/FBX delivery in Blender 4.5.1.
+[Verification scope](release-1.0-readiness.md#persistent-saving-and-windows-source-verification) · [CI run](https://github.com/Yoruiopz/Codex-Blender-Bridge/actions/runs/44746240116)
+
+An edited 4096² Float32 FILE image survived Restore, Save As and fresh reopen on
+Linux Blender 4.5.14 and 5.2.2. The final process verified the original Image's
+own packed bytes and every native decoded channel with the external source
+absent. This qualifies the tested unloaded reconstruction path. Production
+packing of already-loaded originals and Windows 4K remain open.
+[Edited-texture evidence](image-recovery-jobs.md)
 
 The 29 items below cover the remaining work for the full structured artist
 workflow. All fourteen [release requirements](release-1.0-ledger.json) remain **OPEN**.

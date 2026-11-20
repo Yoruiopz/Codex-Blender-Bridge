@@ -1,9 +1,10 @@
 # Artist task plans, references and protected transforms
 
-**Save availability:** `project.save` currently refuses Save and Save As before
-native/path access; see [the safety change](project-save-safety.md). Fresh-process
-results below establish feature serialization through owned fixture setup, not a
-safe bridge project-save capability. Earlier typed-save reports are historical.
+**Project saving.** The current `project.save` supports Save and Save As under
+persistent Blender-side permissions and project-folder rules. Saving still
+refuses while protected scope is enforced. The fresh-process results below
+apply to the owned fixture setup and source described in each report.
+[Save and recovery contract](project-save-safety.md)
 
 The bridge keeps one bounded plan for the active Blender runtime. It survives
 MCP client disconnection/reconnection. Runtime reset and project replacement
@@ -186,10 +187,10 @@ before their handler or automatic checkpoint while protection is enabled. Native
 checkpointing for accepted transforms remains available. No cleanup/recovery tool
 implicitly disables the policy.
 
-The separate normal-native-save development path also refuses every enforced plan:
-its broad native callbacks and synchronization effects are not a reviewed protected
-scope. Copying to another path still runs native saving in the artist Main. A new
-baseline label or native-effects permission cannot override negative constraints.
+Both ordinary Save and Save As and the separate native verification jobs refuse
+while a protected plan is enforced. Native callbacks and synchronization can
+reach beyond the protected scope, including when saving a copy. Save Project
+permission does not override this boundary.
 A future extension needs a preventive method-specific effect/consumer contract;
 post-save detection of callback damage is not successful preservation. The older
 same-Main protected-capture raw-witness hold remains a separate limitation.

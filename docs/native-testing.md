@@ -51,6 +51,16 @@ process verifies the previous `.blend1`, checks that normal reopen refuses it,
 then explicitly reopens it and saves a separate `.blend`. It compares both prior
 files' bytes before and after recovery.
 
+Use `--case edited_texture_recovery_resave` for an edited 2×2 FILE texture and
+`--case edited_texture_recovery_resave_large --timeout 300` for the 4096² case.
+The writer stores a snapshot through the public job and saves a checkpoint.
+The second process reopens it, reconstructs the original Image's packed bytes
+and saves to a separate path. A third process opens that path with the external
+texture still unavailable, independently decodes the original's packed bytes
+and compares them with Blender's native pixel read. Each 4K phase checks at
+least 8 GiB available memory and 2 GiB available fixture disk before starting.
+[Edited-texture recovery and measured scope](image-recovery-jobs.md)
+
 Run `--case static_asset_delivery` on official Blender 4.5 LTS for the composed
 static delivery check. Three private processes use public Bridge tools to export,
 reimport and save a material-free GLB and FBX pair, then reopen the `.blend` with

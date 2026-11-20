@@ -1,18 +1,15 @@
 # Packed image versions and raw pixel snapshots
 
-**Save availability:** `project.save` currently refuses Save and Save As before
-native/path access; see [the safety change](project-save-safety.md). Fresh-process
-results below establish feature serialization through owned fixture setup, not a
-safe bridge project-save capability. Earlier typed-save reports are historical.
+On current development source, use `project.save` to persist packed images in
+the `.blend` after an authorized native Save or Save As. The older probes below
+retain the scope and serialization steps of their individual fixtures.
+[Save and recover a Blender project](project-save-safety.md)
 
-Unreleased development tools, not included in 0.3.0. These bounded foundations
-advance texture portability and durable edited-input recovery; they do not close
-the full 1.0 delivery, recovery, compatibility or artistic acceptance gates.
-
-The original packing/loaded restoration tools require Object Mode and **Edit Materials**. A FILE source/target also
-requires live **Access External Files**. Packing modifies project datablocks in
-memory; it does not grant save consent or write an external file. An explicit
-`project.save` retains its **Save Project** and path grants, but its native backend is unavailable.
+The synchronous packing and loaded restoration tools require Object Mode and
+**Edit Materials**. A FILE source or target also requires live **Access External
+Files**. Packing modifies project datablocks in memory. Saving the packed bytes
+still requires **Save Project**, and an explicit destination also requires
+**Access External Files** and the current project-folder policy.
 
 ## Choose the content being preserved
 
@@ -77,7 +74,13 @@ and independently reads back the complete raw digest. It retains both original
 and snapshot. A late permission/cancellation/native error can follow a pixel
 write: `possible_mutation=true` is intentional, and `CANCELLED` does not mean
 rollback. Inspect before retrying; an automatic compensating write could erase
-interleaved manual work. Save explicitly if restored pixels must persist.
+interleaved manual work.
+
+Loaded restoration preserves the original Image's existing packed bytes. A
+subsequent save can retain the raw snapshot as a separate Image. The supported
+path to updated packed bytes on the original uses explicit packed reconstruction
+on an unloaded FILE Image, followed by Save As. The cooperative jobs and their
+fresh-process results describe the measured scope. [Cooperative image snapshots and recovery](image-recovery-jobs.md)
 
 ## Bounds and observed evidence
 

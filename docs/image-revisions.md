@@ -1,9 +1,10 @@
 # Versioned texture refresh and relocation
 
-**Save availability:** `project.save` currently refuses Save and Save As before
-native/path access; see [the safety change](project-save-safety.md). Fresh-process
-results below establish feature serialization through owned fixture setup, not a
-safe bridge project-save capability. Earlier typed-save reports are historical.
+**Project saving.** The current `project.save` supports Save and Save As under
+persistent Blender-side permissions and project-folder rules. Saving still
+refuses while protected scope is enforced. The fresh-process results below
+apply to the owned fixture setup and source described in each report.
+[Save and recovery contract](project-save-safety.md)
 
 Unreleased on `main`; not part of the published 0.3.0 packages. `nodes.refresh_image` refreshes
 an Image Texture node from disk, or repairs its source path, by loading a **new image version**

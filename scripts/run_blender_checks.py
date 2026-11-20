@@ -291,7 +291,9 @@ EDITED_TEXTURE_RECOVERY_PHASES = {
     "edited_texture_recovery": ("writer", "reader"),
     "edited_texture_recovery_large": ("writer", "reader"),
     "edited_texture_recovery_resave": ("writer", "recover", "reader"),
+    "edited_texture_recovery_resave_large": ("writer", "recover", "reader"),
 }
+LARGE_EDITED_TEXTURE_RECOVERY_CASES = {"edited_texture_recovery_large", "edited_texture_recovery_resave_large"}
 STOCK_WORKFLOW_PHASES = {
     **{case: {phase: PERSISTENT_SAVE_PHASES["writer" if phase == "writer" else "crash_restart"] for phase in phases}
        for case, phases in EDITED_TEXTURE_RECOVERY_PHASES.items()},
@@ -4011,7 +4013,7 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
         if phase not in STOCK_WORKFLOW_PHASES[case] or bundle is None:
             raise ValueError("Stock Blender workflows require a private profile and an explicit phase")
         command.insert(1, "--disable-autoexec")
-        timeout = min(timeout, 300 if case == "edited_texture_recovery_large" else 180)
+        timeout = min(timeout, 300 if case in LARGE_EDITED_TEXTURE_RECOVERY_CASES else 180)
     if case == STORAGE_RUNTIME_CONTEXT_CASE:
         command.append("--bridge-runtime-context")
     if case in PAIRED_RECOVERY_PROFILES:

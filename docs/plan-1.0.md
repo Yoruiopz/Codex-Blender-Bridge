@@ -28,6 +28,30 @@ override on and off. The full Python suite passed 15,064 tests with three
 platform skips. Production-scale project saving, edited-pixel durability and
 complete portable `.blend` delivery remain open. [Exact verification scope](release-1.0-readiness.md#persistent-saving-and-windows-source-verification)
 
+The qualified checkpoint on `main`, `0e71ad3`, adds verified `.blend1` recovery
+and passed 19 isolated Windows phases plus seven CI jobs. The small packed
+reconstruction workflow also passed Restore → Save As → fresh reopen on both
+Windows and both Linux builds. A separate 4K packed Float32 FILE fixture passed
+the same workflow on Linux Blender 4.5.14 and 5.2.2. The third process verified
+the edited channels in the original Image's own packed payload with the external
+source absent. [CI run](https://github.com/Yoruiopz/Codex-Blender-Bridge/actions/runs/44746240116) · [Edited-texture evidence](image-recovery-jobs.md)
+
+For an already-loaded original Image, the existing restore updates its pixels
+in memory and preserves its old packed bytes. The next production step is an
+explicit in-place pack of verified edited pixels, with independent copies of
+the previous packed bytes and current pixels verified before altering the
+original. Start with the reviewed Float32 FILE profile. Qualify the forward
+and reverse transitions, retained evidence on interruption, and first reopen
+with the external source absent. Broader storage and color roles, Windows
+backup-file semantics and constrained memory remain release requirements.
+
+An ordinary-user NTFS probe verified binary file flush, create-only hard-link
+publication, directory flush after publication, and byte-identical readback in
+another process after abrupt writer exit. Directory pins rejected rename while
+held and allowed rename after release. This measures the tested NTFS sequence
+with tiny synthetic files. The Windows paired-backup driver and its crash
+durability contract still need end-to-end qualification.
+
 ## Published 0.9.1 alpha — 2026-10-31
 
 The latest published alpha comes from `4c1c66ad4d134ed042a3da55deca931def3c898a`.
