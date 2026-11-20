@@ -157,6 +157,37 @@ def finish(env):
     pytest.fail("Modeled guarded job did not terminate")
 
 
+@pytest.mark.parametrize("resolve", ["verified", "wrong_path", "missing_hash", "lost_flag"])
+def test_publication_uncertainty_clears_only_after_complete_matching_file_readback(prepared, resolve):
+    env = prepared
+    _accepted, control, _life = start(env)
+    job = env.manager.active
+    path = "/fixture/current.oldpacked.bin"
+    control.driver.effects = {"publication_attempted": True, "file_published": False,
+                              "publication_outcome_unknown": True, "published_bytes_verified": False,
+                              "artifacts": [{"filepath": path, "file_sha256": None, "file_bytes": None}]}
+    env.manager._observe_prepared(job, control, current=False)
+    control.driver.effects = {"publication_attempted": True, "file_published": True,
+                              "publication_outcome_unknown": False, "published_bytes_verified": True,
+                              "artifacts": [{"filepath": path, "file_sha256": "a" * 64, "file_bytes": 4}]}
+    if resolve == "wrong_path":
+        control.driver.effects["artifacts"][0]["filepath"] = "/fixture/foreign.bin"
+    elif resolve == "missing_hash":
+        control.driver.effects["artifacts"][0]["file_sha256"] = None
+    elif resolve == "lost_flag":
+        control.driver.effects.pop("publication_outcome_unknown")
+    if resolve == "verified":
+        env.manager._observe_prepared(job, control, current=False)
+        assert job.external_effects["publication_outcome_unknown"] is False
+        assert job.external_effects["publication_attempted"] is True
+        assert job.external_effects["artifacts"][0]["file_sha256"] == "a" * 64
+    else:
+        with pytest.raises(env.jobs.BridgeError) as failure:
+            env.manager._observe_prepared(job, control, current=False)
+        assert failure.value.context["reason"] == "PREPARED_PUBLICATION_UNCERTAINTY_LOST"
+        assert job.external_effects["publication_outcome_unknown"] is True
+
+
 def trap(env):
     def foreign(*_args, **_kwargs):
         env.counts["foreign"] += 1

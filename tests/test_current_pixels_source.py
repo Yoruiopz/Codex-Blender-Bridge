@@ -334,6 +334,14 @@ def acquisition_params(env):
     return {**params(env), "retain_event_journal": False}
 
 
+def acquired_preview(env, owner):
+    response, _, _ = queued(env, env.source.PREVIEW_START, acquisition_params(env), owner, "acquire")
+    assert response.ok, response.error
+    record = finish_model(env)
+    assert record.state == "SUCCEEDED", record.error
+    return {**start_parameters(env, record.result), "retain_event_journal": False}
+
+
 @pytest.mark.parametrize("source_env", ["actual_preview_job"], indirect=True)
 def test_acquisition_accepts_before_file_or_payload_work_and_waits_for_delivery(source_env):
     env = source_env
@@ -364,6 +372,63 @@ def test_acquisition_accepts_before_file_or_payload_work_and_waits_for_delivery(
     parameters = {**start_parameters(env, record.result), "retain_event_journal": False}
     response, _request, _life = queued(env, env.source.METHODS[1], parameters, owner, "evicted")
     assert not response.ok and response.error["context"]["reason"] == "PREVIEW_ACQUISITION_NOT_RETAINED"
+
+
+@pytest.mark.parametrize("source_env", ["actual_preview_job"], indirect=True)
+def test_deferred_pack_accepts_before_disputed_path_is_probed(source_env):
+    env = source_env
+    owner = env.source.ConnectionLifetime()
+    parameters = acquired_preview(env, owner)
+    occupied = env.folder / (parameters["backup_prefix"] + env.source.current_pixels_files.SUFFIXES["current"])
+    occupied.write_bytes(b"existing protected file")
+    before = env.flags["captures"]
+    response, _, lifetime = queued(env, env.source.METHODS[1], parameters, owner, "pack", acknowledge=False)
+    assert response.ok, response.error
+    assert response.result["accepted"] and response.result["input_frozen_at_acceptance"] is False
+    job = env.runtime.jobs.active
+    origin = job.prepared["origin"]
+    assert origin.input_deferred is True and origin.file_plan is origin.capture is None
+    assert origin.cached is env.source._PLANS[parameters["expected_target_fingerprint"]]
+    with pytest.raises(env.source.BridgeError):
+        origin.input_deferred = False
+    assert env.runtime.jobs.tick() and job.work is None
+    assert env.flags["captures"] == before and origin.file_plan is None
+    lifetime.acknowledge(True)
+    record = finish_model(env)
+    assert record.state == "FAILED" and record.error["code"] == "INVALID_ARGUMENT", record.error
+    assert env.flags["captures"] == before and origin.capture is None
+    assert occupied.read_bytes() == b"existing protected file" and list(env.folder.iterdir()) == [occupied]
+
+
+@pytest.mark.parametrize("source_env", ["actual_preview_job"], indirect=True)
+def test_deferred_pack_never_rebases_same_identity_pixels_changed_by_worker_provider(source_env):
+    env = source_env
+    owner = env.source.ConnectionLifetime()
+    parameters = acquired_preview(env, owner)
+    response, _, lifetime = queued(env, env.source.METHODS[1], parameters, owner, "pack", acknowledge=False)
+    assert response.ok, response.error
+    before = env.flags["captures"]
+
+    def edited_before_read():
+        env.native.original.marker += 1  # Complete pixel evidence changes; native ID and roles do not.
+        env.flags["hook"] = None
+
+    env.flags["hook"] = edited_before_read
+    lifetime.acknowledge(True)
+    record = finish_model(env)
+    assert record.state == "FAILED" and record.error["context"]["reason"] == "FULL_PREVIEW_BASELINE_CHANGED", record.error
+    assert env.flags["captures"] == before + 1 and env.native.original.marker == 1
+    assert record.result is None and list(env.folder.iterdir()) == []
+
+
+@pytest.mark.parametrize("source_env", ["actual_preview_job"], indirect=True)
+def test_deferred_pack_rejects_another_connection_before_worker_or_probes(source_env):
+    env = source_env
+    parameters = acquired_preview(env, env.source.ConnectionLifetime())
+    before = env.flags["captures"]
+    response, _, _ = queued(env, env.source.METHODS[1], parameters, env.source.ConnectionLifetime(), "pack")
+    assert not response.ok and response.error["context"]["reason"] == "PREVIEW_MISSING_STALE_OR_FOREIGN"
+    assert env.runtime.jobs.active is None and env.flags["captures"] == before and not list(env.folder.iterdir())
 
 
 @pytest.mark.parametrize("source_env", ["actual_preview_job"], indirect=True)

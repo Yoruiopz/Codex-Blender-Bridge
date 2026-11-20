@@ -266,6 +266,7 @@ class BackupFiles:
             value = os.fstat(descriptor)
             if (value.st_dev, value.st_ino) != self.plan.ancestry[-1][1:] or not stat.S_ISDIR(value.st_mode):
                 raise refused("BACKUP_DIRECTORY_CHANGED")
+            check()
             os.fsync(descriptor)
         finally:
             os.close(descriptor)
@@ -355,6 +356,7 @@ class BackupFiles:
         if type(capture) is not GraphCapture or type(capture.payloads) is not PayloadCapture:
             raise invalid_argument("Backup preparation requires the exact admitted graph and payload capture.")
         graph, payloads = capture.summary(), capture.payloads
+        del capture  # Archive steps retain plain graph data and owned payloads only.
         original, snapshot = graph["original"], graph["snapshot"]
         original_identity, snapshot_identity = original["identity"], snapshot["identity"]
         original_name, snapshot_name = original_identity["name"], snapshot_identity["name"]
@@ -429,6 +431,7 @@ class BackupFiles:
         _absent(target)
         try:
             self._gate(check)
+            check()  # The preceding approved-ancestry probe may have blocked.
             self.attempted = True
             descriptor, name = tempfile.mkstemp(prefix=".blender-codex-current-pixels-", suffix=".staging", dir=self.plan.parent)
             self.stage = Path(name)
@@ -453,6 +456,7 @@ class BackupFiles:
                 try:
                     if _identity(os.fstat(descriptor)) != self.stage_identity:
                         raise refused("BACKUP_STAGING_CHANGED")
+                    check()
                     count = os.write(descriptor, block)
                     self.stage_identity = _identity(os.fstat(descriptor))
                     if count != len(block):
@@ -470,6 +474,7 @@ class BackupFiles:
             try:
                 if _identity(os.fstat(descriptor)) != self.stage_identity:
                     raise refused("BACKUP_STAGING_CHANGED")
+                check()
                 os.fsync(descriptor)
             finally:
                 os.close(descriptor)
@@ -489,6 +494,7 @@ class BackupFiles:
             self._gate(check)
             self._stage(links=1)
             _absent(target)
+            check()
             self.publication_attempted = True
             self.uncertain.add(kind)
             os.link(self.stage, target, follow_symlinks=False)  # Atomic create-if-absent, never replace.
@@ -501,6 +507,7 @@ class BackupFiles:
             self._stage(links=2)
             if _identity(target.lstat()) != record.identity:
                 raise refused("BACKUP_PUBLICATION_CHANGED_BEFORE_STAGE_RETIREMENT")
+            check()
             os.unlink(self.stage)
             self.stage_status = "successful_stage_retired"
             self.stage = None

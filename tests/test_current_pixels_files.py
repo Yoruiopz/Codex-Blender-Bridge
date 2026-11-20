@@ -116,6 +116,33 @@ def test_three_create_only_backups_have_full_independent_receipts(files, monkeyp
     assert not effects["native_undo_removes_external_file"]
 
 
+def test_revocation_during_stage_identity_read_prevents_the_following_write(files, monkeypatch):
+    item = files.make()
+    real_open, real_fstat = os.open, os.fstat
+    append_handles = set()
+
+    def opened(path, flags, *args, **kwargs):
+        descriptor = real_open(path, flags, *args, **kwargs)
+        if flags & os.O_APPEND:
+            append_handles.add(descriptor)
+        return descriptor
+
+    def revoked_during_fstat(descriptor):
+        value = real_fstat(descriptor)
+        if descriptor in append_handles:
+            files.live["allowed"] = False
+        return value
+
+    monkeypatch.setattr(os, "open", opened)
+    monkeypatch.setattr(os, "fstat", revoked_during_fstat)
+    with pytest.raises(files.module.BridgeError) as failure:
+        files.publish(item, "oldpacked", files.old)
+    assert failure.value.code == "PERMISSION_DENIED" and append_handles
+    assert item.attempted and item.stage.stat().st_size == 0
+    assert not item.plan.path("oldpacked").exists()
+    assert item.evidence()["staging_cleanup"] == "retained_unverified"
+
+
 def captured_pair(files):
     module = files.module
     pixel_codecs = importlib.import_module(f"{module.__package__}.pixel_codecs")

@@ -85,6 +85,21 @@ prefix. A changed source can make an archive stale while its verified bytes
 remain intact. Test disconnect and manual edits between scheduler turns before
 exposing a method publicly.
 
+The acquisition fixture passed on both stock Linux builds at
+`58f8a3daab53e93246dc19d16b17727323126ae9`. It observed four permission denials
+per build, preview acknowledgments under 0.4 seconds, complete payload hashes,
+and explicit cancellation after visible progress. The control requests waited
+about 3.2 seconds for Blender's native reads on that fixture.
+
+The loaded-backup fixture now uses deferred acquisition for both starts on
+the same connection. Before any file creation the backup job verifies the
+complete original preview's graph, pixels and approved file plan. It then
+archives the verified bytes without adopting later scene changes. Each file
+turn rechecks live authorization and scope. Once complete readback resolves
+an uncertain publication, the job retains the original attempt and every
+verified path. The result describes the historical archive and leaves live
+scene state unknown. Image and helper writes require a separate verified phase.
+
 The separate read-only graph passed on stock Linux Blender 4.5.14 and 5.2.2
 at clean commit `3805511f571a8acaa2a9c16b6cab07713770348a` (source fingerprint
 `37243a19adccca66c837a9184602e95b68f35fb6bc991b016b301ecb70a4944b`). The capture

@@ -45,10 +45,11 @@ CURRENT_PIXELS_READ_CASES = frozenset({"current_pixels_lifecycle_census", "curre
 CURRENT_PIXELS_LOADED_CASE = "current_pixels_loaded_backup"
 CURRENT_PIXELS_ACQUISITION_CASE = "current_pixels_acquisition"
 CURRENT_PIXELS_QUEUED_CASES = frozenset({CURRENT_PIXELS_LOADED_CASE, CURRENT_PIXELS_ACQUISITION_CASE})
-CURRENT_PIXELS_LOADED_PROFILE = "CURRENT_PIXELS_QUEUED_LOADED_BACKUP_SMALL_V1"
+CURRENT_PIXELS_LOADED_PROFILE = "CURRENT_PIXELS_QUEUED_LOADED_BACKUP_SMALL_V2"
 CURRENT_PIXELS_LOADED_REPORT = "current-pixels-loaded-backup.json"
 CURRENT_PIXELS_LOADED_ASSERTIONS = frozenset({"fixture_only_registration", "normal_registry_unchanged", "canonical_runtime",
-    "real_socket_timer", "four_grant_denials", "queued_pack_preview", "preview_files_unchanged",
+    "real_socket_timer", "both_starters_four_grant_denials", "both_acknowledgements_unfrozen_under_three_seconds",
+    "terminal_preview_hashes", "preview_files_unchanged",
     "source_helper_and_protected_unchanged", "backup_only_queued_start", "backups_independently_reopened",
     "no_image_or_helper_write", "source_unchanged"})
 MESH_STORAGE_ASSERTIONS = frozenset({"source_unchanged", "selected_active_mesh", "canonical_runtime",
@@ -2023,7 +2024,9 @@ def _loaded_backup_receipt_matches(payload: dict | None, temporary: Path, proces
         if (full.get("source_fingerprints") != expected or payload["source_snapshot_sha256"] != hashlib.sha256(canonical).hexdigest()
                 or type(full.get("assertions")) is not dict or set(full["assertions"]) != CURRENT_PIXELS_LOADED_ASSERTIONS
                 or any(value is not True for value in full["assertions"].values())
-                or full.get("request_timeout_ms") != 60000 or full.get("socket_timeout_seconds") != 65
+                or full.get("ack_request_timeout_ms") != 3000 or full.get("control_request_timeout_ms") != 10000
+                or full.get("backup_job_limit_seconds") != 60. or full.get("socket_timeout_seconds") != 65
+                or not _acquisition_storage_setup_matches(full["storage_setup"], payload["source_build"])
                 or full.get("public_three_second_latency_qualified") is not False
                 or full.get("image_packed") is not False or full.get("project_saved") is not False):
             return False
@@ -2034,31 +2037,52 @@ def _loaded_backup_receipt_matches(payload: dict | None, temporary: Path, proces
         baseline, final = full["baseline"], full["final"]
         if (type(baseline) is not dict or type(final) is not dict or baseline.get("backup_files") != []
                 or {**final, "backup_files": []} != baseline or full["protected_baseline"] != full["protected_final"]
+                or type(full.get("preview_poll_count")) is not int or full["preview_poll_count"] < 1
                 or type(full.get("poll_count")) is not int or full["poll_count"] < 1
                 or type(full.get("peak_rss_bytes")) is not int or full["peak_rss_bytes"] <= 0):
             return False
         transcript = full["transport"]
-        if type(transcript) is not list or len(transcript) != 7:
+        if type(transcript) is not list or len(transcript) != 12:
             return False
         ids = set()
-        methods = ["image.current_pixels_pack_preview"] * 5 + ["image.pack_current_pixels_job_start", "jobs.inspect"]
+        methods = (["image.current_pixels_pack_preview_start"] * 5 + ["jobs.inspect"]
+                   + ["image.pack_current_pixels_job_start"] * 5 + ["jobs.inspect"])
         for index, row in enumerate(transcript):
             request, response = row["request"], row["response"]
+            budget = 10000 if methods[index] == "jobs.inspect" else 3000
+            max_latency = 3. if index in {4, 10} else 65.
             if (type(request) is not dict or set(request) != {"id", "method", "params", "protocol_version", "timeout_ms"}
                     or request["method"] != methods[index] or request["protocol_version"] != "1.0"
-                    or type(request["timeout_ms"]) is not int or request["timeout_ms"] != 60000
+                    or type(request["timeout_ms"]) is not int or request["timeout_ms"] != budget
                     or type(request["id"]) is not str or request["id"] in ids
                     or response.get("id") != request["id"] or response.get("protocol_version") != "1.0"
                     or type(row.get("elapsed_seconds")) not in {int, float}
-                    or not math.isfinite(row["elapsed_seconds"]) or not 0 <= row["elapsed_seconds"] <= 70):
+                    or not 0 <= row["elapsed_seconds"] <= max_latency):
                 return False
             ids.add(request["id"])
-            if index < 4:
+            if index < 4 or 6 <= index < 10:
                 if response.get("ok") is not False or response.get("error", {}).get("code") != "PERMISSION_DENIED":
                     return False
             elif response.get("ok") is not True:
                 return False
-        preview = transcript[4]["response"]["result"]
+        preview_job = transcript[5]["response"]["result"]
+        job = transcript[11]["response"]["result"]
+        accepted_ids = set()
+        for index, terminal in ((4, preview_job), (10, job)):
+            row = transcript[index]
+            ack = row["response"]["result"]
+            job_id = ack["job_id"]
+            if (ack["accepted"] is not True or ack["job_completed"] is not False or ack["terminal"] is not False
+                    or ack["input_frozen_at_acceptance"] is not False or ack["undo_boundary_created"] is not False
+                    or ack["request_id"] != row["request"]["id"]
+                    or type(job_id) is not str or not job_id.startswith("job_") or not _domain_hex(job_id[4:], 32)
+                    or job_id in accepted_ids or terminal["job_id"] != job_id or terminal["request_id"] != ack["request_id"]
+                    or transcript[index + 1]["request"]["params"] != {"job_id": job_id}
+                    or terminal["terminal"] is not True or terminal["state"] != "SUCCEEDED"
+                    or terminal["undo_boundary_created"] is not False or terminal["revision"] <= ack["revision"]):
+                return False
+            accepted_ids.add(job_id)
+        preview = preview_job["result"]
         parameters = transcript[4]["request"]["params"]
         if (preview.get("phase") != "preview" or preview.get("profile") != "FILE_F32_EXR_DATA_CURRENT_PIXELS_V1"
                 or preview.get("dimensions") != [2, 2] or preview.get("image_packed") is not False
@@ -2068,33 +2092,33 @@ def _loaded_backup_receipt_matches(payload: dict | None, temporary: Path, proces
             return False
         if any(row["request"]["params"] != parameters for row in transcript[:4]):
             return False
-        start = transcript[5]["request"]["params"]
+        start = transcript[10]["request"]["params"]
         if start != {**parameters, "expected_target_fingerprint": preview["fingerprint"],
-                     "confirm_replace_packed_bytes": True, "confirm_discard_current_buffer": True, "time_limit_seconds": 60.}:
+                     "confirm_replace_packed_bytes": True, "confirm_discard_current_buffer": True, "time_limit_seconds": 60.} or any(
+                row["request"]["params"] != start for row in transcript[6:10]):
             return False
-        accepted = transcript[5]["response"]["result"]
-        job = transcript[6]["response"]["result"]
-        if (accepted.get("accepted") is not True or accepted.get("job_completed") is not False
-                or accepted.get("undo_boundary_created") is not False or job.get("job_id") != accepted.get("job_id")
-                or transcript[6]["request"]["params"] != {"job_id": accepted["job_id"]}
-                or full["terminal"] != job or job.get("terminal") is not True or job.get("state") != "SUCCEEDED"):
+        if full["terminal"] != job:
             return False
         outcome, recovery = job["result"], job["recovery_evidence"]
         if (outcome.get("phase") != "backups_verified" or outcome.get("image_packed") is not False
-                or outcome.get("project_saved") is not False or recovery.get("stage") != "UNKNOWN"
+                or outcome.get("project_saved") is not False or outcome.get("historical_archive") is not True
+                or outcome.get("current_scene_match_verified") is not False or recovery.get("stage") != "UNKNOWN"
                 or recovery.get("state_known") is not False or recovery.get("observed_prefix") is not None
                 or recovery.get("observed_prefix_sha256") is not None
                 or recovery.get("helper_record_write_attempted") is not False or recovery.get("image_write_attempted") is not False
                 or recovery.get("durable_backups_verified") is not True or recovery.get("external_write_attempted") is not True):
             return False
         facts = preview["payload_facts"]
-        if (facts["original_packed_sha256"] != baseline["images"][0]["packed"]
-                or facts["snapshot_packed_sha256"] != baseline["images"][1]["packed"]
-                or facts["current_pixels_sha256_float32_le"] != baseline["images"][0]["pixels"]):
+        hashes = {"original_packed_sha256": baseline["images"][0]["packed"],
+                  "snapshot_packed_sha256": baseline["images"][1]["packed"],
+                  "current_pixels_sha256_float32_le": baseline["images"][0]["pixels"],
+                  "original_decoded_pixels_sha256": hashlib.sha256(struct.pack("<16f", *([-0., .25, .5, 1.] * 4))).hexdigest()}
+        if hashes != full["payload_hashes"] or any(not _domain_hex(value) or facts[name] != value for name, value in hashes.items()):
             return False
         records = full["backup_files"]
         folder, prefix = Path(parameters["backup_directory"]), parameters["backup_prefix"]
-        if folder != temporary / "lifecycle-backups" or type(records) is not list or len(records) != 3 or records != outcome["files"]:
+        if (folder != temporary / "lifecycle-backups" or folder.is_symlink()
+                or type(records) is not list or len(records) != 3 or records != outcome["files"]):
             return False
         payloads = {}
         for record in records:
@@ -2118,8 +2142,9 @@ def _loaded_backup_receipt_matches(payload: dict | None, temporary: Path, proces
         return (manifest.get("kind") == "current_pixels_manifest" and manifest.get("profile") == preview["profile"]
                 and manifest.get("width") == 2 and manifest.get("height") == 2
                 and manifest.get("current_pixels_sha256_float32_le") == facts["current_pixels_sha256_float32_le"]
+                and manifest.get("previous_decoded_pixels_sha256") == facts["original_decoded_pixels_sha256"]
                 and manifest.get("previous_packed_sha256") == facts["original_packed_sha256"])
-    except (OSError, ValueError, KeyError, TypeError, AttributeError, RecursionError):
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, IndexError, RecursionError):
         return False
 
 
@@ -4551,7 +4576,8 @@ def _run_process(blender: Path, case: str, output: Path, timeout: int, *,
         result["qualification_scope"] = {"fixture_only_queued_preview_and_backup": True,
             "public_tool_acceptance": False, "image_forward_transition_qualified": False,
             "restoration_qualified": False, "windows_qualified": False,
-            "request_timeout_ms": 60000, "public_three_second_latency_qualified": False}
+            "ack_request_timeout_ms": 3000, "control_request_timeout_ms": 10000,
+            "backup_job_limit_seconds": 60., "public_three_second_latency_qualified": False}
     if case == CURRENT_PIXELS_ACQUISITION_CASE:
         result["qualification_scope"] = {"fixture_only_queued_preview_acquisition": True,
             "ack_request_timeout_ms": 3000, "maximum_report_bytes": 2 * 1024 * 1024,

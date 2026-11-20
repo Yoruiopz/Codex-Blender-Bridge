@@ -556,6 +556,11 @@ class CurrentPixelsOrigin:
     def __delattr__(self, name):
         raise refused("RETAINED_ORIGIN_IMMUTABLE")
 
+    @property
+    def input_deferred(self) -> bool:
+        return (self.method == PREVIEW_START
+                or (self.method == METHODS[1] and self.binding.methods == FIXTURE_METHODS))
+
     def __init__(self, context, params, method):
         if threading.current_thread() is not threading.main_thread() or type(context) is not ToolContext:
             raise refused("MAIN_THREAD_CONTEXT_REQUIRED")
@@ -616,7 +621,9 @@ class CurrentPixelsOrigin:
         self.callback_verifier = verifier_type, verifier, _function_facts(verifier), verifier.__kwdefaults__
         self.callbacks = None
         self.check_job_callbacks()
-        self.callbacks = jobs.PreparedJobCallbacks.capture(context, origin=self, preview=method == PREVIEW_START)
+        self.callbacks = jobs.PreparedJobCallbacks.capture(
+            context, origin=self, preview=method == PREVIEW_START, deferred=self.input_deferred,
+        )
         self._stop(context)
         self.witness = self._witness()
         if self.cached is not None and _plain(json.loads(self.cached.raw)["identity_witness"]) != self.witness:
@@ -628,8 +635,9 @@ class CurrentPixelsOrigin:
             get_task_plans(context.state)
             self.store, self.generation = _store_facts(context.state)
         try:
-            if method == PREVIEW_START:
-                self.file_policy = self._file_policy_value()
+            if self.input_deferred:
+                if self.file_policy is None:
+                    self.file_policy = self._file_policy_value()
             else:
                 self._freeze_file_plan(self.approved_file_policy(), self.authorize)
                 self.refresh_capture(context)
@@ -651,10 +659,24 @@ class CurrentPixelsOrigin:
         object.__setattr__(self, "file_plan", plan)
 
     def prepare_acquisition(self, context):
-        if self.method != PREVIEW_START or not self.used or self.file_plan is not None:
-            raise refused("PREVIEW_ACQUISITION_NOT_CURRENT")
+        self._require_acquisition_worker(context)
+        if self.file_plan is not None:
+            raise refused("DEFERRED_SOURCE_ACQUISITION_NOT_CURRENT")
         self.authorize(context)
         self._freeze_file_plan(self.file_policy, self._read_gate)
+        if self.cached is not None:
+            expected = json.loads(self.cached.raw)["files"]
+            if _plain(current_pixels_files.BackupPlan.summary(self.file_plan)) != _plain(expected):
+                raise refused("FULL_PREVIEW_BASELINE_CHANGED")
+
+    def _require_acquisition_worker(self, context):
+        if not self.input_deferred or not self.used or context is self.context:
+            raise refused("DEFERRED_SOURCE_ACQUISITION_NOT_CURRENT")
+        self.check_worker_context(context)
+        job = self.callbacks.job
+        if (self.context.jobs.active is not job or job.lifetime.connection is not self.owner
+                or not job.lifetime.delivered.is_set()):
+            raise refused("DEFERRED_SOURCE_ACQUISITION_NOT_CURRENT")
 
     def release_acquisition(self):
         object.__setattr__(self, "capture", None)
@@ -813,7 +835,7 @@ class CurrentPixelsOrigin:
         if self.used or self.bound is None or not self.bound.active or self.context.checkpoint_admission is not self.bound:
             raise refused("ADMISSION_NOT_CURRENT")
         self.authorize()
-        if self.method != PREVIEW_START:
+        if not self.input_deferred:
             self.refresh_capture(self.context)
         object.__setattr__(self, "used", True)
         if self.spec.modifies:
@@ -873,6 +895,7 @@ class CurrentPixelsOrigin:
             raise refused("APPROVED_TEXTURE_ROOT_CHANGED")
         if self._witness() != self.witness:
             raise refused("IDENTITY_OR_CONTEXT_WITNESS_CHANGED")
+        self._stop(self.gate_context)
 
     def _capture_gate(self):
         # The graph drains in one main-thread turn. Its enclosing gates compare
@@ -905,6 +928,7 @@ class CurrentPixelsOrigin:
 
     def acquire_steps(self, context):
         """Recheck the live origin around each scheduled read or pure payload phase."""
+        self._require_acquisition_worker(context)
         self.authorize(context)
         inputs = self._capture_inputs(context, None)
         work = self.binding.graph.capture_graph_steps(require_blender(), self.parameters["image_name"],
@@ -923,6 +947,8 @@ class CurrentPixelsOrigin:
         finally:
             work.close()
         self._read_gate()
+        if self.cached is not None:
+            self.file_plan.check(self._read_gate)
         return self._retain_capture(current, None)
 
     def refresh_capture(self, context=None, *, expected_prefix=None, lifecycle_record=_MISSING):

@@ -226,6 +226,7 @@ class PreparedJobCallbacks:
         "history_attempted",
         "history_dependencies",
         "history_lock",
+        "input_deferred",
         "job",
         "job_deadline",
         "job_method",
@@ -263,8 +264,9 @@ class PreparedJobCallbacks:
     )
 
     @classmethod
-    def capture(cls, context, *, origin, preview=False):
-        if cls is not PreparedJobCallbacks or type(context) is not ToolContext or type(preview) is not bool:
+    def capture(cls, context, *, origin, preview=False, deferred=False):
+        if (cls is not PreparedJobCallbacks or type(context) is not ToolContext
+                or type(preview) is not bool or type(deferred) is not bool or (preview and not deferred)):
             raise _prepared_refused("PREPARED_ADMISSION_REQUIRED")
         source = sys.modules.get(__package__ + ".current_pixels_source")
         domain = sys.modules.get(__package__ + ".tools.image_current_pixels")
@@ -301,6 +303,7 @@ class PreparedJobCallbacks:
         self.source_check, self.source_facts = check, _function_facts(check)
         self.prepare, self.prepare_facts, self.driver_type = prepare, _function_facts(prepare), driver_type
         self.preview_only = preview
+        self.input_deferred = deferred
         self.methods = {name: (vars(driver_type).get(name), _function_facts(vars(driver_type).get(name)))
                         for name in ("__init__", "steps", "cleanup", "evidence", "recovery_evidence")}
         if not self.methods["steps"][0].__code__.co_flags & inspect.CO_GENERATOR:
@@ -362,7 +365,8 @@ class PreparedJobCallbacks:
             raise _prepared_refused("PREPARED_RUNTIME_CHANGED")
         _prepared_runtime_parts(self.runtime_module, executor_module)
         context_property = inspect.getattr_static(self.executor_type, "context")
-        if type(self.preview_only) is not bool:
+        if (type(self.preview_only) is not bool or type(self.input_deferred) is not bool
+                or getattr(self.origin, "input_deferred", False) is not self.input_deferred):
             raise _prepared_refused("PREPARED_CALLBACK_ORIGIN_CHANGED")
         prepare_name = "prepare_current_pixels_preview" if self.preview_only else "prepare_current_pixels"
         driver_name = "CurrentPixelsPreviewDriver" if self.preview_only else "CurrentPixelsDriver"
@@ -778,7 +782,7 @@ class PaintJobs(CooperativeJobController):
         control.verify(context=context)
         token = object()
         identity, metadata = (), {}
-        if not control.preview_only:
+        if not control.input_deferred:
             identity, metadata = _identity(prepared["source"]), _metadata(prepared["source"])
         job = GuardedPreparedPaintJob("job_" + uuid.uuid4().hex, context.request_id,
             prepared["source_name"], prepared["name"], context.request_lifecycle or RequestLifetime.local(),
@@ -803,7 +807,7 @@ class PaintJobs(CooperativeJobController):
                 self._finish(job, "FAILED", failure if isinstance(failure, BridgeError) else _prepared_refused("PREPARED_ACCEPT_FAILED"))
             raise
         return {"accepted": True, **job.summary(), "job_completed": False,
-                "input_frozen_at_acceptance": not control.preview_only, "native_commit_interruptible": False}
+                "input_frozen_at_acceptance": not control.input_deferred, "native_commit_interruptible": False}
 
     def start_recovery_driver(self, context: Any, params: dict, time_limit: float, *, snapshot: bool) -> dict:
         from .tools.image_recovery_jobs import WRITE, prepare_restore, prepare_snapshot
@@ -1073,10 +1077,19 @@ class PaintJobs(CooperativeJobController):
             if reduced is None or (current and reduced != value):
                 raise _prepared_refused("PREPARED_OBSERVATION_INVALID")
             previous = getattr(job, field)
-            for name in ("publication_attempted", "file_published", "publication_outcome_unknown",
+            for name in ("publication_attempted", "file_published",
                          "external_write_attempted", "helper_record_write_attempted", "image_write_attempted"):
                 if previous.get(name) is True and reduced.get(name) is not True:
                     raise _prepared_refused("PREPARED_ATTEMPT_FACT_LOST")
+            if previous.get("publication_outcome_unknown") is True and reduced.get("publication_outcome_unknown") is not True:
+                # Link publication is uncertain until the exact file has
+                # complete readback. Resolving it does not discard the attempt.
+                pending = {row["filepath"] for row in previous.get("artifacts", ())}
+                verified = {row["filepath"] for row in reduced.get("artifacts", ())}
+                if (reduced.get("publication_outcome_unknown") is not False or not pending or not pending <= verified
+                        or reduced.get("file_published") is not True or reduced.get("published_bytes_verified") is not True
+                        or reduced.get("artifacts_incomplete") is not False or reduced.get("artifacts_truncated") is not False):
+                    raise _prepared_refused("PREPARED_PUBLICATION_UNCERTAINTY_LOST")
             setattr(job, field, reduced)
             if current:
                 control.recovery = _prepared_plain(reduced, maximum=8192)
@@ -1236,7 +1249,7 @@ class PaintJobs(CooperativeJobController):
         if type(job) is GuardedPreparedPaintJob:
             control = self._prepared_control(job)
             control.verify(context=context, job=job)
-            commit = None if control.preview_only else lambda callback: self._native_commit(job, context, callback)
+            commit = None if control.input_deferred else lambda callback: self._native_commit(job, context, callback)
             work = control.methods["steps"][0](control.driver, context, job, commit)
             if type(work) is not GeneratorType or work.gi_code is not control.methods["steps"][0].__code__:
                 raise _prepared_refused("PREPARED_WORK_ORIGIN_CHANGED")

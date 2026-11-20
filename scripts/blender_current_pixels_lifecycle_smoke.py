@@ -26,10 +26,10 @@ REPORT_NAME = "current-pixels-census.json"
 GRAPH_PROFILE = "CURRENT_PIXELS_NATIVE_SOURCE_GRAPH_V1"
 GRAPH_MARKER = "BLENDER_CURRENT_PIXELS_SOURCE_GRAPH_OK "
 GRAPH_REPORT_NAME = "current-pixels-source-graph.json"
-LOADED_PROFILE = "CURRENT_PIXELS_QUEUED_LOADED_BACKUP_SMALL_V1"
+LOADED_PROFILE = "CURRENT_PIXELS_QUEUED_LOADED_BACKUP_SMALL_V2"
 LOADED_MARKER = "BLENDER_CURRENT_PIXELS_LOADED_BACKUP_OK "
 LOADED_REPORT_NAME = "current-pixels-loaded-backup.json"
-LOADED_REQUEST_MS = 60000
+LOADED_BACKUP_JOB_SECONDS = 60.
 ACQUISITION_PROFILE = "CURRENT_PIXELS_QUEUED_ACQUISITION_SMALL_V1"
 ACQUISITION_MARKER = "BLENDER_CURRENT_PIXELS_ACQUISITION_OK "
 ACQUISITION_REPORT_NAME = "current-pixels-acquisition.json"
@@ -45,7 +45,8 @@ ACQUISITION_ASSERTIONS = frozenset({
     "queued_cancellation", "source_helper_and_protected_unchanged", "no_files_written", "source_unchanged",
 })
 LOADED_ASSERTIONS = frozenset({"fixture_only_registration", "normal_registry_unchanged", "canonical_runtime",
-    "real_socket_timer", "four_grant_denials", "queued_pack_preview", "preview_files_unchanged",
+    "real_socket_timer", "both_starters_four_grant_denials", "both_acknowledgements_unfrozen_under_three_seconds",
+    "terminal_preview_hashes", "preview_files_unchanged",
     "source_helper_and_protected_unchanged", "backup_only_queued_start", "backups_independently_reopened",
     "no_image_or_helper_write", "source_unchanged"})
 GRAPH_ASSERTIONS = frozenset({"positive_complete_graph", "repeat_complete_graph", "four_grant_denials",
@@ -266,7 +267,6 @@ def native_graph_probe(bpy, graph, before, parent, *, loaded_backup=None):
     # The existing background graph probe owns this operator-context negative.
     # An interactive timer after factory reset has no Edit Mode operator context;
     # queued preview/backup needs only the ordinary Object Mode data context.
-    acquisition = loaded_backup is not None and loaded_backup.get("acquisition") is True
     storage_setup = None
     if loaded_backup is None:
         assert bpy.ops.object.mode_set(mode="EDIT") == {"FINISHED"}
@@ -282,7 +282,7 @@ def native_graph_probe(bpy, graph, before, parent, *, loaded_backup=None):
         # Edit Mode replaces attribute storage. Reacquire the declared UV wrapper.
         uv_attribute = mesh.attributes["UVMap"]
         assert tuple(tuple(item.vector) for item in uv_attribute.data) == expected_uv
-    if bpy.app.build_hash == b"d13f752e3b9c" and (loaded_backup is None or acquisition):
+    if bpy.app.build_hash == b"d13f752e3b9c":
         uv_attribute, storage_setup = prepare_fixture_boolean_storage(mesh, expected_uv)
     assert original.is_dirty and original.has_data and helper.has_data
     provider, manager = runtime.permissions._source, runtime.permissions
@@ -503,8 +503,7 @@ def native_graph_probe(bpy, graph, before, parent, *, loaded_backup=None):
             "visual_reviewed": False, "windows_qualified": False}}
 
 
-def acquisition_requests(request, control, method, arguments, result, transcript):
-    """Exercise only real socket operations; retain the two decisive job chains."""
+def require_starter_grants(request, control, method, arguments):
     for preference in ACQUISITION_GRANTS:
         control("grant", preference=preference, enabled=False)
         try:
@@ -514,15 +513,73 @@ def acquisition_requests(request, control, method, arguments, result, transcript
             control("grant", preference=preference, enabled=True)
         control("unchanged")
 
+
+def start_deferred_job(request, method, arguments):
+    response, row = request(method, arguments, timeout_ms=ACQUISITION_ACK_MS)
+    assert response["ok"] is True and 0 <= row["elapsed_seconds"] <= 3., response
+    ack = response["result"]
+    assert ack["accepted"] is True and ack["job_completed"] is False
+    assert ack["input_frozen_at_acceptance"] is False and ack["undo_boundary_created"] is False
+    assert re.fullmatch(r"job_[0-9a-f]{32}", ack["job_id"])
+    return ack
+
+
+def loaded_backup_requests(request, control, preview_method, pack_method, arguments, result, transcript, polls):
+    """Obtain a reviewed preview then run the separate, deferred backup job."""
+    def wait(ack, seconds, *, collect_polls=False):
+        params = {"job_id": ack["job_id"]}
+        end, revision, count = time.monotonic() + seconds, ack["revision"], 0
+        while time.monotonic() < end:
+            response, row = request("jobs.inspect", params, retained=False, timeout_ms=ACQUISITION_CONTROL_MS)
+            assert response["ok"] is True, response
+            job = response["result"]
+            assert job["job_id"] == ack["job_id"] and job["revision"] >= revision
+            revision, count = job["revision"], count + 1
+            if collect_polls and len(polls) < 256:
+                polls.append({"revision": revision, "state": job["state"], "progress": job["progress"],
+                              "elapsed_seconds": row["elapsed_seconds"]})
+            if job["terminal"] is True:
+                transcript.append(row)
+                assert job["state"] == "SUCCEEDED" and job["undo_boundary_created"] is False, job
+                return job, count
+            time.sleep(.02)
+        raise AssertionError("Private current-pixels job exceeded the diagnostic deadline")
+
+    require_starter_grants(request, control, preview_method, arguments)
+    preview_ack = start_deferred_job(request, preview_method, arguments)
+    preview_job, preview_polls = wait(preview_ack, 93.)
+    preview = preview_job["result"]
+    assert preview["phase"] == "preview" and re.fullmatch(r"[0-9a-f]{64}", preview["fingerprint"])
+    assert re.fullmatch(r"[0-9a-f]{64}", preview["consumer_graph_sha256"])
+    assert preview["backup_files_written"] is False and preview["image_packed"] is False
+    control("preview_verified", preview=preview)
+
+    start = {**arguments, "expected_target_fingerprint": preview["fingerprint"],
+             "confirm_replace_packed_bytes": True, "confirm_discard_current_buffer": True,
+             "time_limit_seconds": LOADED_BACKUP_JOB_SECONDS}
+    require_starter_grants(request, control, pack_method, start)
+    accepted = start_deferred_job(request, pack_method, start)
+    assert accepted["job_id"] != preview_ack["job_id"]
+    job, count = wait(accepted, LOADED_BACKUP_JOB_SECONDS + 15., collect_polls=True)
+    assert job["result"]["phase"] == "backups_verified"
+    assert job["result"]["image_packed"] is False and job["result"]["project_saved"] is False
+    assert job["result"]["historical_archive"] is True and job["result"]["current_scene_match_verified"] is False
+    recovery = job["recovery_evidence"]
+    assert recovery["stage"] == "UNKNOWN" and recovery["state_known"] is False
+    assert recovery["durable_backups_verified"] is True
+    assert recovery["helper_record_write_attempted"] is False and recovery["image_write_attempted"] is False
+    assert len(transcript) == 12
+    result.update(preview=preview, terminal=job, preview_poll_count=preview_polls, poll_count=count)
+
+
+def acquisition_requests(request, control, method, arguments, result, transcript):
+    """Exercise only real socket operations; retain the two decisive job chains."""
+    require_starter_grants(request, control, method, arguments)
     accepted_ids = set()
     for cancel in (False, True):
-        response, row = request(method, arguments, timeout_ms=ACQUISITION_ACK_MS)
-        assert response["ok"] is True and 0 <= row["elapsed_seconds"] <= 3., response
-        ack = response["result"]
-        assert ack["accepted"] is True and ack["job_completed"] is False
-        assert ack["input_frozen_at_acceptance"] is False and ack["undo_boundary_created"] is False
+        ack = start_deferred_job(request, method, arguments)
         job_id = ack["job_id"]
-        assert re.fullmatch(r"job_[0-9a-f]{32}", job_id) and job_id not in accepted_ids
+        assert job_id not in accepted_ids
         accepted_ids.add(job_id)
         params = {"job_id": job_id}
         revision = ack["revision"]
@@ -647,7 +704,7 @@ def _loaded_backup_probe(bpy, before, parent, runtime, prefs, original, helper, 
             stream = connection.makefile("rb")
             sequence = 0
 
-            def request(method, params, *, retained=True, timeout_ms=LOADED_REQUEST_MS):
+            def request(method, params, *, retained=True, timeout_ms):
                 nonlocal sequence
                 sequence += 1
                 frame = {"id": ("acquisition_" if acquisition else "loaded_backup_") + str(sequence),
@@ -667,55 +724,8 @@ def _loaded_backup_probe(bpy, before, parent, runtime, prefs, original, helper, 
                 acquisition_requests(request, control, source.PREVIEW_START, arguments, result, transcript)
                 return
 
-            for preference in ACQUISITION_GRANTS:
-                control("grant", preference=preference, enabled=False)
-                try:
-                    response, _row = request(contract.PACK_PREVIEW, arguments)
-                    assert response["ok"] is False and response["error"]["code"] == "PERMISSION_DENIED", response
-                finally:
-                    control("grant", preference=preference, enabled=True)
-                control("unchanged")
-            response, _row = request(contract.PACK_PREVIEW, arguments)
-            assert response["ok"] is True, response
-            preview = response["result"]
-            assert (preview["profile"] == contract.PROFILE and preview["dimensions"] == [2, 2]
-                    and preview["phase"] == "preview" and preview["backup_files_written"] is False
-                    and preview["image_packed"] is False)
-            assert type(preview["fingerprint"]) is str and len(preview["fingerprint"]) == 64
-            control("preview_verified", preview=preview)
-            start = {**arguments, "expected_target_fingerprint": preview["fingerprint"],
-                "confirm_replace_packed_bytes": True, "confirm_discard_current_buffer": True,
-                "time_limit_seconds": 60.}
-            response, _row = request(contract.PACK_START, start)
-            assert response["ok"] is True and response["result"]["accepted"] is True, response
-            accepted = response["result"]
-            assert accepted["job_completed"] is False and accepted["undo_boundary_created"] is False
-            assert type(accepted["job_id"]) is str
-            end, count, revision = time.monotonic() + 75., 0, 0
-            while time.monotonic() < end:
-                response, row = request("jobs.inspect", {"job_id": accepted["job_id"]}, retained=False)
-                assert response["ok"] is True, response
-                job = response["result"]
-                assert job["revision"] >= revision
-                revision, count = job["revision"], count + 1
-                if len(polls) < 256:
-                    polls.append({"revision": revision, "state": job["state"], "progress": job["progress"],
-                                  "elapsed_seconds": row["elapsed_seconds"]})
-                if job["terminal"]:
-                    transcript.append(row)
-                    assert job["state"] == "SUCCEEDED", job
-                    assert job["result"]["phase"] == "backups_verified"
-                    assert job["result"]["image_packed"] is False and job["result"]["project_saved"] is False
-                    assert job["recovery_evidence"]["stage"] == "UNKNOWN"
-                    assert job["recovery_evidence"]["state_known"] is False
-                    assert job["recovery_evidence"]["durable_backups_verified"] is True
-                    assert job["recovery_evidence"]["helper_record_write_attempted"] is False
-                    assert job["recovery_evidence"]["image_write_attempted"] is False
-                    result.update(preview=preview, accepted=accepted, terminal=job, poll_count=count)
-                    break
-                time.sleep(.02)
-            else:
-                raise AssertionError("Private backup job exceeded the diagnostic deadline")
+            loaded_backup_requests(request, control, source.PREVIEW_START, contract.PACK_START,
+                                  arguments, result, transcript, polls)
         except BaseException:
             result["failure"] = traceback.format_exc()
         finally:
@@ -786,28 +796,38 @@ def _loaded_backup_probe(bpy, before, parent, runtime, prefs, original, helper, 
             path = Path(record["filepath"])
             assert path.parent == backups and not path.is_symlink() and path.is_file()
             assert path.name in {*expected, prefix + ".manifest.json"}
-            raw = path.read_bytes()
+            with path.open("rb") as stream:
+                raw = stream.read(65537)
+            assert 1 <= len(raw) <= 65536
             assert len(raw) == record["file_bytes"] and hashlib.sha256(raw).hexdigest() == record["file_sha256"]
             if path.name in expected:
                 assert raw == expected[path.name]
             else:
                 manifest = contract.parse_manifest(raw)
                 assert hashlib.sha256(raw).hexdigest() == terminal["result"]["manifest_sha256"]
-                assert manifest["current_pixels_sha256_float32_le"] == result["preview"]["payload_facts"]["current_pixels_sha256_float32_le"]
+                hashes = result["payload_hashes"]
+                assert manifest["current_pixels_sha256_float32_le"] == hashes["current_pixels_sha256_float32_le"]
+                assert manifest["previous_packed_sha256"] == hashes["original_packed_sha256"]
+                assert manifest["previous_decoded_pixels_sha256"] == hashes["original_decoded_pixels_sha256"]
             records.append(record)
         assert {path.name for path in backups.iterdir()} == {*expected, prefix + ".manifest.json"}
         assert source_fingerprints() == before
         assertions.update(source_helper_and_protected_unchanged=True, backup_only_queued_start=True,
-            backups_independently_reopened=True, no_image_or_helper_write=True, source_unchanged=True)
+            backups_independently_reopened=True, no_image_or_helper_write=True, source_unchanged=True,
+            real_socket_timer=True, both_starters_four_grant_denials=True,
+            both_acknowledgements_unfrozen_under_three_seconds=True, preview_files_unchanged=True)
         assert set(assertions) == LOADED_ASSERTIONS
         proof = {"completed": True, "profile": LOADED_PROFILE, "scope": "fixture_only_queued_preview_and_backup",
             "process_instance": token, "process_id": os.getpid(), "blender_version": bpy.app.version_string,
             "source_build": bpy.app.build_hash.decode(), "source_fingerprints": before,
             "source_snapshot_sha256": hashlib.sha256(canonical_json(before)).hexdigest(),
-            "assertions": assertions, "request_timeout_ms": LOADED_REQUEST_MS, "socket_timeout_seconds": 65,
+            "assertions": assertions, "ack_request_timeout_ms": ACQUISITION_ACK_MS,
+            "control_request_timeout_ms": ACQUISITION_CONTROL_MS, "backup_job_limit_seconds": LOADED_BACKUP_JOB_SECONDS,
+            "socket_timeout_seconds": 65, "storage_setup": storage_setup, "payload_hashes": result["payload_hashes"],
             "public_three_second_latency_qualified": False, "public_tool_acceptance": False,
             "image_forward_transition_qualified": False, "restoration_qualified": False, "windows_qualified": False,
             "private_display": display, "transport": transcript, "polls": polls, "poll_count": result["poll_count"],
+            "preview_poll_count": result["preview_poll_count"],
             "baseline": baseline, "protected_baseline": protected_before, "final": observe(),
             "protected_final": protected_state(), "backup_files": records, "terminal": terminal,
             "elapsed_seconds": time.monotonic() - began,
@@ -831,16 +851,7 @@ def _loaded_backup_probe(bpy, before, parent, runtime, prefs, original, helper, 
                         setattr(prefs, parameters["preference"], parameters["enabled"])
                     elif action == "unchanged":
                         unchanged()
-                    elif action == "preview_verified":
-                        unchanged()
-                        preview = parameters["preview"]
-                        payload = preview["payload_facts"]
-                        assert payload["original_packed_sha256"] == hashlib.sha256(previous).hexdigest()
-                        assert payload["snapshot_packed_sha256"] == hashlib.sha256(current).hexdigest()
-                        assert payload["current_pixels_sha256_float32_le"] == hashlib.sha256(edited.tobytes()).hexdigest()
-                        assertions.update(four_grant_denials=True, queued_pack_preview=True,
-                                          preview_files_unchanged=True, real_socket_timer=True)
-                    elif action == "acquisition_preview_verified" and acquisition:
+                    elif action == ("acquisition_preview_verified" if acquisition else "preview_verified"):
                         unchanged()
                         preview = parameters["preview"]
                         assert preview["profile"] == contract.PROFILE and preview["dimensions"] == [2, 2]

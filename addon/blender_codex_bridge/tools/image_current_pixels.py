@@ -109,20 +109,29 @@ def restore_start(_context, _params):
 
 
 def prepare_current_pixels(context, params):
-    origin = _enter_small_backup(context, params, contract.PACK_START)
-    return {"source": origin.capture.original, "source_name": origin.parameters["image_name"],
+    origin = _origin(context, params, contract.PACK_START).enter()
+    prepared = {"source_name": origin.parameters["image_name"],
             "name": origin.parameters["snapshot_name"], "requires_external_files": True,
             "method": contract.PACK_START, "kind": contract.KIND,
             "driver_type": CurrentPixelsDriver, "origin": origin,
-            "workload": origin.capture.workload}
+            "workload": {"source_capture_pending": True}}
+    if not origin.input_deferred:
+        _require_small_backup(origin.capture, origin.file_plan)
+        prepared.update(source=origin.capture.original, workload=origin.capture.workload)
+    return prepared
 
 
 class CurrentPixelsDriver:
     def __init__(self, prepared):
         self.origin = origin = prepared["origin"]
-        self.files = files.BackupFiles(origin.file_plan)
+        self.files = self.receipt = None
         self.record_uuid = uuid.uuid4().hex
-        capture = origin.capture
+        if not origin.input_deferred:
+            self._freeze_receipt(origin.capture)
+
+    def _freeze_receipt(self, capture):
+        origin = self.origin
+        self.files = files.BackupFiles(origin.file_plan)
         prefix = capture.full_native_prefix_sha256
         self.receipt = contract.validate_receipt({
             "kind": contract.KIND, "schema_version": 1, "method": contract.PACK_START,
@@ -133,7 +142,7 @@ class CurrentPixelsDriver:
             "verification_required": True, "recovery_authorized": False,
             "project_saved": False, "source_file_read": False, "automatic_inverse_attempted": False,
             "record_uuid": self.record_uuid, "runtime_nonce": origin.binding.nonce,
-            "image_name": prepared["source_name"], "snapshot_name": prepared["name"],
+            "image_name": origin.parameters["image_name"], "snapshot_name": origin.parameters["snapshot_name"],
             "expected_target_fingerprint": origin.parameters["expected_target_fingerprint"],
             "expected_prefix_sha256": prefix, "observed_prefix_sha256": prefix, "observed_prefix": "PREPARED",
             "previous_packed_sha256": capture.payloads.original_packed_sha256,
@@ -144,15 +153,28 @@ class CurrentPixelsDriver:
 
     def steps(self, context, _job, _commit):
         origin = self.origin
-        origin.authorize(context)
-        capture = origin.refresh_capture(context)
-        work = self.files.prepare_pair_steps(
-            capture, record_uuid=self.record_uuid, runtime_nonce=origin.binding.nonce,
-            affected_materials=origin.parameters["affected_materials"], check=origin._read_gate,
-        )
-        # The file iterator closes each OS descriptor before yielding. Renew
-        # grants and compare the complete baseline at every subsequent turn;
-        # within that turn file gates check the retained origin without providers.
+        if origin.input_deferred:
+            origin.prepare_acquisition(context)
+            yield {"phase": "backup_preflight", "completed": 0, "total": 1}
+            capture = yield from origin.acquire_steps(context)
+        else:
+            origin.authorize(context)
+            capture = origin.refresh_capture(context)
+        try:
+            if origin.input_deferred:
+                _require_small_backup(capture, origin.file_plan)
+                self._freeze_receipt(capture)
+            work = self.files.prepare_pair_steps(
+                capture, record_uuid=self.record_uuid, runtime_nonce=origin.binding.nonce,
+                affected_materials=origin.parameters["affected_materials"], check=origin._read_gate,
+            )
+        finally:
+            if origin.input_deferred:
+                origin.release_acquisition()
+            del capture
+        # A deferred backup archives the bytes matched to the original preview
+        # before any output. Renew live grants, path and ownership on every
+        # turn. No fresh scene content is used to replace those frozen bytes.
         try:
             while True:
                 try:
@@ -163,7 +185,8 @@ class CurrentPixelsDriver:
                 self._record_attempt()
                 yield progress
                 origin.authorize(context)
-                origin.refresh_capture(context)
+                if not origin.input_deferred:
+                    origin.refresh_capture(context)
         except BaseException:
             self._record_attempt()
             self.receipt = contract.unknown_observation(self.receipt)
@@ -178,7 +201,8 @@ class CurrentPixelsDriver:
             manifest_sha256=pair["manifest_sha256"], observed_prefix="BACKUPS_DURABLE",
         )
         return {"phase": "backups_verified", "files": pair["files"],
-                "manifest_sha256": pair["manifest_sha256"], "image_packed": False, "project_saved": False}
+                "manifest_sha256": pair["manifest_sha256"], "image_packed": False, "project_saved": False,
+                **({"historical_archive": True, "current_scene_match_verified": False} if origin.input_deferred else {})}
 
     def _record_attempt(self):
         if self.files.attempted and self.receipt["stage"] == "PREPARED":
@@ -188,16 +212,21 @@ class CurrentPixelsDriver:
             )
 
     def cleanup(self, _context, _job, *, success):
-        self.files.close()
+        if self.files is not None:
+            self.files.close()
         return self.evidence()
 
     def evidence(self):
+        if self.files is None:
+            return {"publication_attempted": False, "file_published": False}
         return self.files.evidence()
 
     def recovery_evidence(self):
         # The job controller renews live permissions after each driver step.
         # Keep the verified backup facts, but a later provider can change Main
         # before the cached receipt is published to the caller.
+        if self.receipt is None:
+            return {"possible_mutation": False, "project_saved": False, "source_file_read": False}
         return contract.unknown_observation(self.receipt)
 
 

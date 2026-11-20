@@ -858,6 +858,112 @@ def test_acquisition_fixture_requires_observed_progress_and_terminal_cancellatio
         assert controls.count("unchanged") == 5 and controls.count("acquisition_preview_verified") == 1
 
 
+@pytest.mark.parametrize("fault", [None, "late_ack", "frozen_ack", "denial", "same_job", "scene_claim", "artifact"])
+def test_deferred_loaded_backup_requires_both_queued_receipts_and_exact_archive(runner, monkeypatch, tmp_path, fault):
+    from scripts import blender_current_pixels_lifecycle_smoke as fixture
+
+    preview_method = "image.current_pixels_pack_preview_start"
+    pack_method = "image.pack_current_pixels_job_start"
+    token, transcript, controls, polls, result = "9" * 32, [], [], [], {}
+    folder = tmp_path / "lifecycle-backups"
+    folder.mkdir()
+    arguments = {"backup_directory": str(folder), "retain_event_journal": False, "backup_prefix": "archive"}
+    current, previous = b"current archive fixture bytes", b"previous archive fixture bytes"
+    content = {"archive.current.exr": current, "archive.oldpacked.bin": previous}
+    hashes = {"original_packed_sha256": hashlib.sha256(previous).hexdigest(),
+              "snapshot_packed_sha256": hashlib.sha256(current).hexdigest(),
+              "current_pixels_sha256_float32_le": "5" * 64,
+              "original_decoded_pixels_sha256": hashlib.sha256(runner.struct.pack("<16f", *([-0., .25, .5, 1.] * 4))).hexdigest()}
+    preview = {"phase": "preview", "profile": "FILE_F32_EXR_DATA_CURRENT_PIXELS_V1",
+               "dimensions": [2, 2], "fingerprint": "3" * 64, "consumer_graph_sha256": "4" * 64,
+               "backup_files_written": False, "image_packed": False, "payload_facts": hashes}
+    content["archive.manifest.json"] = fixture.canonical_json({"kind": "current_pixels_manifest",
+        "profile": preview["profile"], "width": 2, "height": 2,
+        "current_pixels_sha256_float32_le": hashes["current_pixels_sha256_float32_le"],
+        "previous_packed_sha256": hashes["original_packed_sha256"],
+        "previous_decoded_pixels_sha256": hashes["original_decoded_pixels_sha256"]})
+    records = []
+    for name, raw in content.items():
+        path = folder / name
+        path.write_bytes(raw)
+        records.append({"filepath": str(path), "file_bytes": len(raw), "file_sha256": hashlib.sha256(raw).hexdigest()})
+    archived = {"phase": "backups_verified", "image_packed": False, "project_saved": False, "historical_archive": True,
+                "current_scene_match_verified": False, "files": records, "manifest_sha256": records[-1]["file_sha256"]}
+    recovery = {"stage": "UNKNOWN", "state_known": False, "helper_record_write_attempted": False,
+                "image_write_attempted": False, "durable_backups_verified": True, "external_write_attempted": True}
+    starts = {preview_method: 0, pack_method: 0}
+    accepted = {}
+
+    def request(method, params, *, retained=True, timeout_ms):
+        request_id = f"model-{len(transcript)}"
+        frame = {"id": request_id, "protocol_version": "1.0", "method": method, "params": params, "timeout_ms": timeout_ms}
+        response = {"id": request_id, "protocol_version": "1.0", "ok": True}
+        if method in starts:
+            starts[method] += 1
+            if starts[method] <= 4:
+                response.update(ok=False, error={"code": "PERMISSION_DENIED"})
+            else:
+                job_id = "job_" + ("1" if method == preview_method else "2") * 32
+                ack = {"job_id": job_id, "request_id": request_id, "revision": 1, "accepted": True,
+                       "terminal": False, "job_completed": False,
+                       "input_frozen_at_acceptance": False, "undo_boundary_created": False}
+                accepted[job_id] = ack, method
+                response["result"] = ack
+        else:
+            assert method == "jobs.inspect"
+            ack, starter = accepted[params["job_id"]]
+            response["result"] = {"job_id": ack["job_id"], "request_id": ack["request_id"], "revision": 3,
+                "terminal": True, "state": "SUCCEEDED", "undo_boundary_created": False, "progress": {},
+                "result": preview if starter == preview_method else archived, "recovery_evidence": recovery}
+        row = {"request": frame, "response": response, "elapsed_seconds": .25}
+        if retained:
+            transcript.append(row)
+        return response, row
+
+    def control(action, **kwargs):
+        controls.append((action, kwargs))
+
+    fixture.loaded_backup_requests(request, control, preview_method, pack_method, arguments, result, transcript, polls)
+    assert [action for action, _ in controls].count("unchanged") == 8
+    assert [details["preference"] for action, details in controls if action == "grant" and not details["enabled"]] == list(fixture.ACQUISITION_GRANTS) * 2
+    assert controls[12] == ("preview_verified", {"preview": preview})
+    assert result["poll_count"] == result["preview_poll_count"] == 1
+
+    sources = fixture.source_fingerprints()
+    monkeypatch.setattr(runner, "_domain_display", lambda **_options: {"path": "owned", "sha256": "8" * 64})
+    compact = {"completed": True, "profile": fixture.LOADED_PROFILE, "scope": "fixture_only_queued_preview_and_backup",
+               "process_instance": token, "process_id": 31, "blender_version": "4.5.14 LTS", "source_build": "62c1db4208e8",
+               "source_snapshot_sha256": hashlib.sha256(fixture.canonical_json(sources)).hexdigest(),
+               "public_tool_acceptance": False, "image_forward_transition_qualified": False,
+               "restoration_qualified": False, "windows_qualified": False}
+    baseline = {"backup_files": [], "images": [{"packed": hashes["original_packed_sha256"],
+                "pixels": hashes["current_pixels_sha256_float32_le"]}, {"packed": hashes["snapshot_packed_sha256"]}]}
+    full = {**compact, "source_fingerprints": sources, "assertions": dict.fromkeys(fixture.LOADED_ASSERTIONS, True),
+            "ack_request_timeout_ms": 3000, "control_request_timeout_ms": 10000, "backup_job_limit_seconds": 60.,
+            "socket_timeout_seconds": 65, "storage_setup": None, "public_three_second_latency_qualified": False,
+            "image_packed": False, "project_saved": False, "private_display": {"manifest_path": "owned", "manifest_sha256": "8" * 64},
+            "baseline": baseline, "final": {**baseline, "backup_files": list(content)}, "protected_baseline": {"pixels": "7" * 64},
+            "protected_final": {"pixels": "7" * 64}, "poll_count": 1, "preview_poll_count": 1,
+            "peak_rss_bytes": 123, "payload_hashes": hashes, "transport": transcript,
+            "terminal": result["terminal"], "backup_files": records}
+    backup_ack = transcript[10]["response"]["result"]
+    if fault == "late_ack":
+        transcript[10]["elapsed_seconds"] = 3.01
+    elif fault == "frozen_ack":
+        backup_ack["input_frozen_at_acceptance"] = True
+    elif fault == "denial":
+        transcript[7]["response"]["error"]["code"] = "INVALID_ARGUMENT"
+    elif fault == "same_job":
+        backup_ack["job_id"] = transcript[4]["response"]["result"]["job_id"]
+    elif fault == "scene_claim":
+        archived["current_scene_match_verified"] = True
+    elif fault == "artifact":
+        (folder / "archive.current.exr").write_bytes(current[::-1])
+    compact["full_receipt"] = fixture.write_receipt(tmp_path / fixture.LOADED_REPORT_NAME, full)
+
+    assert runner._loaded_backup_receipt_matches(compact, tmp_path, token) is (fault is None)
+
+
 @pytest.mark.parametrize("fault", ["profile", "token", "pid", "build", "version", "lifecycle", "windows",
     "missing_file", "symlink", "path", "hash", "size_bool", "oversize", "full_token", "full_false_integer", "source", "source_drift",
     "catalog_schema", "catalog_build", "catalog_count", "catalog_names", "old52", "extra58", "truncated", "exit", "timeout",
