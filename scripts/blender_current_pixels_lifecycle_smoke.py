@@ -401,9 +401,46 @@ def native_graph_probe(bpy, graph, before, parent, *, loaded_backup=None):
 
     before_read = observed()
     if loaded_backup is not None:
+        def project_state():
+            return bpy.data.filepath, bpy.data.is_saved
+
+        def images_resolve_exactly():
+            return all(bpy.data.images[image.name].as_pointer() == image.as_pointer()
+                       for image in (original, helper, other))
+
+        def scene_checkpoint_observation():
+            scene = bpy.context.scene
+            keys = tuple(scene.keys())
+            authored = {name: scene[name] for name in keys if name != SCENE_CHECKPOINT_KEY}
+            assert all(type(value) in {str, int, float, bool} for value in authored.values())
+            filepath, saved = project_state()
+            return {"scene_uid": scene.session_uid, "scene_pointer": scene.as_pointer(), "scene_name": scene.name,
+                    "authored_properties": authored, "marker_key": SCENE_CHECKPOINT_KEY,
+                    "marker": scene.get(SCENE_CHECKPOINT_KEY), "filepath": filepath, "saved": saved}
+
+        def fixture_checkpoint_context(protected_state):
+            """Exercise the fixture's stock no-active-Object undo context before preview."""
+            layer, scene = bpy.context.view_layer, bpy.context.scene
+            layer.objects.active = None
+            before_setup, protected_before = observed(), protected_state()
+            scene_before = scene_checkpoint_observation()
+            before_self = scene.user_of_id(scene)
+            assert bpy.ops.ed.undo_push.poll()
+            assert bpy.ops.ed.undo_push(message="Fixture setup before Bridge preview") == {"FINISHED"}
+            assert layer.objects.active is None and scene.tool_settings.particle_edit.object is None
+            after_self = scene.user_of_id(scene)
+            assert (before_self, after_self) in {(0, 0), (0, 1), (1, 1)} and SCENE_CHECKPOINT_KEY not in scene
+            assert scene_checkpoint_observation() == scene_before
+            assert observed() == before_setup and protected_state() == protected_before
+            return {"scene_self_references_before": before_self, "scene_self_references_after": after_self,
+                    "active_object_after": None, "particle_object_after": None,
+                    "native_setup_push_completed": True, "baseline_observations_unchanged": True}
+
         def start_queued():
             return _loaded_backup_probe(bpy, before, parent, runtime, prefs, original, helper, other,
                 material, backups, previous, current, edited, observed, original_decoded_sha256=digest(old),
+                project_state=project_state, images_resolve_exactly=images_resolve_exactly,
+                scene_checkpoint_observation=scene_checkpoint_observation, fixture_checkpoint_context=fixture_checkpoint_context,
                 storage_setup=storage_setup, **loaded_backup)
 
         if loaded_backup.get("helper_record"):
@@ -777,35 +814,6 @@ def acquisition_requests(request, control, method, arguments, result, transcript
     assert len(transcript) == 10
 
 
-def scene_checkpoint_observation(bpy):
-    scene = bpy.context.scene
-    keys = list(scene.keys())
-    authored = {name: scene[name] for name in keys if name != SCENE_CHECKPOINT_KEY}
-    assert all(type(value) in {str, int, float, bool} for value in authored.values())
-    return {"scene_uid": scene.session_uid, "scene_pointer": scene.as_pointer(), "scene_name": scene.name,
-            "authored_properties": authored, "marker_key": SCENE_CHECKPOINT_KEY, "marker": scene.get(SCENE_CHECKPOINT_KEY),
-            "filepath": bpy.data.filepath, "saved": bpy.data.is_saved}
-
-
-def fixture_checkpoint_context(bpy, observe, protected_state):
-    """Exercise the fixture's stock no-active-Object undo context before preview."""
-    layer, scene = bpy.context.view_layer, bpy.context.scene
-    layer.objects.active = None
-    before, protected_before = observe(), protected_state()
-    scene_before = scene_checkpoint_observation(bpy)
-    before_self = scene.user_of_id(scene)
-    assert bpy.ops.ed.undo_push.poll()
-    assert bpy.ops.ed.undo_push(message="Fixture setup before Bridge preview") == {"FINISHED"}
-    assert layer.objects.active is None and scene.tool_settings.particle_edit.object is None
-    after_self = scene.user_of_id(scene)
-    assert (before_self, after_self) in {(0, 0), (0, 1), (1, 1)} and SCENE_CHECKPOINT_KEY not in scene
-    assert scene_checkpoint_observation(bpy) == scene_before
-    assert observe() == before and protected_state() == protected_before
-    return {"scene_self_references_before": before_self, "scene_self_references_after": after_self,
-            "active_object_after": None, "particle_object_after": None,
-            "native_setup_push_completed": True, "baseline_observations_unchanged": True}
-
-
 def without_added_helper_record(observation):
     original, helper = observation["images"]
     keys = helper["keys"]
@@ -830,7 +838,8 @@ def verify_helper_record(raw, manifest, outcome, recovery, baseline):
 
 def _loaded_backup_probe(bpy, before, parent, runtime, prefs, original, helper, protected,
                          material, backups, previous, current, edited, observe, *, report, token, display,
-                         original_decoded_sha256, storage_setup=None, acquisition=False, interruption=False,
+                         original_decoded_sha256, project_state, images_resolve_exactly, scene_checkpoint_observation,
+                         fixture_checkpoint_context, storage_setup=None, acquisition=False, interruption=False,
                          helper_record=False):
     """Real socket worker and the registered Runtime timer; no manual dispatch."""
     import queue
@@ -877,14 +886,14 @@ def _loaded_backup_probe(bpy, before, parent, runtime, prefs, original, helper, 
             "roles": [protected.colorspace_settings.name, protected.alpha_mode], "filepath": protected.filepath,
             "fake_user": protected.use_fake_user, "keys": sorted(protected.keys())}
 
-    fixture_checkpoint = fixture_checkpoint_context(bpy, observe, protected_state) if helper_record else None
+    fixture_checkpoint = fixture_checkpoint_context(protected_state) if helper_record else None
     baseline, protected_before = observe(), protected_state()
     assert baseline["backup_files"] == []
     if interruption or helper_record:
-        assert bpy.data.filepath == "" and not bpy.data.is_saved
+        assert project_state() == ("", False)
     if helper_record:
         assert HELPER_LIFECYCLE_KEY not in baseline["images"][1]["keys"] and helper.get(HELPER_LIFECYCLE_KEY) is None
-    checkpoint_before = scene_checkpoint_observation(bpy) if helper_record else None
+    checkpoint_before = scene_checkpoint_observation() if helper_record else None
     initial_names = set(runtime.registry._tools)
     controls, done, result = queue.Queue(), threading.Event(), {}
     transcript, polls, assertions = [], [], {key: True for key in (
@@ -967,7 +976,7 @@ def _loaded_backup_probe(bpy, before, parent, runtime, prefs, original, helper, 
         artifacts = interrupted_backup_artifacts(backups, previous, terminal["external_effects"])
         assert all(sample["artifacts"] == artifacts for sample in samples)
         unchanged(allow_backups=True)
-        assert bpy.data.filepath == "" and not bpy.data.is_saved
+        assert project_state() == ("", False)
         assert runtime.jobs.active is None and not runtime.state.snapshot()["is_executing"]
         assert source_fingerprints() == before
         assertions.update(dict.fromkeys(INTERRUPTION_ASSERTIONS - {"terminal_preview_hashes"}, True))
@@ -1077,11 +1086,11 @@ def _loaded_backup_probe(bpy, before, parent, runtime, prefs, original, helper, 
             )
 
             assert LIFECYCLE_KEY == HELPER_LIFECYCLE_KEY and manifest is not None
-            assert all(bpy.data.images[image.name].as_pointer() == image.as_pointer() for image in (original, helper, protected))
+            assert images_resolve_exactly()
             raw_record = validate_lifecycle_record(helper[LIFECYCLE_KEY])
             verify_helper_record(raw_record, manifest, terminal["result"], terminal["recovery_evidence"], baseline)
             assert terminal["recovery_evidence"]["expected_target_fingerprint"] == result["preview"]["fingerprint"]
-            checkpoint_after = scene_checkpoint_observation(bpy)
+            checkpoint_after = scene_checkpoint_observation()
             assert checkpoint_before["filepath"] == "" and checkpoint_before["saved"] is False
             assert {**checkpoint_after, "marker": checkpoint_before["marker"]} == checkpoint_before
             assert re.fullmatch(r"BCB1:[0-9a-f]{32}:[0-9a-f]{32}", checkpoint_after["marker"])
@@ -1140,7 +1149,7 @@ def _loaded_backup_probe(bpy, before, parent, runtime, prefs, original, helper, 
                         unchanged()
                     elif action == "interrupted_stable_sample" and interruption:
                         unchanged(allow_backups=True)
-                        assert bpy.data.filepath == "" and not bpy.data.is_saved
+                        assert project_state() == ("", False)
                         assert runtime.jobs.active is None and not runtime.state.snapshot()["is_executing"]
                         answer.extend((True, {"tick": supervisor_ticks,
                             "artifacts": interrupted_backup_artifacts(backups, previous, parameters["effects"])}))
