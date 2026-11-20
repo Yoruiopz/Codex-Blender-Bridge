@@ -419,6 +419,31 @@ def test_current_provider_cannot_replace_tracked_source_before_first_full_read(s
     assert env.flags["captures"] == env.flags["foreign"] == env.flags["writes"] == 0
 
 
+@pytest.mark.parametrize("module,slot", [
+    ("images", "_summary"), ("images", "_check"), ("images", "local_editable"),
+    ("pixel_brush", "number"), ("pixel_brush", "size"), ("pixel_brush", "invalid_argument"),
+])
+def test_start_provider_cannot_replace_guarded_job_helpers(source_env, monkeypatch, module, slot):
+    env = source_env
+    proof = preview(env)
+    before = env.flags["captures"]
+    helpers = getattr(env.source.jobs, module)
+
+    def foreign(*_args, **_kwargs):
+        pytest.fail("A replacement job helper was called")
+
+    def replace():
+        env.flags["hook"] = None
+        monkeypatch.setattr(helpers, slot, foreign)
+
+    env.flags["hook"] = replace
+    with pytest.raises(env.source.BridgeError) as failure:
+        start(env, proof)
+    assert failure.value.context["reason"] == "DOMAIN_CALLBACK_SOURCE_CHANGED"
+    assert env.flags["captures"] == before
+    assert env.runtime.jobs.active is None and not list(env.folder.iterdir())
+
+
 def test_start_native_identity_is_bound_before_providers_even_if_modeled_full_reader_is_unchanged(source_env):
     env = source_env
     proof = preview(env)

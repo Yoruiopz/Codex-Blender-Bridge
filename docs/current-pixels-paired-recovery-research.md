@@ -72,12 +72,17 @@ A changed source can make an archive stale without making its verified bytes
 invalid. Test cancellation, disconnect and manual edits between scheduler turns
 before exposing any method publicly.
 
-The separate read-only graph passed on 4.5.14 after changing node/socket ownership
-checks to exact native identities and hashing whether each optional UV flag buffer
-exists. The source binds the owning tree, concrete class and valid link endpoints.
-A physically absent flag hashes differently from a present all-false buffer, and
-5.2 `SINGLE` data still refuses before any attribute payload read. The 5.2.2 graph
-replay reached an unsupported default shader panel state.
+The separate read-only graph passed on stock Linux Blender 4.5.14 and 5.2.2
+at clean commit `3805511f571a8acaa2a9c16b6cab07713770348a` (source fingerprint
+`37243a19adccca66c837a9184602e95b68f35fb6bc991b016b301ecb70a4944b`). The capture
+binds exact node and socket identities to their owning tree, concrete classes and
+link endpoints. A physically absent UV flag hashes differently from a present
+all-false buffer. The tested 5.2.2 stock clone role can remain unset, confirmed by
+Blender's native null pointer and the per-layer role flags. The 5.2.2 fixture also
+verified that a manual Principled shader panel collapse changes both graph digests
+and that restoration returns the original observation. The `SINGLE` input gate
+continues to refuse before reading attribute payloads. These results cover the
+read-only graph fixture. They provide no queued backup or recovery acceptance.
 
 ## Exact declared data scope
 

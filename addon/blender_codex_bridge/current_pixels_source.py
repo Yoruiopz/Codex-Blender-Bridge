@@ -302,6 +302,18 @@ class _Registration:
                         if module is self.graph and name in required_graph_tables:
                             raise refused("MANDATORY_GRAPH_TABLE_NOT_CAPTURED") from None
                         continue  # Callable/type inventories are qualified separately.
+        # The prepared controller and snapshot reader call these specific
+        # members through modules. Retaining the modules alone cannot pin them.
+        for module_name, binding_name, members in (
+            ("tools.images", "images", ("_summary", "_check", "local_editable")),
+            ("tools.pixel_brush", "pixel_brush", ("number", "size", "invalid_argument")),
+        ):
+            module = sys.modules.get(__package__ + "." + module_name)
+            if type(module) is not ModuleType or vars(jobs).get(binding_name) is not module:
+                raise refused("PREPARED_JOB_HELPERS_UNQUALIFIED")
+            for name in members:
+                function = vars(module).get(name)
+                self.functions.append((module, name, function, (_function_facts(function),)))
         if not required_graph_tables <= {name for owner, name, _facts, _refs in self.constants if owner is self.graph}:
             raise refused("MANDATORY_GRAPH_TABLE_NOT_CAPTURED")
         self.constant_maps = tuple(row[3] for row in self.constants)
