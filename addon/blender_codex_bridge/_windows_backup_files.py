@@ -30,6 +30,9 @@ _ATTRIBUTE_REPARSE_POINT = 0x400
 _FILE_TYPE_DISK = 1
 _ATTRIBUTES_INFO = 9
 _FILE_ID_INFO = 18
+_MAX_APPEND_BYTES = 1024 * 1024
+_MAX_CHECKED_PREFIX_BYTES = 64 * 1024
+_MAX_FILE_OFFSET = 2**63 - 1
 
 FileID = tuple[int, bytes]
 LeafSignature = tuple[int, int, int, int]
@@ -64,11 +67,11 @@ def _winerror() -> OSError:
     return ctypes.WinError(ctypes.get_last_error())
 
 
-def _open_existing(path: Path, *, directory: bool) -> int:
-    # A leaf read denies concurrent write/delete opens. The new writable
+def _open_existing(path: Path, *, directory: bool, writable: bool = False) -> int:
+    # Leaf handles deny concurrent write/delete opens. The new writable
     # directory handle shares read/write with the pre-existing ancestry pin.
     handle = _kernel32().CreateFileW(
-        str(path), _GENERIC_READ | (_GENERIC_WRITE if directory else 0),
+        str(path), _GENERIC_READ | (_GENERIC_WRITE if directory or writable else 0),
         _SHARE_READ | (_SHARE_WRITE if directory else 0), None, _OPEN_EXISTING,
         _OPEN_REPARSE_POINT | (_BACKUP_SEMANTICS if directory else 0), None,
     )
@@ -107,10 +110,31 @@ def _leaf_signature(info: os.stat_result, links: int) -> LeafSignature:
     return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns
 
 
-def _binary_descriptor(handle: int) -> int:
+def _binary_descriptor(handle: int, *, writable: bool) -> int:
     import msvcrt
 
-    return msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY | os.O_NOINHERIT)
+    access = os.O_RDWR if writable else os.O_RDONLY
+    return msvcrt.open_osfhandle(handle, access | os.O_BINARY | os.O_NOINHERIT)
+
+
+@contextmanager
+def _open_verified_leaf(path: Path, *, links: int, writable: bool = False) -> Iterator[tuple[int, LeafDescriptor]]:
+    _kernel32()  # Refuse unsupported platforms before probing the path.
+    expected = _leaf_signature(path.lstat(), links)
+    handle = _open_existing(path, directory=False, writable=writable)
+    try:
+        file_id = _file_id(handle, directory=False)
+        fd = _binary_descriptor(handle, writable=writable)
+    except BaseException:
+        _close_handle(handle)
+        raise
+    # msvcrt now owns the native handle, closed only through the descriptor.
+    try:
+        if _leaf_signature(os.fstat(fd), links) != expected or _leaf_signature(path.lstat(), links) != expected:
+            raise OSError(errno.EIO, "The named backup leaf changed during open.")
+        yield handle, LeafDescriptor(fd, expected, file_id)
+    finally:
+        os.close(fd)
 
 
 @contextmanager
@@ -121,24 +145,56 @@ def open_leaf(path: Path, *, links: int) -> Iterator[LeafDescriptor]:
     pins throughout this scope. The caller owns byte limits, hashing, and comparing
     identities across separate scopes. This context manager closes the descriptor.
     """
-    _kernel32()  # Refuse unsupported platforms before probing the path.
-    expected = _leaf_signature(path.lstat(), links)
-    handle = _open_existing(path, directory=False)
-    try:
-        file_id = _file_id(handle, directory=False)
-        fd = _binary_descriptor(handle)
-    except BaseException:
-        _close_handle(handle)
-        raise
-    # msvcrt now owns the native handle, closed only through the descriptor.
-    try:
-        if _leaf_signature(os.fstat(fd), links) != expected or _leaf_signature(path.lstat(), links) != expected:
-            raise OSError(errno.EIO, "The named backup leaf changed during open.")
-        yield LeafDescriptor(fd, expected, file_id)
-        if _leaf_signature(os.fstat(fd), links) != expected or _leaf_signature(path.lstat(), links) != expected:
+    with _open_verified_leaf(path, links=links) as (_, leaf):
+        yield leaf
+        if (_leaf_signature(os.fstat(leaf.fd), links) != leaf.signature
+                or _leaf_signature(path.lstat(), links) != leaf.signature):
             raise OSError(errno.EIO, "The backup leaf changed during the read.")
-    finally:
-        os.close(fd)
+
+
+def append_leaf(path: Path, block: bytes, *, expected_file_id: FileID, prior_size: int,
+                prior_bytes: bytes | None = None) -> LeafSignature:
+    """Append one bounded block to an existing single-link file and flush it.
+
+    The caller must retain the approved ancestry pins through the final reopen.
+    A supplied journal prefix is checked under the same write handle as the append.
+    After a write has been attempted, an exception may leave changed bytes. The
+    caller owns uncertainty tracking, complete hash verification and parent flushes.
+    """
+    if type(block) is not bytes or not 1 <= len(block) <= _MAX_APPEND_BYTES:
+        raise ValueError("Backup append requires a nonempty bounded binary block.")
+    if type(prior_size) is not int or not 0 <= prior_size <= _MAX_FILE_OFFSET - len(block):
+        raise ValueError("Backup append requires an exact representable prior length.")
+    if (type(expected_file_id) is not tuple or len(expected_file_id) != 2
+            or type(expected_file_id[0]) is not int or not 0 <= expected_file_id[0] < 2**64
+            or type(expected_file_id[1]) is not bytes or len(expected_file_id[1]) != 16 or not any(expected_file_id[1])):
+        raise ValueError("Backup append requires an exact native file identity.")
+    if prior_bytes is not None and (type(prior_bytes) is not bytes or len(prior_bytes) != prior_size
+                                    or len(prior_bytes) > _MAX_CHECKED_PREFIX_BYTES):
+        raise ValueError("Backup append requires the complete bounded prior prefix.")
+
+    final_size = prior_size + len(block)
+    with _open_verified_leaf(path, links=1, writable=True) as (handle, leaf):
+        if leaf.file_id != expected_file_id or leaf.signature[2] != prior_size:
+            raise OSError(errno.EIO, "The backup leaf identity or prior length changed before append.")
+        if prior_bytes is not None and (os.lseek(leaf.fd, 0, os.SEEK_SET) != 0
+                                        or os.read(leaf.fd, prior_size + 1) != prior_bytes):
+            raise OSError(errno.EIO, "The backup leaf prefix changed before append.")
+        if os.lseek(leaf.fd, 0, os.SEEK_END) != prior_size:
+            raise OSError(errno.EIO, "The backup leaf length changed before append.")
+        if os.write(leaf.fd, block) != len(block):
+            raise OSError(errno.EIO, "The backup leaf append wrote a partial block.")
+        after_write = _leaf_signature(os.fstat(leaf.fd), 1)
+        if after_write[:3] != (*leaf.signature[:2], final_size):
+            raise OSError(errno.EIO, "The backup leaf changed after append.")
+        if not _kernel32().FlushFileBuffers(handle):
+            raise _winerror()
+
+    # The last-write timestamp may settle only after the writable handle closes.
+    with open_leaf(path, links=1) as reopened:
+        if reopened.file_id != expected_file_id or reopened.signature[:3] != after_write[:3]:
+            raise OSError(errno.EIO, "The backup leaf changed after the append handle closed.")
+        return reopened.signature
 
 
 def flush_pinned_directory(path: Path, pinned_handle: int) -> FileID:

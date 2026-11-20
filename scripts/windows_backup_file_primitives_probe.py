@@ -1,13 +1,14 @@
 """Opt-in Windows backup primitive probe on an explicit disposable fixture parent.
 
 Uses local synthetic files and retains one new, owned directory. The receipt
-records an API-level directory flush and cross-process readback. Filesystem
-power-loss behavior and the Blender backup workflow require separate evidence.
+records binary append, a competing Win32 open, directory flush, and cross-process
+readback. Power-loss behavior and the Blender backup workflow require separate evidence.
 """
 
 from __future__ import annotations
 
 import argparse
+import errno
 import hashlib
 import json
 import os
@@ -28,7 +29,11 @@ from blender_codex_bridge.texture_staging import _ancestors, _directory_id, _Dir
 PREFIX = "bcb-backup-file-probe-"
 PAYLOAD = b"\x00\r\n\x1a" + bytes(range(256)) * 2
 COMPETITOR = b"owned competing file\r\n\x1a"
+APPEND_PREFIX = b"owned append prefix\x00\r\n\x1a"
+APPEND_BLOCK = b"\x00\r\n\x1afirst binary block\xff"
+APPEND_TAIL = b"\x1a\r\n\x00second binary block\x80"
 ABRUPT_EXIT = 91
+ERROR_SHARING_VIOLATION = 32
 
 
 def receipt(path: Path, expected: bytes, links: int) -> dict:
@@ -51,7 +56,58 @@ def write_exclusive(path: Path, data: bytes) -> None:
 def file_receipts(root: Path) -> dict:
     return {"stage": receipt(root / "staged.bin", PAYLOAD, 2),
             "published": receipt(root / "published.bin", PAYLOAD, 2),
-            "competitor": receipt(root / "competing.bin", COMPETITOR, 1)}
+            "competitor": receipt(root / "competing.bin", COMPETITOR, 1),
+            "append": receipt(root / "appended.bin", APPEND_PREFIX + APPEND_BLOCK + APPEND_TAIL, 1)}
+
+
+def probe_append(root: Path) -> dict:
+    path = root / "appended.bin"
+    write_exclusive(path, APPEND_PREFIX)
+    before = receipt(path, APPEND_PREFIX, 1)
+    volume, identifier = before["file_id"]
+    expected_id = (volume, bytes.fromhex(identifier))
+
+    # Isolate the share-mode check from the write itself. This is the same
+    # handle primitive used by append_leaf, with an independent CreateFileW call.
+    with windows_files._open_verified_leaf(path, links=1, writable=True) as (_, guard):
+        if guard.file_id != expected_id or guard.signature[2] != before["bytes"]:
+            raise RuntimeError("Share check did not bind the expected append file")
+        try:
+            competing_handle = windows_files._open_existing(path, directory=False, writable=True)
+        except OSError as error:
+            share_error = getattr(error, "winerror", None)
+            if share_error != ERROR_SHARING_VIOLATION:
+                raise
+        else:
+            windows_files._close_handle(competing_handle)
+            raise RuntimeError("A competing Win32 writable open succeeded while the write handle was held")
+
+    prefix = APPEND_PREFIX + APPEND_BLOCK
+    first = windows_files.append_leaf(path, APPEND_BLOCK, expected_file_id=expected_id, prior_size=before["bytes"])
+    intermediate = receipt(path, prefix, 1)
+    if first[2] != len(prefix) or intermediate["file_id"] != before["file_id"]:
+        raise RuntimeError("First append did not preserve its file identity and verify the expected length")
+
+    wrong_prefix = b"!" + prefix[1:]
+    try:
+        windows_files.append_leaf(path, APPEND_TAIL, expected_file_id=expected_id,
+                                  prior_size=intermediate["bytes"], prior_bytes=wrong_prefix)
+    except OSError as error:
+        if error.errno != errno.EIO or error.strerror != "The backup leaf prefix changed before append.":
+            raise
+    else:
+        raise RuntimeError("Append accepted a competing prefix of the same length")
+    if receipt(path, prefix, 1) != intermediate:
+        raise RuntimeError("Rejected append changed the existing file")
+
+    final = windows_files.append_leaf(path, APPEND_TAIL, expected_file_id=expected_id,
+                                      prior_size=intermediate["bytes"], prior_bytes=prefix)
+    complete = receipt(path, prefix + APPEND_TAIL, 1)
+    if final[2] != complete["bytes"] or complete["file_id"] != before["file_id"]:
+        raise RuntimeError("Checked-prefix append did not preserve the file identity and verify the expected length")
+    return {"competing_writable_open_winerror": share_error, "competing_open_scope": "same_process_same_path",
+            "initial": before, "after_first_append": intermediate, "after_checked_prefix_append": complete,
+            "wrong_prefix_refused_unchanged": True, "successful_append_flushes": 2}
 
 
 def child(root: Path, phase: str, nonce: str) -> None:
@@ -63,6 +119,7 @@ def child(root: Path, phase: str, nonce: str) -> None:
         if phase == "reader":
             print(json.dumps({"pid": os.getpid(), "files": file_receipts(root)}), flush=True)
             return
+        append = probe_append(root)
         stage, competitor = root / "staged.bin", root / "competing.bin"
         write_exclusive(stage, PAYLOAD)
         before = receipt(stage, PAYLOAD, 1)
@@ -79,8 +136,10 @@ def child(root: Path, phase: str, nonce: str) -> None:
         measured = file_receipts(root)
         if measured["stage"] != measured["published"] or measured["stage"]["file_id"] != before["file_id"]:
             raise RuntimeError("Publication did not preserve the exact file identity")
+        if measured["append"] != append["after_checked_prefix_append"]:
+            raise RuntimeError("Appended file changed before the writer exit boundary")
         volume, identifier = windows_files.flush_pinned_directory(root, pins.handles[-1])
-        print(json.dumps({"pid": os.getpid(), "files": measured,
+        print(json.dumps({"pid": os.getpid(), "files": measured, "append": append,
                           "flushed_directory_id": [volume, identifier.hex()]}), flush=True)
         # Exit before Python finally blocks release the directory pins.
         os._exit(ABRUPT_EXIT)
@@ -123,12 +182,16 @@ def main() -> None:
     reader = run_child(root, "reader", nonce, 0)
     if len({os.getpid(), writer["pid"], reader["pid"]}) != 3 or writer["files"] != reader["files"]:
         raise RuntimeError("Fresh reader did not verify the failed-process boundary and exact files")
+    append = writer.pop("append")
+    if append["after_checked_prefix_append"] != reader["files"]["append"]:
+        raise RuntimeError("Fresh reader did not verify the exact appended file")
     report = {"python": list(sys.version_info[:3]),
               "module_sha256": hashlib.sha256(Path(windows_files.__file__).read_bytes()).hexdigest(),
               "file_fsync_returned_success": True, "create_only_collision_preserved": True,
               "pinned_directory_flush_returned_success": True, "process_exit_reopen_verified": True,
               "power_loss_durability_verified": False, "product_backup_durability_qualified": False,
-              "writer_exit": ABRUPT_EXIT, "reader_exit": 0, "writer": writer, "reader": reader}
+              "writer_exit": ABRUPT_EXIT, "reader_exit": 0, "writer": writer, "reader": reader,
+              "append": {**append, "process_exit_reopen_verified": True}}
     encoded = json.dumps(report, sort_keys=True)
     with closing(_DirectoryPins(root)):
         write_exclusive(root / "report.json", (encoded + "\n").encode("utf-8"))

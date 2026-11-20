@@ -6,7 +6,7 @@ import stat
 import sys
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, call
 
 import pytest
 
@@ -109,6 +109,122 @@ def test_signature_change_refuses_even_when_win32_open_succeeds(windows_files, p
         fixture.path.lstat.return_value.st_mtime_ns = 90
     fixture.os.close.assert_called_once_with(42)
     fixture.kernel.CloseHandle.assert_not_called()
+
+
+@pytest.fixture
+def append_file(windows_files):
+    fixture = windows_files
+    prefix = b"\x00\r\n\x1a" + b"x" * 19
+    block = b"\r\n\x1a\x00"
+    final_size = len(prefix) + len(block)
+    fixture.attributes[19] = 0
+    fixture.identities[19] = fixture.identities[17]
+    fixture.kernel.CreateFileW.side_effect = [17, 19]
+    fixture.crt.open_osfhandle.side_effect = [42, 43]
+    fixture.os.O_RDWR = 2
+    fixture.os.SEEK_SET = 0
+    fixture.os.SEEK_END = 2
+    fixture.os.read = Mock(return_value=prefix)
+    fixture.os.lseek = Mock(side_effect=lambda _fd, _offset, whence: len(prefix) if whence == 2 else 0)
+
+    def write(_fd, data):
+        fixture.os.fstat.return_value.st_size += len(data)
+        return len(data)
+
+    def close(fd):
+        if fd == 42:
+            # Windows reports the final last-write time after closing the writer.
+            fixture.path.lstat.return_value.st_size = fixture.os.fstat.return_value.st_size
+            fixture.path.lstat.return_value.st_mtime_ns = 51
+            fixture.os.fstat.return_value.st_mtime_ns = 51
+
+    fixture.os.write = Mock(side_effect=write)
+    fixture.os.close.side_effect = close
+    timeline = Mock()
+    timeline.attach_mock(fixture.kernel.CreateFileW, "open")
+    timeline.attach_mock(fixture.os.read, "read")
+    timeline.attach_mock(fixture.os.lseek, "seek")
+    timeline.attach_mock(fixture.os.write, "write")
+    timeline.attach_mock(fixture.kernel.FlushFileBuffers, "flush")
+    timeline.attach_mock(fixture.os.close, "close")
+    return SimpleNamespace(api=fixture, timeline=timeline, block=block, prefix=prefix, final_size=final_size,
+                           append=lambda **overrides: fixture.module.append_leaf(
+                               fixture.path, **{"block": block, "expected_file_id": fixture.identities[17],
+                                                "prior_size": len(prefix), **overrides}))
+
+
+def test_append_compares_prefix_on_write_handle_flushes_then_reopens(append_file):
+    model = append_file
+    fixture = model.api
+    assert model.append(prior_bytes=model.prefix) == (1, 9, model.final_size, 51)
+    assert model.timeline.mock_calls == [
+        call.open(str(fixture.path), 0xC0000000, 1, None, 3, 0x00200000, None),
+        call.seek(42, 0, 0), call.read(42, len(model.prefix) + 1), call.seek(42, 0, 2),
+        call.write(42, model.block), call.flush(17), call.close(42),
+        call.open(str(fixture.path), 0x80000000, 1, None, 3, 0x00200000, None), call.close(43),
+    ]
+    assert fixture.crt.open_osfhandle.call_args_list == [call(17, 0x8082), call(19, 0x8080)]
+    fixture.kernel.CloseHandle.assert_not_called()
+
+
+@pytest.mark.parametrize("kwargs", [
+    {"block": b""}, {"block": b"x" * (1024 * 1024 + 1)}, {"prior_size": True}, {"prior_size": 2**63},
+    {"expected_file_id": (91, bytes(16))}, {"prior_size": 65537, "prior_bytes": b"x" * 65537},
+    {"prior_bytes": b"short"},
+])
+def test_invalid_append_inputs_never_probe_path(append_file, kwargs):
+    with pytest.raises(ValueError):
+        append_file.append(**kwargs)
+    append_file.api.path.lstat.assert_not_called()
+    append_file.api.kernel.CreateFileW.assert_not_called()
+
+
+@pytest.mark.parametrize("fault", ["wrong_identity", "wrong_length", "wrong_prefix", "wrong_eof", "sharing_denied"])
+def test_append_refuses_before_write_if_preconditions_fail(append_file, fault):
+    model = append_file
+    fixture = model.api
+    kwargs = {}
+    if fault == "wrong_identity":
+        kwargs["expected_file_id"] = (91, b"f" * 15 + b"!")
+    elif fault == "wrong_length":
+        kwargs["prior_size"] = len(model.prefix) - 1
+    elif fault == "wrong_prefix":
+        kwargs["prior_bytes"] = b"!" * len(model.prefix)
+    elif fault == "wrong_eof":
+        fixture.os.lseek.side_effect = None
+        fixture.os.lseek.return_value = len(model.prefix) - 1
+    else:
+        fixture.kernel.CreateFileW.side_effect = None
+        fixture.kernel.CreateFileW.return_value = ctypes.c_void_p(-1).value
+    with pytest.raises(OSError):
+        model.append(**kwargs)
+    fixture.os.write.assert_not_called()
+    fixture.kernel.FlushFileBuffers.assert_not_called()
+    assert fixture.kernel.CreateFileW.call_count == 1
+    if fault != "sharing_denied":
+        fixture.os.close.assert_called_once_with(42)
+    else:
+        fixture.os.close.assert_not_called()
+
+
+@pytest.mark.parametrize("fault", ["short_write", "flush_failed", "reopen_replaced"])
+def test_append_preserves_late_failure_without_repeating_write(append_file, fault):
+    fixture = append_file.api
+    if fault == "short_write":
+        fixture.os.write.side_effect = None
+        fixture.os.write.return_value = 1
+    elif fault == "flush_failed":
+        fixture.kernel.FlushFileBuffers.return_value = False
+    else:
+        fixture.identities[19] = (91, b"f" * 15 + b"!")
+    with pytest.raises(OSError, match=r"partial block|Win32 failure|after the append handle closed"):
+        append_file.append()
+    fixture.os.write.assert_called_once_with(42, append_file.block)
+    assert fixture.os.close.call_args_list == ([call(42), call(43)] if fault == "reopen_replaced" else [call(42)])
+    if fault == "short_write":
+        fixture.kernel.FlushFileBuffers.assert_not_called()
+    else:
+        fixture.kernel.FlushFileBuffers.assert_called_once_with(17)
 
 
 @pytest.fixture

@@ -195,7 +195,16 @@ same file identities and verified the complete bytes. The probe retains the
 owned folder and `report.json`. This evidence covers the tested process-exit
 sequence. The Blender backup driver, host power-loss behavior and Windows 4K
 qualification remain open. Integrating the helper requires the approved
-ancestry pins and native file IDs to survive each individual I/O operation. Test
-exclusive append, create-only linking with the source held, and exact staging
-link retirement by handle before using the same verified directory flush. Keep
-any uncertain files for inspection after interrupted publication.
+ancestry pins and native file IDs to survive each individual I/O operation.
+
+An additional ordinary-user NTFS run on Python 3.12.4 verified two bounded
+binary appends and two successful file flushes. A second writable open on the
+same path in the same process returned Windows sharing error 32 while the
+verified handle was held. The probe refused an incorrect prefix and verified
+the existing bytes. A fresh reader reopened the final 70-byte file with the
+same native file ID and complete digest after the writer exited abruptly.
+The module hash was
+`8e1dce065661220de5838c393878c8fa17e9fd5995e15ded49d7d5affa00f50d`.
+Create-only linking with the source held and exact staging link retirement
+by handle still require native testing. Preserve uncertain files after
+interrupted publication.
