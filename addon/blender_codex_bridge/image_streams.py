@@ -184,9 +184,11 @@ def _png(reader: Reader) -> Iterator[dict]:
                 color = header["color_type"]
                 if (color == 3 and (palette is None or not 0 < length <= palette)) or (color != 3 and length != {0: 2, 2: 6}.get(color, -1)):
                     raise invalid_argument("PNG transparency metadata is invalid for its color type.")
-            elif kind == b"IEND":
-                if length or reader.position+4 != reader.total or not idat or not inflater.eof or lines.received != lines.expected:
-                    raise invalid_argument("PNG lacks complete scanlines/zlib termination or has invalid IEND/trailing data.")
+            elif kind == b"IEND" and (
+                length or reader.position + 4 != reader.total or not idat or not inflater.eof
+                or lines.received != lines.expected
+            ):
+                raise invalid_argument("PNG lacks complete scanlines/zlib termination or has invalid IEND/trailing data.")
             expected_lengths = {b"sRGB": 1, b"gAMA": 4, b"cHRM": 32, b"pHYs": 9, b"tIME": 7}
             if kind in expected_lengths and length != expected_lengths[kind]:
                 raise invalid_argument("PNG standard metadata has an invalid length.")
